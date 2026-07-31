@@ -41,13 +41,25 @@ function insertRequest(
 ) {
 	db.run(
 		"INSERT INTO requests (id, timestamp, method, path, account_used, success) VALUES (?, ?, ?, ?, ?, ?)",
-		[row.id, row.timestamp, "POST", "/v1/messages", row.account_used, row.success ? 1 : 0],
+		[
+			row.id,
+			row.timestamp,
+			"POST",
+			"/v1/messages",
+			row.account_used,
+			row.success ? 1 : 0,
+		],
 	);
 }
 
 function insertAccount(
 	db: Database,
-	row: { id: string; name: string; request_count?: number; total_requests?: number },
+	row: {
+		id: string;
+		name: string;
+		request_count?: number;
+		total_requests?: number;
+	},
 ) {
 	db.run(
 		"INSERT INTO accounts (id, name, provider, request_count, total_requests, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -77,9 +89,24 @@ describe("StatsRepository.getAccountStats — no-account bucket binding", () => 
 
 	it("reports the real success rate for the no-account bucket under the NULL encoding", async () => {
 		// 3 NULL rows: 2 success, 1 failure → 67% success rate
-		insertRequest(db, { id: "n1", timestamp: 1, account_used: null, success: true });
-		insertRequest(db, { id: "n2", timestamp: 2, account_used: null, success: true });
-		insertRequest(db, { id: "n3", timestamp: 3, account_used: null, success: false });
+		insertRequest(db, {
+			id: "n1",
+			timestamp: 1,
+			account_used: null,
+			success: true,
+		});
+		insertRequest(db, {
+			id: "n2",
+			timestamp: 2,
+			account_used: null,
+			success: true,
+		});
+		insertRequest(db, {
+			id: "n3",
+			timestamp: 3,
+			account_used: null,
+			success: false,
+		});
 
 		const result = await repo.getAccountStats(10, true);
 
@@ -127,8 +154,18 @@ describe("StatsRepository.getAccountStats — no-account bucket binding", () => 
 
 	it("collapses NULL rows and legacy literal rows into a single bucket", async () => {
 		// 2 NULL + 2 literal: all 4 successes → 100%
-		insertRequest(db, { id: "n1", timestamp: 1, account_used: null, success: true });
-		insertRequest(db, { id: "n2", timestamp: 2, account_used: null, success: true });
+		insertRequest(db, {
+			id: "n1",
+			timestamp: 1,
+			account_used: null,
+			success: true,
+		});
+		insertRequest(db, {
+			id: "n2",
+			timestamp: 2,
+			account_used: null,
+			success: true,
+		});
 		insertRequest(db, {
 			id: "l1",
 			timestamp: 3,
@@ -168,8 +205,18 @@ describe("StatsRepository.getAccountStats — no-account bucket binding", () => 
 		});
 
 		// No-account bucket: 2 success / 2 total → 100%
-		insertRequest(db, { id: "n1", timestamp: 3, account_used: null, success: true });
-		insertRequest(db, { id: "n2", timestamp: 4, account_used: null, success: true });
+		insertRequest(db, {
+			id: "n1",
+			timestamp: 3,
+			account_used: null,
+			success: true,
+		});
+		insertRequest(db, {
+			id: "n2",
+			timestamp: 4,
+			account_used: null,
+			success: true,
+		});
 
 		const result = await repo.getAccountStats(10, true);
 
@@ -183,8 +230,18 @@ describe("StatsRepository.getAccountStats — no-account bucket binding", () => 
 	});
 
 	it("reports 0 success rate when every no-account row failed", async () => {
-		insertRequest(db, { id: "n1", timestamp: 1, account_used: null, success: false });
-		insertRequest(db, { id: "n2", timestamp: 2, account_used: null, success: false });
+		insertRequest(db, {
+			id: "n1",
+			timestamp: 1,
+			account_used: null,
+			success: false,
+		});
+		insertRequest(db, {
+			id: "n2",
+			timestamp: 2,
+			account_used: null,
+			success: false,
+		});
 
 		const result = await repo.getAccountStats(10, true);
 

@@ -1,13 +1,13 @@
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { Logger, logBus } from "@better-ccflare/logger";
 import type { LogEvent } from "@better-ccflare/types";
 import {
 	bootstrapMinimaxUsagePolling,
 	registerMinimaxUsagePolling,
-	type UsageCacheRegistrar,
 	supportsRefreshBackedUsagePolling,
+	type UsageCacheRegistrar,
 } from "./server";
 
 describe("supportsRefreshBackedUsagePolling", () => {
@@ -59,7 +59,11 @@ describe("registerMinimaxUsagePolling", () => {
 
 	it("registers polling for a Minimax account with an API key", () => {
 		const { registrar, startPolling } = makeRegistrar();
-		const result = registerMinimaxUsagePolling(makeAccount(), registrar, 30_000);
+		const result = registerMinimaxUsagePolling(
+			makeAccount(),
+			registrar,
+			30_000,
+		);
 
 		expect(result).toBe(true);
 		expect(startPolling).toHaveBeenCalledTimes(1);
@@ -403,7 +407,11 @@ describe("bootstrapMinimaxUsagePolling", () => {
 			}),
 		];
 
-		const registered = bootstrapMinimaxUsagePolling(accounts, registrar, 30_000);
+		const registered = bootstrapMinimaxUsagePolling(
+			accounts,
+			registrar,
+			30_000,
+		);
 
 		// Only the two Minimax accounts should appear in the registered list,
 		// proving the filter on `provider === "minimax"` is actually applied
@@ -425,7 +433,11 @@ describe("bootstrapMinimaxUsagePolling", () => {
 			makeAccount({ id: "anthropic-1", provider: "anthropic" }),
 		];
 
-		const registered = bootstrapMinimaxUsagePolling(accounts, registrar, 30_000);
+		const registered = bootstrapMinimaxUsagePolling(
+			accounts,
+			registrar,
+			30_000,
+		);
 
 		expect(registered).toEqual([]);
 		expect(startPolling).toHaveBeenCalledTimes(0);
@@ -454,7 +466,11 @@ describe("bootstrapMinimaxUsagePolling", () => {
 			}),
 		];
 
-		const registered = bootstrapMinimaxUsagePolling(accounts, registrar, 30_000);
+		const registered = bootstrapMinimaxUsagePolling(
+			accounts,
+			registrar,
+			30_000,
+		);
 
 		expect(registered).toEqual(["minimax-good"]);
 		expect(startPolling).toHaveBeenCalledTimes(1);
@@ -530,9 +546,7 @@ describe("bootstrapMinimaxUsagePolling", () => {
 		expect(
 			warningMsgs.some((m) => m.includes("beta") && m.includes("no API key")),
 		).toBe(true);
-		expect(
-			warningMsgs.some((m) => m.includes("gamma")),
-		).toBe(false);
+		expect(warningMsgs.some((m) => m.includes("gamma"))).toBe(false);
 	});
 
 	it("does not WARN when no Minimax accounts are present at all", () => {

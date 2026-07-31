@@ -57,13 +57,23 @@
  * The pin relies on the pool being a single connection, so the harness forces
  * BETTER_CCFLARE_DB_POOL_MAX=1 before constructing DatabaseOperations.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import {
+	afterAll,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from "bun:test";
 // Side-effect import: load @better-ccflare/core before @better-ccflare/types.
 // types/agent.ts runtime-imports core while core/strategy.ts imports types, a
 // pre-existing cycle that crashes when types is the first module evaluated.
 import "@better-ccflare/core";
 import type { Config } from "@better-ccflare/config";
-import type { BunSqlAdapter, DatabaseOperations } from "@better-ccflare/database";
+import type {
+	BunSqlAdapter,
+	DatabaseOperations,
+} from "@better-ccflare/database";
 import { NO_ACCOUNT_ID } from "@better-ccflare/types";
 import { createAnalyticsHandler } from "../handlers/analytics";
 import {
@@ -279,7 +289,7 @@ describe.skipIf(!livePgAvailable)(
 		// Preserve the real `it` reference under a stable name so the wrapper
 		// above can call it without recursing into itself.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const bunTestIt = (it as any) as (
+		const bunTestIt = it as any as (
 			name: string,
 			fn: any,
 			timeoutMs?: number,
@@ -540,36 +550,49 @@ describe.skipIf(!livePgAvailable)(
 		// -------------------------------------------------------------------
 
 		describe("StatsRepository.getAccountStats — the /api/stats 500", () => {
-			liveIt("executes on PostgreSQL and buckets NULL account_used under NO_ACCOUNT_ID", async () => {
-				await seedBaseline();
+			liveIt(
+				"executes on PostgreSQL and buckets NULL account_used under NO_ACCOUNT_ID",
+				async () => {
+					await seedBaseline();
 
-				const stats = await dbOps.getStatsRepository().getAccountStats(10, true);
+					const stats = await dbOps
+						.getStatsRepository()
+						.getAccountStats(10, true);
 
-				const noAccount = stats.find((r) => r.name === NO_ACCOUNT_ID);
-				expect(noAccount).toBeDefined();
-				// 3 NULL rows + 1 legacy literal row collapse into one bucket
-				expect(noAccount?.requestCount).toBe(4);
-				// 3 of 4 succeeded
-				expect(noAccount?.successRate).toBe(75);
+					const noAccount = stats.find((r) => r.name === NO_ACCOUNT_ID);
+					expect(noAccount).toBeDefined();
+					// 3 NULL rows + 1 legacy literal row collapse into one bucket
+					expect(noAccount?.requestCount).toBe(4);
+					// 3 of 4 succeeded
+					expect(noAccount?.successRate).toBe(75);
 
-				const real = stats.find((r) => r.name === "primary");
-				expect(real?.requestCount).toBe(2);
-				expect(real?.successRate).toBe(50);
-			});
+					const real = stats.find((r) => r.name === "primary");
+					expect(real?.requestCount).toBe(2);
+					expect(real?.successRate).toBe(50);
+				},
+			);
 
-			liveIt("executes on PostgreSQL with includeUnauthenticated = false", async () => {
-				await seedBaseline();
-				const stats = await dbOps
-					.getStatsRepository()
-					.getAccountStats(10, false);
-				expect(stats.map((s) => s.name)).toContain("primary");
-				expect(stats.map((s) => s.name)).not.toContain(NO_ACCOUNT_ID);
-			});
+			liveIt(
+				"executes on PostgreSQL with includeUnauthenticated = false",
+				async () => {
+					await seedBaseline();
+					const stats = await dbOps
+						.getStatsRepository()
+						.getAccountStats(10, false);
+					expect(stats.map((s) => s.name)).toContain("primary");
+					expect(stats.map((s) => s.name)).not.toContain(NO_ACCOUNT_ID);
+				},
+			);
 
-			liveIt("returns an empty array on PostgreSQL when there are no requests", async () => {
-				const stats = await dbOps.getStatsRepository().getAccountStats(10, true);
-				expect(stats).toEqual([]);
-			});
+			liveIt(
+				"returns an empty array on PostgreSQL when there are no requests",
+				async () => {
+					const stats = await dbOps
+						.getStatsRepository()
+						.getAccountStats(10, true);
+					expect(stats).toEqual([]);
+				},
+			);
 		});
 
 		// -------------------------------------------------------------------
@@ -593,92 +616,107 @@ describe.skipIf(!livePgAvailable)(
 
 			liveIt("getActiveAccountCount executes", async () => {
 				await seedBaseline();
-				expect(await dbOps.getStatsRepository().getActiveAccountCount()).toBe(1);
+				expect(await dbOps.getStatsRepository().getActiveAccountCount()).toBe(
+					1,
+				);
 			});
 
-			liveIt("getRecentErrorGroups executes with three PARTITION BY placeholders", async () => {
-				await seedBaseline();
-				const groups = await dbOps
-					.getStatsRepository()
-					.getRecentErrorGroups(now - 24 * HOUR, 10);
-				const messages = groups.map((g) => g.errorCode);
-				expect(messages).toContain("upstream 529");
-				expect(messages).toContain("no account available");
-			});
+			liveIt(
+				"getRecentErrorGroups executes with three PARTITION BY placeholders",
+				async () => {
+					await seedBaseline();
+					const groups = await dbOps
+						.getStatsRepository()
+						.getRecentErrorGroups(now - 24 * HOUR, 10);
+					const messages = groups.map((g) => g.errorCode);
+					expect(messages).toContain("upstream 529");
+					expect(messages).toContain("no account available");
+				},
+			);
 
-			liveIt("getRecentErrorGroups collapses same-error unattributed rows into one group", async () => {
-				await seedRequest({
-					id: "e-null-1",
-					timestamp: now - HOUR,
-					accountUsed: null,
-					success: false,
-					errorMessage: "same error",
-				});
-				await seedRequest({
-					id: "e-null-2",
-					timestamp: now - HOUR + 1,
-					accountUsed: null,
-					success: false,
-					errorMessage: "same error",
-				});
-				await seedRequest({
-					id: "e-legacy-1",
-					timestamp: now - HOUR + 2,
-					accountUsed: NO_ACCOUNT_ID,
-					success: false,
-					errorMessage: "same error",
-				});
+			liveIt(
+				"getRecentErrorGroups collapses same-error unattributed rows into one group",
+				async () => {
+					await seedRequest({
+						id: "e-null-1",
+						timestamp: now - HOUR,
+						accountUsed: null,
+						success: false,
+						errorMessage: "same error",
+					});
+					await seedRequest({
+						id: "e-null-2",
+						timestamp: now - HOUR + 1,
+						accountUsed: null,
+						success: false,
+						errorMessage: "same error",
+					});
+					await seedRequest({
+						id: "e-legacy-1",
+						timestamp: now - HOUR + 2,
+						accountUsed: NO_ACCOUNT_ID,
+						success: false,
+						errorMessage: "same error",
+					});
 
-				const groups = await dbOps
-					.getStatsRepository()
-					.getRecentErrorGroups(now - 24 * HOUR, 10);
-				const group = groups.filter((g) => g.errorCode === "same error");
-				expect(group).toHaveLength(1);
-				expect(group[0].occurrenceCount).toBe(3);
-			});
+					const groups = await dbOps
+						.getStatsRepository()
+						.getRecentErrorGroups(now - 24 * HOUR, 10);
+					const group = groups.filter((g) => g.errorCode === "same error");
+					expect(group).toHaveLength(1);
+					expect(group[0].occurrenceCount).toBe(3);
+				},
+			);
 
-			liveIt("getTopModels executes (ROUND(CAST(... AS NUMERIC)) is dialect-sensitive)", async () => {
-				await seedBaseline();
-				const models = await dbOps.getStatsRepository().getTopModels(5);
-				expect(models.length).toBeGreaterThan(0);
-				expect(models[0].model).toBe("claude-sonnet-4");
-				expect(Number.isFinite(models[0].percentage)).toBe(true);
-			});
+			liveIt(
+				"getTopModels executes (ROUND(CAST(... AS NUMERIC)) is dialect-sensitive)",
+				async () => {
+					await seedBaseline();
+					const models = await dbOps.getStatsRepository().getTopModels(5);
+					expect(models.length).toBeGreaterThan(0);
+					expect(models[0].model).toBe("claude-sonnet-4");
+					expect(Number.isFinite(models[0].percentage)).toBe(true);
+				},
+			);
 
-			liveIt("getApiKeyStats executes with a dynamic IN placeholder list", async () => {
-				await seedRequest({
-					id: "k-1",
-					timestamp: now - HOUR,
-					accountUsed: "acct-1",
-					success: true,
-					apiKeyId: "key-1",
-					apiKeyName: "ci",
-				});
-				await seedRequest({
-					id: "k-2",
-					timestamp: now - HOUR,
-					accountUsed: "acct-1",
-					success: false,
-					apiKeyId: "key-1",
-					apiKeyName: "ci",
-				});
-				const stats = await dbOps.getStatsRepository().getApiKeyStats();
-				expect(stats).toHaveLength(1);
-				expect(stats[0].requests).toBe(2);
-				expect(stats[0].successRate).toBe(50);
-			});
+			liveIt(
+				"getApiKeyStats executes with a dynamic IN placeholder list",
+				async () => {
+					await seedRequest({
+						id: "k-1",
+						timestamp: now - HOUR,
+						accountUsed: "acct-1",
+						success: true,
+						apiKeyId: "key-1",
+						apiKeyName: "ci",
+					});
+					await seedRequest({
+						id: "k-2",
+						timestamp: now - HOUR,
+						accountUsed: "acct-1",
+						success: false,
+						apiKeyId: "key-1",
+						apiKeyName: "ci",
+					});
+					const stats = await dbOps.getStatsRepository().getApiKeyStats();
+					expect(stats).toHaveLength(1);
+					expect(stats[0].requests).toBe(2);
+					expect(stats[0].successRate).toBe(50);
+				},
+			);
 
-			liveIt("getSessionStats executes with a repeated OR-clause parameter pair", async () => {
-				await seedBaseline();
-				const sessions = await dbOps
-					.getStatsRepository()
-					.getSessionStats([
+			liveIt(
+				"getSessionStats executes with a repeated OR-clause parameter pair",
+				async () => {
+					await seedBaseline();
+					const sessions = await dbOps.getStatsRepository().getSessionStats([
 						{ id: "acct-1", session_start: now - 2 * HOUR },
 						{ id: "acct-2", session_start: null },
 					]);
-				expect(sessions.get("acct-1")?.requests).toBe(2);
-				expect(sessions.has("acct-2")).toBe(false);
-			});
+					expect(sessions.get("acct-1")?.requests).toBe(2);
+					expect(sessions.has("acct-2")).toBe(false);
+				},
+			);
 		});
 
 		// -------------------------------------------------------------------
@@ -701,16 +739,19 @@ describe.skipIf(!livePgAvailable)(
 				expect(Array.isArray(body.recentErrors)).toBe(true);
 			});
 
-			liveIt("returns 200 with the ?errorsSinceHours= parameter the dashboard sends", async () => {
-				await seedBaseline();
-				const handler = createStatsHandler(dbOps);
-				const body = (await readJson(
-					await handler(
-						new URL("http://x/api/stats?since=7&errorsSinceHours=24"),
-					),
-				)) as Record<string, unknown>;
-				expect(Array.isArray(body.recentErrors)).toBe(true);
-			});
+			liveIt(
+				"returns 200 with the ?errorsSinceHours= parameter the dashboard sends",
+				async () => {
+					await seedBaseline();
+					const handler = createStatsHandler(dbOps);
+					const body = (await readJson(
+						await handler(
+							new URL("http://x/api/stats?since=7&errorsSinceHours=24"),
+						),
+					)) as Record<string, unknown>;
+					expect(Array.isArray(body.recentErrors)).toBe(true);
+				},
+			);
 
 			liveIt("returns 200 against an empty database", async () => {
 				const handler = createStatsHandler(dbOps);
@@ -768,14 +809,17 @@ describe.skipIf(!livePgAvailable)(
 				expect(totals.requests).toBe(2);
 			});
 
-			liveIt("executes with a mixed sentinel + named-account filter", async () => {
-				await seedBaseline();
-				const body = await analytics(
-					`range=24h&accounts=primary,${encodeURIComponent(NO_ACCOUNT_ID)}`,
-				);
-				const totals = body.totals as Record<string, unknown>;
-				expect(totals.requests).toBe(6);
-			});
+			liveIt(
+				"executes with a mixed sentinel + named-account filter",
+				async () => {
+					await seedBaseline();
+					const body = await analytics(
+						`range=24h&accounts=primary,${encodeURIComponent(NO_ACCOUNT_ID)}`,
+					);
+					const totals = body.totals as Record<string, unknown>;
+					expect(totals.requests).toBe(6);
+				},
+			);
 
 			liveIt("executes with model, apiKey and status filters", async () => {
 				await seedBaseline();
@@ -790,26 +834,34 @@ describe.skipIf(!livePgAvailable)(
 				});
 
 				expect(
-					((await analytics("range=24h&models=claude-opus-4"))
-						.totals as Record<string, unknown>).requests,
+					(
+						(await analytics("range=24h&models=claude-opus-4"))
+							.totals as Record<string, unknown>
+					).requests,
 				).toBe(1);
 				expect(
-					((await analytics("range=24h&apiKeys=ci")).totals as Record<
-						string,
-						unknown
-					>).requests,
+					(
+						(await analytics("range=24h&apiKeys=ci")).totals as Record<
+							string,
+							unknown
+						>
+					).requests,
 				).toBe(1);
 				expect(
-					((await analytics("range=24h&status=success")).totals as Record<
-						string,
-						unknown
-					>).requests,
+					(
+						(await analytics("range=24h&status=success")).totals as Record<
+							string,
+							unknown
+						>
+					).requests,
 				).toBe(5);
 				expect(
-					((await analytics("range=24h&status=error")).totals as Record<
-						string,
-						unknown
-					>).requests,
+					(
+						(await analytics("range=24h&status=error")).totals as Record<
+							string,
+							unknown
+						>
+					).requests,
 				).toBe(2);
 			});
 
@@ -821,15 +873,18 @@ describe.skipIf(!livePgAvailable)(
 				}
 			});
 
-			liveIt("executes the modelBreakdown and cumulative variants", async () => {
-				await seedBaseline();
-				expect(
-					(await analytics("range=24h&modelBreakdown=true")).timeSeries,
-				).toBeDefined();
-				expect(
-					(await analytics("range=24h&mode=cumulative")).timeSeries,
-				).toBeDefined();
-			});
+			liveIt(
+				"executes the modelBreakdown and cumulative variants",
+				async () => {
+					await seedBaseline();
+					expect(
+						(await analytics("range=24h&modelBreakdown=true")).timeSeries,
+					).toBeDefined();
+					expect(
+						(await analytics("range=24h&mode=cumulative")).timeSeries,
+					).toBeDefined();
+				},
+			);
 		});
 
 		// -------------------------------------------------------------------
@@ -846,15 +901,18 @@ describe.skipIf(!livePgAvailable)(
 				expect(body.meta).toBeDefined();
 			});
 
-			liveIt("GET /api/insights/cache executes with the sentinel account filter", async () => {
-				await seedBaseline();
-				const res = await createCacheInsightsHandler(context)(
-					new URLSearchParams(
-						`range=24h&accounts=${encodeURIComponent(NO_ACCOUNT_ID)}&threshold=40`,
-					),
-				);
-				expect(res.status).toBe(200);
-			});
+			liveIt(
+				"GET /api/insights/cache executes with the sentinel account filter",
+				async () => {
+					await seedBaseline();
+					const res = await createCacheInsightsHandler(context)(
+						new URLSearchParams(
+							`range=24h&accounts=${encodeURIComponent(NO_ACCOUNT_ID)}&threshold=40`,
+						),
+					);
+					expect(res.status).toBe(200);
+				},
+			);
 
 			liveIt("GET /api/insights/anomalies executes", async () => {
 				await seedBaseline();
@@ -901,13 +959,16 @@ describe.skipIf(!livePgAvailable)(
 		// -------------------------------------------------------------------
 
 		describe("raw-adapter handlers", () => {
-			liveIt("GET /api/requests executes (takes a BunSqlAdapter, not dbOps)", async () => {
-				await seedBaseline();
-				const res = await createRequestsSummaryHandler(adapter)(50);
-				const body = (await readJson(res)) as unknown[];
-				expect(Array.isArray(body)).toBe(true);
-				expect(body).toHaveLength(6);
-			});
+			liveIt(
+				"GET /api/requests executes (takes a BunSqlAdapter, not dbOps)",
+				async () => {
+					await seedBaseline();
+					const res = await createRequestsSummaryHandler(adapter)(50);
+					const body = (await readJson(res)) as unknown[];
+					expect(Array.isArray(body)).toBe(true);
+					expect(body).toHaveLength(6);
+				},
+			);
 
 			liveIt("GET /api/requests/detail executes", async () => {
 				await seedBaseline();
@@ -1077,21 +1138,24 @@ describe.skipIf(!livePgAvailable)(
 		// -------------------------------------------------------------------
 
 		describe("account repository write path", () => {
-			liveIt("markAccountRateLimited returns a truthful applied flag on PostgreSQL", async () => {
-				await seedAccount({ id: "acct-1", name: "primary" });
-				const result = await dbOps.markAccountRateLimited(
-					"acct-1",
-					now + HOUR,
-					"upstream_429_with_reset",
-				);
-				expect(result).toBeDefined();
+			liveIt(
+				"markAccountRateLimited returns a truthful applied flag on PostgreSQL",
+				async () => {
+					await seedAccount({ id: "acct-1", name: "primary" });
+					const result = await dbOps.markAccountRateLimited(
+						"acct-1",
+						now + HOUR,
+						"upstream_429_with_reset",
+					);
+					expect(result).toBeDefined();
 
-				const row = await adapter.get<{ rate_limited_until: number | null }>(
-					"SELECT rate_limited_until FROM accounts WHERE id = ?",
-					["acct-1"],
-				);
-				expect(Number(row?.rate_limited_until)).toBe(now + HOUR);
-			});
+					const row = await adapter.get<{ rate_limited_until: number | null }>(
+						"SELECT rate_limited_until FROM accounts WHERE id = ?",
+						["acct-1"],
+					);
+					expect(Number(row?.rate_limited_until)).toBe(now + HOUR);
+				},
+			);
 
 			liveIt("clearExpiredRateLimits clears only expired benches", async () => {
 				await seedAccount({
@@ -1115,27 +1179,30 @@ describe.skipIf(!livePgAvailable)(
 				expect(still?.rate_limited_until).not.toBeNull();
 			});
 
-			liveIt("exercises the per-account mutation routes' repository calls", async () => {
-				await seedAccount({ id: "acct-1", name: "primary" });
-				await dbOps.pauseAccount("acct-1", "manual");
-				await dbOps.resumeAccount("acct-1");
-				await dbOps.renameAccount("acct-1", "renamed");
-				await dbOps.updateAccountPriority("acct-1", 3);
-				await dbOps.setAutoFallbackEnabled("acct-1", true);
-				await dbOps.setAutoPauseOnOverageEnabled("acct-1", true);
-				await dbOps.setPeakHoursPauseEnabled("acct-1", true);
-				await dbOps.setAccountBillingType("acct-1", "plan");
-				await dbOps.updateAccountRequestCount("acct-1", 7);
-				await dbOps.resetAccountSession("acct-1", now);
-				await dbOps.setRequiresReauth("acct-1", true);
-				await dbOps.resetConsecutiveRateLimits("acct-1");
-				await dbOps.forceResetAccountRateLimit("acct-1");
-				expect(await dbOps.hasAccountsForProvider("anthropic")).toBe(true);
+			liveIt(
+				"exercises the per-account mutation routes' repository calls",
+				async () => {
+					await seedAccount({ id: "acct-1", name: "primary" });
+					await dbOps.pauseAccount("acct-1", "manual");
+					await dbOps.resumeAccount("acct-1");
+					await dbOps.renameAccount("acct-1", "renamed");
+					await dbOps.updateAccountPriority("acct-1", 3);
+					await dbOps.setAutoFallbackEnabled("acct-1", true);
+					await dbOps.setAutoPauseOnOverageEnabled("acct-1", true);
+					await dbOps.setPeakHoursPauseEnabled("acct-1", true);
+					await dbOps.setAccountBillingType("acct-1", "plan");
+					await dbOps.updateAccountRequestCount("acct-1", 7);
+					await dbOps.resetAccountSession("acct-1", now);
+					await dbOps.setRequiresReauth("acct-1", true);
+					await dbOps.resetConsecutiveRateLimits("acct-1");
+					await dbOps.forceResetAccountRateLimit("acct-1");
+					expect(await dbOps.hasAccountsForProvider("anthropic")).toBe(true);
 
-				const account = await dbOps.getAccount("acct-1");
-				expect(account?.name).toBe("renamed");
-				expect((await dbOps.getAllAccounts()).length).toBe(1);
-			});
+					const account = await dbOps.getAccount("acct-1");
+					expect(account?.name).toBe("renamed");
+					expect((await dbOps.getAllAccounts()).length).toBe(1);
+				},
+			);
 		});
 
 		// -------------------------------------------------------------------
@@ -1143,38 +1210,41 @@ describe.skipIf(!livePgAvailable)(
 		// -------------------------------------------------------------------
 
 		describe("request repository", () => {
-			liveIt("saveRequest / updateRequestUsage execute the real upsert on PostgreSQL", async () => {
-				await seedAccount({ id: "acct-1", name: "primary" });
-				await dbOps.saveRequest(
-					"live-1",
-					"POST",
-					"/v1/messages",
-					"acct-1",
-					200,
-					true,
-					null,
-					120,
-					0,
-					{
+			liveIt(
+				"saveRequest / updateRequestUsage execute the real upsert on PostgreSQL",
+				async () => {
+					await seedAccount({ id: "acct-1", name: "primary" });
+					await dbOps.saveRequest(
+						"live-1",
+						"POST",
+						"/v1/messages",
+						"acct-1",
+						200,
+						true,
+						null,
+						120,
+						0,
+						{
+							model: "claude-sonnet-4",
+							inputTokens: 10,
+							outputTokens: 5,
+							costUsd: 0.02,
+						},
+					);
+					await dbOps.updateRequestUsage("live-1", {
 						model: "claude-sonnet-4",
-						inputTokens: 10,
-						outputTokens: 5,
-						costUsd: 0.02,
-					},
-				);
-				await dbOps.updateRequestUsage("live-1", {
-					model: "claude-sonnet-4",
-					inputTokens: 20,
-					outputTokens: 10,
-					costUsd: 0.05,
-				});
+						inputTokens: 20,
+						outputTokens: 10,
+						costUsd: 0.05,
+					});
 
-				const row = await adapter.get<{ input_tokens: number }>(
-					"SELECT input_tokens FROM requests WHERE id = ?",
-					["live-1"],
-				);
-				expect(Number(row?.input_tokens)).toBe(20);
-			});
+					const row = await adapter.get<{ input_tokens: number }>(
+						"SELECT input_tokens FROM requests WHERE id = ?",
+						["live-1"],
+					);
+					expect(Number(row?.input_tokens)).toBe(20);
+				},
+			);
 
 			liveIt("payload storage round-trips on PostgreSQL", async () => {
 				await seedBaseline();
@@ -1200,9 +1270,9 @@ describe.skipIf(!livePgAvailable)(
 			liveIt("read aggregates execute on PostgreSQL", async () => {
 				await seedBaseline();
 				expect((await dbOps.getRecentRequests(10)).length).toBe(6);
-				expect((await dbOps.getRequestStats(now - 24 * HOUR)).totalRequests).toBe(
-					6,
-				);
+				expect(
+					(await dbOps.getRequestStats(now - 24 * HOUR)).totalRequests,
+				).toBe(6);
 				expect(await dbOps.aggregateStats(24 * HOUR)).toBeDefined();
 				expect((await dbOps.getTopModels(5)).length).toBeGreaterThan(0);
 				expect((await dbOps.getRecentErrors(10)).length).toBeGreaterThan(0);
@@ -1252,19 +1322,22 @@ describe.skipIf(!livePgAvailable)(
 				);
 			}
 
-			liveIt("listAlerts / getUnacknowledgedCount / acknowledge execute", async () => {
-				await seedAlert("a-1", 0);
-				await seedAlert("a-2", 0);
-				await seedAlert("a-3", 1);
+			liveIt(
+				"listAlerts / getUnacknowledgedCount / acknowledge execute",
+				async () => {
+					await seedAlert("a-1", 0);
+					await seedAlert("a-2", 0);
+					await seedAlert("a-3", 1);
 
-				const svc = context.alertService;
-				expect((await svc.listAlerts(100)).length).toBe(3);
-				expect(await svc.getUnacknowledgedCount()).toBe(2);
-				expect(await svc.acknowledgeAlert("a-1")).toBe(true);
-				expect(await svc.acknowledgeAlert("missing")).toBe(false);
-				await svc.acknowledgeAll();
-				expect(await svc.getUnacknowledgedCount()).toBe(0);
-			});
+					const svc = context.alertService;
+					expect((await svc.listAlerts(100)).length).toBe(3);
+					expect(await svc.getUnacknowledgedCount()).toBe(2);
+					expect(await svc.acknowledgeAlert("a-1")).toBe(true);
+					expect(await svc.acknowledgeAlert("missing")).toBe(false);
+					await svc.acknowledgeAll();
+					expect(await svc.getUnacknowledgedCount()).toBe(0);
+				},
+			);
 		});
 
 		// -------------------------------------------------------------------
