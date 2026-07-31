@@ -6,7 +6,7 @@
  * branch was created to address: draining a body stream that is still
  * being forwarded truncates the client's response silently. The
  * ccflare-side leak fix (cancelDiscardedResponseBody) intentionally
- * targets ONLY the failover/retry discard sites (see the 12 call sites
+ * targets ONLY the failover/retry discard sites (see the 13 call sites
  * listed in proxy-operations.ts). Every other path — the streaming
  * forwarder in response-handler.ts, the non-streaming forwarder, and
  * the model-not-found forward to the client (`withSanitizedProxyHeaders`) —

@@ -56,7 +56,7 @@
  * directly without pulling in the proxy-operations.ts transitive
  * dependency chain (which loads cacheBodyStore → @better-ccflare/database,
  * and that module fails to initialise in worktrees where `bun install`
- * has not run). The 12 discard sites in proxy-operations.ts import this
+ * has not run). The 13 discard sites in proxy-operations.ts import this
  * helper and call it before each `return null;`.
  */
 export function cancelDiscardedResponseBody(

@@ -21,7 +21,16 @@ export type RateLimitReason =
 	 *  model-scoped in the rate-limit sense — the account is not benched, and by
 	 *  the time this is detected the response has typically already been passed
 	 *  through to the client. */
-	| "extra_usage_exhausted";
+	| "extra_usage_exhausted"
+	/** Anthropic 429 that reports no rate-limit window at all — `x-should-retry:
+	 *  true` and not a single `anthropic-ratelimit-*` / `x-ratelimit-*` header or
+	 *  `retry-after`. Live measurement showed this to be request-scoped rather
+	 *  than account-wide: the same account served 200s seconds either side of the
+	 *  rejection on the same model, while every other account rejected the same
+	 *  request identically, and retries spanning 11s never once cleared it. The
+	 *  account is NOT benched — the request fails over and the account stays in
+	 *  rotation. */
+	| "windowless_429";
 
 // Usage data types for Anthropic accounts
 export interface UsageWindowData {

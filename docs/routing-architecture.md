@@ -41,7 +41,7 @@ flowchart TD
     J -->|"Strategy itself found nothing<br/>(all paused / rate-limited)"| M["503 pool_exhausted"]
     I -->|"Yes"| N["Dispatch: try candidates in order"]
     N --> O{"Upstream 429?"}
-    O -->|"Yes"| P{"out_of_credits (model/beta-<br/>scoped) or synthetic keepalive?"}
+    O -->|"Yes"| P{"Narrower than the account?<br/>out_of_credits (model/beta-scoped),<br/>windowless 429 (request-scoped),<br/>or synthetic keepalive"}
     P -->|"Yes"| P2["No account cooldown —<br/>fail over to next candidate"]
     P -->|"No"| P3["Apply account cooldown,<br/>fail over to next candidate"]
     P2 --> N
@@ -49,7 +49,22 @@ flowchart TD
     O -->|"No"| Q["Return response to client"]
 ```
 
-*Source: `packages/proxy/src/proxy.ts` (`handleProxy`, `applyUsageThrottling`), `packages/proxy/src/handlers/account-selector.ts` (`selectAccountsForRequest`).*
+Three classes of 429 are narrower than the account and therefore fail over per
+request with the account left in rotation — no cooldown, no
+`consecutive_rate_limits` increment:
+
+- **`out_of_credits`** — credits/overage depleted for one model or beta (e.g. context-1m); the account's other models still work.
+- **`windowless_429`** — `x-should-retry: true` with no rate-limit metadata at all (no `retry-after`, no `anthropic-ratelimit-*` / `x-ratelimit-*` header). Measured on a production install as **request**-scoped: the same account served 200s two seconds before and 38 seconds after on the same model, retries spanning 11.2s returned identical bare 429s without ever clearing, and the next account rejected the same client request the same way. Benching for it drained the pool one account per failover attempt. The check is fail-closed — any header that reports window state, known name or not, is treated as a real limit and benched as before.
+- **Synthetic keepalive replays** — the keepalive scheduler's own parallel burst trips a per-IP limit; no request-history row is written either.
+
+The `windowless_429` exemption is not universal: it is evaluated only on the
+no-fallback path (the requested model has no multi-entry mapping). An account
+**with** multi-entry model mappings walks its fallback list first, and when every
+mapped model has 429ed the request ends at `all_models_exhausted_429`, which
+**does** apply an account cooldown — even if each individual 429 reported no
+window.
+
+*Source: `packages/proxy/src/proxy.ts` (`handleProxy`, `applyUsageThrottling`), `packages/proxy/src/handlers/account-selector.ts` (`selectAccountsForRequest`), `packages/proxy/src/handlers/proxy-operations.ts` + `packages/proxy/src/handlers/retryable-429.ts` (the three no-bench 429 classes).*
 
 ## The Four Load-Balancing Strategies
 

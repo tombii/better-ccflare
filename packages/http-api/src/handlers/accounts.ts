@@ -64,6 +64,11 @@ const RATE_LIMIT_REASONS = new Set<RateLimitReason>([
 	"upstream_529_overloaded_no_reset",
 	"out_of_credits",
 	"extra_usage_exhausted",
+	// Never actually written to accounts.rate_limited_reason today (a
+	// windowless 429 does not bench the account), but listed so this set stays
+	// a faithful mirror of the union and cannot silently null the value if a
+	// future path ever persists it.
+	"windowless_429",
 ]);
 
 function toRateLimitReason(v: string | null): RateLimitReason | null {

@@ -81,9 +81,10 @@ const ACCOUNT_WIDE_UNIFIED_STATUSES = new Set([
  * exists to identify carries none of these headers, so it still qualifies.
  *
  * Detection is header-based on purpose: AnthropicProvider.parseRateLimit
- * FABRICATES `resetTime = now + 60_000` for a bare 429
- * (providers/anthropic/provider.ts:459-463), so a `!resetTime` test is false for
- * precisely the responses this module exists to identify.
+ * FABRICATES `resetTime = now + 60_000` for a bare 429 — see
+ * `DEFAULT_429_COOLDOWN_MS` in providers/anthropic/provider.ts — so a
+ * `!resetTime` test is false for precisely the responses this module exists to
+ * identify.
  */
 export function hasRateLimitMetadata(headers: Headers): boolean {
 	if (headers.get("retry-after") !== null) return true;

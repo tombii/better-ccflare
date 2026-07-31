@@ -203,6 +203,11 @@ interface CircuitEntry {
  * similarly scoped to a single model/surface, not account-wide, so the
  * request fails over naturally without tripping the breaker.
  *
+ * `windowless_429` (a 429 reporting no rate-limit window at all) is scoped
+ * to the individual request — no cooldown is applied and the account stays
+ * in rotation — so counting it would open the breaker on an account that is
+ * still serving traffic.
+ *
  * Every other `RateLimitReason` — account/provider-wide exhaustion,
  * 529 overload — counts as a circuit failure.
  *
@@ -229,6 +234,10 @@ export function shouldCountAsCircuitFailure(kind: FailureKind): boolean {
 		case "model_fallback_429":
 		case "out_of_credits":
 		case "extra_usage_exhausted":
+			return false;
+		// Request-scoped, and no cooldown is applied — the account keeps
+		// serving other traffic, so this must not count toward opening.
+		case "windowless_429":
 			return false;
 		case "upstream_429_with_reset":
 		case "upstream_429_no_reset_default_5h":
