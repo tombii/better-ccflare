@@ -154,6 +154,11 @@ async function buildPlatform(platform: Platform) {
 	// Get version from package.json, optionally suffixed for patched builds
 	const packageJson = await Bun.file("./package.json").json();
 	const suffix = process.env.CCFLARE_BUILD_SUFFIX;
+	if (suffix && !/^[a-zA-Z0-9._-]+$/.test(suffix)) {
+		throw new Error(
+			"CCFLARE_BUILD_SUFFIX must only contain alphanumeric characters, dots, underscores, and hyphens",
+		);
+	}
 	const version = suffix
 		? `${packageJson.version}+${suffix}`
 		: packageJson.version;
