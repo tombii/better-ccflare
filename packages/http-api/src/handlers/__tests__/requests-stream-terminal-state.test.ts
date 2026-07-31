@@ -116,16 +116,18 @@ describe("createRequestsSummaryHandler — stream terminal state mapping", () =>
 		expect(row?.streamTerminalState).toBeUndefined();
 	});
 
-	it("drops a value the current build does not know instead of forwarding it", async () => {
+	it('reports a state the build does not know as "unknown", not as absent', async () => {
 		// The column is TEXT and nothing constrains it: a row written by a newer
 		// producer build (or by hand) can hold a state outside the union. It must
-		// not reach consumers that treat StreamTerminalState as exhaustive.
+		// not reach consumers that treat the union as exhaustive — but it must
+		// also not collapse into the same `undefined` a non-streaming request
+		// produces, or a NEW failure state would read as a clean 200.
 		// Own row, so this mutation cannot influence the other assertions
 		// regardless of test execution order.
 		await saveWithTerminalState(dbOps, "req-unknown-state", "truncated");
 		await dbOps
 			.getAdapter()
-			.query(`UPDATE requests SET stream_terminal_state = ? WHERE id = ?`, [
+			.run(`UPDATE requests SET stream_terminal_state = ? WHERE id = ?`, [
 				"some_future_state",
 				"req-unknown-state",
 			]);
@@ -134,7 +136,31 @@ describe("createRequestsSummaryHandler — stream terminal state mapping", () =>
 		const row = body.find((r) => r.id === "req-unknown-state");
 
 		expect(row).toBeDefined();
-		expect(row?.streamTerminalState).toBeUndefined();
+		expect(row?.streamTerminalState).toBe("unknown");
+		// …and still distinguishable from a request that recorded nothing.
+		expect(
+			body.find((r) => r.id === "req-no-state")?.streamTerminalState,
+		).toBeUndefined();
+	});
+
+	it("narrows the sibling attribution columns the same way", async () => {
+		// The neighbouring provenance columns are unconstrained TEXT too; leaving
+		// them on a bare cast while hardening only this field would be an
+		// asymmetry a reader cannot explain.
+		await saveWithTerminalState(dbOps, "req-bad-attribution", "complete");
+		await dbOps
+			.getAdapter()
+			.run(
+				`UPDATE requests SET project_attribution_source = ?, agent_attribution_source = ? WHERE id = ?`,
+				["not_a_source", "also_not_a_source", "req-bad-attribution"],
+			);
+
+		const body = await fetchRows();
+		const row = body.find((r) => r.id === "req-bad-attribution");
+
+		expect(row).toBeDefined();
+		expect(row?.projectAttributionSource).toBeUndefined();
+		expect(row?.agentAttributionSource).toBeUndefined();
 	});
 
 	it("keeps a cancelled stream distinguishable from a clean 200", async () => {

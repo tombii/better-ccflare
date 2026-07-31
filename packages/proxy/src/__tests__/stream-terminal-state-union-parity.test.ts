@@ -1,58 +1,44 @@
 /**
- * Pins the API-side `StreamTerminalState` union (@better-ccflare/types) to the
- * producer-side `AnthropicTerminalState` (../anthropic-terminal-recovery).
+ * Pins the API-side state set (`@better-ccflare/types`) to the producer-side
+ * set (`../anthropic-terminal-recovery`).
  *
- * The two cannot share one declaration: types is the base package, so it must
- * not depend on proxy. That leaves the set of states duplicated, and a state
- * added on one side only would silently produce values the other side claims
- * cannot exist.
+ * The two cannot share one declaration: types is the base package and must not
+ * depend on proxy. That leaves the set duplicated, and a state added on one
+ * side only would produce values the other side claims cannot exist.
  *
- * The two `Record` types below close that gap at COMPILE time — a key added to
- * either union makes the corresponding object literal incomplete and
- * `bun run typecheck` fails. The runtime assertions additionally pin the
- * exported `STREAM_TERMINAL_STATES` array to the same set, so the array cannot
- * drift away from the type it derives from.
+ * This check is deliberately a RUNTIME comparison of two exported arrays, not
+ * a type-level assertion. The root tsconfig excludes every `__tests__`
+ * directory, so `tsc` never sees this file — a type-level trick here would
+ * compile-check nothing and give false assurance. Both unions are derived from
+ * their arrays via `(typeof ARRAY)[number]`, so comparing the arrays at
+ * runtime does check the types.
  */
 import { describe, expect, it } from "bun:test";
-import type { StreamTerminalState } from "@better-ccflare/types";
-import { STREAM_TERMINAL_STATES } from "@better-ccflare/types";
-import type { AnthropicTerminalState } from "../anthropic-terminal-recovery";
+import {
+	STREAM_TERMINAL_STATES,
+	toStreamTerminalState,
+} from "@better-ccflare/types/request";
+import { ANTHROPIC_TERMINAL_STATES } from "../anthropic-terminal-recovery";
 
-// Every producer state must exist as an API state …
-const PRODUCER_TO_API: Record<AnthropicTerminalState, StreamTerminalState> = {
-	complete: "complete",
-	recovered: "recovered",
-	error: "error",
-	truncated: "truncated",
-	client_cancelled: "client_cancelled",
-};
-
-// … and every API state must exist as a producer state.
-const API_TO_PRODUCER: Record<StreamTerminalState, AnthropicTerminalState> = {
-	complete: "complete",
-	recovered: "recovered",
-	error: "error",
-	truncated: "truncated",
-	client_cancelled: "client_cancelled",
-};
-
-describe("stream terminal state — union parity with the producer", () => {
+describe("stream terminal state — parity with the producer", () => {
 	it("covers exactly the same set on both sides", () => {
-		expect(Object.keys(PRODUCER_TO_API).sort()).toEqual(
-			Object.keys(API_TO_PRODUCER).sort(),
-		);
-	});
-
-	it("keeps STREAM_TERMINAL_STATES in sync with the union", () => {
 		expect([...STREAM_TERMINAL_STATES].sort()).toEqual(
-			Object.keys(PRODUCER_TO_API).sort() as StreamTerminalState[],
+			[...ANTHROPIC_TERMINAL_STATES].sort(),
 		);
 	});
 
-	it("maps each state to itself (no silent renaming across the boundary)", () => {
-		for (const state of STREAM_TERMINAL_STATES) {
-			expect(PRODUCER_TO_API[state]).toBe(state);
-			expect(API_TO_PRODUCER[state]).toBe(state);
+	it("accepts every state the producer can emit", () => {
+		for (const state of ANTHROPIC_TERMINAL_STATES) {
+			// A producer state the API cannot name would come back as "unknown".
+			expect(toStreamTerminalState(state)).toBe(state);
 		}
+	});
+
+	it('reports a state the API does not know as "unknown", not as absent', () => {
+		expect(toStreamTerminalState("some_future_state")).toBe("unknown");
+		expect(toStreamTerminalState("")).toBeUndefined();
+		expect(toStreamTerminalState(null)).toBeUndefined();
+		expect(toStreamTerminalState(undefined)).toBeUndefined();
+		expect(toStreamTerminalState(42)).toBeUndefined();
 	});
 });

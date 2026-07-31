@@ -10,28 +10,43 @@ const MAX_PENDING_EVENT_CHARS = 64 * 1024;
 export type AnthropicTerminalRecoveryReason = "timeout" | "eof";
 
 /**
- * Real outcome of an Anthropic-Messages-shaped SSE stream. The wrapper emits
- * exactly one of these via `onTerminalState` when it finalizes — distinct from
- * a header-level `response.ok` check, which only reflects the upstream's
- * opening handshake. A 200 OK with a TCP close mid-content is `truncated`,
- * not `complete`. Used by response-handler to record genuine success/failure.
+ * Real outcome of an Anthropic-Messages-shaped SSE stream, and the
+ * authoritative definition of that set. The wrapper emits exactly one of these
+ * via `onTerminalState` when it finalizes — distinct from a header-level
+ * `response.ok` check, which only reflects the upstream's opening handshake. A
+ * 200 OK with a TCP close mid-content is `truncated`, not `complete`. Used by
+ * response-handler to record genuine success/failure.
+ *
+ * Exported as a runtime array — not just a type — so the API-side copy in
+ * `@better-ccflare/types` can be compared against it in a test. A type-only
+ * declaration is erased at compile time and could drift silently
+ * (`packages/types` must not import this package, so the two sets cannot share
+ * one declaration).
+ *
+ * - `complete` — `message_stop` (and a stop_reason delta) was observed upstream.
+ * - `recovered` — stop_reason delta was seen but message_stop was missing, so
+ *   the terminator was synthesized.
+ * - `error` — the stream surfaced an explicit `error` event, or upstream threw.
+ * - `truncated` — the stream closed without ever reaching a terminal state
+ *   (mid-content TCP close).
+ * - `client_cancelled` — downstream cancelled before the upstream finished.
+ *   Claude Code cancels streams routinely (Esc, tool interrupts, client
+ *   aborts); this is neither an upstream failure nor a proxy defect, and is
+ *   recorded distinctly so it doesn't poison success-rate metrics as a
+ *   false negative.
+ *
+ * Adding a member here without adding it to `STREAM_TERMINAL_STATES` fails
+ * `stream-terminal-state-union-parity.test.ts`.
  */
-export type AnthropicTerminalState =
-	/** `message_stop` (and a stop_reason delta) was observed upstream. */
-	| "complete"
-	/** Stop_reason delta was seen but message_stop was missing — synthesized. */
-	| "recovered"
-	/** Stream surfaced an explicit `error` event or upstream threw. */
-	| "error"
-	/** Stream closed without ever reaching a terminal state (mid-content TCP close). */
-	| "truncated"
-	/**
-	 * Downstream cancelled before the upstream finished. Claude Code cancels
-	 * streams routinely (Esc, tool interrupts, client aborts). This is neither
-	 * an upstream failure nor a proxy defect — recorded as a distinct state
-	 * so it doesn't poison the success-rate metrics as a false-negative.
-	 */
-	| "client_cancelled";
+export const ANTHROPIC_TERMINAL_STATES = [
+	"complete",
+	"recovered",
+	"error",
+	"truncated",
+	"client_cancelled",
+] as const;
+
+export type AnthropicTerminalState = (typeof ANTHROPIC_TERMINAL_STATES)[number];
 
 export interface AnthropicTerminalRecoveryOptions {
 	/** @internal Override only in deterministic unit tests. */
