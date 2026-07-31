@@ -45,8 +45,11 @@ describe("extractProjectAttributionFromRequest", () => {
 		expect(result.projectAttributionSource).toBe("header_project");
 	});
 
-	it("strips control characters and caps header-derived project length at 64", () => {
-		const raw = `\x01\x02${"x".repeat(80)}\n`;
+	it("strips control characters from a valid header-derived project name", () => {
+		// Dash-delimited so no unbroken alnum run trips LONG_TOKEN_RE (20+), and
+		// within the 64-char slug grammar bound so it passes validation.
+		const slug = `${"x".repeat(15)}-`.repeat(4);
+		const raw = `\x01\x02${slug}\n`;
 		const headers = new Headers({ "x-project": raw });
 		const result = extractProjectAttributionFromRequest(headers, null);
 		expect(result.project).not.toBeNull();
@@ -54,6 +57,66 @@ describe("extractProjectAttributionFromRequest", () => {
 		// biome-ignore lint/suspicious/noControlCharactersInRegex: asserting control chars are gone
 		expect(result.project ?? "").not.toMatch(/[\x00-\x1F\x7F]/);
 		expect(result.projectAttributionSource).toBe("header_project");
+	});
+
+	it("rejects a header value that exceeds the 64-char slug grammar bound (no silent truncate)", () => {
+		// Round-2 P1 hardening for the H1 path made >64-char values reject
+		// wholesale rather than truncate-and-keep; the header path must match.
+		const raw = "x".repeat(80);
+		const headers = new Headers({ "x-project": raw });
+		const result = extractProjectAttributionFromRequest(headers, null);
+		expect(result.project).toBeNull();
+		expect(result.projectAttributionSource).toBe("none");
+	});
+
+	describe("header-derived project names are validated like heading-derived ones (#373)", () => {
+		it("rejects a namespaced header value that fails isLowRiskProjectSlug", () => {
+			const headers = new Headers({
+				"x-better-ccflare-project": "## some system prompt fragment",
+			});
+			const result = extractProjectAttributionFromRequest(headers, null);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+
+		it("rejects a legacy x-project header value that fails isLowRiskProjectSlug", () => {
+			const headers = new Headers({
+				"x-project": "Authorization: Bearer sk_live_abc123456789",
+			});
+			const result = extractProjectAttributionFromRequest(headers, null);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+
+		it("rejects a header value carrying a secret past the 64-char truncation boundary", () => {
+			// Same shape as the H1 boundary-straddling test: a pre-truncation
+			// validator would slice this down to a clean 64-char prefix and let
+			// it through. Header path must validate the FULL value too.
+			const cleanPrefix = `${"x".repeat(15)}-`.repeat(4);
+			const headers = new Headers({
+				"x-project": `${cleanPrefix}${"Z".repeat(25)}`,
+			});
+			const result = extractProjectAttributionFromRequest(headers, null);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+
+		it("falls through to the legacy header when the namespaced header is rejected", () => {
+			const headers = new Headers({
+				"x-better-ccflare-project": "# leaked system prompt heading",
+				"x-project": "legacy-project",
+			});
+			const result = extractProjectAttributionFromRequest(headers, null);
+			expect(result.project).toBe("legacy-project");
+			expect(result.projectAttributionSource).toBe("header_project");
+		});
+
+		it("still accepts ordinary slug-shaped header values", () => {
+			const headers = new Headers({ "x-better-ccflare-project": "my-app" });
+			const result = extractProjectAttributionFromRequest(headers, null);
+			expect(result.project).toBe("my-app");
+			expect(result.projectAttributionSource).toBe("header_project");
+		});
 	});
 
 	it("infers a sanitized repo slug from a /home workspace path in the system prompt", () => {
