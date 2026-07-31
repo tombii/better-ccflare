@@ -128,6 +128,99 @@ export function supportsRefreshBackedUsagePolling(
 	return provider === "anthropic" || provider === "xai";
 }
 
+/**
+ * Minimal interface satisfied by the `usageCache` singleton in
+ * `@better-ccflare/providers`. Declared locally so the bootstrap helper
+ * can be unit-tested with a mock without dragging the full UsageCache
+ * class (which is not exported) into the public type surface.
+ */
+export interface UsageCacheRegistrar {
+	startPolling(
+		accountId: string,
+		tokenProvider: () => Promise<string>,
+		provider: string,
+		intervalMs: number,
+	): void;
+}
+
+/**
+ * Register usage polling for a single Minimax account. The Minimax fetcher
+ * hits the Token Plan `remains` endpoint with a Bearer API key; no OAuth
+ * refresh is required. Mirrors the surrounding nanogpt/zai/kilo pattern:
+ * pay-as-you-go, API-key authentication, no window reset callback
+ * (Minimax has `requiresSessionTracking: false` in provider-config.ts).
+ *
+ * Returns true if polling was registered, false if the account is not
+ * a Minimax account or has no API key. Extracted from the bootstrap
+ * loop so the registration contract is unit-testable.
+ *
+ * When `logger` is provided AND the account is a Minimax account missing a
+ * non-empty API key, emits a `WARN` naming the account. Matches the
+ * sibling nanogpt/zai/kilo blocks (Greptile #350 P2): "X account <name> has
+ * no API key, skipping usage polling". The account name is the only
+ * identifier in the message — never the key value or any part of it.
+ */
+export function registerMinimaxUsagePolling(
+	account: Account,
+	usageCache: UsageCacheRegistrar,
+	intervalMs: number,
+	logger?: Logger,
+): boolean {
+	if (account.provider !== "minimax") return false;
+	if (!account.api_key) {
+		logger?.warn(
+			`Minimax account ${account.name ?? account.id} has no API key, skipping usage polling`,
+		);
+		return false;
+	}
+	const apiKeyProvider = async () => account.api_key || "";
+	usageCache.startPolling(
+		account.id,
+		apiKeyProvider,
+		account.provider,
+		intervalMs,
+	);
+	return true;
+}
+
+/**
+ * Run the Minimax usage-polling bootstrap over a list of accounts. This is the
+ * shape of the wiring block `startServer()` runs for every Minimax account at
+ * startup — filter for provider === "minimax", then delegate each one to
+ * {@link registerMinimaxUsagePolling} which decides whether polling should
+ * actually start.
+ *
+ * Returns the account IDs that were registered (i.e. had a usable API key).
+ * Returning the registered IDs rather than a bare count lets callers log the
+ * affected accounts and gives tests a stable handle to assert against.
+ *
+ * `logger` is forwarded to {@link registerMinimaxUsagePolling} so per-account
+ * "no API key" warnings surface from the unit-testable helper, keeping
+ * behavior consistent with the sibling nanogpt/zai/kilo bootstrap blocks.
+ *
+ * Extracted from the inline bootstrap block so a regression test can exercise
+ * the exact wiring path (filter → forEach → registerMinimaxUsagePolling) with
+ * a mixed-provider account list. If the inline block in `startServer()` is
+ * removed but this helper still exists and is unit-tested in isolation, the
+ * startup-time wiring has no test coverage — that is the gap this function
+ * exists to close. Keep the bootstrap block in `startServer()` calling this.
+ */
+export function bootstrapMinimaxUsagePolling(
+	accounts: readonly Account[],
+	usageCache: UsageCacheRegistrar,
+	intervalMs: number,
+	logger?: Logger,
+): string[] {
+	const minimaxAccounts = accounts.filter((a) => a.provider === "minimax");
+	const registered: string[] = [];
+	for (const account of minimaxAccounts) {
+		if (registerMinimaxUsagePolling(account, usageCache, intervalMs, logger)) {
+			registered.push(account.id);
+		}
+	}
+	return registered;
+}
+
 // Helper function to resolve dashboard assets with fallback
 function resolveDashboardAsset(assetPath: string): string | null {
 	try {
@@ -1589,6 +1682,37 @@ Available endpoints:
 		}
 	} else {
 		log.info(`No Kilo Gateway accounts found, usage polling will not start`);
+	}
+
+	// Start usage polling for Minimax accounts (Token Plan `remains` endpoint)
+	const minimaxAccounts = accounts.filter((a) => a.provider === "minimax");
+	const registeredMinimaxAccountIds = bootstrapMinimaxUsagePolling(
+		accounts,
+		usageCache,
+		config.getUsagePollIntervalMs(),
+		log,
+	);
+	if (minimaxAccounts.length === 0) {
+		log.info(`No Minimax accounts found, usage polling will not start`);
+	} else if (registeredMinimaxAccountIds.length > 0) {
+		log.info(
+			`Found ${minimaxAccounts.length} Minimax accounts, starting usage polling...`,
+		);
+		for (const accountId of registeredMinimaxAccountIds) {
+			const account = accounts.find((a) => a.id === accountId);
+			log.info(
+				`Started usage polling for Minimax account ${account?.name ?? accountId}`,
+			);
+		}
+	} else {
+		// All Minimax accounts exist but lack API keys. Per-account WARN logs
+		// already fired inside registerMinimaxUsagePolling; this summary
+		// makes the diagnosis unambiguous: the reason polling did not start
+		// is missing credentials, not a missing account. Matches the
+		// nanogpt/zai/kilo phrasing style (Greptile #350 P2).
+		log.info(
+			`Found ${minimaxAccounts.length} Minimax account(s) but all lack API keys, usage polling will not start`,
+		);
 	}
 
 	// Pre-warm Bedrock model and inference profile caches
