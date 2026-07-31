@@ -31,6 +31,8 @@ export {
 } from "./model-capacity";
 export {
 	createPoolExhaustedResponse,
+	type PoolExhaustionAccountReason,
+	type PoolExhaustionKind,
 	proxyUnauthenticated,
 	proxyWithAccount,
 } from "./proxy-operations";

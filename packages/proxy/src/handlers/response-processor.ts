@@ -12,6 +12,7 @@ import {
 	applyRateLimitCooldown,
 	completeRateLimitProbe,
 } from "./rate-limit-cooldown";
+import { circuitKeyFor, recordSuccess } from "../circuit-breaker";
 
 const log = new Logger("ResponseProcessor");
 
@@ -311,6 +312,19 @@ export async function processProxyResponse(
 	// errors, would silently bypass marking and failover. The mid-stream case
 	// (status 200 with an SSE `event: error` frame partway through the body)
 	// is handled separately by the streaming forwarder — see issue #114.
+
+	// Hoisted out of the rate-limit branch below so the success branch can
+	// gate the new circuit-breaker `recordSuccess` call symmetrically with
+	// the existing `recordFailure` exclusion in applyRateLimitCooldown:
+	// without this guard, the keepalive scheduler (which fires parallel
+	// requests across every cached account simultaneously) becomes a
+	// timer-driven circuit-eraser — every keepalive tick that returns 200
+	// closes a circuit regardless of whether the upstream has actually
+	// recovered. The header is set by cache-keepalive-scheduler.ts and only
+	// synthetic replays carry it, so it cannot be confused for a real
+	// user-driven request.
+	const isKeepalive = isInternalProbe(requestMeta?.headers, ctx, "keepalive");
+
 	if (rateLimitInfo.isRateLimited) {
 		// Skip cooldown application on synthetic cache-keepalive replays. The
 		// keepalive scheduler fires parallel requests across every cached
@@ -320,7 +334,6 @@ export async function processProxyResponse(
 		// pool to zero routable accounts even though no user-visible quota
 		// was actually exhausted. Loop-prevention header set by
 		// cache-keepalive-scheduler.ts; only synthetic replays carry it.
-		const isKeepalive = isInternalProbe(requestMeta?.headers, ctx, "keepalive");
 		if (isKeepalive) {
 			log.warn(
 				`Keepalive replay for ${account.name} got ${response.status} — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
@@ -355,6 +368,39 @@ export async function processProxyResponse(
 
 	if (!rateLimitInfo.isRateLimited && !skipAccountMetadata) {
 		completeRateLimitProbe(account, response.ok ? "recovered" : "abandoned");
+
+		// Notify the circuit breaker of the successful request — the
+		// request-path success call that fixes PR #349's
+		// "half-open probe can never close" defect (PR #349 audit,
+		// Risk 2: HIGH). Without this call the breaker's only success
+		// side-effect is `forceClose` from clearExpiredRateLimits, which
+		// cannot transition a `half-open` entry to `closed` (that is the
+		// half-open-only branch in `CircuitBreaker.recordSuccess`). The
+		// gate must survive three filters to fire:
+		//
+		//   1. response.ok — a 5xx against an open upstream is not
+		//      evidence of recovery; calling recordSuccess on a 500 would
+		//      close a circuit the upstream has not actually healed.
+		//   2. !isKeepalive — symmetric with the cooldown-skip above; see
+		//      comment on the hoisted constant.
+		//   3. !isInternalProbe(requestMeta?.headers, ctx, "auto-refresh")
+		//      — auto-refresh probes run on an internal cadence and
+		//      bypass user-quota state; treating one of their 200s as a
+		//      recovery signal would erase an open circuit any time the
+		//      auto-refresh scheduler happens to land successfully.
+		//
+		// The half-open close is the only mutation that matters here;
+		// `recordSuccess` on a `closed` entry with `failureCount > 0`
+		// clears the streak, which is also the right behaviour for a
+		// healthy stream of successful requests.
+		if (
+			response.ok &&
+			!isKeepalive &&
+			!isInternalProbe(requestMeta?.headers, ctx, "auto-refresh")
+		) {
+			recordSuccess(circuitKeyFor(account));
+		}
+
 		// (a) Stability reset — gated only on rate_limited_at.
 		// clearExpiredRateLimits nulls rate_limited_until without touching rate_limited_at,
 		// so we must not gate on rate_limited_until or we'd miss accounts already cleared

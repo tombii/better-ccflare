@@ -1377,8 +1377,47 @@ export const POOL_EXHAUSTED_UNKNOWN_RESET_RETRY_AFTER_SECONDS = 600;
 export const POOL_EXHAUSTED_MAX_RETRY_AFTER_SECONDS = 3600;
 
 /**
+ * Top-level error.type values produced by createPoolExhaustedResponse.
+ *
+ * `pool_exhausted` means "every account is genuinely exhausted (rate-limited,
+ * usage-capped, paused, requires reauth, or otherwise filtered out)".
+ * `circuit_open` means "the circuit breaker is refusing this account". The
+ * wire shape stays identical — only `error.type` and `accounts[].reason`
+ * differ — so SDK clients keep treating the response as a 503 transient.
+ * Downstream consumers that need to differentiate (e.g. the AO fleet reaper)
+ * read the JSON body.
+ */
+export type PoolExhaustionKind = "pool_exhausted" | "circuit_open";
+
+/**
+ * Per-account reason values emitted in `accounts[].reason`.
+ *
+ * `circuit_open` is distinct from the other values: it means the breaker
+ * refused this account, NOT that the account's cooldown is expired. Reporting
+ * a circuit-open account as `rate_limited` would mislead the reaper into
+ * pausing session spawns for the wrong reason.
+ */
+export type PoolExhaustionAccountReason =
+	| "requires_reauth"
+	| "paused"
+	| "usage_exhausted"
+	| "rate_limited"
+	| "circuit_open"
+	| "unavailable";
+
+/**
+ * Default Retry-After (seconds) for the `circuit_open` response. Matches the
+ * breaker's `OPEN_COOLDOWN_MS` so a polite client that respects Retry-After
+ * will retry exactly when the breaker is most likely to admit a half-open
+ * probe. Only used as a floor when no usage/cooldown recovery time is known
+ * or is sooner than this — see `retryAfterSeconds` below.
+ */
+const CIRCUIT_OPEN_RETRY_AFTER_SECONDS = 30;
+
+/**
  * Create a 503 Service Unavailable response when the account pool is exhausted.
- * All accounts are paused, rate-limited, usage-exhausted, or filtered out.
+ * All accounts are paused, rate-limited, usage-exhausted, circuit-open, or
+ * filtered out.
  *
  * Usage-aware: `usageSnapshots` (keyed by account.id) lets the function surface
  * a `usage_exhausted` reason for accounts with no `rate_limited_until` cooldown
@@ -1388,42 +1427,62 @@ export const POOL_EXHAUSTED_MAX_RETRY_AFTER_SECONDS = 3600;
  * `usageCache` (or its own snapshot provider); the function itself stays pure
  * and testable without touching I/O.
  *
+ * `kind: "circuit_open"` overrides every per-account reason to `circuit_open`
+ * — the account's own state (paused, rate-limited, usage-exhausted) is
+ * irrelevant when the breaker itself is the gate refusing the request. The
+ * Retry-After is still the longer of the breaker's cooldown and any known
+ * usage/rate-limit recovery time: a 30s breaker hint on an account that is
+ * also usage-capped for hours would otherwise lie to the client about when
+ * capacity actually returns.
+ *
  * @param accounts - All accounts that were considered but are unavailable
  * @param usageSnapshots - Per-account usage telemetry (id → snapshot), used
  *   to identify usage_exhausted accounts and to derive `next_available_at` /
  *   `Retry-After` when an upstream reset time is known.
- * @returns 503 response with pool_exhausted error and Retry-After header
+ * @param kind - Which top-level cause to report. Defaults to `"pool_exhausted"`.
+ * @returns 503 response with the pool-exhausted JSON shape and Retry-After header
  */
 export function createPoolExhaustedResponse(
 	accounts: Account[],
 	usageSnapshots?: ReadonlyMap<string, AccountUsageSnapshot>,
+	kind: PoolExhaustionKind = "pool_exhausted",
 ): Response {
 	const now = Date.now();
+	const isCircuitOpen = kind === "circuit_open";
 
 	// Build account info list — usage-exhausted outranks cooldown because the
 	// client needs the longer reset horizon (weekly vs minutes-long cooldowns)
 	// to avoid retrying an account upstream will reject immediately.
+	// `circuit_open` outranks everything else: the breaker was the gate, so
+	// the account's own state is irrelevant to why this request was refused.
 	const accountInfos = accounts.map((account) => {
 		const usage = usageSnapshots?.get(account.id);
 		const usageExhausted =
 			usage !== undefined &&
 			isUsageExhausted(usage.utilization, usage.resetMs, now);
 
-		const reason = account.requires_reauth
-			? "requires_reauth"
-			: account.paused
-				? "paused"
-				: usageExhausted
-					? "usage_exhausted"
-					: account.rate_limited_until && account.rate_limited_until > now
-						? "rate_limited"
-						: "unavailable";
+		const reason: PoolExhaustionAccountReason = isCircuitOpen
+			? "circuit_open"
+			: account.requires_reauth
+				? "requires_reauth"
+				: account.paused
+					? "paused"
+					: usageExhausted
+						? "usage_exhausted"
+						: account.rate_limited_until && account.rate_limited_until > now
+							? "rate_limited"
+							: "unavailable";
 
 		let availableAt: string | null = null;
-		if (usageExhausted && usage?.resetMs && usage.resetMs > now) {
-			availableAt = new Date(usage.resetMs).toISOString();
-		} else if (account.rate_limited_until && account.rate_limited_until > now) {
-			availableAt = new Date(account.rate_limited_until).toISOString();
+		if (!isCircuitOpen) {
+			if (usageExhausted && usage?.resetMs && usage.resetMs > now) {
+				availableAt = new Date(usage.resetMs).toISOString();
+			} else if (
+				account.rate_limited_until &&
+				account.rate_limited_until > now
+			) {
+				availableAt = new Date(account.rate_limited_until).toISOString();
+			}
 		}
 
 		return {
@@ -1433,10 +1492,14 @@ export function createPoolExhaustedResponse(
 		};
 	});
 
-	// next_available_at = earliest of (active cooldown) and (future usage
-	// reset). Both signals have to be considered — a usage-capped account with
-	// `rate_limited_until = null` would otherwise be ignored by the original
-	// code and leak Retry-After: 60 to the client.
+	// next_available_at / Retry-After = earliest of (active cooldown) and
+	// (future usage reset). Both signals have to be considered — a
+	// usage-capped account with `rate_limited_until = null` would otherwise be
+	// ignored and leak an optimistic Retry-After to the client. For
+	// circuit_open, the breaker's own cooldown floors the wait — but if the
+	// account is ALSO usage-capped or rate-limited past that, the longer,
+	// more honest wait wins (a 30s breaker hint must never undercut an hours-long
+	// usage cap).
 	const recoveryCandidates: number[] = [];
 	for (const account of accounts) {
 		if (account.rate_limited_until && account.rate_limited_until > now) {
@@ -1456,7 +1519,7 @@ export function createPoolExhaustedResponse(
 		recoveryCandidates.length > 0 ? Math.min(...recoveryCandidates) : null;
 
 	const nextAvailableAt =
-		earliestRecoveryMs !== null
+		!isCircuitOpen && earliestRecoveryMs !== null
 			? new Date(earliestRecoveryMs).toISOString()
 			: null;
 
@@ -1464,7 +1527,7 @@ export function createPoolExhaustedResponse(
 	// recovery time is known. Mirrors model-capacity.ts's clamp semantics; the
 	// floor (600s = UsageCache TTL) ensures a client retry can observe fresh
 	// telemetry rather than retrying blindly against a stale snapshot.
-	const retryAfterSeconds =
+	const usageAwareRetryAfterSeconds =
 		earliestRecoveryMs !== null
 			? Math.max(
 					1,
@@ -1475,11 +1538,17 @@ export function createPoolExhaustedResponse(
 				)
 			: POOL_EXHAUSTED_UNKNOWN_RESET_RETRY_AFTER_SECONDS;
 
+	// For circuit_open, take the longer of the breaker's own cooldown and any
+	// known usage/rate-limit recovery — "the longer, more honest wait wins".
+	const retryAfterSeconds = isCircuitOpen
+		? Math.max(CIRCUIT_OPEN_RETRY_AFTER_SECONDS, usageAwareRetryAfterSeconds)
+		: usageAwareRetryAfterSeconds;
+
 	return new Response(
 		JSON.stringify({
 			type: "error",
 			error: {
-				type: "pool_exhausted",
+				type: kind,
 				message: ERROR_MESSAGES.POOL_EXHAUSTED,
 				next_available_at: nextAvailableAt,
 				accounts: accountInfos,
@@ -1490,6 +1559,9 @@ export function createPoolExhaustedResponse(
 			headers: {
 				"Content-Type": "application/json",
 				"Retry-After": String(retryAfterSeconds),
+				// Wire shape stays identical regardless of kind — the cause lives
+				// in `error.type`. Downstream consumers that need to differentiate
+				// (fleet reaper, capacity-state consumers) read the JSON body.
 				"x-better-ccflare-pool-status": "exhausted",
 			},
 		},
