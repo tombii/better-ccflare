@@ -20,7 +20,9 @@ import type {
  * - tokenOutliers / outputBlowups: requests >= zScoreThreshold stddevs
  *   above their baseline mean (total tokens / output tokens respectively)
  * - runawayLoops: dense bursts of near-identical requests per
- *   (account, model, project)
+ *   (account, model, agent) — keyed by per-agent identity so many
+ *   workers sharing one account+model+project (each on its own agent)
+ *   do not collapse into one bucket that falsely reports as a loop
  * - misrouting: expensive models repeatedly used for trivially small calls
  */
 
@@ -41,6 +43,13 @@ export interface AnomalyRequestRow {
 	account: string | null;
 	model: string | null;
 	project: string | null;
+	/**
+	 * Per-request agent identity (from the agent-attribution pipeline).
+	 * Used by the runaway-loop detector as the per-bucket key so distinct
+	 * workers sharing one (account, model, project) do not collapse
+	 * into a single bucket that falsely reports as a loop.
+	 */
+	agentUsed: string | null;
 	inputTokens: number;
 	cacheReadInputTokens: number;
 	cacheCreationInputTokens: number;
@@ -292,8 +301,12 @@ export interface RunawayLoopOptions {
 
 /**
  * Detect runaway loops: bursts of >= minRequests requests within windowMs
- * for one (account, model, project), where the request-side token profile
- * is similar (coefficient of variation <= similarityTolerance).
+ * for one (account, model, project, agent), where the request-side token
+ * profile is similar (coefficient of variation <= similarityTolerance).
+ *
+ * The key carries both `project` and `agentUsed`: distinct agents sharing a
+ * project do not collapse, and unattributed traffic still remains separated
+ * by project.
  *
  * All rows count, including zero-token ones — repeated failing retries are
  * exactly the signal.
@@ -315,7 +328,7 @@ export function detectRunawayLoops(
 ): RunawayLoopGroup[] {
 	const groups = new Map<string, AnomalyRequestRow[]>();
 	for (const row of rows) {
-		const key = `${baselineKey(row.account, row.model)}${GROUP_KEY_SEPARATOR}${normalizeKey(row.project)}`;
+		const key = `${baselineKey(row.account, row.model)}${GROUP_KEY_SEPARATOR}${normalizeKey(row.project)}${GROUP_KEY_SEPARATOR}${normalizeKey(row.agentUsed)}`;
 		const group = groups.get(key);
 		if (group) {
 			group.push(row);
@@ -407,6 +420,7 @@ export function detectRunawayLoops(
 				account: normalizeKey(group[run.start].account),
 				model: normalizeKey(group[run.start].model),
 				project: group[run.start].project,
+				agentUsed: group[run.start].agentUsed,
 				windowStartMs,
 				windowEndMs,
 				requests: run.end - run.start + 1,

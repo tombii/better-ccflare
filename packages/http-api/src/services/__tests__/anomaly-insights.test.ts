@@ -43,6 +43,7 @@ function req(partial: Partial<AnomalyRequestRow> = {}): AnomalyRequestRow {
 		account: "acc",
 		model: "claude-opus-4-8",
 		project: null,
+		agentUsed: null,
 		inputTokens: 0,
 		cacheReadInputTokens: 0,
 		cacheCreationInputTokens: 0,
@@ -205,14 +206,20 @@ describe("detectRunawayLoops", () => {
 	};
 
 	test("flags a dense burst of near-identical requests", () => {
-		// 12 requests, one every 10s, identical token profile.
+		// 12 requests, one every 10s, identical token profile, same agent.
 		const rows = Array.from({ length: 12 }, (_, i) =>
-			req({ timestamp: i * 10_000, inputTokens: 500, project: "proj" }),
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+			}),
 		);
 		const loops = detectRunawayLoops(rows, opts);
 		expect(loops).toHaveLength(1);
 		expect(loops[0].account).toBe("acc");
 		expect(loops[0].project).toBe("proj");
+		expect(loops[0].agentUsed).toBe("agent-a");
 		expect(loops[0].requests).toBe(12);
 		expect(loops[0].windowStartMs).toBe(0);
 		expect(loops[0].windowEndMs).toBe(110_000);
@@ -225,33 +232,89 @@ describe("detectRunawayLoops", () => {
 	test("does not flag sparse traffic", () => {
 		// One request every 10 minutes: never enough in any 5-minute window.
 		const rows = Array.from({ length: 12 }, (_, i) =>
-			req({ timestamp: i * 600_000, inputTokens: 500 }),
+			req({ timestamp: i * 600_000, inputTokens: 500, agentUsed: "agent-a" }),
 		);
 		expect(detectRunawayLoops(rows, opts)).toHaveLength(0);
 	});
 
 	test("does not flag bursts with dissimilar token profiles", () => {
 		const rows = Array.from({ length: 12 }, (_, i) =>
-			req({ timestamp: i * 10_000, inputTokens: i % 2 === 0 ? 10 : 10_000 }),
-		);
-		expect(detectRunawayLoops(rows, opts)).toHaveLength(0);
-	});
-
-	test("splits groups by project", () => {
-		// 6 requests in each of two projects: neither reaches minRequests.
-		const rows = Array.from({ length: 12 }, (_, i) =>
 			req({
 				timestamp: i * 10_000,
-				inputTokens: 500,
-				project: i % 2 === 0 ? "p1" : "p2",
+				inputTokens: i % 2 === 0 ? 10 : 10_000,
+				agentUsed: "agent-a",
 			}),
 		);
 		expect(detectRunawayLoops(rows, opts)).toHaveLength(0);
 	});
 
+	test("splits groups by agent (project is context, not a key)", () => {
+		// 6 requests in each of two agents, same project: neither reaches
+		// minRequests — the agent, not the project, scopes the bucket.
+		const rows = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "shared-proj",
+				agentUsed: i % 2 === 0 ? "agent-a" : "agent-b",
+			}),
+		);
+		expect(detectRunawayLoops(rows, opts)).toHaveLength(0);
+	});
+
+	test("does NOT flag parallel-fleet traffic from N distinct agents", () => {
+		// Production evidence (issue #367): a fleet of independent workers
+		// shared one (account, model, project). Each worker ran its own
+		// agent and did modest per-agent traffic. With the old
+		// (account, model, project) keying the fleet collapsed into ONE
+		// bucket and the burst looked like a runaway loop (97 CRITICAL
+		// pages in 3h). With per-agent keying the burst splits into N
+		// buckets, each below opts.minRequests, and no loop fires.
+		//
+		// To produce a definitive negative-control shape:
+		//   - Per-worker count (9) is below opts.minRequests (10).
+		//   - Per-worker tokens are identical (CoV = 0) — without the fix,
+		//     the combined 108-row bucket has CoV = 0 and clearly qualifies.
+		const rows: AnomalyRequestRow[] = [];
+		const workerCount = 12;
+		const requestsPerWorker = 9; // < opts.minRequests = 10
+		for (let w = 0; w < workerCount; w++) {
+			for (let r = 0; r < requestsPerWorker; r++) {
+				rows.push(
+					req({
+						timestamp: r * 1100 + w * 13, // slight per-agent skew
+						inputTokens: 500, // identical across one worker
+						cacheReadInputTokens: 0,
+						project: "fleet-proj",
+						agentUsed: `worker-${w}`,
+					}),
+				);
+			}
+		}
+		const loops = detectRunawayLoops(rows, opts);
+		expect(loops).toHaveLength(0);
+	});
+
+	test("DOES flag a single agent repeating the same request (true loop)", () => {
+		// The reverse case: one agent / one session, repeating the same
+		// request shape many times inside one window.
+		const rows = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+			}),
+		);
+		const loops = detectRunawayLoops(rows, opts);
+		expect(loops).toHaveLength(1);
+		expect(loops[0].agentUsed).toBe("agent-a");
+		expect(loops[0].requests).toBe(12);
+	});
+
 	test("flags repeated zero-token requests (e.g. failing retries)", () => {
 		const rows = Array.from({ length: 12 }, (_, i) =>
-			req({ timestamp: i * 5_000 }),
+			req({ timestamp: i * 5_000, agentUsed: "agent-a" }),
 		);
 		const loops = detectRunawayLoops(rows, opts);
 		expect(loops).toHaveLength(1);
@@ -266,10 +329,14 @@ describe("detectRunawayLoops", () => {
 		// per-window qualification must report each burst on its own.
 		const rows = [
 			...Array.from({ length: 12 }, (_, i) =>
-				req({ timestamp: i * 10_000, inputTokens: 100 }),
+				req({ timestamp: i * 10_000, inputTokens: 100, agentUsed: "agent-a" }),
 			),
 			...Array.from({ length: 12 }, (_, i) =>
-				req({ timestamp: 120_000 + i * 10_000, inputTokens: 10_000 }),
+				req({
+					timestamp: 120_000 + i * 10_000,
+					inputTokens: 10_000,
+					agentUsed: "agent-a",
+				}),
 			),
 		];
 		const loops = detectRunawayLoops(rows, opts);
@@ -288,7 +355,7 @@ describe("detectRunawayLoops", () => {
 		// 30 requests, one every 30s (14.5 minutes total). Every 5-minute
 		// window holds 10-11 requests, so the run must merge into one group.
 		const rows = Array.from({ length: 30 }, (_, i) =>
-			req({ timestamp: i * 30_000, inputTokens: 500 }),
+			req({ timestamp: i * 30_000, inputTokens: 500, agentUsed: "agent-a" }),
 		);
 		const loops = detectRunawayLoops(rows, opts);
 		expect(loops).toHaveLength(1);
@@ -348,6 +415,26 @@ describe("detectRunawayLoops", () => {
 			expect(loop.requests).toBe(12);
 			expect(loop.project).not.toContain("…");
 		}
+	});
+
+	test("honors a configurable loopMinRequests threshold", () => {
+		// Per-agent key, but the threshold is the count of requests for
+		// one agent inside the window. With loopMinRequests=12 this exact
+		// 11-request steady stream should NOT fire; relaxing to 10 makes
+		// it fire. This is the configurable knob the operator needs.
+		const rows = Array.from({ length: 11 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				agentUsed: "agent-a",
+			}),
+		);
+		expect(detectRunawayLoops(rows, { ...opts, minRequests: 12 })).toHaveLength(
+			0,
+		);
+		const loops = detectRunawayLoops(rows, { ...opts, minRequests: 10 });
+		expect(loops).toHaveLength(1);
+		expect(loops[0].requests).toBe(11);
 	});
 });
 
@@ -489,12 +576,13 @@ describe("buildAnomalyInsightsResponse", () => {
 				inputTokens: 90_000,
 				outputTokens: 10_000,
 			}),
-			// Runaway loop burst on another account/project; the model has no
+			// Runaway loop burst on another account/agent; the model has no
 			// known rates so the small calls don't count as misrouting.
 			...Array.from({ length: 12 }, (_, i) =>
 				req({
 					account: "loop-acc",
 					project: "loop-proj",
+					agentUsed: "loop-agent",
 					model: "loop-model",
 					timestamp: i * 10_000,
 					inputTokens: 50,

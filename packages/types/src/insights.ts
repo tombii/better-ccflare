@@ -121,14 +121,19 @@ export interface TokenOutlierEvent {
 }
 
 /**
- * A sustained burst of near-identical requests (same account/model/project,
+ * A sustained burst of near-identical requests (same account/model/agent,
  * similar request-side token profile) dense enough to look like a runaway
  * agent loop.
+ *
+ * Keyed by per-agent identity rather than per `(account, model, project)` so
+ * many fleet workers sharing one account+model+project — each on its own agent
+ * — no longer collapse into a single bucket that falsely reports as a loop.
  */
 export interface RunawayLoopGroup {
 	account: string;
 	model: string;
 	project: string | null;
+	agentUsed: string | null;
 	windowStartMs: number;
 	windowEndMs: number;
 	requests: number;

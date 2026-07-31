@@ -178,6 +178,7 @@ interface AnomalyRequestSqlRow {
 	account: string | null;
 	model: string | null;
 	project: string | null;
+	agent_used: string | null;
 	input_tokens: number;
 	cache_read_input_tokens: number;
 	cache_creation_input_tokens: number;
@@ -195,6 +196,7 @@ function toAnomalyRequestRow(row: AnomalyRequestSqlRow): AnomalyRequestRow {
 		// control chars / overly long prompt content cannot leak through
 		// the API response. The real extraction bug is upstream (#368).
 		project: sanitizeProjectForDisplay(row.project),
+		agentUsed: row.agent_used,
 		inputTokens: Number(row.input_tokens) || 0,
 		cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,
 		cacheCreationInputTokens: Number(row.cache_creation_input_tokens) || 0,
@@ -316,6 +318,7 @@ export function createAnomalyInsightsHandler(context: APIContext) {
 					a.name as account,
 					r.model as model,
 					r.project as project,
+					r.agent_used as agent_used,
 					COALESCE(r.input_tokens, 0) as input_tokens,
 					COALESCE(r.cache_read_input_tokens, 0) as cache_read_input_tokens,
 					COALESCE(r.cache_creation_input_tokens, 0) as cache_creation_input_tokens,
