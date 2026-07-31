@@ -216,3 +216,62 @@ describe("transformRequestBodyModelForce", () => {
 		expect(result).toBe(request);
 	});
 });
+
+describe("model transforms preserve the abort signal", () => {
+	// Both transforms rebuild the Request from `request.url`, and a URL-based
+	// rebuild does not inherit the signal. Losing it would detach a client
+	// disconnect from the upstream fetch for every account with a model mapping.
+	function signalledRequest(controller: AbortController, model = "sonnet") {
+		return new Request("http://test.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ model, messages: [] }),
+			signal: controller.signal,
+		});
+	}
+
+	it("keeps the signal when transformRequestBodyModel rewrites the model", async () => {
+		const controller = new AbortController();
+		const request = signalledRequest(controller);
+
+		const result = await transformRequestBodyModel(
+			request,
+			undefined,
+			() => "mapped-model",
+		);
+
+		// A rewrite happened, so this must be a new Request object …
+		expect(result).not.toBe(request);
+		// … that still aborts together with the client.
+		expect(result.signal.aborted).toBe(false);
+		controller.abort();
+		expect(result.signal.aborted).toBe(true);
+	});
+
+	it("keeps the signal when transformRequestBodyModelForce rewrites the model", async () => {
+		const controller = new AbortController();
+		const request = signalledRequest(controller);
+
+		const result = await transformRequestBodyModelForce(request, "MiniMax-M2");
+
+		expect(result).not.toBe(request);
+		expect(result.signal.aborted).toBe(false);
+		controller.abort();
+		expect(result.signal.aborted).toBe(true);
+	});
+
+	it("passes the original request through when no rewrite is needed", async () => {
+		const controller = new AbortController();
+		const request = signalledRequest(controller, "same-model");
+
+		const result = await transformRequestBodyModel(
+			request,
+			undefined,
+			() => "same-model",
+		);
+
+		expect(result).toBe(request);
+		controller.abort();
+		expect(result.signal.aborted).toBe(true);
+	});
+});
