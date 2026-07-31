@@ -157,14 +157,36 @@ export interface ModelMisroutingGroup {
 	exampleRequestIds: string[];
 }
 
+/**
+ * Pair of fields that lets the UI distinguish a list that genuinely has
+ * nothing from one that is truncated at the response cap. `totalCount` is
+ * the full count of detected events before any trimming; `truncated` is
+ * true when totalCount exceeds the returned array length.
+ */
+export interface AnomalyDetectorSummary {
+	totalCount: number;
+	truncated: boolean;
+}
+
 /** Full response of GET /api/insights/anomalies. */
 export interface AnomalyInsightsResponse {
 	meta: AnomalyInsightsMeta;
 	baselines: AnomalyBaseline[];
+	/**
+	 * Sorted by z-score descending (most extreme first). The list is the
+	 * trimmed top-N sample (length <= meta.maxEventsPerDetector); see the
+	 * matching `*Summary` for the full count and truncation status.
+	 */
 	tokenOutliers: TokenOutlierEvent[];
+	tokenOutliersSummary: AnomalyDetectorSummary;
 	outputBlowups: TokenOutlierEvent[];
+	outputBlowupsSummary: AnomalyDetectorSummary;
+	/** Sorted by request count descending. */
 	runawayLoops: RunawayLoopGroup[];
+	runawayLoopsSummary: AnomalyDetectorSummary;
+	/** Sorted by total cost descending. */
 	misrouting: ModelMisroutingGroup[];
+	misroutingSummary: AnomalyDetectorSummary;
 }
 
 /**

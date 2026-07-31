@@ -7,6 +7,8 @@ import {
 	detectModelMisrouting,
 	detectRunawayLoops,
 	detectTokenOutliers,
+	PROJECT_DISPLAY_MAX_CHARS,
+	sanitizeProjectForDisplay,
 } from "../anomaly-insights";
 
 /**
@@ -294,6 +296,59 @@ describe("detectRunawayLoops", () => {
 		expect(loops[0].windowStartMs).toBe(0);
 		expect(loops[0].windowEndMs).toBe(29 * 30_000);
 	});
+
+	test("distinct projects that share a 63-char prefix do NOT collapse into one loop", () => {
+		// Regression for Greptile review on PR #369: toAnomalyRow used to
+		// call sanitizeProjectForDisplay BEFORE handing rows to the
+		// detectors, so any project longer than 64 chars was sliced to 63
+		// chars + ellipsis. Two projects that share their first 63 chars
+		// and differ at byte 64 (or beyond) collapse to the same display
+		// value, and the (account, model, project) grouping key in
+		// detectRunawayLoops then merges them into one loop. After the fix,
+		// toAnomalyRow hands the raw project to the detectors (the DB-side
+		// sanitizeProjectName already caps at PROJECT_NAME_MAX_LEN=64 and
+		// strips C0 control chars), so this test must surface TWO loops
+		// with the original project values preserved.
+		const sharedPrefix = "z".repeat(63);
+		const projectA = `${sharedPrefix}A_suffix`;
+		const projectB = `${sharedPrefix}B_suffix`;
+		// Demonstrate the bug we are protecting against: the sanitiser
+		// truncates both projects to 63 chars + ellipsis, so the display
+		// values are identical under the old behaviour. If the sanitiser
+		// ever stops truncating, this assert fails and the test no longer
+		// exercises the regression — that is the signal to revisit.
+		expect(sanitizeProjectForDisplay(projectA)).toBe(
+			sanitizeProjectForDisplay(projectB),
+		);
+		// The detector sees the raw (un-truncated) projects, which is what
+		// toAnomalyRow now provides after the fix.
+		const rows = [
+			...Array.from({ length: 12 }, (_, i) =>
+				req({
+					timestamp: i * 10_000,
+					inputTokens: 500,
+					project: projectA,
+				}),
+			),
+			...Array.from({ length: 12 }, (_, i) =>
+				req({
+					timestamp: i * 10_000,
+					inputTokens: 500,
+					project: projectB,
+				}),
+			),
+		];
+		const loops = detectRunawayLoops(rows, opts);
+		expect(loops).toHaveLength(2);
+		const projects = loops.map((l) => l.project).sort();
+		expect(projects).toEqual([projectA, projectB].sort());
+		// Each loop carries its 12 un-punctuated rows — the original project
+		// propagates end-to-end, not the truncated display value.
+		for (const loop of loops) {
+			expect(loop.requests).toBe(12);
+			expect(loop.project).not.toContain("…");
+		}
+	});
 });
 
 describe("detectModelMisrouting", () => {
@@ -492,5 +547,133 @@ describe("buildAnomalyInsightsResponse", () => {
 		expect(response.tokenOutliers).toHaveLength(1);
 		// The cap keeps the highest z-score.
 		expect(response.tokenOutliers[0].requestId).toBe("bigger");
+	});
+
+	test("reports totalCount + truncation per detector so the UI can distinguish '50-of-50' from '50-of-847'", () => {
+		// Baseline rows dominate so the mean stays low; spikes are far enough
+		// above to register as outliers. Cap of 5 forces 5 of N to be shown.
+		const rows: AnomalyRequestRow[] = [
+			...Array.from({ length: 100 }, () => req({ inputTokens: 100 })),
+			...Array.from({ length: 10 }, (_, i) =>
+				req({ id: `spike-${i}`, inputTokens: 50000 }),
+			),
+		];
+		const response = buildAnomalyInsightsResponse({
+			rows,
+			rates,
+			options: {
+				range: "24h",
+				minBaselineRequests: 10,
+				zScoreThreshold: 1.5,
+				maxEventsPerDetector: 5,
+			},
+		});
+		// Without totalCount the UI cannot tell "5 hidden" from "no more".
+		expect(response.tokenOutliersSummary.totalCount).toBe(10);
+		expect(response.tokenOutliersSummary.truncated).toBe(true);
+		expect(response.tokenOutliers).toHaveLength(5);
+		// Output blowups use the same detector math — they should mirror.
+		expect(response.outputBlowupsSummary.totalCount).toBe(0);
+		expect(response.outputBlowupsSummary.truncated).toBe(false);
+	});
+
+	test("summary.truncated is false when the full count fits under the cap", () => {
+		// 18 baseline + 2 spikes at z threshold 1.5 => exactly 2 outliers.
+		const rows: AnomalyRequestRow[] = [
+			...Array.from({ length: 18 }, () => req({ inputTokens: 100 })),
+			req({ id: "big", inputTokens: 1000 }),
+			req({ id: "bigger", inputTokens: 2000 }),
+		];
+		const response = buildAnomalyInsightsResponse({
+			rows,
+			rates,
+			options: {
+				range: "24h",
+				minBaselineRequests: 10,
+				zScoreThreshold: 1.5,
+				maxEventsPerDetector: 50,
+			},
+		});
+		expect(response.tokenOutliersSummary.totalCount).toBe(2);
+		expect(response.tokenOutliersSummary.truncated).toBe(false);
+		expect(response.tokenOutliers).toHaveLength(2);
+	});
+
+	test("summary is correct for runawayLoops and misrouting as well", () => {
+		// 12 near-identical loops on one (account, model) using a model
+		// with no known rates so the same rows are NOT flagged as
+		// misrouting.
+		const loopRows: AnomalyRequestRow[] = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "loop-proj",
+				model: "unknown-loop-model",
+			}),
+		);
+		// And one tiny-call account for misrouting
+		const tinyRows: AnomalyRequestRow[] = Array.from({ length: 5 }, (_, i) =>
+			req({
+				account: "tiny-acc",
+				timestamp: i,
+				inputTokens: 50,
+				costUsd: 0.02,
+			}),
+		);
+		const response = buildAnomalyInsightsResponse({
+			rows: [...loopRows, ...tinyRows],
+			rates,
+			options: {
+				range: "24h",
+				minBaselineRequests: 5,
+				maxEventsPerDetector: 1,
+			},
+		});
+		expect(response.runawayLoopsSummary.totalCount).toBeGreaterThanOrEqual(1);
+		expect(response.runawayLoops).toHaveLength(1);
+		if (response.runawayLoopsSummary.totalCount > 1) {
+			expect(response.runawayLoopsSummary.truncated).toBe(true);
+		}
+		expect(response.misroutingSummary.totalCount).toBe(1);
+		expect(response.misroutingSummary.truncated).toBe(false);
+	});
+});
+
+describe("sanitizeProjectForDisplay", () => {
+	test("returns null for null / undefined / empty / whitespace-only input", () => {
+		expect(sanitizeProjectForDisplay(null)).toBeNull();
+		expect(sanitizeProjectForDisplay(undefined)).toBeNull();
+		expect(sanitizeProjectForDisplay("")).toBeNull();
+		expect(sanitizeProjectForDisplay("   \t\n  ")).toBeNull();
+	});
+
+	test("strips C0 control characters and DEL so prompt content cannot smuggle bytes through the UI", () => {
+		const hostile = "hello\x00\x07\x1b[31m\x7fworld";
+		expect(sanitizeProjectForDisplay(hostile)).toBe("helloworld");
+	});
+
+	test("collapses whitespace runs and trims", () => {
+		// The gap between `alpha` and `beta` is purely C0 whitespace, so
+		// after stripping the control chars the words become adjacent
+		// (sanitisation cannot fabricate a space where none existed).
+		expect(sanitizeProjectForDisplay("  alpha\n\n\tbeta  ")).toBe("alphabeta");
+		// Spaces inside the input are real whitespace and DO get collapsed.
+		expect(sanitizeProjectForDisplay("  alpha    beta  ")).toBe("alpha beta");
+	});
+
+	test("clamps to PROJECT_DISPLAY_MAX_CHARS and appends an ellipsis", () => {
+		const long = "x".repeat(PROJECT_DISPLAY_MAX_CHARS + 50);
+		const out = sanitizeProjectForDisplay(long);
+		expect(out).not.toBeNull();
+		expect(out?.length).toBe(PROJECT_DISPLAY_MAX_CHARS);
+		expect(out?.endsWith("…")).toBe(true);
+	});
+
+	test("passes a normal project name through unchanged", () => {
+		expect(sanitizeProjectForDisplay("repo-frontend")).toBe("repo-frontend");
+	});
+
+	test("returns null when the input is only control characters", () => {
+		expect(sanitizeProjectForDisplay("\x00\x01\x02")).toBeNull();
 	});
 });

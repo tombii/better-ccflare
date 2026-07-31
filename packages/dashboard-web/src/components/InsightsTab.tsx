@@ -1,8 +1,13 @@
 import { AlertTriangle } from "lucide-react";
 import React, { useState } from "react";
 import type { TimeRange } from "../constants";
-import { useCacheInsights, useContextInsights } from "../hooks/queries";
+import {
+	useAnomalyInsights,
+	useCacheInsights,
+	useContextInsights,
+} from "../hooks/queries";
 import { AlertsView } from "./insights/AlertsView";
+import { AnomaliesView } from "./insights/AnomaliesView";
 import { CacheEfficiencyView } from "./insights/CacheEfficiencyView";
 import { ContextCompositionView } from "./insights/ContextCompositionView";
 import { TimeRangeSelector } from "./overview/TimeRangeSelector";
@@ -18,6 +23,11 @@ export const InsightsTab = React.memo(() => {
 		isLoading: contextLoading,
 		isError: contextError,
 	} = useContextInsights(timeRange);
+	const {
+		data: anomalyData,
+		isLoading: anomalyLoading,
+		isError: anomalyError,
+	} = useAnomalyInsights(timeRange);
 
 	return (
 		<div className="space-y-6">
@@ -59,6 +69,23 @@ export const InsightsTab = React.memo(() => {
 				<ContextCompositionView
 					data={contextData}
 					loading={contextLoading}
+					timeRange={timeRange}
+				/>
+			)}
+
+			{anomalyError ? (
+				<Card>
+					<CardContent className="p-6">
+						<div className="flex items-center gap-2 text-destructive">
+							<AlertTriangle className="h-5 w-5" />
+							<span>Failed to load anomaly insights. Please try again.</span>
+						</div>
+					</CardContent>
+				</Card>
+			) : (
+				<AnomaliesView
+					data={anomalyData}
+					loading={anomalyLoading}
 					timeRange={timeRange}
 				/>
 			)}

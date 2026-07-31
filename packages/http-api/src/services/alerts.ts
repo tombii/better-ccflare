@@ -19,6 +19,7 @@ import type {
 import {
 	type AnomalyRequestRow,
 	buildAnomalyInsightsResponse,
+	sanitizeProjectForDisplay,
 } from "./anomaly-insights";
 
 const log = new Logger("AlertsService");
@@ -161,7 +162,11 @@ function toAlertEvent(row: AlertRow): AlertEvent {
 		threshold: row.threshold == null ? null : Number(row.threshold),
 		account: row.account,
 		model: row.model,
-		project: row.project,
+		// Defence in depth: sanitise at the read boundary so historical
+		// alert rows that pre-date the project-extraction fix cannot leak
+		// prompt content through the alerts UI. Stored DB data is not
+		// modified; only what the dashboard sees is clamped.
+		project: sanitizeProjectForDisplay(row.project),
 		requestId: row.request_id,
 		acknowledged: Boolean(row.acknowledged),
 	};
@@ -173,6 +178,15 @@ function toAnomalyRow(row: AnomalySqlRow): AnomalyRequestRow {
 		timestamp: Number(row.timestamp) || 0,
 		account: row.account,
 		model: row.model,
+		// Preserve the original project so the runaway-loop grouping key
+		// (account, model, project) sees distinct values for two projects
+		// that share a 63-char prefix but differ at the last char. The
+		// DB-side project is already sanitised at write time by
+		// sanitizeProjectName in proxy/src/project-attribution.ts
+		// (PROJECT_NAME_MAX_LEN=64, C0 control chars stripped). Display
+		// truncation for the API response below lives in the response
+		// builder, not here — truncation before detection makes the
+		// detector itself collapse distinct projects into one loop.
 		project: row.project,
 		inputTokens: Number(row.input_tokens) || 0,
 		cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,

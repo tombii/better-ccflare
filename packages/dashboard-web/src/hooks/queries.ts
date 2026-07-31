@@ -254,6 +254,18 @@ export const useContextInsights = (timeRange: string) => {
 	});
 };
 
+export const useAnomalyInsights = (timeRange: string) => {
+	return useQuery({
+		queryKey: queryKeys.insightsAnomalies(timeRange),
+		queryFn: () => api.getAnomalyInsights(timeRange),
+		staleTime: 45000,
+		refetchInterval: 60000,
+		refetchIntervalInBackground: false,
+		gcTime: 15 * 60 * 1000,
+		enabled: !!timeRange,
+	});
+};
+
 export const useRequests = (limit: number, _refetchInterval?: number) => {
 	return useQuery({
 		queryKey: queryKeys.requests(limit),

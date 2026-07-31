@@ -17,6 +17,7 @@ import {
 	DEFAULT_MISROUTING_MIN_OUTPUT_RATE_USD,
 	DEFAULT_MISROUTING_MIN_REQUESTS,
 	DEFAULT_Z_SCORE_THRESHOLD,
+	sanitizeProjectForDisplay,
 } from "../services/anomaly-insights";
 import {
 	buildCacheInsightsResponse,
@@ -190,7 +191,10 @@ function toAnomalyRequestRow(row: AnomalyRequestSqlRow): AnomalyRequestRow {
 		timestamp: Number(row.timestamp) || 0,
 		account: row.account,
 		model: row.model,
-		project: row.project,
+		// Defence in depth: sanitise the project field at the boundary so
+		// control chars / overly long prompt content cannot leak through
+		// the API response. The real extraction bug is upstream (#368).
+		project: sanitizeProjectForDisplay(row.project),
 		inputTokens: Number(row.input_tokens) || 0,
 		cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,
 		cacheCreationInputTokens: Number(row.cache_creation_input_tokens) || 0,
