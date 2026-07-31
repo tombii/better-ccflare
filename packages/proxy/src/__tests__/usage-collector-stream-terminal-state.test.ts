@@ -152,4 +152,17 @@ describe("UsageCollector - stream terminal state in the live summary", () => {
 
 		expect(summary.streamTerminalState).toBeUndefined();
 	});
+
+	test('a state outside the union is reported as "unknown", like the REST path', async () => {
+		// The producer cannot emit this today — the cast is what a future
+		// producer state (or a bug) would look like arriving here. Both write
+		// surfaces of this field must narrow identically, otherwise the live
+		// stream and a later fetch describe the same request differently.
+		const summary = await runRequestAndGetSummary(
+			"terminal-state-foreign",
+			"totally_unknown" as unknown as EndMessage["streamTerminalState"],
+		);
+
+		expect(summary.streamTerminalState).toBe("unknown");
+	});
 });

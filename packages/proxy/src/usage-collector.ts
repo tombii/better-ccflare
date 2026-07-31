@@ -11,6 +11,9 @@ import {
 	type ProjectAttributionSource,
 	type RequestResponse,
 } from "@better-ccflare/types";
+// Cycle-free subpath (see packages/types/src/request.ts header) — same guard
+// the REST handler uses, so both write surfaces narrow identically.
+import { toStreamTerminalState } from "@better-ccflare/types/request";
 import { formatCost } from "@better-ccflare/ui-common";
 import { cacheBodyStore } from "./cache-body-store";
 import {
@@ -918,7 +921,11 @@ export class UsageCollector {
 			// so under write pressure the live summary can show a state that no
 			// later /api/requests fetch will confirm. That gap predates this field
 			// and applies to the whole row, not just this value.
-			streamTerminalState: msg.streamTerminalState ?? undefined,
+			//
+			// Narrowed with the same guard as the REST path even though the
+			// producer only emits known states: both surfaces feed one field, and
+			// hardening one of them is how the two drift apart.
+			streamTerminalState: toStreamTerminalState(msg.streamTerminalState),
 		};
 
 		// Notify cacheBodyStore and emit summary for real-time updates

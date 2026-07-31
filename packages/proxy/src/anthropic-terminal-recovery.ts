@@ -23,7 +23,11 @@ export type AnthropicTerminalRecoveryReason = "timeout" | "eof";
  * (`packages/types` must not import this package, so the two sets cannot share
  * one declaration).
  *
- * - `complete` — `message_stop` (and a stop_reason delta) was observed upstream.
+ * - `complete` — `message_stop` was observed upstream. A stop_reason delta may
+ *   or may not have preceded it: `determineTerminalState()` returns `complete`
+ *   on `messageStopSeen` alone, so a stream that reaches the protocol endpoint
+ *   without a terminal delta counts as complete, not truncated. Stated
+ *   explicitly because `response-handler` maps this state to `success: true`.
  * - `recovered` — stop_reason delta was seen but message_stop was missing, so
  *   the terminator was synthesized.
  * - `error` — the stream surfaced an explicit `error` event, or upstream threw.
