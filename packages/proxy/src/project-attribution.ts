@@ -249,22 +249,31 @@ export function extractProjectAttribution(
 	getHeader: (name: string) => string | null | undefined,
 	systemPrompt: string | null,
 ): ProjectExtractionResult {
-	const namespacedHeader = sanitizeProjectName(
-		getHeader("x-better-ccflare-project"),
-	);
-	if (namespacedHeader) {
-		return {
-			project: namespacedHeader,
-			projectAttributionSource: "header_project",
-		};
+	// Validate the FULL raw header value, then length-cap only after it passes
+	// — same reject-wholesale-before-truncating rule as the H1 heading path
+	// below. A client fully controls its own request headers, so this path
+	// needs the same secret/slug validation as attacker-influenced system
+	// prompt text (#373).
+	const rawNamespaced = getHeader("x-better-ccflare-project");
+	if (rawNamespaced && isLowRiskProjectSlug(rawNamespaced)) {
+		const namespacedHeader = sanitizeProjectName(rawNamespaced);
+		if (namespacedHeader) {
+			return {
+				project: namespacedHeader,
+				projectAttributionSource: "header_project",
+			};
+		}
 	}
 
-	const legacyHeader = sanitizeProjectName(getHeader("x-project"));
-	if (legacyHeader) {
-		return {
-			project: legacyHeader,
-			projectAttributionSource: "header_project",
-		};
+	const rawLegacy = getHeader("x-project");
+	if (rawLegacy && isLowRiskProjectSlug(rawLegacy)) {
+		const legacyHeader = sanitizeProjectName(rawLegacy);
+		if (legacyHeader) {
+			return {
+				project: legacyHeader,
+				projectAttributionSource: "header_project",
+			};
+		}
 	}
 
 	if (systemPrompt) {
