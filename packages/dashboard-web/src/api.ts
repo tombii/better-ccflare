@@ -806,7 +806,14 @@ class API extends HttpClient {
 
 	// SSE streaming requires special handling, keep as-is
 	streamLogs(onLog: (log: LogEntry) => void): EventSource {
-		const eventSource = new EventSource(`/api/logs/stream`);
+		// The native EventSource API cannot set custom headers, so the API key
+		// (when configured) is passed via query string instead — the server
+		// only accepts it this way for this one endpoint (#216).
+		const apiKey = this.getApiKey();
+		const url = apiKey
+			? `/api/logs/stream?api_key=${encodeURIComponent(apiKey)}`
+			: `/api/logs/stream`;
+		const eventSource = new EventSource(url);
 		eventSource.addEventListener("message", (event) => {
 			try {
 				const data = JSON.parse(event.data);

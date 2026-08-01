@@ -2105,7 +2105,6 @@ export async function forceResetRateLimit(
 
 	const usagePollTriggered = await notifyServersToForceResetRateLimit(
 		account.id,
-		dbOps,
 		config,
 	);
 
@@ -2119,7 +2118,6 @@ export async function forceResetRateLimit(
 
 async function notifyServersToForceResetRateLimit(
 	accountId: string,
-	dbOps: DatabaseOperations,
 	config: Config,
 ): Promise<boolean> {
 	const configuredPort = config.getRuntime().port || 8080;
@@ -2128,16 +2126,11 @@ async function notifyServersToForceResetRateLimit(
 	const ports = [...new Set([configuredPort, defaultPort, testPort])];
 	let usagePollTriggered = false;
 
-	// If API authentication is enabled, skip best-effort local notifications.
-	const activeApiKeys = await dbOps.getActiveApiKeys();
-	const requiresAuth = activeApiKeys.length > 0;
-	if (requiresAuth) {
-		console.warn(
-			"⚠️  API authentication is enabled — skipping server notification.\n" +
-				"   The rate limit state was cleared in the database but no usage poll was triggered.",
-		);
-		return false;
-	}
+	// The local-control-secret (issue #216) lets this notification through
+	// AuthService's HTTP gate even when API-key auth is enabled — the CLI
+	// and the server both resolve it from the same on-disk config file, so
+	// this never involves handling a real API key.
+	const localControlSecret = config.getLocalControlSecret();
 
 	for (const port of ports) {
 		try {
@@ -2145,7 +2138,10 @@ async function notifyServersToForceResetRateLimit(
 				`http://localhost:${port}/api/accounts/${accountId}/force-reset-rate-limit`,
 				{
 					method: "POST",
-					headers: { "Content-Type": "application/json" },
+					headers: {
+						"Content-Type": "application/json",
+						"x-better-ccflare-local-control-secret": localControlSecret,
+					},
 				},
 			);
 
@@ -2171,6 +2167,7 @@ async function notifyServersToForceResetRateLimit(
  */
 async function reauthenticateQwenAccount(
 	dbOps: DatabaseOperations,
+	config: Config,
 	account: {
 		id: string;
 		provider: string;
@@ -2270,13 +2267,22 @@ async function reauthenticateQwenAccount(
 	);
 	console.log("OAuth tokens have been updated.");
 
-	// Notify running servers to reload tokens (best-effort)
+	// Notify running servers to reload tokens (best-effort). The
+	// local-control-secret (issue #216) lets this through AuthService's HTTP
+	// gate even when API-key auth is enabled.
 	console.log("\nNotifying running servers to reload tokens...");
+	const localControlSecret = config.getLocalControlSecret();
 	for (const port of [8080, 8081]) {
 		try {
 			const response = await fetch(
 				`http://localhost:${port}/api/accounts/${account.id}/reload`,
-				{ method: "POST", headers: { "Content-Type": "application/json" } },
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						"x-better-ccflare-local-control-secret": localControlSecret,
+					},
+				},
 			);
 			if (response.ok) {
 				console.log(`✓ Token reload successful on port ${port}`);
@@ -2390,7 +2396,7 @@ export async function reauthenticateAccount(
 
 	// Handle Qwen re-authentication via device code flow
 	if (account.provider === "qwen") {
-		return reauthenticateQwenAccount(dbOps, account, name);
+		return reauthenticateQwenAccount(dbOps, config, account, name);
 	}
 
 	if (account.provider === "xai") {
@@ -2591,30 +2597,22 @@ export async function reauthenticateAccount(
 		const defaultPort = 8080;
 		const testPort = 8081;
 
-		// Check if API authentication is enabled
-		const activeApiKeys = await dbOps.getActiveApiKeys();
-		const requiresAuth = activeApiKeys.length > 0;
+		// The local-control-secret (issue #216) lets this notification through
+		// AuthService's HTTP gate even when API-key auth is enabled — the CLI
+		// and the server both resolve it from the same on-disk config file, so
+		// this never involves handling a real API key.
+		const localControlSecret = config.getLocalControlSecret();
 
-		if (requiresAuth) {
-			console.log(
-				"⚠️  API authentication is enabled - automatic server reload not supported",
-			);
-			console.log(
-				"   Please restart the server manually to use the new tokens:",
-			);
-			console.log("   - Stop the running server");
-			console.log("   - Start it again with: bun start");
-			return;
-		}
-
-		// If no API authentication, proceed with unauthenticated requests
 		for (const port of [defaultPort, testPort]) {
 			try {
 				const response = await fetch(
 					`http://localhost:${port}/api/accounts/${accountId}/reload`,
 					{
 						method: "POST",
-						headers: { "Content-Type": "application/json" },
+						headers: {
+							"Content-Type": "application/json",
+							"x-better-ccflare-local-control-secret": localControlSecret,
+						},
 					},
 				);
 

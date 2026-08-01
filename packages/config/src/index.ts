@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -91,6 +92,13 @@ export interface ConfigData {
 	alert_cooldown_minutes?: number;
 	alert_webhook_url?: string;
 	outbound_proxy?: string;
+	// Local-control secret: shared between the CLI and the server process it
+	// controls, used to authorize a small set of idempotent CLI->server
+	// notify calls (token reload, force-reset-rate-limit) when API-key auth
+	// is enabled. See AuthService#isLocalControlRequest. Generated once on
+	// first access and persisted — unlike ProxyContext.internalProbeSecret,
+	// which is intentionally re-minted every server process start.
+	local_control_secret?: string;
 	// Database configuration
 	db_wal_mode?: boolean;
 	db_busy_timeout_ms?: number;
@@ -421,6 +429,24 @@ export class Config extends EventEmitter {
 	setCacheKeepaliveTtlMinutes(minutes: number): void {
 		const clamped = this.clamp(minutes, 0, 60);
 		this.set("cache_keepalive_ttl_minutes", clamped);
+	}
+
+	/**
+	 * Returns the persisted local-control secret, generating and persisting
+	 * one on first access. Both the server (via AuthService) and the CLI
+	 * (via this same Config, backed by the same on-disk config file) resolve
+	 * to the identical value, so the CLI can authorize its own notify calls
+	 * to its own locally-running server without ever handling a real API
+	 * key (issue #216).
+	 */
+	getLocalControlSecret(): string {
+		const existing = this.data.local_control_secret;
+		if (typeof existing === "string" && existing.length > 0) {
+			return existing;
+		}
+		const secret = randomUUID();
+		this.set("local_control_secret", secret);
+		return secret;
 	}
 
 	getSystemPromptCacheTtl1h(): boolean {

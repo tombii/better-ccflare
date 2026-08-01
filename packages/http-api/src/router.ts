@@ -143,7 +143,11 @@ export class APIRouter {
 	constructor(context: APIContext) {
 		this.context = context;
 		this.handlers = new Map();
-		this.authService = new AuthService(context.dbOps);
+		this.authService = new AuthService(
+			context.dbOps,
+			context.internalProbeSecret,
+			context.localControlSecret,
+		);
 		this.qwenStatusHandler = createQwenDeviceFlowStatusHandler();
 		this.codexStatusHandler = createCodexDeviceFlowStatusHandler();
 		this.registerHandlers();

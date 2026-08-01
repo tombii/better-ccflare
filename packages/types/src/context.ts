@@ -73,6 +73,21 @@ export interface APIContext {
 		}>;
 		refresh: () => Promise<{ success: boolean; error?: string }>;
 	};
+	/**
+	 * Process-local secret gating internal-probe requests (auto-refresh /
+	 * cache-keepalive self-loops) at the AuthService HTTP auth gate (#216).
+	 * Optional so older entrypoints/tests that don't wire it still construct
+	 * an APIRouter; AuthService fails closed (no exemption) when absent.
+	 */
+	internalProbeSecret?: string;
+	/**
+	 * Persisted secret (shared with the CLI via the on-disk config file)
+	 * allowing the user's own CLI to notify their own locally-running server
+	 * of DB-side changes (token reload, force-reset-rate-limit) even when
+	 * API-key auth is enabled (#216). Optional for the same reason as
+	 * internalProbeSecret above.
+	 */
+	localControlSecret?: string;
 }
 
 // Load balancing strategy interface

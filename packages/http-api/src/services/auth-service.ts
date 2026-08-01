@@ -15,13 +15,74 @@ export interface AuthenticationResult {
 	error?: string;
 }
 
+/** Header carrying the process-local secret that gates internal-probe markers.
+ * Mirrors packages/proxy/src/handlers/proxy-types.ts INTERNAL_PROBE_SECRET_HEADER —
+ * duplicated here (rather than imported) to avoid a http-api -> proxy package
+ * dependency; the string value MUST stay in sync with that file. */
+const INTERNAL_PROBE_SECRET_HEADER = "x-better-ccflare-internal-probe-secret";
+
+/** Header carrying the persisted local-control secret used by the better-ccflare
+ * CLI to notify its own locally-running server of DB-side changes (token
+ * reload, force-reset-rate-limit) when API-key auth is enabled. Unlike the
+ * internal-probe secret (minted fresh per server process), this secret is
+ * persisted in the config file so the separate, short-lived CLI process can
+ * read it too. See packages/config Config#getLocalControlSecret. */
+const LOCAL_CONTROL_SECRET_HEADER = "x-better-ccflare-local-control-secret";
+
+/** Paths where a valid local-control-secret is honored. Intentionally a small,
+ * explicit allowlist — these are idempotent, non-sensitive internal signals
+ * (clear an in-process cache / re-poll usage) triggered by the user's own CLI
+ * against their own locally-running server, not a general auth bypass. */
+function isLocalControlNotifyPath(path: string): boolean {
+	return (
+		path.startsWith("/api/accounts/") &&
+		(path.endsWith("/reload") || path.endsWith("/force-reset-rate-limit"))
+	);
+}
+
 export class AuthService {
 	private crypto: NodeCryptoUtils;
 	private dbOps: DatabaseOperations;
+	private internalProbeSecret?: string;
+	private localControlSecret?: string;
 
-	constructor(dbOps: DatabaseOperations) {
+	constructor(
+		dbOps: DatabaseOperations,
+		internalProbeSecret?: string,
+		localControlSecret?: string,
+	) {
 		this.dbOps = dbOps;
 		this.crypto = new NodeCryptoUtils();
+		this.internalProbeSecret = internalProbeSecret;
+		this.localControlSecret = localControlSecret;
+	}
+
+	/**
+	 * Mirrors isInternalProbe() in packages/proxy/src/handlers/proxy-types.ts:
+	 * a request is a legitimate internal probe (auto-refresh or
+	 * cache-keepalive self-loop) only if the process-local secret matches AND
+	 * one of the marker headers is present. Fails closed (false) if the
+	 * secret is missing/unset or doesn't match.
+	 */
+	private isInternalProbeRequest(headers: Headers): boolean {
+		if (!this.internalProbeSecret) return false;
+		if (headers.get(INTERNAL_PROBE_SECRET_HEADER) !== this.internalProbeSecret)
+			return false;
+		const hasAutoRefresh =
+			headers.get("x-better-ccflare-auto-refresh") === "true";
+		const hasKeepalive = headers.get("x-better-ccflare-keepalive") === "true";
+		return hasAutoRefresh || hasKeepalive;
+	}
+
+	/**
+	 * True when the request carries a valid local-control-secret AND targets
+	 * one of the small allowlisted CLI-notify paths. Fails closed if the
+	 * secret is missing/unset or doesn't match.
+	 */
+	private isLocalControlRequest(headers: Headers, path: string): boolean {
+		if (!this.localControlSecret) return false;
+		if (!isLocalControlNotifyPath(path)) return false;
+		return headers.get(LOCAL_CONTROL_SECRET_HEADER) === this.localControlSecret;
 	}
 
 	/**
@@ -127,6 +188,25 @@ export class AuthService {
 	}
 
 	/**
+	 * Extract an API key from the query string, for the one endpoint where a
+	 * header genuinely cannot be sent: the dashboard's live log tail uses the
+	 * browser's native EventSource, which has no header-injection API (#216).
+	 * Deliberately NOT wired into extractApiKey()/the general auth path —
+	 * every other endpoint still requires the key via header, unchanged. The
+	 * key is still validated through the normal validateApiKey() scrypt
+	 * check; this only changes *where* the key may be read from, not what
+	 * counts as valid.
+	 */
+	private extractApiKeyFromQuery(req: Request): string | null {
+		try {
+			const url = new URL(req.url);
+			return url.searchParams.get("api_key");
+		} catch {
+			return null;
+		}
+	}
+
+	/**
 	 * Check if a path is statically exempt from authentication
 	 * (does not require async DB check)
 	 */
@@ -163,9 +243,23 @@ export class AuthService {
 	}
 
 	/**
-	 * Check if a path should be exempt from authentication
+	 * Check if a path should be exempt from authentication.
+	 *
+	 * `headers`, when provided, allows two narrow internal exemptions
+	 * (issue #216 stage 1) on top of the static/API-key rules below:
+	 *  - a correctly-marked internal probe (auto-refresh / cache-keepalive
+	 *    self-loop) hitting a proxy endpoint (/v1/*, /messages/*)
+	 *  - a correctly-marked local-control request (the user's own CLI
+	 *    notifying their own locally-running server) hitting one of the
+	 *    small allowlisted account-notify endpoints
+	 * Both fail closed: omitting `headers`, or presenting a wrong/missing
+	 * secret, falls through to the normal auth-required behavior.
 	 */
-	async isPathExempt(path: string, method: string): Promise<boolean> {
+	async isPathExempt(
+		path: string,
+		method: string,
+		headers?: Headers,
+	): Promise<boolean> {
 		// Static exemptions first (no DB hit)
 		if (this.isStaticPathExempt(path)) {
 			return true;
@@ -182,13 +276,21 @@ export class AuthService {
 			return false;
 		}
 
-		// Proxy endpoints (/v1/*, /messages/*, etc.) require authentication if enabled
+		// Proxy endpoints (/v1/*, /messages/*, etc.) require authentication if
+		// enabled, except for correctly-marked internal probes (#216).
 		if (path.startsWith("/v1") || path.startsWith("/messages")) {
+			if (headers && this.isInternalProbeRequest(headers)) {
+				return true;
+			}
 			return false;
 		}
 
-		// API endpoints require authentication if enabled
+		// API endpoints require authentication if enabled, except for
+		// correctly-marked local-control CLI-notify requests (#216).
 		if (path.startsWith("/api")) {
+			if (headers && this.isLocalControlRequest(headers, path)) {
+				return true;
+			}
 			return false;
 		}
 
@@ -204,7 +306,7 @@ export class AuthService {
 		method: string,
 	): Promise<AuthenticationResult> {
 		// If path is exempt, allow without authentication
-		if (await this.isPathExempt(path, method)) {
+		if (await this.isPathExempt(path, method, req.headers)) {
 			return {
 				isAuthenticated: true,
 			};
@@ -217,8 +319,15 @@ export class AuthService {
 			};
 		}
 
-		// Extract API key from request
-		const apiKey = this.extractApiKey(req);
+		// Extract API key from request. The logs SSE stream additionally
+		// accepts the key via query string (?api_key=) because the browser's
+		// native EventSource cannot set custom headers (#216) — every other
+		// endpoint still requires the header/Bearer form.
+		const apiKey =
+			this.extractApiKey(req) ||
+			(path === "/api/logs/stream" && method === "GET"
+				? this.extractApiKeyFromQuery(req)
+				: null);
 		if (!apiKey) {
 			return {
 				isAuthenticated: false,
