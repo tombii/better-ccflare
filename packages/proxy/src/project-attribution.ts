@@ -251,8 +251,15 @@ export function isLowRiskProjectSlug(value: string): boolean {
  * review on #378).
  */
 export function isLowRiskPathSegment(value: string): boolean {
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
-	const cleaned = value.replace(/[\x00-\x1F\x7F]/g, "").trim();
+	// Check for control chars BEFORE stripping them — sanitizeProjectName's
+	// strip-then-keep behavior would otherwise silently fuse a control-char
+	// boundary (e.g. "repo\nleaked-fragment" -> "repoleaked-fragment"),
+	// deleting the very separator that would have made the leaked half read
+	// as a second word and get caught by whitespace/word-count checks
+	// (round-3 Greptile review on #378).
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: detecting them is the point
+	if (/[\x00-\x1F\x7F]/.test(value)) return false;
+	const cleaned = value.trim();
 	if (!cleaned) return false;
 	const lower = cleaned.toLowerCase();
 

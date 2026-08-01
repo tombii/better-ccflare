@@ -194,6 +194,20 @@ describe("extractProjectAttributionFromRequest", () => {
 			expect(result.projectAttributionSource).toBe("none");
 		});
 
+		it("rejects a path segment where a control char fuses the real directory with leaked text (round-3 Greptile review on #378)", () => {
+			// A naive strip-then-check validator deletes \n/\t before checking for
+			// whitespace, silently fusing "repo" + "leaked-fragment" into the
+			// clean-looking slug "repoleaked-fragment". The control char must be
+			// detected in the RAW captured value before any stripping happens.
+			const headers = new Headers();
+			const body = {
+				system: "/home/u/projects/repo\nleaked-fragment/more",
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+
 		// Regression (Greptile review on #378): isLowRiskProjectSlug's label-based
 		// heuristics (credential/incident/hostname labels) are tuned for free-text
 		// headings and headers, and false-positive on ordinary directory names.
@@ -556,6 +570,15 @@ describe("isLowRiskPathSegment", () => {
 		expect(isLowRiskPathSegment("repo short words")).toBe(false);
 		expect(isLowRiskPathSegment("two words")).toBe(false);
 		expect(isLowRiskPathSegment("a b")).toBe(false);
+	});
+
+	it("rejects a control-char-fused value rather than silently deleting the separator (round-3 Greptile review on #378)", () => {
+		// The raw value must be checked for control chars BEFORE they're
+		// stripped, or "repo\nleaked" silently fuses into "repoleaked" and
+		// passes the whitespace/shape checks.
+		expect(isLowRiskPathSegment("repo\nleaked-fragment")).toBe(false);
+		expect(isLowRiskPathSegment("repo\tleaked-fragment")).toBe(false);
+		expect(isLowRiskPathSegment("repo\rleaked-fragment")).toBe(false);
 	});
 
 	it("still rejects secrets, keys, IPs, and opaque high-entropy tokens", () => {
