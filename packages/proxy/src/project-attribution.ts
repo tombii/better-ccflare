@@ -242,8 +242,13 @@ export function isLowRiskProjectSlug(value: string): boolean {
  * What's actually dangerous in this branch is the capture running on past
  * the real directory boundary when the system prompt's newlines have been
  * collapsed, pulling in following prompt text — so this keeps the
- * shape/length/word-count/opaque-token checks (which catch that runaway
- * text) and drops the label-matching ones.
+ * shape/length/opaque-token checks (which catch that runaway text) and
+ * drops the label-matching ones. Whitespace is rejected outright (rather
+ * than just capped at 6 words like isLowRiskProjectSlug) because a real
+ * directory name is never space-separated — even a short run-on like
+ * "repo short words" is unambiguously leaked prompt text riding along with
+ * the real directory name, not a directory name itself (round-2 Greptile
+ * review on #378).
  */
 export function isLowRiskPathSegment(value: string): boolean {
 	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
@@ -286,8 +291,10 @@ export function isLowRiskPathSegment(value: string): boolean {
 		return false;
 	}
 
-	// Sentence-shaped free text (a runaway capture reads as a sentence).
-	if (cleaned.split(/\s+/).filter(Boolean).length > 6) return false;
+	// Any whitespace at all means this isn't a directory name — real path
+	// segments don't contain spaces, so even a short space-separated run is
+	// leaked text riding along with the real directory name.
+	if (/\s/.test(cleaned)) return false;
 
 	return SLUG_SHAPE_RE.test(cleaned);
 }

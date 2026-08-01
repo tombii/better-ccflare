@@ -179,6 +179,21 @@ describe("extractProjectAttributionFromRequest", () => {
 			expect(result.projectAttributionSource).toBe("none");
 		});
 
+		it("rejects a short space-separated run-on rather than persisting it as the project (round-2 Greptile review on #378)", () => {
+			// "repo short words" is short enough to dodge the six-word sentence
+			// cap and slug-shaped enough to pass SLUG_SHAPE_RE, but a real
+			// directory name never contains a literal space — this is leaked
+			// prompt text riding along with the real "repo" directory, not a
+			// directory name itself.
+			const headers = new Headers();
+			const body = {
+				system: "/home/u/projects/repo short words/more",
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+
 		// Regression (Greptile review on #378): isLowRiskProjectSlug's label-based
 		// heuristics (credential/incident/hostname labels) are tuned for free-text
 		// headings and headers, and false-positive on ordinary directory names.
@@ -532,6 +547,15 @@ describe("isLowRiskPathSegment", () => {
 		expect(
 			isLowRiskPathSegment("leaked system prompt fragment with many words"),
 		).toBe(false);
+	});
+
+	it("rejects any whitespace, even a short run-on that dodges the sentence heuristic (round-2 Greptile review on #378)", () => {
+		// A real directory name is never space-separated, so a short capture
+		// like "repo short words" must be rejected outright rather than only
+		// once it crosses a word-count threshold.
+		expect(isLowRiskPathSegment("repo short words")).toBe(false);
+		expect(isLowRiskPathSegment("two words")).toBe(false);
+		expect(isLowRiskPathSegment("a b")).toBe(false);
 	});
 
 	it("still rejects secrets, keys, IPs, and opaque high-entropy tokens", () => {
