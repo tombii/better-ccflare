@@ -277,13 +277,21 @@ export function extractProjectAttribution(
 	}
 
 	if (systemPrompt) {
+		// Validate the FULL captured path segment, then length-cap only after it
+		// passes — same reject-wholesale-before-truncating rule as the header and
+		// H1 heading paths. A collapsed-newline system prompt can make `[^/]+` run
+		// on past the directory name into following prompt text, so this needs the
+		// same secret/slug validation as attacker-influenced text (#373).
 		const pathMatch = systemPrompt.match(WORKSPACE_PATH_RE);
-		const sanitizedPath = sanitizeProjectName(pathMatch?.[1]);
-		if (sanitizedPath) {
-			return {
-				project: sanitizedPath,
-				projectAttributionSource: "path_project",
-			};
+		const rawPath = pathMatch?.[1];
+		if (rawPath && isLowRiskProjectSlug(rawPath)) {
+			const sanitizedPath = sanitizeProjectName(rawPath);
+			if (sanitizedPath) {
+				return {
+					project: sanitizedPath,
+					projectAttributionSource: "path_project",
+				};
+			}
 		}
 
 		// Walk EVERY H1 heading (not just the first) and use the first one that

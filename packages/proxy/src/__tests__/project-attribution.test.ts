@@ -139,6 +139,46 @@ describe("extractProjectAttributionFromRequest", () => {
 		expect(result.projectAttributionSource).toBe("path_project");
 	});
 
+	describe("workspace-path segments are validated like header/heading values (#373)", () => {
+		it("rejects a path segment that runs on past the directory name into leaked prompt text", () => {
+			// Same signature as the original report: a collapsed-newline system
+			// prompt makes WORKSPACE_PATH_RE's [^/]+ capture group run on past the
+			// real directory name into following prompt text, producing a
+			// multi-word, `#`-containing value that must be rejected wholesale
+			// rather than truncated to 64 chars and kept.
+			const headers = new Headers();
+			const body = {
+				system:
+					"/home/will/projects/better-ccflare # Some Leaked System Prompt Heading Text/more",
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+
+		it("falls through to an eligible H1 heading when the workspace path segment is rejected", () => {
+			const headers = new Headers();
+			const body = {
+				system:
+					"/home/will/projects/leaked system prompt fragment with many words/more\n# Harness\nWelcome.",
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBe("Harness");
+			expect(result.projectAttributionSource).toBe("heading_project");
+		});
+
+		it("rejects a path segment carrying a secret past the 64-char truncation boundary", () => {
+			const cleanPrefix = `${"x".repeat(15)}-`.repeat(4);
+			const headers = new Headers();
+			const body = {
+				system: `/home/will/projects/${cleanPrefix}${"Z".repeat(25)}/file.ts`,
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+	});
+
 	it("uses the first eligible non-Claude H1 heading as the project when no header/path match", () => {
 		const headers = new Headers();
 		const body = { system: "# Harness\nWelcome to the project." };
