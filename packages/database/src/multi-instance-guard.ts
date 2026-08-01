@@ -295,6 +295,21 @@ export async function runStartupGuard(
 		const message = formatGuardMessage(result.peers);
 		writeLog(message);
 		if (mode === "refuse") {
+			// Clear this process's own heartbeat before throwing so an
+			// immediate retry does not see a phantom peer (self) and refuse
+			// again for up to HEARTBEAT_EXPIRY_MS. The lifecycle cleanup
+			// callback is not installed yet (it is wired by the caller after
+			// runStartupGuard returns), so the row would otherwise linger.
+			// Fixes Greptile P1 on PR #376.
+			try {
+				await clearHeartbeat(adapter);
+			} catch (err) {
+				// Best-effort cleanup; surface the original refusal even if
+				// the cleanup itself failed.
+				log.warn(
+					`heartbeat cleanup during refuse failed: ${(err as Error).message}`,
+				);
+			}
 			throw new MultiInstanceRefusedError(result.peers);
 		}
 	}

@@ -168,6 +168,47 @@ describe("multi-instance-guard (SQLite)", () => {
 		).rejects.toThrow(MultiInstanceRefusedError);
 	});
 
+	it("NEGATIVE 4: refuse mode clears own heartbeat before throwing so a retry does not false-positive", async () => {
+		// Simulate a peer that is already running.
+		const now = Date.now();
+		adapter.getSQLiteDb().run(
+			`INSERT INTO instance_heartbeats
+				(instance_id, hostname, pid, started_at, last_heartbeat,
+				 node_version, db_dialect)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			[
+				"peer-uuid-refuse",
+				"peer-host",
+				4321,
+				now - 5_000,
+				now - 1_000,
+				"v20.0.0",
+				"sqlite",
+			],
+		);
+
+		// Refuse: should throw.
+		await expect(
+			runStartupGuard(adapter, { now, mode: "refuse" }),
+		).rejects.toThrow(MultiInstanceRefusedError);
+
+		// After the throw, this process's own heartbeat row must be gone.
+		// The only remaining row should be the peer we wrote directly.
+		// Without the Greptile fix, our own row would still be present and
+		// a fast retry would see it as a (self) peer and refuse again for
+		// up to HEARTBEAT_EXPIRY_MS.
+		const remaining = adapter
+			.getSQLiteDb()
+			.query<
+				{ instance_id: string },
+				[]
+			>("SELECT instance_id FROM instance_heartbeats ORDER BY instance_id")
+			.all();
+
+		expect(remaining.length).toBe(1);
+		expect(remaining[0].instance_id).toBe("peer-uuid-refuse");
+	});
+
 	it("warn mode does NOT throw even when peers are present", async () => {
 		const now = Date.now();
 		adapter.getSQLiteDb().run(
