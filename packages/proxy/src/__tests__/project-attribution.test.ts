@@ -24,6 +24,7 @@ import {
 	extractProjectAttributionFromParts,
 	extractProjectAttributionFromRequest,
 	extractSystemPromptFromBase64,
+	isLowRiskPathSegment,
 	isLowRiskProjectSlug,
 } from "../project-attribution";
 
@@ -177,6 +178,30 @@ describe("extractProjectAttributionFromRequest", () => {
 			expect(result.project).toBeNull();
 			expect(result.projectAttributionSource).toBe("none");
 		});
+
+		// Regression (Greptile review on #378): isLowRiskProjectSlug's label-based
+		// heuristics (credential/incident/hostname labels) are tuned for free-text
+		// headings and headers, and false-positive on ordinary directory names.
+		// The path-segment capture is structurally a single path component, so it
+		// must use the narrower isLowRiskPathSegment validator instead.
+		const legitDirNames: Array<[string, string]> = [
+			["password-manager", "password-manager"],
+			["customer-portal", "customer-portal"],
+			["auth-token-service", "auth-token-service"],
+			["account-billing", "account-billing"],
+			["ui.v2", "ui.v2"],
+		];
+		for (const [label, dirName] of legitDirNames) {
+			it(`still extracts legit workspace directory name: ${label}`, () => {
+				const headers = new Headers();
+				const body = {
+					system: `/home/will/projects/${dirName}/file.ts`,
+				};
+				const result = extractProjectAttributionFromRequest(headers, body);
+				expect(result.project).toBe(dirName);
+				expect(result.projectAttributionSource).toBe("path_project");
+			});
+		}
 	});
 
 	it("uses the first eligible non-Claude H1 heading as the project when no header/path match", () => {
@@ -481,6 +506,52 @@ describe("isLowRiskProjectSlug", () => {
 			const boundaryStraddlingSecret = `${CLEAN_64_PREFIX}${"Z".repeat(25)}`;
 			expect(isLowRiskProjectSlug(boundaryStraddlingSecret)).toBe(false);
 		});
+	});
+});
+
+describe("isLowRiskPathSegment", () => {
+	it("accepts ordinary directory names that isLowRiskProjectSlug's label heuristics would reject", () => {
+		// These are all real, unremarkable workspace directory names that
+		// CREDENTIAL_LABEL_RE / INCIDENT_LABEL_RE / DOTTED_HOSTNAME_LABEL_RE
+		// false-positive on when applied to free text (Greptile review on #378).
+		expect(isLowRiskPathSegment("password-manager")).toBe(true);
+		expect(isLowRiskPathSegment("customer-portal")).toBe(true);
+		expect(isLowRiskPathSegment("auth-token-service")).toBe(true);
+		expect(isLowRiskPathSegment("account-billing")).toBe(true);
+		expect(isLowRiskPathSegment("ui.v2")).toBe(true);
+		expect(isLowRiskPathSegment("better-ccflare")).toBe(true);
+		expect(isLowRiskPathSegment("MyProj")).toBe(true);
+	});
+
+	it("still rejects a runaway sentence-shaped capture (the #373 leak signature)", () => {
+		expect(
+			isLowRiskPathSegment(
+				"better-ccflare # Some Leaked System Prompt Heading Text",
+			),
+		).toBe(false);
+		expect(
+			isLowRiskPathSegment("leaked system prompt fragment with many words"),
+		).toBe(false);
+	});
+
+	it("still rejects secrets, keys, IPs, and opaque high-entropy tokens", () => {
+		expect(isLowRiskPathSegment("Bearer sk_live_abc123456789")).toBe(false);
+		expect(isLowRiskPathSegment("AKIAIOSFODNN7EXAMPLE")).toBe(false);
+		expect(isLowRiskPathSegment("10.0.0.5")).toBe(false);
+		expect(isLowRiskPathSegment("sess1234567890qwerty")).toBe(false);
+		expect(isLowRiskPathSegment("deadbeefcafebabe")).toBe(false);
+	});
+
+	it("still rejects URL/URI-scheme and traversal shapes", () => {
+		expect(isLowRiskPathSegment("https://example.com")).toBe(false);
+		expect(isLowRiskPathSegment("www.example.com")).toBe(false);
+		expect(isLowRiskPathSegment("..")).toBe(false);
+	});
+
+	it("rejects the FULL value rather than a 64-char-truncated prefix", () => {
+		const cleanPrefix = `${"x".repeat(15)}-`.repeat(4);
+		const boundaryStraddlingSecret = `${cleanPrefix}${"Z".repeat(25)}`;
+		expect(isLowRiskPathSegment(boundaryStraddlingSecret)).toBe(false);
 	});
 });
 

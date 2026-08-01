@@ -228,6 +228,70 @@ export function isLowRiskProjectSlug(value: string): boolean {
 	return SLUG_SHAPE_RE.test(cleaned);
 }
 
+/**
+ * Validator for the captured segment of `WORKSPACE_PATH_RE` (#373 follow-up).
+ *
+ * The capture is structurally a single path segment (`[^/]+`), not
+ * free-form attacker text, so `isLowRiskProjectSlug`'s label-based
+ * heuristics (CREDENTIAL_LABEL_RE, INCIDENT_LABEL_RE, JIRA_TICKET_RE,
+ * DOTTED_HOSTNAME_LABEL_RE) are miscalibrated here: they exist to catch
+ * free-text sentences and hostnames, and false-positive on completely
+ * ordinary directory names like "password-manager", "customer-portal",
+ * "auth-token-service", or "ui.v2".
+ *
+ * What's actually dangerous in this branch is the capture running on past
+ * the real directory boundary when the system prompt's newlines have been
+ * collapsed, pulling in following prompt text — so this keeps the
+ * shape/length/word-count/opaque-token checks (which catch that runaway
+ * text) and drops the label-matching ones.
+ */
+export function isLowRiskPathSegment(value: string): boolean {
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+	const cleaned = value.replace(/[\x00-\x1F\x7F]/g, "").trim();
+	if (!cleaned) return false;
+	const lower = cleaned.toLowerCase();
+
+	if (
+		lower.includes("://") ||
+		lower.includes("www.") ||
+		URI_SCHEME_RE.test(cleaned)
+	) {
+		return false;
+	}
+
+	if (
+		cleaned.startsWith("/") ||
+		cleaned.startsWith("\\") ||
+		cleaned.includes("..")
+	) {
+		return false;
+	}
+
+	const atIndex = cleaned.indexOf("@");
+	if (atIndex !== -1 && cleaned.indexOf(".", atIndex) !== -1) return false;
+
+	if (UUID_RE.test(cleaned)) return false;
+
+	if (
+		SECRET_TOKEN_RE.test(cleaned) ||
+		KNOWN_SECRET_PREFIX_RE.test(cleaned) ||
+		MULTI_SEGMENT_TOKEN_RE.test(cleaned) ||
+		lower.includes("bearer ") ||
+		AWS_KEY_RE.test(cleaned) ||
+		IPV4_RE.test(cleaned) ||
+		LONG_TOKEN_RE.test(cleaned) ||
+		HEX_OPAQUE_TOKEN_RE.test(cleaned) ||
+		OPAQUE_MIXED_TOKEN_RE.test(cleaned)
+	) {
+		return false;
+	}
+
+	// Sentence-shaped free text (a runaway capture reads as a sentence).
+	if (cleaned.split(/\s+/).filter(Boolean).length > 6) return false;
+
+	return SLUG_SHAPE_RE.test(cleaned);
+}
+
 const WORKSPACE_PATH_RE =
 	/\/(?:Users|home)\/[^/]+\/(?:Desktop|projects|repos|src)\/([^/]+)\//;
 // Global so extractProjectAttribution can walk every H1 heading in the system
@@ -280,11 +344,14 @@ export function extractProjectAttribution(
 		// Validate the FULL captured path segment, then length-cap only after it
 		// passes — same reject-wholesale-before-truncating rule as the header and
 		// H1 heading paths. A collapsed-newline system prompt can make `[^/]+` run
-		// on past the directory name into following prompt text, so this needs the
-		// same secret/slug validation as attacker-influenced text (#373).
+		// on past the directory name into following prompt text, so this needs
+		// shape/length/word-count validation against that (#373). Uses
+		// isLowRiskPathSegment rather than isLowRiskProjectSlug because the
+		// latter's label-based heuristics false-positive on ordinary directory
+		// names (see isLowRiskPathSegment's doc comment).
 		const pathMatch = systemPrompt.match(WORKSPACE_PATH_RE);
 		const rawPath = pathMatch?.[1];
-		if (rawPath && isLowRiskProjectSlug(rawPath)) {
+		if (rawPath && isLowRiskPathSegment(rawPath)) {
 			const sanitizedPath = sanitizeProjectName(rawPath);
 			if (sanitizedPath) {
 				return {
