@@ -8,7 +8,7 @@ import { removeAccount, removeAccountById } from "../account";
 // against a temporary file. Requires the generated `inline-*-worker.ts`
 // build artifacts to be present; run `bun run build` or the project's
 // CI build step before executing.
-const TEST_DB_PATH = "/tmp/test-remove-duplicate-guard.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-remove-duplicate-guard.db`;
 
 // Same-name rows must differ on provider or custom_endpoint: the UNIQUE index
 // idx_accounts_unique_name_provider_endpoint now forbids two rows sharing

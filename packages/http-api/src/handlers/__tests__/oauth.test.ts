@@ -16,7 +16,7 @@ import {
 } from "../oauth";
 
 // Test database path
-const TEST_DB_PATH = "/tmp/test-oauth-handler.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-oauth-handler.db`;
 
 // Spy used to assert clearAccountRefreshCache is invoked on successful reauth.
 // mock.module must be called at top-level (before imports resolve). The mock
@@ -305,7 +305,7 @@ mock.module("@better-ccflare/providers/qwen", () => ({
 	})),
 }));
 
-const CODEX_REAUTH_DB_PATH = "/tmp/test-codex-reauth-handler.db";
+const CODEX_REAUTH_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-codex-reauth-handler.db`;
 
 describe("createCodexReauthHandler", () => {
 	let dbOps: DatabaseOperations;
@@ -480,7 +480,7 @@ describe("createCodexReauthHandler", () => {
 // Qwen reauth handler
 // ---------------------------------------------------------------------------
 
-const QWEN_REAUTH_DB_PATH = "/tmp/test-qwen-reauth-handler.db";
+const QWEN_REAUTH_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-qwen-reauth-handler.db`;
 
 describe("createQwenReauthHandler", () => {
 	let dbOps: DatabaseOperations;
@@ -555,8 +555,7 @@ describe("createQwenReauthHandler", () => {
 // Anthropic reauth init handler
 // ---------------------------------------------------------------------------
 
-const ANTHROPIC_REAUTH_INIT_DB_PATH =
-	"/tmp/test-anthropic-reauth-init-handler.db";
+const ANTHROPIC_REAUTH_INIT_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-anthropic-reauth-init-handler.db`;
 
 describe("createAnthropicReauthInitHandler", () => {
 	let dbOps: DatabaseOperations;
@@ -656,8 +655,7 @@ describe("createAnthropicReauthInitHandler", () => {
 // Anthropic reauth callback handler
 // ---------------------------------------------------------------------------
 
-const ANTHROPIC_REAUTH_CALLBACK_DB_PATH =
-	"/tmp/test-anthropic-reauth-callback-handler.db";
+const ANTHROPIC_REAUTH_CALLBACK_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-anthropic-reauth-callback-handler.db`;
 
 describe("createAnthropicReauthCallbackHandler", () => {
 	let dbOps: DatabaseOperations;

@@ -4,7 +4,7 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 import { DatabaseFactory } from "@better-ccflare/database";
 import { createAccountAddHandler } from "../accounts";
 
-const TEST_DB_PATH = "/tmp/test-account-add-duplicate-guard.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-account-add-duplicate-guard.db`;
 
 describe("createAccountAddHandler — duplicate (name, provider, custom_endpoint) guard", () => {
 	let dbOps: DatabaseOperations;

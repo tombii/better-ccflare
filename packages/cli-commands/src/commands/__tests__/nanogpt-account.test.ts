@@ -5,7 +5,7 @@ import { DatabaseFactory } from "@better-ccflare/database";
 import { createNanoGPTAccount } from "../account";
 
 // Test database path
-const TEST_DB_PATH = "/tmp/test-nanogpt-cli.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-nanogpt-cli.db`;
 
 describe("CLI NanoGPT Account Creation", () => {
 	let dbOps: DatabaseOperations;

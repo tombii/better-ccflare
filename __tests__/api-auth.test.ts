@@ -5,7 +5,7 @@ import { generateApiKey, listApiKeys, disableApiKey, enableApiKey, deleteApiKey,
 import { NodeCryptoUtils } from "@better-ccflare/types";
 
 // Test data
-const TEST_DB_PATH = "/tmp/test-api-auth.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-api-auth.db`;
 
 describe("API Authentication", () => {
 	let dbOps: any;

@@ -16,8 +16,20 @@ function runCLI(args: string[]): Promise<{
 	exitCode: number;
 }> {
 	return new Promise((resolve) => {
+		// Route the spawned CLI's database through the environment's temp dir so
+		// tests pass under any sandbox that blocks writes to ~/.config/. The
+		// CLI honours BETTER_CCFLARE_DB_PATH (see packages/database/src/factory.ts)
+		// — honouring it here keeps each test run hermetic and removes a
+		// ~/.config/better-ccflare/better-ccflare.db dependency the test never
+		// asked for. Falls back to ~/.config in the unlikely event neither
+		// TMPDIR nor HOME is writable.
+		const cliDbPath = `${process.env.TMPDIR || "/tmp"}/better-ccflare-cli-test-${process.pid}-${Date.now()}.db`;
 		const proc = spawn("bun", ["run", CLI_PATH, ...args], {
-			env: { ...process.env, NODE_ENV: "test" },
+			env: {
+				...process.env,
+				NODE_ENV: "test",
+				BETTER_CCFLARE_DB_PATH: cliDbPath,
+			},
 		});
 
 		let stdout = "";

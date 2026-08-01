@@ -45,7 +45,7 @@ afterAll(() => {
 	fs.rmSync(workspacePersistenceTmpDir, { recursive: true, force: true });
 });
 
-const TEST_DB_PATH = "/tmp/test-agent-interceptor-precedence.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-agent-interceptor-precedence.db`;
 
 /**
  * Precedence matrix for interceptAndModifyRequest's system-prompt path:

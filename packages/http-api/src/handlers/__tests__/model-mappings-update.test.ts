@@ -11,7 +11,7 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 import { DatabaseFactory } from "@better-ccflare/database";
 import { createAccountModelMappingsUpdateHandler } from "../accounts";
 
-const TEST_DB_PATH = "/tmp/test-model-mappings-update.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-model-mappings-update.db`;
 
 /** Insert a minimal account row and return its generated id. */
 async function insertAccount(
