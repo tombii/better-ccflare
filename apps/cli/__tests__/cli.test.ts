@@ -409,6 +409,8 @@ describe("CLI Security Tests", () => {
 			"--serve",
 			"--ssl-key",
 			"/tmp/nonexistent-key-with-sensitive-data-abc123.pem",
+			"--ssl-cert",
+			"/tmp/nonexistent-cert-with-sensitive-data-abc123.pem",
 		]);
 
 		const _output = result.stdout + result.stderr;

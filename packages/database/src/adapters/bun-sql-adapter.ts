@@ -351,7 +351,23 @@ export class BunSqlAdapter {
 	 */
 	async close(): Promise<void> {
 		if (this.isSQLite && this.sqliteDb) {
-			this.sqliteDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+			// PRAGMA wal_checkpoint is best-effort cleanup. It can fail with
+			// SQLITE_IOERR_VNODE (errno 6922) when the underlying file or its
+			// -wal/-shm siblings have been unlinked by a concurrent cleanup
+			// path before this close runs (e.g. a test that calls fs.unlinkSync
+			// on /tmp/<test>.db in afterAll before DatabaseFactory.reset()).
+			// close() must not throw — callers like DatabaseFactory.closeAll()
+			// discard the returned promise via `void instance.close()`, so any
+			// rejection here surfaces as an "Unhandled error between tests"
+			// even though every assertion already passed.
+			try {
+				this.sqliteDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+			} catch (error) {
+				console.warn(
+					"PRAGMA wal_checkpoint failed during SQLite close:",
+					error,
+				);
+			}
 			this.sqliteDb.close();
 		} else if (this.sql) {
 			await this.sql.end();

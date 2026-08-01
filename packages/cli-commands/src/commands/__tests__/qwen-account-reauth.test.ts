@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterAll,
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+} from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +18,14 @@ mock.module("../../utils/browser", () => ({
 	openBrowser: async () => true,
 }));
 
+// Capture the real @better-ccflare/providers/qwen module first so other
+// exports stay intact for downstream consumers (mock.module replaces the
+// WHOLE module globally — see packages/http-api/handlers/__tests__/oauth.test.ts
+// for the full rationale).
+const actualQwen = await import("@better-ccflare/providers/qwen");
+
 mock.module("@better-ccflare/providers/qwen", () => ({
+	...actualQwen,
 	initiateDeviceFlow: async () => ({
 		deviceCode: "device-code",
 		userCode: "USER-CODE",
@@ -26,6 +41,13 @@ mock.module("@better-ccflare/providers/qwen", () => ({
 		resource_url: null,
 	}),
 }));
+
+// Restore the real @better-ccflare/providers/qwen module once this file's
+// tests finish so later test files in the same process (mock.module has no
+// per-file isolation without --isolate) resolve the real exports again.
+afterAll(() => {
+	mock.module("@better-ccflare/providers/qwen", () => actualQwen);
+});
 
 const { reauthenticateAccount } = await import("../account");
 
