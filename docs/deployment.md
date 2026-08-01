@@ -923,6 +923,38 @@ stringData:
 - [ ] Security audit completed
 - [ ] Documentation up to date
 
+## Multi-Instance Deployment: Single-Instance-per-Database
+
+> **Operator rule (read first):** better-ccflare is **single-instance-per-database**. Run exactly one process per database. Running two or more instances against the same database is unsupported and will silently diverge.
+
+This is the most important sentence in the deployment guide. The rest of this section explains why, what diverges, and what the operator should do instead.
+
+### What this rule means
+
+A second instance sharing the same database is not a "high availability" setup — it is a hidden divergent state. The database is shared, but the seven categories of in-process coordination state below are not. They diverge silently: each instance sees consistent durable state and inconsistent transient state, so nothing errors. Routing decisions, rate-limit handling, and OAuth refreshes simply start to disagree across instances.
+
+### What diverges when two instances share a database
+
+In operator terms, the seven categories of in-process coordination state are:
+
+- **Sticky client-to-account routing.** A client talking to instance A can be routed to a different account than the same client talking to instance B. The same conversation can hop between accounts mid-flight.
+- **Account recency penalty.** Recently-used accounts are penalised to spread load. Two instances independently keep this recency map, so they can both pick the same "fresh" account, or both penalise the same account.
+- **In-memory usage cache.** Used to make rate-limit decisions. Two instances have two views of the same account's recent usage. Each instance may decide the account has headroom when the other has seen it exhausted.
+- **Keepalive body replay cache.** Cached upstream responses can be replayed by one instance and missed by another, leading to duplicate upstream requests or missed replay-style fast paths.
+- **OAuth refresh scheduler.** A second instance refreshes the same OAuth token concurrently. This is a **race against the upstream provider**, not just a duplicate request — concurrent refreshes can invalidate the token the other instance is about to use.
+- **Rate-limit recovery probe lease map.** A single-flight probe map prevents two probes from running at once on the same account. Two instances each run their own probe map, so the recovery probe can run twice in parallel.
+- **Session-volume circuit breaker.** A circuit breaker that opens on session overage fires per-instance. Sessions can be ended earlier or later than expected depending on which instance handles them.
+
+### Why it is silent
+
+There is no error. Each instance sees the same database and the same set of accounts. There is no coordination layer (no Redis, no leader election, no distributed lock) that would let an instance know the other has fresher in-process state. The divergence is a property of the design, not a bug in the steady-state.
+
+### What to do instead
+
+- **Run one instance per database.** This is the standard, supported, and only safe configuration.
+- **For zero-downtime deploys, use a blue/green pattern.** Stop instance A, then start instance B. The replacement instance starts cleanly because instance A has already exited; there is no leftover in-process state to worry about.
+- **For horizontal scaling, scale the accounts, not the instances.** Each instance owns a different account set; clients route to the instance that owns the account they need. The seven categories of divergence are bounded by the partitioning of accounts.
+
 ## Security Considerations
 
 ### Production Security Checklist
