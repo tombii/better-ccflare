@@ -18,25 +18,42 @@ export function LogsTab() {
 	const eventSourceRef = useRef<EventSource | null>(null);
 	const logsEndRef = useRef<HTMLDivElement>(null);
 	const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+	// Guards against a stale streamLogs() resolving (the token-mint request
+	// completes) after the stream was already stopped/torn down — e.g. rapid
+	// pause/resume or unmount while the mint request is in flight.
+	const streamingRef = useRef(false);
 
 	const startStreaming = useCallback(() => {
-		eventSourceRef.current = api.streamLogs((log: LogEntry) => {
-			setLogs((prev) => [...prev.slice(-999), log]); // Keep last 1000 logs
-			// Auto-scroll to bottom when new log arrives
-			if (autoScroll && logsEndRef.current) {
-				// Clear any pending scroll timeout to prevent accumulation
-				if (scrollTimeoutRef.current) {
-					clearTimeout(scrollTimeoutRef.current);
+		streamingRef.current = true;
+		api
+			.streamLogs((log: LogEntry) => {
+				setLogs((prev) => [...prev.slice(-999), log]); // Keep last 1000 logs
+				// Auto-scroll to bottom when new log arrives
+				if (autoScroll && logsEndRef.current) {
+					// Clear any pending scroll timeout to prevent accumulation
+					if (scrollTimeoutRef.current) {
+						clearTimeout(scrollTimeoutRef.current);
+					}
+					scrollTimeoutRef.current = setTimeout(() => {
+						logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+						scrollTimeoutRef.current = null;
+					}, 0);
 				}
-				scrollTimeoutRef.current = setTimeout(() => {
-					logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-					scrollTimeoutRef.current = null;
-				}, 0);
-			}
-		});
+			})
+			.then((eventSource) => {
+				if (!streamingRef.current) {
+					eventSource.close();
+					return;
+				}
+				eventSourceRef.current = eventSource;
+			})
+			.catch((error) => {
+				console.error("Failed to start log stream:", error);
+			});
 	}, [autoScroll]);
 
 	const stopStreaming = useCallback(() => {
+		streamingRef.current = false;
 		if (eventSourceRef.current) {
 			eventSourceRef.current.close();
 			eventSourceRef.current = null;

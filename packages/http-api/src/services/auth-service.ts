@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	type ApiKey,
@@ -5,6 +6,26 @@ import {
 	NodeCryptoUtils,
 } from "@better-ccflare/types";
 import { extractApiKey } from "./extract-api-key";
+
+/**
+ * Constant-time string comparison for secrets (internal-probe secret,
+ * local-control secret) that mirrors the approach NodeCryptoUtils#verifyApiKey
+ * uses for API key hashes: a plain `!==`/`===` on a secret leaks its length
+ * and per-character match progress via timing, which `crypto.timingSafeEqual`
+ * avoids. `timingSafeEqual` requires equal-length buffers, so a length
+ * mismatch is treated as not-equal directly — the secrets here are
+ * fixed-format (UUIDs / hex tokens), so length itself isn't the sensitive
+ * bit; only the character-by-character comparison over the expected format
+ * needs to be constant-time.
+ */
+function timingSafeStringEqual(a: string, b: string): boolean {
+	const bufA = Buffer.from(a, "utf8");
+	const bufB = Buffer.from(b, "utf8");
+	if (bufA.length !== bufB.length) {
+		return false;
+	}
+	return timingSafeEqual(bufA, bufB);
+}
 
 export interface AuthenticationResult {
 	isAuthenticated: boolean;
@@ -40,11 +61,27 @@ function isLocalControlNotifyPath(path: string): boolean {
 	);
 }
 
+/** How long a minted logs-stream token remains valid if never consumed. Short
+ * because the token is only ever used immediately after being minted (the
+ * dashboard fetches it and opens the EventSource in the same tick). */
+const STREAM_TOKEN_TTL_MS = 60_000;
+
+interface StreamTokenRecord {
+	expiresAt: number;
+	apiKeyId?: string;
+	role?: ApiKeyRole;
+}
+
 export class AuthService {
 	private crypto: NodeCryptoUtils;
 	private dbOps: DatabaseOperations;
 	private internalProbeSecret?: string;
 	private localControlSecret?: string;
+	/** In-memory, single-use tokens minted by mintLogsStreamToken() and
+	 * consumed by validateAndConsumeLogsStreamToken(). No DB persistence —
+	 * these are ephemeral (60s TTL) and only ever needed within the same
+	 * server process that minted them. */
+	private streamTokens = new Map<string, StreamTokenRecord>();
 
 	constructor(
 		dbOps: DatabaseOperations,
@@ -66,7 +103,8 @@ export class AuthService {
 	 */
 	private isInternalProbeRequest(headers: Headers): boolean {
 		if (!this.internalProbeSecret) return false;
-		if (headers.get(INTERNAL_PROBE_SECRET_HEADER) !== this.internalProbeSecret)
+		const provided = headers.get(INTERNAL_PROBE_SECRET_HEADER);
+		if (!provided || !timingSafeStringEqual(provided, this.internalProbeSecret))
 			return false;
 		const hasAutoRefresh =
 			headers.get("x-better-ccflare-auto-refresh") === "true";
@@ -82,7 +120,9 @@ export class AuthService {
 	private isLocalControlRequest(headers: Headers, path: string): boolean {
 		if (!this.localControlSecret) return false;
 		if (!isLocalControlNotifyPath(path)) return false;
-		return headers.get(LOCAL_CONTROL_SECRET_HEADER) === this.localControlSecret;
+		const provided = headers.get(LOCAL_CONTROL_SECRET_HEADER);
+		if (!provided) return false;
+		return timingSafeStringEqual(provided, this.localControlSecret);
 	}
 
 	/**
@@ -188,19 +228,69 @@ export class AuthService {
 	}
 
 	/**
-	 * Extract an API key from the query string, for the one endpoint where a
+	 * Mint a short-lived, single-use token for the one endpoint where a
 	 * header genuinely cannot be sent: the dashboard's live log tail uses the
 	 * browser's native EventSource, which has no header-injection API (#216).
-	 * Deliberately NOT wired into extractApiKey()/the general auth path —
-	 * every other endpoint still requires the key via header, unchanged. The
-	 * key is still validated through the normal validateApiKey() scrypt
-	 * check; this only changes *where* the key may be read from, not what
-	 * counts as valid.
+	 * Requires the caller to already be authenticated via the normal
+	 * header/Bearer path (enforced by the "/api/logs/stream/token" route
+	 * requiring auth like any other /api/* endpoint) — this method itself
+	 * does not authenticate, it just records who the token is for.
+	 *
+	 * Deliberately NOT the durable API key: putting the long-lived key in a
+	 * URL risks leaking it via browser history, Referer headers, or
+	 * reverse-proxy/access logs. The minted token is random, expires quickly,
+	 * and is consumed on first use, so even if it leaks via those channels
+	 * the exposure window and blast radius are both minimal.
 	 */
-	private extractApiKeyFromQuery(req: Request): string | null {
+	mintLogsStreamToken(apiKeyId?: string, role?: ApiKeyRole): string {
+		// Opportunistically sweep expired tokens so the map doesn't grow
+		// unbounded across a long-lived server process.
+		this.pruneExpiredStreamTokens();
+
+		const token = randomBytes(32).toString("hex");
+		this.streamTokens.set(token, {
+			expiresAt: Date.now() + STREAM_TOKEN_TTL_MS,
+			apiKeyId,
+			role,
+		});
+		return token;
+	}
+
+	/**
+	 * Validate and consume (single-use) a logs-stream token minted by
+	 * mintLogsStreamToken(). Returns the associated role/apiKeyId on success,
+	 * or null if the token is missing, unknown, expired, or already used.
+	 */
+	private validateAndConsumeLogsStreamToken(
+		token: string,
+	): StreamTokenRecord | null {
+		const record = this.streamTokens.get(token);
+		// Single-use: delete on first lookup regardless of outcome, so a
+		// leaked/replayed token can't be tried again.
+		this.streamTokens.delete(token);
+		if (!record) return null;
+		if (Date.now() > record.expiresAt) return null;
+		return record;
+	}
+
+	private pruneExpiredStreamTokens(): void {
+		const now = Date.now();
+		for (const [token, record] of this.streamTokens) {
+			if (now > record.expiresAt) {
+				this.streamTokens.delete(token);
+			}
+		}
+	}
+
+	/**
+	 * Extract a logs-stream token from the query string. Scoped the same way
+	 * the raw-api-key query fallback used to be: only consulted for
+	 * GET /api/logs/stream.
+	 */
+	private extractStreamTokenFromQuery(req: Request): string | null {
 		try {
 			const url = new URL(req.url);
-			return url.searchParams.get("api_key");
+			return url.searchParams.get("stream_token");
 		} catch {
 			return null;
 		}
@@ -319,15 +409,30 @@ export class AuthService {
 			};
 		}
 
-		// Extract API key from request. The logs SSE stream additionally
-		// accepts the key via query string (?api_key=) because the browser's
-		// native EventSource cannot set custom headers (#216) — every other
-		// endpoint still requires the header/Bearer form.
-		const apiKey =
-			this.extractApiKey(req) ||
-			(path === "/api/logs/stream" && method === "GET"
-				? this.extractApiKeyFromQuery(req)
-				: null);
+		// The logs SSE stream is special-cased: the browser's native
+		// EventSource cannot set custom headers, so instead of accepting the
+		// durable API key via query string (which risks leaking it via
+		// browser history / Referer / access logs), it accepts a short-lived,
+		// single-use token minted by a separate, normally-authenticated
+		// endpoint (POST /api/logs/stream/token). Every other endpoint still
+		// requires the key via header/Bearer form, unchanged.
+		if (path === "/api/logs/stream" && method === "GET") {
+			const token = this.extractStreamTokenFromQuery(req);
+			if (token) {
+				const record = this.validateAndConsumeLogsStreamToken(token);
+				if (record) {
+					return {
+						isAuthenticated: true,
+						apiKeyId: record.apiKeyId,
+						role: record.role,
+					};
+				}
+			}
+			// Fall through to the normal header/Bearer check below in case a
+			// client sends the real key via header instead of a token.
+		}
+
+		const apiKey = this.extractApiKey(req);
 		if (!apiKey) {
 			return {
 				isAuthenticated: false,

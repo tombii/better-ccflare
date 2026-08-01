@@ -125,7 +125,7 @@ import { createUsageHistoryHandler } from "./handlers/usage-history";
 import { createVersionCheckHandler } from "./handlers/version";
 import { AuthService } from "./services/auth-service";
 import type { APIContext } from "./types";
-import { errorResponse } from "./utils/http-error";
+import { errorResponse, jsonResponse } from "./utils/http-error";
 
 /**
  * API Router that handles all API endpoints
@@ -527,6 +527,21 @@ export class APIRouter {
 					Unauthorized(authzResult.reason || "Authorization failed"),
 				);
 			}
+		}
+
+		// Logs-stream token minting (#379): needs the authenticated caller's
+		// identity (apiKeyId/role) to bind into the minted token, which the
+		// static handlers map (keyed only by method+path) has no way to pass
+		// through — so it's handled here, after the normal auth/authz checks
+		// above already ran for this path like any other /api/* endpoint.
+		if (path === "/api/logs/stream/token" && method === "POST") {
+			return await this.wrapHandler(() => {
+				const token = this.authService.mintLogsStreamToken(
+					authResult.apiKeyId,
+					authResult.role,
+				);
+				return jsonResponse({ token });
+			})(req, url);
 		}
 
 		// Check for exact match

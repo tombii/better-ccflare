@@ -444,9 +444,48 @@ export class Config extends EventEmitter {
 		if (typeof existing === "string" && existing.length > 0) {
 			return existing;
 		}
+
+		// Re-check the on-disk file before generating a new secret: another
+		// process (e.g. a CLI invocation racing the server's first-ever boot)
+		// may have already generated and persisted one after this instance's
+		// `this.data` was loaded into memory. Adopting that value instead of
+		// overwriting it avoids the two processes permanently disagreeing on
+		// the secret for the lifetime of this server process (see comment on
+		// the local_control_secret field above).
+		const fromDisk = this.readLocalControlSecretFromDisk();
+		if (typeof fromDisk === "string" && fromDisk.length > 0) {
+			this.data.local_control_secret = fromDisk;
+			return fromDisk;
+		}
+
 		const secret = randomUUID();
 		this.set("local_control_secret", secret);
 		return secret;
+	}
+
+	/**
+	 * Best-effort fresh read of just the local_control_secret field from the
+	 * on-disk config file, bypassing the in-memory `this.data` snapshot.
+	 * Mirrors the existsSync/readFileSync/JSON.parse pattern used by
+	 * loadConfig(), but never mutates `this.data` or writes to disk itself —
+	 * callers decide what to do with the result. Returns undefined on any
+	 * read/parse failure (matching loadConfig()'s log-and-continue behavior).
+	 */
+	private readLocalControlSecretFromDisk(): string | undefined {
+		if (!existsSync(this.configPath)) {
+			return undefined;
+		}
+		try {
+			const content = readFileSync(this.configPath, "utf8");
+			const parsed = JSON.parse(content) as ConfigData;
+			const value = parsed.local_control_secret;
+			return typeof value === "string" && value.length > 0 ? value : undefined;
+		} catch (error) {
+			log.error(
+				`Failed to re-read config file for local_control_secret: ${error}`,
+			);
+			return undefined;
+		}
 	}
 
 	getSystemPromptCacheTtl1h(): boolean {
