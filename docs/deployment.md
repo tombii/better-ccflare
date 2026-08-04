@@ -952,8 +952,8 @@ There is no error. Each instance sees the same database and the same set of acco
 ### What to do instead
 
 - **Run one instance per database.** This is the standard, supported, and only safe configuration.
-- **For zero-downtime deploys, use a blue/green pattern.** Stop instance A, then start instance B. The replacement instance starts cleanly because instance A has already exited; there is no leftover in-process state to worry about.
-- **For horizontal scaling, scale the accounts, not the instances.** Each instance owns a different account set; clients route to the instance that owns the account they need. The seven categories of divergence are bounded by the partitioning of accounts.
+- **For zero-downtime deploys, use a cold handoff (rolling restart), not blue/green.** Because the rule above forbids two live instances against one database, true blue/green — run both and cut over — is not achievable here. The supported pattern is: stop instance A, wait for it to exit, then start instance B. There is a brief unavailability window while instance B starts and becomes ready (typically a few seconds for process startup). Eliminating that window entirely would require either a second database or an external coordination layer (leader election or advisory lock) — the project provides neither.
+- **For horizontal scaling, scale the accounts, not the instances — and only with one database per instance.** Each instance must own its own database holding its own disjoint account subset, and the client (or upstream load balancer) routes to the instance owning the account it needs. This partitioning is an operator-maintained convention: the product does not enforce it. If two instances share one database, every instance loads the full account set and selects server-side, so the partition is imaginary and all seven divergence categories above remain reachable.
 
 ## Security Considerations
 
