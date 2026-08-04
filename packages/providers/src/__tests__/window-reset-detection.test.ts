@@ -204,4 +204,137 @@ describe("usageCache window-reset callback", () => {
 
 		expect(callback).not.toHaveBeenCalled();
 	});
+
+	// The upstream reset timestamp jitters by fractions of a second around the
+	// same wall-clock instant, so a bare `newResetAt > prevResetAt` misreads that
+	// jitter as a window rollover. Measured over 48h of production logs: 1554 of
+	// 1564 detections were jitter (largest 1.879s), the 10 genuine rollovers all
+	// advanced by exactly 5.00h — an empty gap of 1.9s…17999s between the classes.
+	// The literals below pin that measurement, deliberately not derived from the
+	// threshold constant so a wrong constant still fails these tests.
+
+	it("does not fire onWindowReset on sub-second jitter (332ms, as observed)", () => {
+		const accountId = "zai-jitter-test";
+		const callback = mock(() => {});
+
+		const base = 1_700_000_000_000;
+		const oldData: ZaiUsageData = {
+			time_limit: null,
+			tokens_limit: {
+				used: 60,
+				remaining: 40,
+				percentage: 60,
+				resetAt: base,
+				type: "tokens_limit",
+			},
+		};
+		const newData: ZaiUsageData = {
+			time_limit: null,
+			tokens_limit: {
+				used: 61,
+				remaining: 39,
+				percentage: 61,
+				resetAt: base + 332,
+				type: "tokens_limit",
+			},
+		};
+
+		usageCache.set(accountId, oldData);
+		usageCache.notifyWindowReset(accountId, newData, "zai", callback);
+
+		expect(callback).not.toHaveBeenCalled();
+
+		usageCache.delete(accountId);
+	});
+
+	it("does not fire onWindowReset when the advance stays below the threshold (59s)", () => {
+		const accountId = "zai-below-threshold-test";
+		const callback = mock(() => {});
+
+		const base = 1_700_000_000_000;
+		const oldData: ZaiUsageData = {
+			time_limit: null,
+			tokens_limit: {
+				used: 60,
+				remaining: 40,
+				percentage: 60,
+				resetAt: base,
+				type: "tokens_limit",
+			},
+		};
+		const newData: ZaiUsageData = {
+			time_limit: null,
+			tokens_limit: {
+				used: 62,
+				remaining: 38,
+				percentage: 62,
+				resetAt: base + 59_000,
+				type: "tokens_limit",
+			},
+		};
+
+		usageCache.set(accountId, oldData);
+		usageCache.notifyWindowReset(accountId, newData, "zai", callback);
+
+		expect(callback).not.toHaveBeenCalled();
+
+		usageCache.delete(accountId);
+	});
+
+	it("fires onWindowReset on a genuine 5h window rollover", () => {
+		const accountId = "zai-real-rollover-test";
+		const callback = mock(() => {});
+
+		const base = 1_700_000_000_000;
+		const oldData: ZaiUsageData = {
+			time_limit: null,
+			tokens_limit: {
+				used: 95,
+				remaining: 5,
+				percentage: 95,
+				resetAt: base,
+				type: "tokens_limit",
+			},
+		};
+		const newData: ZaiUsageData = {
+			time_limit: null,
+			tokens_limit: {
+				used: 1,
+				remaining: 99,
+				percentage: 1,
+				resetAt: base + 5 * 60 * 60 * 1000,
+				type: "tokens_limit",
+			},
+		};
+
+		usageCache.set(accountId, oldData);
+		usageCache.notifyWindowReset(accountId, newData, "zai", callback);
+
+		expect(callback).toHaveBeenCalledTimes(1);
+		expect(callback).toHaveBeenCalledWith(accountId);
+
+		usageCache.delete(accountId);
+	});
+
+	it("does not fire onWindowReset on anthropic five_hour jitter (real payload)", () => {
+		const accountId = "anthropic-jitter-test";
+		const callback = mock(() => {});
+
+		// Verbatim from the production log that surfaced this bug.
+		const oldData: UsageData = {
+			five_hour: { utilization: 74, resets_at: "2026-08-04T07:19:59.388Z" },
+			seven_day: { utilization: 31, resets_at: null },
+		};
+		const newData: UsageData = {
+			five_hour: { utilization: 75, resets_at: "2026-08-04T07:19:59.720Z" },
+			seven_day: { utilization: 31, resets_at: null },
+		};
+
+		usageCache.set(accountId, oldData);
+		usageCache.notifyWindowReset(accountId, newData, "anthropic", callback);
+
+		expect(callback).not.toHaveBeenCalled();
+
+		usageCache.delete(accountId);
+	});
 });
