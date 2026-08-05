@@ -800,7 +800,7 @@ graph TB
 
 ### Database Considerations
 
-better-ccflare uses SQLite by default, which is suitable for single-instance deployments. For Kubernetes multi-pod deployments, set `DATABASE_URL` to use PostgreSQL (see [PostgreSQL Support for Multi-Pod Deployments](#postgresql-support-for-multi-pod-deployments) above).
+better-ccflare uses SQLite by default, which is suitable for single-instance deployments. For Kubernetes deployments where the pod's local disk isn't durable across restarts, set `DATABASE_URL` to use PostgreSQL instead (see [PostgreSQL Support for Kubernetes Deployments](#postgresql-support-for-kubernetes-deployments) above). This does not permit running multiple replicas — see [Multi-Instance Deployment](#multi-instance-deployment-single-instance-per-database) below.
 
 #### SQLite Optimization (Default)
 
@@ -813,9 +813,9 @@ PRAGMA temp_store = MEMORY;
 PRAGMA mmap_size = 268435456;
 ```
 
-### PostgreSQL Support for Multi-Pod Deployments
+### PostgreSQL Support for Kubernetes Deployments
 
-SQLite is unsuitable for Kubernetes deployments with multiple replicas because pods cannot safely share a single file. better-ccflare has first-class PostgreSQL support via `Bun.SQL` — set the `DATABASE_URL` environment variable and the schema is created automatically on startup.
+SQLite is unsuitable for Kubernetes deployments because a pod's local disk is not guaranteed to survive a restart or reschedule. better-ccflare has first-class PostgreSQL support via `Bun.SQL` — set the `DATABASE_URL` environment variable and the schema is created automatically on startup. Note this solves *durability*, not *concurrency*: better-ccflare is still [single-instance-per-database](#multi-instance-deployment-single-instance-per-database), so this is for a single pod (`replicas: 1`), not a multi-pod fleet sharing one database.
 
 ```bash
 # Create a PostgreSQL database
@@ -831,7 +831,7 @@ The full schema (`accounts`, `requests`, `request_payloads`, `oauth_sessions`, `
 
 ### Kubernetes Deployment
 
-> **Important**: For multi-pod Kubernetes deployments, you **must** use PostgreSQL. Set `DATABASE_URL` to share a single database across all replicas. SQLite cannot be safely shared across pods.
+> **Important**: better-ccflare is [single-instance-per-database](#multi-instance-deployment-single-instance-per-database) — run exactly **one** replica per `DATABASE_URL`. Use PostgreSQL (not SQLite) so the pod's state survives a restart or reschedule, but do not scale this deployment horizontally; two pods sharing one database will silently diverge (as of [PR #376](https://github.com/tombii/better-ccflare/pull/376), the startup guard will warn — but not refuse by default — when this happens). To scale, run separate `DATABASE_URL`-per-deployment stacks with disjoint account sets (see [Multi-Instance Deployment](#multi-instance-deployment-single-instance-per-database)).
 
 ```yaml
 # better-ccflare-deployment.yaml
@@ -842,7 +842,7 @@ metadata:
   labels:
     app: better-ccflare
 spec:
-  replicas: 3
+  replicas: 1 # single-instance-per-database — do not scale this without a separate DATABASE_URL
   selector:
     matchLabels:
       app: better-ccflare
@@ -1197,7 +1197,7 @@ find /backup/better-ccflare -name "*.tar.gz" -mtime +30 -delete
 | `RETRY_BACKOFF` | 2 | Backoff multiplier for exponential retry delays |
 | `better-ccflare_CONFIG_PATH` | Platform-specific | Path to configuration file |
 | `better-ccflare_DB_PATH` | Platform-specific | Path to SQLite database file (ignored when `DATABASE_URL` is set) |
-| `DATABASE_URL` | - | PostgreSQL connection string. When set, PostgreSQL is used instead of SQLite. Required for multi-pod Kubernetes deployments. Example: `postgresql://user:pass@host:5432/db` |
+| `DATABASE_URL` | - | PostgreSQL connection string. When set, PostgreSQL is used instead of SQLite. Recommended for single-pod Kubernetes deployments (durable state across restarts). Each better-ccflare instance requires its own database — see [Multi-Instance Deployment](#multi-instance-deployment-single-instance-per-database). Example: `postgresql://user:pass@host:5432/db` |
 
 ### Configuration File
 
