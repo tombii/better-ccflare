@@ -26,6 +26,11 @@ import { EMBEDDED_INCREMENTAL_VACUUM_WORKER_CODE } from "./inline-incremental-va
 import { EMBEDDED_VACUUM_WORKER_CODE } from "./inline-vacuum-worker";
 import { ensureSchema, runMigrations } from "./migrations";
 import { ensureSchemaPg, runMigrationsPg } from "./migrations-pg";
+import {
+	readMultiInstanceMode,
+	runStartupGuard,
+	startHeartbeatLoop,
+} from "./multi-instance-guard";
 import { resolveDbPath } from "./paths";
 import {
 	AccountRepository,
@@ -213,6 +218,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private originalAutoVacuumMode?: number;
 	/** Prevents concurrent compact() calls from spawning multiple vacuum workers */
 	private compacting = false;
+	/** Stop function returned by the multi-instance guard's heartbeat loop. */
+	private heartbeatStop: (() => Promise<void>) | null = null;
 	/**
 	 * Hourly `incrementalVacuum()` ticks that bailed because the worker
 	 * couldn't claim the writer slot (SQLITE_BUSY). Bumped on every failure,
@@ -386,6 +393,15 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			await ensureSchemaPg(this.adapter);
 			await runMigrationsPg(this.adapter);
 		}
+		// Run the multi-instance guard after migrations so the heartbeat table
+		// exists before we probe it. SQLite migrations are synchronous so they
+		// were applied inside the constructor; for PG we just ran them above.
+		// Default mode is "warn" — see #351.
+		const mode = readMultiInstanceMode();
+		await runStartupGuard(this.adapter, { mode });
+		// Start the heartbeat loop so this instance's row is refreshed
+		// while it lives. The stopper is invoked from close().
+		this.heartbeatStop = startHeartbeatLoop(this.adapter);
 	}
 
 	setRuntimeConfig(runtime: RuntimeConfig): void {
@@ -1294,6 +1310,16 @@ OAuth tokens will need to be re-authenticated.
 	}
 
 	async close(): Promise<void> {
+		// Stop the multi-instance heartbeat loop and remove this instance's
+		// row before closing the adapter. Best-effort — errors here are
+		// logged inside the stopper, not rethrown.
+		if (this.heartbeatStop) {
+			try {
+				await this.heartbeatStop();
+			} finally {
+				this.heartbeatStop = null;
+			}
+		}
 		await this.adapter.close();
 	}
 
