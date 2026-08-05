@@ -22,9 +22,22 @@ export function LogsTab() {
 	// completes) after the stream was already stopped/torn down — e.g. rapid
 	// pause/resume or unmount while the mint request is in flight.
 	const streamingRef = useRef(false);
+	const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+	// The stream-token path (#379) is single-use: once EventSource connects,
+	// the token is consumed server-side. If the connection drops, the
+	// browser's native reconnect would replay the same (now-dead) token and
+	// get stuck 401'ing forever. So on error we close the source ourselves
+	// and re-run startStreaming(), which mints a fresh token, instead of
+	// letting EventSource retry on its own.
+	const startStreamingRef = useRef<() => void>(() => {});
 
 	const startStreaming = useCallback(() => {
 		streamingRef.current = true;
+		if (reconnectTimeoutRef.current) {
+			clearTimeout(reconnectTimeoutRef.current);
+			reconnectTimeoutRef.current = null;
+		}
 		api
 			.streamLogs((log: LogEntry) => {
 				setLogs((prev) => [...prev.slice(-999), log]); // Keep last 1000 logs
@@ -46,15 +59,40 @@ export function LogsTab() {
 					return;
 				}
 				eventSourceRef.current = eventSource;
+				eventSource.onerror = () => {
+					eventSource.close();
+					if (eventSourceRef.current === eventSource) {
+						eventSourceRef.current = null;
+					}
+					if (!streamingRef.current) return;
+					// Debounce so a persistently-down server doesn't spin us
+					// into a tight mint-connect-fail loop.
+					reconnectTimeoutRef.current = setTimeout(() => {
+						reconnectTimeoutRef.current = null;
+						if (streamingRef.current) startStreamingRef.current();
+					}, 2000);
+				};
 			})
 			.catch((error) => {
 				console.error("Failed to start log stream:", error);
+				if (!streamingRef.current) return;
+				reconnectTimeoutRef.current = setTimeout(() => {
+					reconnectTimeoutRef.current = null;
+					if (streamingRef.current) startStreamingRef.current();
+				}, 2000);
 			});
 	}, [autoScroll]);
 
+	startStreamingRef.current = startStreaming;
+
 	const stopStreaming = useCallback(() => {
 		streamingRef.current = false;
+		if (reconnectTimeoutRef.current) {
+			clearTimeout(reconnectTimeoutRef.current);
+			reconnectTimeoutRef.current = null;
+		}
 		if (eventSourceRef.current) {
+			eventSourceRef.current.onerror = null;
 			eventSourceRef.current.close();
 			eventSourceRef.current = null;
 		}
