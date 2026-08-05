@@ -22,8 +22,11 @@ describe("RateLimitProgress", () => {
 				usageWindow="tokens_limit"
 				usageData={{
 					tokens_limit: {
+						used: 92,
+						remaining: 8,
 						percentage: 92,
 						resetAt: Date.now() + 60 * 60 * 1000,
+						type: "tokens_limit",
 					},
 					time_limit: null,
 				}}
