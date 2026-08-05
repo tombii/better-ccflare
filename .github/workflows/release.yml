@@ -11,6 +11,7 @@ jobs:
     name: Build Multi-Architecture Binaries
     permissions:
       contents: write
+      pull-requests: read # gh pr view lookups for contributor credit in changelog
     runs-on: ubuntu-latest
 
     steps:
