@@ -94,6 +94,21 @@ jobs:
           # Tags: Full version (3.1.0-beta.3), major.minor (3.1 - stable only), major (3 - stable only)
           # Only add latest/main and major version tags for stable releases (not pre-releases)
 
+      - name: Set build provenance
+        id: provenance
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "git_sha=${HEAD_SHA}" >> $GITHUB_OUTPUT
+            echo "git_ref=${HEAD_BRANCH}" >> $GITHUB_OUTPUT
+          else
+            echo "git_sha=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+            echo "git_ref=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          fi
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker images
         id: build
         uses: docker/build-push-action@v5
@@ -107,6 +122,9 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
+            GIT_SHA=${{ steps.provenance.outputs.git_sha }}
+            GIT_REF=${{ steps.provenance.outputs.git_ref }}
+            BUILD_DATE=${{ steps.provenance.outputs.build_date }}
 
       - name: Generate artifact attestation
         if: github.event_name != 'pull_request'

@@ -56,11 +56,20 @@ RUN useradd -r -u 1000 -m -s /bin/bash ccflare && \
     mkdir -p /data && \
     chown -R ccflare:ccflare /data /app
 
+# Build provenance for the /health endpoint (packages/http-api/src/handlers/health.ts)
+ARG GIT_SHA=unknown
+ARG GIT_REF=unknown
+ARG BUILD_DATE=unknown
+
 # Set environment variables
 ENV NODE_ENV=production
 ENV BETTER_CCFLARE_DB_PATH=/data/better-ccflare.db
 ENV XDG_CONFIG_HOME=/data
 ENV BETTER_CCFLARE_LOG_DIR=/app/logs
+ENV CCFLARE_VERSION=${VERSION}
+ENV CCFLARE_GIT_SHA=${GIT_SHA}
+ENV CCFLARE_GIT_REF=${GIT_REF}
+ENV CCFLARE_BUILD_DATE=${BUILD_DATE}
 
 # Create logs directory with proper permissions
 RUN mkdir -p /app/logs /data && chown -R ccflare:ccflare /app/logs /data
