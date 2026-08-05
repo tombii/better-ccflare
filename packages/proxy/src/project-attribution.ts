@@ -228,6 +228,84 @@ export function isLowRiskProjectSlug(value: string): boolean {
 	return SLUG_SHAPE_RE.test(cleaned);
 }
 
+/**
+ * Validator for the captured segment of `WORKSPACE_PATH_RE` (#373 follow-up).
+ *
+ * The capture is structurally a single path segment (`[^/]+`), not
+ * free-form attacker text, so `isLowRiskProjectSlug`'s label-based
+ * heuristics (CREDENTIAL_LABEL_RE, INCIDENT_LABEL_RE, JIRA_TICKET_RE,
+ * DOTTED_HOSTNAME_LABEL_RE) are miscalibrated here: they exist to catch
+ * free-text sentences and hostnames, and false-positive on completely
+ * ordinary directory names like "password-manager", "customer-portal",
+ * "auth-token-service", or "ui.v2".
+ *
+ * What's actually dangerous in this branch is the capture running on past
+ * the real directory boundary when the system prompt's newlines have been
+ * collapsed, pulling in following prompt text — so this keeps the
+ * shape/length/opaque-token checks (which catch that runaway text) and
+ * drops the label-matching ones. Whitespace is rejected outright (rather
+ * than just capped at 6 words like isLowRiskProjectSlug) because a real
+ * directory name is never space-separated — even a short run-on like
+ * "repo short words" is unambiguously leaked prompt text riding along with
+ * the real directory name, not a directory name itself (round-2 Greptile
+ * review on #378).
+ */
+export function isLowRiskPathSegment(value: string): boolean {
+	// Check for control chars BEFORE stripping them — sanitizeProjectName's
+	// strip-then-keep behavior would otherwise silently fuse a control-char
+	// boundary (e.g. "repo\nleaked-fragment" -> "repoleaked-fragment"),
+	// deleting the very separator that would have made the leaked half read
+	// as a second word and get caught by whitespace/word-count checks
+	// (round-3 Greptile review on #378).
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: detecting them is the point
+	if (/[\x00-\x1F\x7F]/.test(value)) return false;
+	const cleaned = value.trim();
+	if (!cleaned) return false;
+	const lower = cleaned.toLowerCase();
+
+	if (
+		lower.includes("://") ||
+		lower.includes("www.") ||
+		URI_SCHEME_RE.test(cleaned)
+	) {
+		return false;
+	}
+
+	if (
+		cleaned.startsWith("/") ||
+		cleaned.startsWith("\\") ||
+		cleaned.includes("..")
+	) {
+		return false;
+	}
+
+	const atIndex = cleaned.indexOf("@");
+	if (atIndex !== -1 && cleaned.indexOf(".", atIndex) !== -1) return false;
+
+	if (UUID_RE.test(cleaned)) return false;
+
+	if (
+		SECRET_TOKEN_RE.test(cleaned) ||
+		KNOWN_SECRET_PREFIX_RE.test(cleaned) ||
+		MULTI_SEGMENT_TOKEN_RE.test(cleaned) ||
+		lower.includes("bearer ") ||
+		AWS_KEY_RE.test(cleaned) ||
+		IPV4_RE.test(cleaned) ||
+		LONG_TOKEN_RE.test(cleaned) ||
+		HEX_OPAQUE_TOKEN_RE.test(cleaned) ||
+		OPAQUE_MIXED_TOKEN_RE.test(cleaned)
+	) {
+		return false;
+	}
+
+	// Any whitespace at all means this isn't a directory name — real path
+	// segments don't contain spaces, so even a short space-separated run is
+	// leaked text riding along with the real directory name.
+	if (/\s/.test(cleaned)) return false;
+
+	return SLUG_SHAPE_RE.test(cleaned);
+}
+
 const WORKSPACE_PATH_RE =
 	/\/(?:Users|home)\/[^/]+\/(?:Desktop|projects|repos|src)\/([^/]+)\//;
 // Global so extractProjectAttribution can walk every H1 heading in the system
@@ -277,13 +355,24 @@ export function extractProjectAttribution(
 	}
 
 	if (systemPrompt) {
+		// Validate the FULL captured path segment, then length-cap only after it
+		// passes — same reject-wholesale-before-truncating rule as the header and
+		// H1 heading paths. A collapsed-newline system prompt can make `[^/]+` run
+		// on past the directory name into following prompt text, so this needs
+		// shape/length/word-count validation against that (#373). Uses
+		// isLowRiskPathSegment rather than isLowRiskProjectSlug because the
+		// latter's label-based heuristics false-positive on ordinary directory
+		// names (see isLowRiskPathSegment's doc comment).
 		const pathMatch = systemPrompt.match(WORKSPACE_PATH_RE);
-		const sanitizedPath = sanitizeProjectName(pathMatch?.[1]);
-		if (sanitizedPath) {
-			return {
-				project: sanitizedPath,
-				projectAttributionSource: "path_project",
-			};
+		const rawPath = pathMatch?.[1];
+		if (rawPath && isLowRiskPathSegment(rawPath)) {
+			const sanitizedPath = sanitizeProjectName(rawPath);
+			if (sanitizedPath) {
+				return {
+					project: sanitizedPath,
+					projectAttributionSource: "path_project",
+				};
+			}
 		}
 
 		// Walk EVERY H1 heading (not just the first) and use the first one that

@@ -24,6 +24,7 @@ import {
 	extractProjectAttributionFromParts,
 	extractProjectAttributionFromRequest,
 	extractSystemPromptFromBase64,
+	isLowRiskPathSegment,
 	isLowRiskProjectSlug,
 } from "../project-attribution";
 
@@ -137,6 +138,99 @@ describe("extractProjectAttributionFromRequest", () => {
 		const result = extractProjectAttributionFromRequest(headers, body);
 		expect(result.project).toBe("MyProj");
 		expect(result.projectAttributionSource).toBe("path_project");
+	});
+
+	describe("workspace-path segments are validated like header/heading values (#373)", () => {
+		it("rejects a path segment that runs on past the directory name into leaked prompt text", () => {
+			// Same signature as the original report: a collapsed-newline system
+			// prompt makes WORKSPACE_PATH_RE's [^/]+ capture group run on past the
+			// real directory name into following prompt text, producing a
+			// multi-word, `#`-containing value that must be rejected wholesale
+			// rather than truncated to 64 chars and kept.
+			const headers = new Headers();
+			const body = {
+				system:
+					"/home/will/projects/better-ccflare # Some Leaked System Prompt Heading Text/more",
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+
+		it("falls through to an eligible H1 heading when the workspace path segment is rejected", () => {
+			const headers = new Headers();
+			const body = {
+				system:
+					"/home/will/projects/leaked system prompt fragment with many words/more\n# Harness\nWelcome.",
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBe("Harness");
+			expect(result.projectAttributionSource).toBe("heading_project");
+		});
+
+		it("rejects a path segment carrying a secret past the 64-char truncation boundary", () => {
+			const cleanPrefix = `${"x".repeat(15)}-`.repeat(4);
+			const headers = new Headers();
+			const body = {
+				system: `/home/will/projects/${cleanPrefix}${"Z".repeat(25)}/file.ts`,
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+
+		it("rejects a short space-separated run-on rather than persisting it as the project (round-2 Greptile review on #378)", () => {
+			// "repo short words" is short enough to dodge the six-word sentence
+			// cap and slug-shaped enough to pass SLUG_SHAPE_RE, but a real
+			// directory name never contains a literal space — this is leaked
+			// prompt text riding along with the real "repo" directory, not a
+			// directory name itself.
+			const headers = new Headers();
+			const body = {
+				system: "/home/u/projects/repo short words/more",
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+
+		it("rejects a path segment where a control char fuses the real directory with leaked text (round-3 Greptile review on #378)", () => {
+			// A naive strip-then-check validator deletes \n/\t before checking for
+			// whitespace, silently fusing "repo" + "leaked-fragment" into the
+			// clean-looking slug "repoleaked-fragment". The control char must be
+			// detected in the RAW captured value before any stripping happens.
+			const headers = new Headers();
+			const body = {
+				system: "/home/u/projects/repo\nleaked-fragment/more",
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+
+		// Regression (Greptile review on #378): isLowRiskProjectSlug's label-based
+		// heuristics (credential/incident/hostname labels) are tuned for free-text
+		// headings and headers, and false-positive on ordinary directory names.
+		// The path-segment capture is structurally a single path component, so it
+		// must use the narrower isLowRiskPathSegment validator instead.
+		const legitDirNames: Array<[string, string]> = [
+			["password-manager", "password-manager"],
+			["customer-portal", "customer-portal"],
+			["auth-token-service", "auth-token-service"],
+			["account-billing", "account-billing"],
+			["ui.v2", "ui.v2"],
+		];
+		for (const [label, dirName] of legitDirNames) {
+			it(`still extracts legit workspace directory name: ${label}`, () => {
+				const headers = new Headers();
+				const body = {
+					system: `/home/will/projects/${dirName}/file.ts`,
+				};
+				const result = extractProjectAttributionFromRequest(headers, body);
+				expect(result.project).toBe(dirName);
+				expect(result.projectAttributionSource).toBe("path_project");
+			});
+		}
 	});
 
 	it("uses the first eligible non-Claude H1 heading as the project when no header/path match", () => {
@@ -441,6 +535,70 @@ describe("isLowRiskProjectSlug", () => {
 			const boundaryStraddlingSecret = `${CLEAN_64_PREFIX}${"Z".repeat(25)}`;
 			expect(isLowRiskProjectSlug(boundaryStraddlingSecret)).toBe(false);
 		});
+	});
+});
+
+describe("isLowRiskPathSegment", () => {
+	it("accepts ordinary directory names that isLowRiskProjectSlug's label heuristics would reject", () => {
+		// These are all real, unremarkable workspace directory names that
+		// CREDENTIAL_LABEL_RE / INCIDENT_LABEL_RE / DOTTED_HOSTNAME_LABEL_RE
+		// false-positive on when applied to free text (Greptile review on #378).
+		expect(isLowRiskPathSegment("password-manager")).toBe(true);
+		expect(isLowRiskPathSegment("customer-portal")).toBe(true);
+		expect(isLowRiskPathSegment("auth-token-service")).toBe(true);
+		expect(isLowRiskPathSegment("account-billing")).toBe(true);
+		expect(isLowRiskPathSegment("ui.v2")).toBe(true);
+		expect(isLowRiskPathSegment("better-ccflare")).toBe(true);
+		expect(isLowRiskPathSegment("MyProj")).toBe(true);
+	});
+
+	it("still rejects a runaway sentence-shaped capture (the #373 leak signature)", () => {
+		expect(
+			isLowRiskPathSegment(
+				"better-ccflare # Some Leaked System Prompt Heading Text",
+			),
+		).toBe(false);
+		expect(
+			isLowRiskPathSegment("leaked system prompt fragment with many words"),
+		).toBe(false);
+	});
+
+	it("rejects any whitespace, even a short run-on that dodges the sentence heuristic (round-2 Greptile review on #378)", () => {
+		// A real directory name is never space-separated, so a short capture
+		// like "repo short words" must be rejected outright rather than only
+		// once it crosses a word-count threshold.
+		expect(isLowRiskPathSegment("repo short words")).toBe(false);
+		expect(isLowRiskPathSegment("two words")).toBe(false);
+		expect(isLowRiskPathSegment("a b")).toBe(false);
+	});
+
+	it("rejects a control-char-fused value rather than silently deleting the separator (round-3 Greptile review on #378)", () => {
+		// The raw value must be checked for control chars BEFORE they're
+		// stripped, or "repo\nleaked" silently fuses into "repoleaked" and
+		// passes the whitespace/shape checks.
+		expect(isLowRiskPathSegment("repo\nleaked-fragment")).toBe(false);
+		expect(isLowRiskPathSegment("repo\tleaked-fragment")).toBe(false);
+		expect(isLowRiskPathSegment("repo\rleaked-fragment")).toBe(false);
+	});
+
+	it("still rejects secrets, keys, IPs, and opaque high-entropy tokens", () => {
+		expect(isLowRiskPathSegment("Bearer sk_live_abc123456789")).toBe(false);
+		expect(isLowRiskPathSegment("AKIAIOSFODNN7EXAMPLE")).toBe(false);
+		expect(isLowRiskPathSegment("10.0.0.5")).toBe(false);
+		expect(isLowRiskPathSegment("sess1234567890qwerty")).toBe(false);
+		expect(isLowRiskPathSegment("deadbeefcafebabe")).toBe(false);
+	});
+
+	it("still rejects URL/URI-scheme and traversal shapes", () => {
+		expect(isLowRiskPathSegment("https://example.com")).toBe(false);
+		expect(isLowRiskPathSegment("www.example.com")).toBe(false);
+		expect(isLowRiskPathSegment("..")).toBe(false);
+	});
+
+	it("rejects the FULL value rather than a 64-char-truncated prefix", () => {
+		const cleanPrefix = `${"x".repeat(15)}-`.repeat(4);
+		const boundaryStraddlingSecret = `${cleanPrefix}${"Z".repeat(25)}`;
+		expect(isLowRiskPathSegment(boundaryStraddlingSecret)).toBe(false);
 	});
 });
 
