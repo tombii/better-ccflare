@@ -19,9 +19,14 @@ export function LogsTab() {
 	const logsEndRef = useRef<HTMLDivElement>(null);
 	const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 	// Guards against a stale streamLogs() resolving (the token-mint request
-	// completes) after the stream was already stopped/torn down — e.g. rapid
-	// pause/resume or unmount while the mint request is in flight.
+	// completes) after the stream was already stopped/torn down, or after a
+	// newer startStreaming() call has superseded it — e.g. rapid
+	// pause/resume, unmount while the mint request is in flight, or an
+	// error-triggered reconnect racing a manual restart. Each startStreaming()
+	// call captures the current generation; only the call whose generation is
+	// still current when its promise resolves is allowed to touch the refs.
 	const streamingRef = useRef(false);
+	const generationRef = useRef(0);
 	const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 	// The stream-token path (#379) is single-use: once EventSource connects,
@@ -34,10 +39,13 @@ export function LogsTab() {
 
 	const startStreaming = useCallback(() => {
 		streamingRef.current = true;
+		const generation = ++generationRef.current;
 		if (reconnectTimeoutRef.current) {
 			clearTimeout(reconnectTimeoutRef.current);
 			reconnectTimeoutRef.current = null;
 		}
+		const isCurrent = () =>
+			streamingRef.current && generationRef.current === generation;
 		api
 			.streamLogs((log: LogEntry) => {
 				setLogs((prev) => [...prev.slice(-999), log]); // Keep last 1000 logs
@@ -54,7 +62,7 @@ export function LogsTab() {
 				}
 			})
 			.then((eventSource) => {
-				if (!streamingRef.current) {
+				if (!isCurrent()) {
 					eventSource.close();
 					return;
 				}
@@ -64,21 +72,21 @@ export function LogsTab() {
 					if (eventSourceRef.current === eventSource) {
 						eventSourceRef.current = null;
 					}
-					if (!streamingRef.current) return;
+					if (!isCurrent()) return;
 					// Debounce so a persistently-down server doesn't spin us
 					// into a tight mint-connect-fail loop.
 					reconnectTimeoutRef.current = setTimeout(() => {
 						reconnectTimeoutRef.current = null;
-						if (streamingRef.current) startStreamingRef.current();
+						if (isCurrent()) startStreamingRef.current();
 					}, 2000);
 				};
 			})
 			.catch((error) => {
 				console.error("Failed to start log stream:", error);
-				if (!streamingRef.current) return;
+				if (!isCurrent()) return;
 				reconnectTimeoutRef.current = setTimeout(() => {
 					reconnectTimeoutRef.current = null;
-					if (streamingRef.current) startStreamingRef.current();
+					if (isCurrent()) startStreamingRef.current();
 				}, 2000);
 			});
 	}, [autoScroll]);
@@ -87,6 +95,7 @@ export function LogsTab() {
 
 	const stopStreaming = useCallback(() => {
 		streamingRef.current = false;
+		generationRef.current++;
 		if (reconnectTimeoutRef.current) {
 			clearTimeout(reconnectTimeoutRef.current);
 			reconnectTimeoutRef.current = null;
