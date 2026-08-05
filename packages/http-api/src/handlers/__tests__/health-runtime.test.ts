@@ -611,3 +611,94 @@ describe("cache isolation between detail and non-detail", () => {
 		expect(callCount).toBe(1); // no extra DB call
 	});
 });
+
+describe("health build-time provenance", () => {
+	const ENV_KEYS = [
+		"CCFLARE_GIT_SHA",
+		"CCFLARE_GIT_REF",
+		"CCFLARE_BUILD_DATE",
+		"CCFLARE_VERSION",
+		"BETTER_CCFLARE_VERSION",
+		"npm_package_version",
+	] as const;
+
+	function snapshotEnv() {
+		const saved: Record<string, string | undefined> = {};
+		for (const k of ENV_KEYS) saved[k] = process.env[k];
+		return saved;
+	}
+
+	function restoreEnv(saved: Record<string, string | undefined>) {
+		for (const k of ENV_KEYS) {
+			const v = saved[k];
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
+	}
+
+	function makeConfig() {
+		return {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+	}
+
+	function makeDb() {
+		return {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+	}
+
+	it("reports build-time provenance when env vars are set", async () => {
+		const saved = snapshotEnv();
+		process.env.CCFLARE_GIT_SHA =
+			"abcdef1234567890abcdef1234567890abcdef12";
+		process.env.CCFLARE_GIT_REF = "deploy/test";
+		process.env.CCFLARE_BUILD_DATE = "2026-08-01T00:00:00Z";
+		process.env.CCFLARE_VERSION = "9.9.9-test";
+		delete process.env.BETTER_CCFLARE_VERSION;
+		delete process.env.npm_package_version;
+		try {
+			const handler = createHealthHandler(makeDb(), makeConfig());
+			const response = await handler(new URL("http://localhost/health"));
+			const body = (await response.json()) as {
+				version?: string;
+				git_sha?: string;
+				git_ref?: string;
+				build_date?: string;
+			};
+			expect(response.status).toBe(200);
+			expect(body.version).toBe("9.9.9-test");
+			expect(body.git_sha).toBe(
+				"abcdef1234567890abcdef1234567890abcdef12",
+			);
+			expect(body.git_ref).toBe("deploy/test");
+			expect(body.build_date).toBe("2026-08-01T00:00:00Z");
+		} finally {
+			restoreEnv(saved);
+		}
+	});
+
+	it("reports 'unknown' for provenance fields when env vars are unset", async () => {
+		const saved = snapshotEnv();
+		for (const k of ENV_KEYS) delete process.env[k];
+		try {
+			const handler = createHealthHandler(makeDb(), makeConfig());
+			const response = await handler(new URL("http://localhost/health"));
+			const body = (await response.json()) as {
+				version?: string;
+				git_sha?: string;
+				git_ref?: string;
+				build_date?: string;
+			};
+			expect(response.status).toBe(200);
+			expect(body.git_sha).toBe("unknown");
+			expect(body.git_ref).toBe("unknown");
+			expect(body.build_date).toBe("unknown");
+			expect(body.version).toBe("unknown");
+		} finally {
+			restoreEnv(saved);
+		}
+	});
+});

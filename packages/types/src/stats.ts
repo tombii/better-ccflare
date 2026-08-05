@@ -212,6 +212,21 @@ export interface HealthResponse {
 	accounts: number;
 	timestamp: string;
 	strategy: string;
+	/**
+	 * Build-time provenance. Populated from env vars injected by the
+	 * Dockerfile at build time:
+	 *   - version: `npm_package_version` (set by `bun run`/npm), or
+	 *     BETTER_CCFLARE_VERSION at build time. Falls back to the literal
+	 *     "unknown" if neither is set (dev runs without a build).
+	 *   - git_sha: full 40-char commit SHA, or "unknown" if not set.
+	 *   - git_ref: branch / tag name (e.g. "main", "deploy/2026-07-30"),
+	 *     or "unknown" if not set.
+	 *   - build_date: RFC 3339 timestamp the image was built, or "unknown".
+	 */
+	version?: string;
+	git_sha?: string;
+	git_ref?: string;
+	build_date?: string;
 	pool?: PoolStatus;
 	accounts_detail?: Array<AccountDetail>;
 	runtime?: {
