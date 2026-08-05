@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -91,6 +92,13 @@ export interface ConfigData {
 	alert_cooldown_minutes?: number;
 	alert_webhook_url?: string;
 	outbound_proxy?: string;
+	// Local-control secret: shared between the CLI and the server process it
+	// controls, used to authorize a small set of idempotent CLI->server
+	// notify calls (token reload, force-reset-rate-limit) when API-key auth
+	// is enabled. See AuthService#isLocalControlRequest. Generated once on
+	// first access and persisted — unlike ProxyContext.internalProbeSecret,
+	// which is intentionally re-minted every server process start.
+	local_control_secret?: string;
 	// Database configuration
 	db_wal_mode?: boolean;
 	db_busy_timeout_ms?: number;
@@ -421,6 +429,63 @@ export class Config extends EventEmitter {
 	setCacheKeepaliveTtlMinutes(minutes: number): void {
 		const clamped = this.clamp(minutes, 0, 60);
 		this.set("cache_keepalive_ttl_minutes", clamped);
+	}
+
+	/**
+	 * Returns the persisted local-control secret, generating and persisting
+	 * one on first access. Both the server (via AuthService) and the CLI
+	 * (via this same Config, backed by the same on-disk config file) resolve
+	 * to the identical value, so the CLI can authorize its own notify calls
+	 * to its own locally-running server without ever handling a real API
+	 * key (issue #216).
+	 */
+	getLocalControlSecret(): string {
+		const existing = this.data.local_control_secret;
+		if (typeof existing === "string" && existing.length > 0) {
+			return existing;
+		}
+
+		// Re-check the on-disk file before generating a new secret: another
+		// process (e.g. a CLI invocation racing the server's first-ever boot)
+		// may have already generated and persisted one after this instance's
+		// `this.data` was loaded into memory. Adopting that value instead of
+		// overwriting it avoids the two processes permanently disagreeing on
+		// the secret for the lifetime of this server process (see comment on
+		// the local_control_secret field above).
+		const fromDisk = this.readLocalControlSecretFromDisk();
+		if (typeof fromDisk === "string" && fromDisk.length > 0) {
+			this.data.local_control_secret = fromDisk;
+			return fromDisk;
+		}
+
+		const secret = randomUUID();
+		this.set("local_control_secret", secret);
+		return secret;
+	}
+
+	/**
+	 * Best-effort fresh read of just the local_control_secret field from the
+	 * on-disk config file, bypassing the in-memory `this.data` snapshot.
+	 * Mirrors the existsSync/readFileSync/JSON.parse pattern used by
+	 * loadConfig(), but never mutates `this.data` or writes to disk itself —
+	 * callers decide what to do with the result. Returns undefined on any
+	 * read/parse failure (matching loadConfig()'s log-and-continue behavior).
+	 */
+	private readLocalControlSecretFromDisk(): string | undefined {
+		if (!existsSync(this.configPath)) {
+			return undefined;
+		}
+		try {
+			const content = readFileSync(this.configPath, "utf8");
+			const parsed = JSON.parse(content) as ConfigData;
+			const value = parsed.local_control_secret;
+			return typeof value === "string" && value.length > 0 ? value : undefined;
+		} catch (error) {
+			log.error(
+				`Failed to re-read config file for local_control_secret: ${error}`,
+			);
+			return undefined;
+		}
 	}
 
 	getSystemPromptCacheTtl1h(): boolean {

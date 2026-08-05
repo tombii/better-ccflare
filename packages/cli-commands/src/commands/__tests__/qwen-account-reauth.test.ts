@@ -29,7 +29,9 @@ mock.module("@better-ccflare/providers/qwen", () => ({
 
 const { reauthenticateAccount } = await import("../account");
 
-const config = {} as Config;
+const config = {
+	getLocalControlSecret: () => "test-local-control-secret",
+} as unknown as Config;
 
 describe("CLI Qwen account re-authentication", () => {
 	let dbOps: DatabaseOperations;

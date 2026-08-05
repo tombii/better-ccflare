@@ -750,6 +750,20 @@ export default async function startServer(options?: {
 	if (port !== runtime.port) {
 		runtime.port = port;
 	}
+
+	// Process-local secret gating internal-probe markers (auto-refresh /
+	// cache-keepalive self-loop requests) — see proxy-types.ts isInternalProbe
+	// and AuthService#isInternalProbeRequest. Intentionally re-minted every
+	// process start (not persisted): these self-loops originate from the same
+	// process that mints the secret, so nothing outside this process ever
+	// needs to know it across restarts.
+	const internalProbeSecret = crypto.randomUUID();
+	// Persisted secret shared with the CLI (via the same on-disk config file)
+	// so `bun run cli --reauthenticate` / `--force-reset-rate-limit` can
+	// notify this locally-running server of DB-side changes even when
+	// API-key auth is enabled (issue #216). See AuthService#isLocalControlRequest.
+	const localControlSecret = config.getLocalControlSecret();
+
 	DatabaseFactory.initialize(undefined, runtime);
 	const dbOps = await DatabaseFactory.getInstanceAsync();
 
@@ -860,10 +874,16 @@ export default async function startServer(options?: {
 		getUsageWorkerHealth: () => getUsageCollectorHealth(),
 		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
 		getStrategy: () => currentStrategy,
+		internalProbeSecret,
+		localControlSecret,
 	});
 
 	// Initialize AuthService for proxy authentication
-	const authService = new AuthService(dbOps);
+	const authService = new AuthService(
+		dbOps,
+		internalProbeSecret,
+		localControlSecret,
+	);
 
 	// Run startup maintenance once (cleanup only) - fire and forget
 	runStartupMaintenance(config, dbOps).catch((err) => {
@@ -1049,7 +1069,6 @@ export default async function startServer(options?: {
 	await initProxy(() => config.getStorePayloads());
 
 	// Proxy context
-	const internalProbeSecret = crypto.randomUUID();
 	const proxyContext: ProxyContext = {
 		strategy,
 		dbOps,
