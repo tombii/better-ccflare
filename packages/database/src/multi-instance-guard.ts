@@ -321,11 +321,15 @@ export async function runStartupGuard(
  *  in-process state so the reader understands the consequence. */
 export function formatGuardMessage(peers: HeartbeatRecord[]): string {
 	const peerLines = peers
-		.map(
-			(p) =>
+		.map((p) => {
+			const ts = Number.isFinite(p.last_heartbeat)
+				? new Date(p.last_heartbeat).toISOString()
+				: String(p.last_heartbeat);
+			return (
 				`  - instance ${p.instance_id.slice(0, 8)}…  host=${p.hostname}  pid=${p.pid}  ` +
-				`last_heartbeat=${new Date(p.last_heartbeat).toISOString()}`,
-		)
+				`last_heartbeat=${ts}`
+			);
+		})
 		.join("\n");
 
 	return [

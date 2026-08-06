@@ -331,8 +331,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			instance_id TEXT PRIMARY KEY,
 			hostname TEXT NOT NULL,
 			pid INTEGER NOT NULL,
-			started_at INTEGER NOT NULL,
-			last_heartbeat INTEGER NOT NULL,
+			started_at BIGINT NOT NULL,
+			last_heartbeat BIGINT NOT NULL,
 			node_version TEXT NOT NULL,
 			db_dialect TEXT NOT NULL
 		)
@@ -1174,6 +1174,26 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		log.info("Made refresh_token nullable in accounts table");
 	} catch (_error) {
 		// Already nullable or column doesn't exist — ignore
+	}
+
+	// Widen instance_heartbeats.{started_at,last_heartbeat} from INTEGER (int4)
+	// to BIGINT (int8). The multi-instance guard writes Date.now() epoch-ms
+	// (~1.79e12), which overflows int4 and crash-loops PG deployments on the
+	// first heartbeat upsert (issue #383). Widening is lossless — every int4
+	// value is a valid int8 — and a no-op on installs where the columns are
+	// already bigint, so running it on every startup is safe. Also clear any
+	// rows left behind by crash-looping incarnations before the fix landed,
+	// since their stored values are garbage.
+	try {
+		await adapter.unsafe(
+			`ALTER TABLE instance_heartbeats
+			 ALTER COLUMN started_at TYPE bigint,
+			 ALTER COLUMN last_heartbeat TYPE bigint`,
+		);
+		await adapter.unsafe(`DELETE FROM instance_heartbeats`);
+		log.info("Widened instance_heartbeats timestamps to bigint (issue #383)");
+	} catch (_error) {
+		// Table doesn't exist yet (ensureSchemaPg hasn't run) — ignore
 	}
 
 	// Clean up empty-string sentinels left by old migration
