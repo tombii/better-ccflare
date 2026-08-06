@@ -8,7 +8,7 @@ import type { Account } from "./account";
 import type { AlertEvent } from "./alerts";
 import type { RequestMeta } from "./api";
 import type { ApiKey } from "./api-key";
-import type { IntegrityStatus } from "./stats";
+import type { IntegrityStatus, RetentionStatus } from "./stats";
 import type { StrategyStore } from "./strategy";
 
 // API context for HTTP handlers
@@ -48,6 +48,7 @@ export interface APIContext {
 		state: string;
 	};
 	getIntegrityStatus?: () => IntegrityStatus;
+	getRetentionStatus?: () => RetentionStatus;
 	getStrategy?: () => LoadBalancingStrategy | null;
 	/**
 	 * Live circuit breaker exposed by the proxy path. Optional so older

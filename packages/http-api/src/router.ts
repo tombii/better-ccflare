@@ -160,6 +160,7 @@ export class APIRouter {
 			getAsyncWriterHealth,
 			getUsageWorkerHealth,
 			getIntegrityStatus,
+			getRetentionStatus,
 			getStrategy,
 		} = this.context;
 
@@ -170,6 +171,8 @@ export class APIRouter {
 			getAsyncWriterHealth,
 			getUsageWorkerHealth,
 			getIntegrityStatus,
+			undefined,
+			getRetentionStatus,
 		);
 		const statsHandler = createStatsHandler(dbOps);
 		const statsResetHandler = createStatsResetHandler(dbOps);

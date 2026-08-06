@@ -157,10 +157,42 @@ export class UsageHistoryRepository extends BaseRepository<UsageSnapshotRow> {
 	}
 
 	async deleteOlderThan(cutoffTs: number): Promise<number> {
-		return this.runWithChanges(
-			`DELETE FROM usage_snapshots WHERE timestamp < ?`,
-			[cutoffTs],
-		);
+		// Batched like RequestRepository.deleteOlderThan/deletePayloadsOlderThan —
+		// an unbounded DELETE here can exceed the PG statement_timeout once the
+		// table is large, which previously caused retention cleanup to fail
+		// forever and let usage_snapshots grow unbounded (#384).
+		//
+		// usage_snapshots has no surrogate key column (append-only time series —
+		// see the CREATE TABLE comment in migrations.ts), and its natural key
+		// (account_id, timestamp, window_key) isn't declared unique. Selecting
+		// on the natural key with LIMIT only bounds the number of *distinct
+		// keys*, not physical rows: if duplicate keys exist, the outer DELETE
+		// removes every row matching each selected key, so a nominal 2000-row
+		// batch could still expand into an unbounded single-statement DELETE —
+		// exactly the PG statement_timeout failure this batching exists to
+		// avoid. Use each row's physical identity instead — SQLite's implicit
+		// `rowid` and PostgreSQL's system `ctid` column — so LIMIT always caps
+		// physical rows deleted per statement, independent of key duplicates.
+		// idx_usage_snapshots_ts (on timestamp alone) makes the inner SELECT
+		// efficient on both dialects.
+		const BATCH_SIZE = 2000;
+		const physicalIdSql = this.adapter.isSQLite
+			? `DELETE FROM usage_snapshots WHERE rowid IN (
+					SELECT rowid FROM usage_snapshots WHERE timestamp < ? LIMIT ?
+				)`
+			: `DELETE FROM usage_snapshots WHERE ctid IN (
+					SELECT ctid FROM usage_snapshots WHERE timestamp < ? LIMIT ?
+				)`;
+		let total = 0;
+		let deleted: number;
+		do {
+			deleted = await this.runWithChanges(physicalIdSql, [
+				cutoffTs,
+				BATCH_SIZE,
+			]);
+			total += deleted;
+		} while (deleted === BATCH_SIZE);
+		return total;
 	}
 }
 

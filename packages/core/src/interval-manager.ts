@@ -117,6 +117,35 @@ export class IntervalManager {
 	}
 
 	/**
+	 * Run a registered interval's callback immediately, sharing the same
+	 * isRunning/maxConcurrent guard as its periodic ticks. Use this instead of
+	 * invoking the callback directly when a one-off run (e.g. at startup) must
+	 * not race a scheduled tick of the same interval — both go through the one
+	 * per-interval isRunning flag tracked here, so at most one is ever in
+	 * flight. Returns false without running the callback if maxConcurrent is 1
+	 * and a run (periodic or on-demand) is already in progress.
+	 */
+	async runNow(id: string): Promise<boolean> {
+		const interval = this.intervals.get(id);
+		if (!interval || this.isShuttingDown) {
+			return false;
+		}
+		if (interval.isRunning && interval.config.maxConcurrent === 1) {
+			log.debug(`Skipping on-demand run of ${id} - already running`);
+			return false;
+		}
+		interval.isRunning = true;
+		interval.lastRun = Date.now();
+		interval.runCount++;
+		try {
+			await interval.config.callback();
+		} finally {
+			interval.isRunning = false;
+		}
+		return true;
+	}
+
+	/**
 	 * Get the number of active intervals
 	 */
 	getActiveCount(): number {
@@ -224,6 +253,7 @@ export function registerCleanup(config: {
 	id: string;
 	callback: () => void | Promise<void>;
 	minutes?: number;
+	maxConcurrent?: number;
 	description?: string;
 }): () => void {
 	return intervalManager.register({

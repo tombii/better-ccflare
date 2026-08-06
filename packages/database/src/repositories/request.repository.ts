@@ -636,9 +636,26 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async deleteOrphanedPayloads(): Promise<number> {
-		return this.runWithChanges(
-			`DELETE FROM request_payloads WHERE id NOT IN (SELECT id FROM requests)`,
-		);
+		// Batched like deleteOlderThan/deletePayloadsOlderThan above — an unbounded
+		// DELETE here can exceed the PG statement_timeout once the table is large.
+		// LEFT JOIN instead of NOT IN (SELECT ...) avoids the slow anti-join plan
+		// NOT IN produces against a large subquery on both SQLite and PostgreSQL.
+		const BATCH_SIZE = 2000;
+		let total = 0;
+		let deleted: number;
+		do {
+			deleted = await this.runWithChanges(
+				`DELETE FROM request_payloads WHERE id IN (
+					SELECT rp.id FROM request_payloads rp
+					LEFT JOIN requests r ON r.id = rp.id
+					WHERE r.id IS NULL
+					LIMIT ?
+				)`,
+				[BATCH_SIZE],
+			);
+			total += deleted;
+		} while (deleted === BATCH_SIZE);
+		return total;
 	}
 
 	async deletePayloadsOlderThan(cutoffTs: number): Promise<number> {

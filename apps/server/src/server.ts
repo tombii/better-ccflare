@@ -8,6 +8,7 @@ import {
 	HTTP_STATUS,
 	initializeNanoGPTPricingIfAccountsExist,
 	installOutboundProxy,
+	intervalManager,
 	NETWORK,
 	registerCleanup,
 	registerDisposable,
@@ -69,6 +70,7 @@ import { validatePathOrThrow } from "@better-ccflare/security";
 import {
 	type Account,
 	type LoadBalancingStrategy,
+	type RetentionStatus,
 	StrategyName,
 	type StrategyStore,
 } from "@better-ccflare/types";
@@ -332,29 +334,23 @@ const usagePollingRetryTimeouts = new Map<string, NodeJS.Timeout>();
 let tlsEnabled = false;
 
 // Startup maintenance (one-shot): cleanup only (compaction available via API endpoint)
-async function runStartupMaintenance(
-	config: Config,
-	dbOps: DatabaseOperations,
-) {
+async function runStartupMaintenance(dbOps: DatabaseOperations) {
 	const log = new Logger("StartupMaintenance");
-	try {
-		const payloadDays = config.getDataRetentionDays();
-		const requestDays = config.getRequestRetentionDays();
-		const { removedRequests, removedPayloads } = await dbOps.cleanupOldRequests(
-			payloadDays * 24 * 60 * 60 * 1000,
-			requestDays * 24 * 60 * 60 * 1000,
+	// Runs the "data-retention-cleanup" interval's own callback via
+	// intervalManager.runNow() instead of duplicating its retention logic
+	// here. Two independent code paths writing retentionState could race — a
+	// startup run that outlives the first hourly tick would overwrite that
+	// tick's newer result — because only the periodic registration's
+	// isRunning flag guarded against overlap. runNow() shares that exact flag
+	// (registered with maxConcurrent: 1), so at most one retention run is
+	// ever in flight regardless of whether startup or the interval triggered
+	// it, closing the race entirely (Greptile, PR #390). The interval must
+	// already be registered before this runs — see the call site.
+	const ran = await intervalManager.runNow("data-retention-cleanup");
+	if (!ran) {
+		log.warn(
+			"Skipped startup retention cleanup - periodic run already in progress",
 		);
-		log.info(
-			`Startup cleanup removed ${removedRequests} requests and ${removedPayloads} payloads (payload=${payloadDays}d, requests=${requestDays}d)`,
-		);
-		const removedSnapshots = await dbOps.pruneUsageSnapshots(
-			Date.now() - config.getUsageHistoryRetentionDays() * TIME_CONSTANTS.DAY,
-		);
-		if (removedSnapshots > 0) {
-			log.info(`Pruned ${removedSnapshots} old usage snapshots`);
-		}
-	} catch (err) {
-		log.error(`Startup cleanup error: ${err}`);
 	}
 	try {
 		// Clean up expired OAuth sessions
@@ -846,6 +842,102 @@ export default async function startServer(options?: {
 	// ProxyContext exists — mirrors the getStrategy() lazy-getter pattern above.
 	let modelCatalogProxyContext: ProxyContext | null = null;
 
+	// Minimal retention-job telemetry (#384): the periodic data-retention
+	// cleanup below silently swallowed failures into a log line with no way
+	// to tell "retention healthy" from "retention dead for weeks" apart from
+	// tailing logs. Declared here (mirrors the currentStrategy /
+	// modelCatalogProxyContext mutable-ref pattern above) so the router,
+	// constructed eagerly below, can read it via a getter; the cleanup
+	// callback mutates it in place once defined further down.
+	const retentionState: RetentionStatus = {
+		lastSuccessAt: null,
+		lastError: null,
+		lastErrorAt: null,
+	};
+	const getRetentionStatus = (): RetentionStatus => ({ ...retentionState });
+
+	// Registered here (before runStartupMaintenance() below) so intervalManager
+	// has "data-retention-cleanup" on record and runNow() can find it — startup
+	// maintenance triggers the very same callback via runNow() instead of
+	// duplicating this logic, so both the boot-time run and the hourly tick
+	// share one isRunning guard (maxConcurrent: 1) and can never race on
+	// retentionState (Greptile, PR #390).
+	const dataRetentionCleanup = async () => {
+		const startTime = Date.now();
+		try {
+			const payloadDays = config.getDataRetentionDays();
+			const requestDays = config.getRequestRetentionDays();
+			const { removedRequests, removedPayloads } =
+				await dbOps.cleanupOldRequests(
+					payloadDays * TIME_CONSTANTS.DAY,
+					requestDays * TIME_CONSTANTS.DAY,
+				);
+			if (removedRequests > 0 || removedPayloads > 0) {
+				log.info(
+					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
+				);
+				// Reclaim freed pages adaptively. incrementalVacuumAdaptive()
+				// scales reclaim with the current freelist: in steady state it
+				// returns a small chunk (or no-ops on an empty freelist), but
+				// after a retention *drop* — which dumps a large surplus of free
+				// pages onto the freelist — it drains that surplus over a handful
+				// of hourly ticks instead of weeks. Each underlying worker call is
+				// bounded (~64 MiB) and the per-tick total is capped (~1 GiB), with
+				// yields between chunks, so the single writer slot is never held
+				// long and concurrent main-thread writes (rate-limit updates, OAuth
+				// refresh, post-processor inserts) aren't starved. Off-thread via
+				// the incremental-vacuum worker. Fire-and-forget so the cleanup
+				// callback isn't blocked on it.
+				dbOps
+					.incrementalVacuumAdaptive()
+					.then((r) => {
+						if (r.reclaimedPages > 0) {
+							log.info(
+								`Adaptive incremental vacuum reclaimed ${r.reclaimedPages} pages in ${r.chunks} chunk(s)`,
+							);
+						}
+					})
+					.catch((err) => {
+						log.error(`Incremental vacuum error: ${err}`);
+					});
+			}
+			const usageHistoryDays = config.getUsageHistoryRetentionDays();
+			const removedSnapshots = await dbOps.pruneUsageSnapshots(
+				Date.now() - usageHistoryDays * TIME_CONSTANTS.DAY,
+			);
+			if (removedSnapshots > 0) {
+				log.info(`Pruned ${removedSnapshots} old usage snapshots`);
+			}
+			retentionState.lastSuccessAt = Date.now();
+			retentionState.lastError = null;
+			retentionState.lastErrorAt = null;
+		} catch (err) {
+			log.error(`Periodic data retention cleanup error: ${err}`);
+			retentionState.lastError =
+				err instanceof Error ? err.message : String(err);
+			retentionState.lastErrorAt = Date.now();
+		}
+	};
+
+	// Periodic data retention cleanup every 1 hour (reduced from 6 hours for more aggressive cleanup).
+	// Registered with immediate: false (default) — runStartupMaintenance()
+	// below fires the first run via intervalManager.runNow() instead, so we
+	// don't double-run at boot.
+	const unregisterDataCleanup = registerCleanup({
+		id: "data-retention-cleanup",
+		callback: dataRetentionCleanup,
+		minutes: 60, // every 1 hour
+		// A batched cleanup can run long on a large backlog (#384) — long enough
+		// to still be in flight when the next hourly tick fires, or when
+		// runStartupMaintenance's runNow() call races a tick. Without this,
+		// IntervalManager would allow overlapping runs, and the two completing
+		// out of order could overwrite retentionState with a stale result (e.g.
+		// an older failure clobbering a newer success in /health).
+		maxConcurrent: 1,
+		description: "Periodic data retention cleanup and incremental vacuum",
+	});
+	stopDataCleanupJob = unregisterDataCleanup;
+
 	const apiRouter = new APIRouter({
 		db,
 		config,
@@ -873,6 +965,7 @@ export default async function startServer(options?: {
 		getAsyncWriterHealth: () => asyncWriter.getHealth(),
 		getUsageWorkerHealth: () => getUsageCollectorHealth(),
 		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
+		getRetentionStatus,
 		getStrategy: () => currentStrategy,
 		internalProbeSecret,
 		localControlSecret,
@@ -886,7 +979,7 @@ export default async function startServer(options?: {
 	);
 
 	// Run startup maintenance once (cleanup only) - fire and forget
-	runStartupMaintenance(config, dbOps).catch((err) => {
+	runStartupMaintenance(dbOps).catch((err) => {
 		log.error("Startup maintenance failed:", err);
 	});
 	stopRetentionJob = () => {}; // No-op stopper
@@ -934,71 +1027,6 @@ export default async function startServer(options?: {
 	});
 
 	stopRateLimitCleanupJob = unregisterRateLimitCleanup;
-
-	// Set up periodic data retention cleanup every 1 hour
-	const dataRetentionCleanup = async () => {
-		const startTime = Date.now();
-		try {
-			const payloadDays = config.getDataRetentionDays();
-			const requestDays = config.getRequestRetentionDays();
-			const { removedRequests, removedPayloads } =
-				await dbOps.cleanupOldRequests(
-					payloadDays * TIME_CONSTANTS.DAY,
-					requestDays * TIME_CONSTANTS.DAY,
-				);
-			if (removedRequests > 0 || removedPayloads > 0) {
-				log.info(
-					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
-				);
-				// Reclaim freed pages adaptively. incrementalVacuumAdaptive()
-				// scales reclaim with the current freelist: in steady state it
-				// returns a small chunk (or no-ops on an empty freelist), but
-				// after a retention *drop* — which dumps a large surplus of free
-				// pages onto the freelist — it drains that surplus over a handful
-				// of hourly ticks instead of weeks. Each underlying worker call is
-				// bounded (~64 MiB) and the per-tick total is capped (~1 GiB), with
-				// yields between chunks, so the single writer slot is never held
-				// long and concurrent main-thread writes (rate-limit updates, OAuth
-				// refresh, post-processor inserts) aren't starved. Off-thread via
-				// the incremental-vacuum worker. Fire-and-forget so the cleanup
-				// callback isn't blocked on it.
-				dbOps
-					.incrementalVacuumAdaptive()
-					.then((r) => {
-						if (r.reclaimedPages > 0) {
-							log.info(
-								`Adaptive incremental vacuum reclaimed ${r.reclaimedPages} pages in ${r.chunks} chunk(s)`,
-							);
-						}
-					})
-					.catch((err) => {
-						log.error(`Incremental vacuum error: ${err}`);
-					});
-			}
-			const usageHistoryDays = config.getUsageHistoryRetentionDays();
-			const removedSnapshots = await dbOps.pruneUsageSnapshots(
-				Date.now() - usageHistoryDays * TIME_CONSTANTS.DAY,
-			);
-			if (removedSnapshots > 0) {
-				log.info(`Pruned ${removedSnapshots} old usage snapshots`);
-			}
-		} catch (err) {
-			log.error(`Periodic data retention cleanup error: ${err}`);
-		}
-	};
-
-	// Periodic data retention cleanup every 1 hour (reduced from 6 hours for more aggressive cleanup).
-	// runStartupMaintenance() (called above) handles the initial cleanup on boot,
-	// so we don't fire dataRetentionCleanup() immediately to avoid concurrent
-	// large deletes that can spike WAL size and wedge the service.
-	const unregisterDataCleanup = registerCleanup({
-		id: "data-retention-cleanup",
-		callback: dataRetentionCleanup,
-		minutes: 60, // every 1 hour
-		description: "Periodic data retention cleanup and incremental vacuum",
-	});
-
-	stopDataCleanupJob = unregisterDataCleanup;
 
 	// Set up periodic WAL checkpoint every 5 minutes to prevent unbounded WAL growth
 	const unregisterWalCheckpoint = registerCleanup({
