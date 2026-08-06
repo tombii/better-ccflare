@@ -224,6 +224,7 @@ export function registerCleanup(config: {
 	id: string;
 	callback: () => void | Promise<void>;
 	minutes?: number;
+	maxConcurrent?: number;
 	description?: string;
 }): () => void {
 	return intervalManager.register({

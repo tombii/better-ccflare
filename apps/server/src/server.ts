@@ -1029,6 +1029,12 @@ export default async function startServer(options?: {
 		id: "data-retention-cleanup",
 		callback: dataRetentionCleanup,
 		minutes: 60, // every 1 hour
+		// A batched cleanup can run long on a large backlog (#384) — long enough
+		// to still be in flight when the next hourly tick fires. Without this,
+		// IntervalManager would start a second concurrent run, and the two
+		// completing out of order could overwrite retentionState with a stale
+		// result (e.g. an older failure clobbering a newer success in /health).
+		maxConcurrent: 1,
 		description: "Periodic data retention cleanup and incremental vacuum",
 	});
 
