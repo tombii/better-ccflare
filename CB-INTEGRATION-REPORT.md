@@ -183,7 +183,7 @@ not present here: HEAD's tree differs from upstream/main by 20 files,
 
 - Did NOT push.
 - Did NOT open a PR.
-- Did NOT touch any live service (`ccmax.zp.digital`, etc.).
+- Did NOT touch any live service.
 - Did NOT change the load-balancing strategy.
 - Did NOT merge `24550bed` (V2 tree); ported by hand.
 - Did NOT symlink another worktree's `node_modules`; ran `bun install`

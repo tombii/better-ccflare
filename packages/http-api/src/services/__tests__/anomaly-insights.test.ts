@@ -250,7 +250,7 @@ describe("detectRunawayLoops", () => {
 
 	test("splits groups by project when agent id is absent", () => {
 		// Regression guard for issue #367: when no agent attribution is
-		// present (live ccmax traffic — `agent_used` is NULL on 100% of
+		// present (live traffic — `agent_used` is NULL on 100% of
 		// rows), the project must still split the bucket. 6 requests in
 		// each of two projects: neither reaches minRequests, and the
 		// combined 12-row bucket would falsely report as a loop if the
@@ -317,7 +317,7 @@ describe("detectRunawayLoops", () => {
 	});
 
 	test("N concurrent distinct sessions do NOT fire, one session repeating DOES", () => {
-		// Mirrors the live ccmax fleet: the only stable per-worker signal
+		// Mirrors the live fleet: the only stable per-worker signal
 		// is the x-claude-code-session-id header, surfaced as agentUsed
 		// via the session_header attribution source. 12 concurrent
 		// distinct sessions, 9 requests each — none should reach

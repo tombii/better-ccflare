@@ -268,7 +268,7 @@ describe("RateLimitProgress", () => {
 	// minimax-usage-fetcher.ts). The legacy Anthropic collector requires
 	// snake_case `resets_at`, so without the dedicated MiniMax branch the 7d
 	// row collapses to a single most-restrictive fallback (max of 5h/7d) — the
-	// bug that hid per-window usage on ccmax. See:
+	// bug that hid per-window usage in production. See:
 	// https://github.com/zenprocess/better-ccflare for the operator-reported
 	// dashboard dead-branch class.
 	it("renders MiniMax five_hour and seven_day as separate windows from each window's own utilization (ccflare-95)", () => {

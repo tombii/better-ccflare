@@ -1529,7 +1529,7 @@ export async function proxyWithAccount(
  * providers/src/usage-fetcher.ts:1065) so a client that respects this header
  * is guaranteed to see fresh usage telemetry on retry. Pre-fix this was the
  * optimistic 60s that triggered CLAUDE_CODE_MAX_RETRIES=5 clients to die in
- * 300s during a 116-minute ccproxy2 outage (production trace 2026-07-30).
+ * 300s during an approximately two-hour outage (production trace).
  */
 export const POOL_EXHAUSTED_UNKNOWN_RESET_RETRY_AFTER_SECONDS = 600;
 
