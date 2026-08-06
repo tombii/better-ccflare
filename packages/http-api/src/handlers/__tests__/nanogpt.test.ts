@@ -5,7 +5,7 @@ import { DatabaseFactory } from "@better-ccflare/database";
 import { createNanoGPTAccountAddHandler } from "../accounts";
 
 // Test database path
-const TEST_DB_PATH = "/tmp/test-nanogpt-handler.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-nanogpt-handler.db`;
 
 describe("NanoGPT Handler", () => {
 	let dbOps: DatabaseOperations;

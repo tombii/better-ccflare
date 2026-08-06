@@ -9,7 +9,7 @@ import { AutoRefreshScheduler } from "../auto-refresh-scheduler";
 import type { ProxyContext } from "../proxy";
 
 // Test database path
-const TEST_DB_PATH = "/tmp/test-token-refresh-hierarchy.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-token-refresh-hierarchy.db`;
 
 describe("Auto-Refresh Token Hierarchy", () => {
 	let db: Database;

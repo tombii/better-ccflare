@@ -20,7 +20,7 @@ import type { RequestResponse } from "@better-ccflare/types";
 import { UsageCollector } from "../usage-collector";
 import type { EndMessage, StartMessage } from "../worker-messages";
 
-const TEST_DB_PATH = "/tmp/test-usage-collector-payload-meta.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-usage-collector-payload-meta.db`;
 
 describe("UsageCollector - RequestPayload.meta includes projectAttributionSource (P2)", () => {
 	let dbOps: DatabaseOperations;

@@ -16,15 +16,31 @@ import {
 } from "../oauth";
 
 // Test database path
-const TEST_DB_PATH = "/tmp/test-oauth-handler.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-oauth-handler.db`;
 
 // Spy used to assert clearAccountRefreshCache is invoked on successful reauth.
-// mock.module must be called at top-level (before imports resolve).
+// mock.module must be called at top-level (before imports resolve). The mock
+// only needs to intercept clearAccountRefreshCache, but mock.module replaces
+// the WHOLE module globally and across file boundaries in Bun (no per-file
+// isolation without --isolate). We capture the real module first, spread its
+// exports so other consumers (e.g. accounts.ts which imports
+// clearAccountRefreshCache, getUsageThrottleStatus, refreshCodexUsageForAccount,
+// restartUsagePollingForAccount) still see the real functions, then restore the
+// real module in afterAll so later test files in this process resolve the real
+// @better-ccflare/proxy exports again.
+const actualProxy = await import("@better-ccflare/proxy");
 const mockClearAccountRefreshCache = mock((_accountId: string) => {});
 
 mock.module("@better-ccflare/proxy", () => ({
+	...actualProxy,
 	clearAccountRefreshCache: mockClearAccountRefreshCache,
 }));
+
+afterAll(() => {
+	mock.module("@better-ccflare/proxy", () => actualProxy);
+	mock.module("@better-ccflare/providers/codex", () => actualCodex);
+	mock.module("@better-ccflare/providers/qwen", () => actualQwen);
+});
 
 /** Poll a device-flow status handler until the session reaches a terminal state. */
 async function waitForSessionComplete(
@@ -249,7 +265,13 @@ const mockInitiateCodexDeviceFlow = mock(async () => ({
 	interval: 5,
 }));
 
+// Capture the real @better-ccflare/providers/codex module first so other
+// exports stay intact for downstream consumers (mock.module replaces the
+// WHOLE module globally — see the @better-ccflare/proxy mock comment above).
+const actualCodex = await import("@better-ccflare/providers/codex");
+
 mock.module("@better-ccflare/providers/codex", () => ({
+	...actualCodex,
 	initiateCodexDeviceFlow: mockInitiateCodexDeviceFlow,
 	pollCodexForToken: mock(async () => ({
 		access_token: "at",
@@ -268,7 +290,13 @@ const mockInitiateQwenDeviceFlow = mock(async () => ({
 	pkce: { verifier: "test-verifier", challenge: "test-challenge" },
 }));
 
+// Capture the real @better-ccflare/providers/qwen module first so other
+// exports stay intact for downstream consumers (mock.module replaces the
+// WHOLE module globally — see the @better-ccflare/proxy mock comment above).
+const actualQwen = await import("@better-ccflare/providers/qwen");
+
 mock.module("@better-ccflare/providers/qwen", () => ({
+	...actualQwen,
 	initiateDeviceFlow: mockInitiateQwenDeviceFlow,
 	pollForToken: mock(async () => ({
 		access_token: "at",
@@ -277,7 +305,7 @@ mock.module("@better-ccflare/providers/qwen", () => ({
 	})),
 }));
 
-const CODEX_REAUTH_DB_PATH = "/tmp/test-codex-reauth-handler.db";
+const CODEX_REAUTH_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-codex-reauth-handler.db`;
 
 describe("createCodexReauthHandler", () => {
 	let dbOps: DatabaseOperations;
@@ -452,7 +480,7 @@ describe("createCodexReauthHandler", () => {
 // Qwen reauth handler
 // ---------------------------------------------------------------------------
 
-const QWEN_REAUTH_DB_PATH = "/tmp/test-qwen-reauth-handler.db";
+const QWEN_REAUTH_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-qwen-reauth-handler.db`;
 
 describe("createQwenReauthHandler", () => {
 	let dbOps: DatabaseOperations;
@@ -527,8 +555,7 @@ describe("createQwenReauthHandler", () => {
 // Anthropic reauth init handler
 // ---------------------------------------------------------------------------
 
-const ANTHROPIC_REAUTH_INIT_DB_PATH =
-	"/tmp/test-anthropic-reauth-init-handler.db";
+const ANTHROPIC_REAUTH_INIT_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-anthropic-reauth-init-handler.db`;
 
 describe("createAnthropicReauthInitHandler", () => {
 	let dbOps: DatabaseOperations;
@@ -628,8 +655,7 @@ describe("createAnthropicReauthInitHandler", () => {
 // Anthropic reauth callback handler
 // ---------------------------------------------------------------------------
 
-const ANTHROPIC_REAUTH_CALLBACK_DB_PATH =
-	"/tmp/test-anthropic-reauth-callback-handler.db";
+const ANTHROPIC_REAUTH_CALLBACK_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-anthropic-reauth-callback-handler.db`;
 
 describe("createAnthropicReauthCallbackHandler", () => {
 	let dbOps: DatabaseOperations;

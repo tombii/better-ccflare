@@ -99,7 +99,7 @@ describe("isRewriteTargetServable", () => {
 	});
 });
 
-const TEST_DB_PATH = "/tmp/test-agent-interceptor-rewrite-guard.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-agent-interceptor-rewrite-guard.db`;
 
 function toArrayBuffer(obj: Record<string, unknown>): ArrayBuffer {
 	const encoder = new TextEncoder();

@@ -7,7 +7,7 @@ import { createAccountRemoveHandler } from "../accounts";
 
 // Conventional test pattern (mirrors kilo.test.ts). Requires the
 // generated `inline-*-worker.ts` build artifacts to be present.
-const TEST_DB_PATH = "/tmp/test-account-remove-handler.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-account-remove-handler.db`;
 
 describe("createAccountRemoveHandler — id-scoped delete", () => {
 	let dbOps: DatabaseOperations;

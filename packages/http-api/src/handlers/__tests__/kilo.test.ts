@@ -5,7 +5,7 @@ import { DatabaseFactory } from "@better-ccflare/database";
 import { createKiloAccountAddHandler } from "../accounts";
 
 // Test database path
-const TEST_DB_PATH = "/tmp/test-kilo-handler.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-kilo-handler.db`;
 
 describe("Kilo Gateway Handler", () => {
 	let dbOps: DatabaseOperations;

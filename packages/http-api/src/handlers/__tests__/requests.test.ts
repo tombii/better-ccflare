@@ -14,7 +14,7 @@ import { DatabaseFactory } from "@better-ccflare/database";
 import type { RequestResponse } from "@better-ccflare/types";
 import { createRequestsSummaryHandler } from "../requests";
 
-const TEST_DB_PATH = "/tmp/test-requests-summary-handler.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-requests-summary-handler.db`;
 
 describe("createRequestsSummaryHandler — attribution source mapping", () => {
 	let dbOps: DatabaseOperations;

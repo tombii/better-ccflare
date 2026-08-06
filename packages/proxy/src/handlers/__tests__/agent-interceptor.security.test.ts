@@ -22,7 +22,7 @@ import {
 } from "@better-ccflare/database";
 import { interceptAndModifyRequest } from "../agent-interceptor";
 
-const TEST_DB_PATH = "/tmp/test-agent-interceptor-security.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-agent-interceptor-security.db`;
 const AUTODISCOVER_ENV = "BETTER_CCFLARE_AGENT_WORKSPACE_AUTODISCOVER";
 
 describe("Agent Interceptor - Directory Traversal Security", () => {

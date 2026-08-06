@@ -12,7 +12,7 @@ import { translateBedrockError } from "../error-handler";
 // sharing this process — use a real, empty, throwaway database. The
 // suggestion lookup naturally finds no matches against an empty DB, which is
 // all these tests assert on (empty/absent suggestions, no throw, no hang).
-const TEST_DB_PATH = "/tmp/test-bedrock-error-handler.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-bedrock-error-handler.db`;
 
 beforeAll(() => {
 	try {

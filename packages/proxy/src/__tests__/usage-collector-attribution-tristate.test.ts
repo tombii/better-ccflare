@@ -31,7 +31,7 @@ import type { RequestResponse } from "@better-ccflare/types";
 import { UsageCollector } from "../usage-collector";
 import type { EndMessage, StartMessage } from "../worker-messages";
 
-const TEST_DB_PATH = "/tmp/test-usage-collector-attribution-tristate.db";
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-usage-collector-attribution-tristate.db`;
 
 describe("UsageCollector - attribution tri-state (real collector, end-to-end)", () => {
 	let dbOps: DatabaseOperations;
