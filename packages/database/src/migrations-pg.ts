@@ -45,6 +45,24 @@ async function _tableExists(
 }
 
 /**
+ * Get a column's data_type from information_schema (e.g. "integer", "bigint").
+ * Returns null if the table/column doesn't exist yet.
+ */
+async function columnDataType(
+	adapter: BunSqlAdapter,
+	table: string,
+	column: string,
+): Promise<string | null> {
+	const result = await adapter.get<{ data_type: string }>(
+		`SELECT data_type
+		 FROM information_schema.columns
+		 WHERE table_name = ? AND column_name = ?`,
+		[table, column],
+	);
+	return result?.data_type ?? null;
+}
+
+/**
  * Ensure the full schema exists for PostgreSQL
  */
 export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
@@ -1180,11 +1198,20 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	// to BIGINT (int8). The multi-instance guard writes Date.now() epoch-ms
 	// (~1.79e12), which overflows int4 and crash-loops PG deployments on the
 	// first heartbeat upsert (issue #383). Widening is lossless — every int4
-	// value is a valid int8 — and a no-op on installs where the columns are
-	// already bigint, so running it on every startup is safe. Also clear any
-	// rows left behind by crash-looping incarnations before the fix landed,
-	// since their stored values are garbage.
-	try {
+	// value is a valid int8. Only run the ALTER (and the accompanying purge
+	// of garbage rows left by crash-looping pre-fix incarnations) when the
+	// column is still int4 — this table is shared by every live instance, so
+	// unconditionally deleting rows on every startup would wipe a peer's
+	// fresh heartbeat right before the guard scans for it. Errors are
+	// allowed to propagate: silently swallowing a failed widening would let
+	// startup continue writing epoch-ms into an unchanged int4 column,
+	// reproducing the same overflow crash this migration fixes.
+	const startedAtType = await columnDataType(
+		adapter,
+		"instance_heartbeats",
+		"started_at",
+	);
+	if (startedAtType === "integer") {
 		await adapter.unsafe(
 			`ALTER TABLE instance_heartbeats
 			 ALTER COLUMN started_at TYPE bigint,
@@ -1192,8 +1219,6 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		);
 		await adapter.unsafe(`DELETE FROM instance_heartbeats`);
 		log.info("Widened instance_heartbeats timestamps to bigint (issue #383)");
-	} catch (_error) {
-		// Table doesn't exist yet (ensureSchemaPg hasn't run) — ignore
 	}
 
 	// Clean up empty-string sentinels left by old migration
