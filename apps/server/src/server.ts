@@ -336,6 +336,7 @@ let tlsEnabled = false;
 async function runStartupMaintenance(
 	config: Config,
 	dbOps: DatabaseOperations,
+	retentionState: RetentionStatus,
 ) {
 	const log = new Logger("StartupMaintenance");
 	try {
@@ -354,8 +355,17 @@ async function runStartupMaintenance(
 		if (removedSnapshots > 0) {
 			log.info(`Pruned ${removedSnapshots} old usage snapshots`);
 		}
+		// Mirrors dataRetentionCleanup's success/failure bookkeeping (#384) — the
+		// hourly job isn't due for up to an hour after boot, so without this a
+		// startup-time retention failure stayed invisible to /health (all-null
+		// retention status) until the next periodic tick surfaced it.
+		retentionState.lastSuccessAt = Date.now();
+		retentionState.lastError = null;
+		retentionState.lastErrorAt = null;
 	} catch (err) {
 		log.error(`Startup cleanup error: ${err}`);
+		retentionState.lastError = err instanceof Error ? err.message : String(err);
+		retentionState.lastErrorAt = Date.now();
 	}
 	try {
 		// Clean up expired OAuth sessions
@@ -902,7 +912,7 @@ export default async function startServer(options?: {
 	);
 
 	// Run startup maintenance once (cleanup only) - fire and forget
-	runStartupMaintenance(config, dbOps).catch((err) => {
+	runStartupMaintenance(config, dbOps, retentionState).catch((err) => {
 		log.error("Startup maintenance failed:", err);
 	});
 	stopRetentionJob = () => {}; // No-op stopper
