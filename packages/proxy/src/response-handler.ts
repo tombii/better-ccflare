@@ -265,24 +265,49 @@ export async function forwardToClient(
 			// Mid-stream rate-limit detection. The sniffer
 			// fires exactly once; after that feed() is a no-op.
 			if (account && rateLimitSniffer?.feed(value)) {
-				// SSE error frames carry no reset header — HTTP headers were
-				// already sent before the error occurred — so any resetTime
-				// passed here is a value ccflare invents, never an upstream
-				// instruction. The two firedReason branches treat that fact
-				// differently on purpose:
-				//   "rate_limit_error" (429, quota) → upstream_429_with_reset,
-				//     WITH the synthetic resetTime below. This is a deliberate
-				//     conservative estimate of the 5h quota window — better to
-				//     under-cool a real quota exhaustion than leave the account
-				//     selectable, and the ramp-capped 429 formula treats
-				//     resetTime only as an upper bound anyway.
-				//   "overloaded_error" (529, transient) → the reason alone
-				//     (upstream_529_overloaded_no_reset), no resetTime. Passing
-				//     a synthetic reset for a 529 would misrepresent a ccflare
-				//     default as an Anthropic Retry-After; the no-reset reason
-				//     routes this to the cooldown core's fixed short overload
-				//     cooldown instead.
-				if (rateLimitSniffer.firedReason === "overloaded_error") {
+				// Skip cooldown on synthetic cache-keepalive replays. The
+				// keepalive scheduler fires parallel requests to every cached
+				// account simultaneously; bursts of 4+ concurrent requests can
+				// trip Anthropic's per-IP burst limit and 429 every account at
+				// the same instant. A keepalive replay whose 200 OK response
+				// later emits a mid-stream `event: error` SSE frame is the
+				// same class of synthetic burst — applying a real cooldown
+				// here drains the pool to zero routable accounts even though
+				// no user-visible quota was actually exhausted. Loop-prevention
+				// header set by cache-keepalive-scheduler.ts; only synthetic
+				// replays carry it. Mirrors the keepalive exemption already
+				// applied in proxy-operations.ts (3 sites) and
+				// response-processor.ts — closing the gap flagged on merged
+				// upstream PR #196 (greptile-apps).
+				const isKeepalive = isInternalProbe(
+					requestHeaders,
+					ctx,
+					"keepalive",
+				);
+				if (isKeepalive) {
+					log.warn(
+						`Keepalive replay for ${account.name} hit mid-stream rate-limit — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
+					);
+				} else if (
+					// SSE error frames carry no reset header — HTTP headers were
+					// already sent before the error occurred — so any resetTime
+					// passed here is a value ccflare invents, never an upstream
+					// instruction. The two firedReason branches treat that fact
+					// differently on purpose:
+					//   "rate_limit_error" (429, quota) → upstream_429_with_reset,
+					//     WITH the synthetic resetTime below. This is a deliberate
+					//     conservative estimate of the 5h quota window — better to
+					//     under-cool a real quota exhaustion than leave the account
+					//     selectable, and the ramp-capped 429 formula treats
+					//     resetTime only as an upper bound anyway.
+					//   "overloaded_error" (529, transient) → the reason alone
+					//     (upstream_529_overloaded_no_reset), no resetTime. Passing
+					//     a synthetic reset for a 529 would misrepresent a ccflare
+					//     default as an Anthropic Retry-After; the no-reset reason
+					//     routes this to the cooldown core's fixed short overload
+					//     cooldown instead.
+					rateLimitSniffer.firedReason === "overloaded_error"
+				) {
 					applyRateLimitCooldown(
 						account,
 						{ reason: "upstream_529_overloaded_no_reset" },
