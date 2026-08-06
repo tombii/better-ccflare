@@ -162,33 +162,36 @@ export class UsageHistoryRepository extends BaseRepository<UsageSnapshotRow> {
 		// table is large, which previously caused retention cleanup to fail
 		// forever and let usage_snapshots grow unbounded (#384).
 		//
-		// usage_snapshots has no surrogate key (append-only time series — see
-		// the CREATE TABLE comment in migrations.ts), so the batch subquery
-		// matches on the natural composite key (account_id, timestamp,
-		// window_key) instead of a single id column. Row-value IN is standard
-		// SQL supported by both SQLite (3.15+) and PostgreSQL, so this works
-		// identically on both dialects. idx_usage_snapshots_ts (on timestamp
-		// alone) makes the inner SELECT efficient.
-		//
-		// The natural key isn't unique, so a batch of BATCH_SIZE selected keys
-		// can match more or fewer than BATCH_SIZE physical rows once duplicates
-		// are deleted in one statement. Comparing `deleted === BATCH_SIZE` to
-		// decide whether to continue is therefore unreliable — it can stop
-		// early and leave eligible rows behind. Loop until a DELETE affects
-		// zero rows instead, which is correct regardless of duplicates (at the
-		// cost of one extra no-op round trip on the final iteration).
+		// usage_snapshots has no surrogate key column (append-only time series —
+		// see the CREATE TABLE comment in migrations.ts), and its natural key
+		// (account_id, timestamp, window_key) isn't declared unique. Selecting
+		// on the natural key with LIMIT only bounds the number of *distinct
+		// keys*, not physical rows: if duplicate keys exist, the outer DELETE
+		// removes every row matching each selected key, so a nominal 2000-row
+		// batch could still expand into an unbounded single-statement DELETE —
+		// exactly the PG statement_timeout failure this batching exists to
+		// avoid. Use each row's physical identity instead — SQLite's implicit
+		// `rowid` and PostgreSQL's system `ctid` column — so LIMIT always caps
+		// physical rows deleted per statement, independent of key duplicates.
+		// idx_usage_snapshots_ts (on timestamp alone) makes the inner SELECT
+		// efficient on both dialects.
 		const BATCH_SIZE = 2000;
+		const physicalIdSql = this.adapter.isSQLite
+			? `DELETE FROM usage_snapshots WHERE rowid IN (
+					SELECT rowid FROM usage_snapshots WHERE timestamp < ? LIMIT ?
+				)`
+			: `DELETE FROM usage_snapshots WHERE ctid IN (
+					SELECT ctid FROM usage_snapshots WHERE timestamp < ? LIMIT ?
+				)`;
 		let total = 0;
 		let deleted: number;
 		do {
-			deleted = await this.runWithChanges(
-				`DELETE FROM usage_snapshots WHERE (account_id, timestamp, window_key) IN (
-					SELECT account_id, timestamp, window_key FROM usage_snapshots WHERE timestamp < ? LIMIT ?
-				)`,
-				[cutoffTs, BATCH_SIZE],
-			);
+			deleted = await this.runWithChanges(physicalIdSql, [
+				cutoffTs,
+				BATCH_SIZE,
+			]);
 			total += deleted;
-		} while (deleted > 0);
+		} while (deleted === BATCH_SIZE);
 		return total;
 	}
 }
