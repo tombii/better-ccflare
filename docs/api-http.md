@@ -95,6 +95,28 @@ curl http://localhost:8080/health?detail=1
 curl http://localhost:8080/health
 ```
 
+**Retention job telemetry**
+
+The response includes `runtime.storage.retention`, reporting the health of the hourly data-retention cleanup job (request/payload/usage-snapshot pruning). Use `lastSuccessAt` for dead-man alerting — if it stops advancing, the job has stalled or is failing silently:
+
+```json
+{
+  "runtime": {
+    "storage": {
+      "retention": {
+        "lastSuccessAt": "2024-12-17T10:30:45.123Z",
+        "lastError": null,
+        "lastErrorAt": null
+      }
+    }
+  }
+}
+```
+
+- `lastSuccessAt` — ISO timestamp of the last successful cleanup run (startup or hourly), or `null` if none has completed yet
+- `lastError` — message from the most recent failure, or `null` if the last run succeeded (cleared on the next success)
+- `lastErrorAt` — ISO timestamp of `lastError`, or `null`
+
 ---
 
 ### Claude Proxy

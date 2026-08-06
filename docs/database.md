@@ -509,32 +509,57 @@ PRAGMA wal_checkpoint(PASSIVE);
 Default data retention:
 - Payloads: 3 days (configurable via `DATA_RETENTION_DAYS` / `data_retention_days`)
 - Request metadata: 90 days (configurable via `REQUEST_RETENTION_DAYS` / `request_retention_days`)
+- Usage history snapshots: 90 days (configurable via `USAGE_HISTORY_RETENTION_DAYS` / `usage_history_retention_days`)
 
-The server performs automatic cleanup at startup (one-shot), removing payloads older than the payload retention window, then removing any orphaned payloads. It also deletes request rows older than the request metadata retention window.
+The server performs automatic cleanup once at startup, then hourly for the lifetime of the process, removing payloads older than the payload retention window, any orphaned payloads, request rows older than the request metadata retention window, and usage-history snapshots older than the usage-history retention window. Startup and periodic runs share a single concurrency guard (`IntervalManager.runNow`), so a slow startup cleanup can never overlap the first hourly tick.
 
-You can change both via environment variables, the config file, or the dashboard (Overview → Data Retention). A manual “Clean up now” action is also available. There is no periodic cleanup job; use the manual action if needed between restarts.
+You can change retention windows via environment variables, the config file, or the dashboard (Overview → Data Retention). A manual "Clean up now" action is also available for use between the hourly ticks.
 
-1. **Payload Storage**: Periodic cleanup of old payloads:
+Deletes are batched (2000 rows per statement, looped until exhausted) rather than issued as one unbounded `DELETE`, so cleanup keeps working on tables large enough to exceed PostgreSQL's `statement_timeout` (see `BETTER_CCFLARE_DB_STATEMENT_TIMEOUT` above) instead of failing permanently. Batches on `usage_snapshots` — which has no unique surrogate key — bound each statement by physical row identity (SQLite `rowid` / PostgreSQL `ctid`) rather than by its natural key, so a batch of duplicate-keyed rows can't expand into an unbounded delete.
+
+1. **Payload Storage**: Batched cleanup of old payloads, plus orphaned payloads left behind by deleted requests:
 ```sql
 DELETE FROM request_payloads WHERE id IN (
-  SELECT id FROM requests WHERE timestamp < ?
+  SELECT id FROM request_payloads WHERE timestamp IS NOT NULL AND timestamp < ? LIMIT 2000
 );
-DELETE FROM request_payloads WHERE id NOT IN (SELECT id FROM requests);
+-- looped until a batch returns fewer than 2000 rows, then:
+DELETE FROM request_payloads WHERE id IN (
+  SELECT rp.id FROM request_payloads rp
+  LEFT JOIN requests r ON r.id = rp.id
+  WHERE r.id IS NULL
+  LIMIT 2000
+);
 ```
 
-2. **Request Metadata**: Optional cleanup of old request records:
+2. **Request Metadata**: Batched cleanup of old request records:
 ```sql
-DELETE FROM requests WHERE timestamp < ?;
+DELETE FROM requests WHERE id IN (
+  SELECT id FROM requests WHERE timestamp < ? LIMIT 2000
+);
 ```
 
-3. **Compaction**: After cleanup, SQLite doesn't shrink the main DB file automatically. To reclaim disk space:
+3. **Usage History**: Batched cleanup of old usage snapshots, bounded by physical row identity:
+```sql
+-- SQLite
+DELETE FROM usage_snapshots WHERE rowid IN (
+  SELECT rowid FROM usage_snapshots WHERE timestamp < ? LIMIT 2000
+);
+-- PostgreSQL
+DELETE FROM usage_snapshots WHERE ctid IN (
+  SELECT ctid FROM usage_snapshots WHERE timestamp < ? LIMIT 2000
+);
+```
+
+4. **Retention health**: `/health` reports `runtime.storage.retention` (`lastSuccessAt`/`lastError`/`lastErrorAt`) so a stalled or failing cleanup job is visible without tailing logs — see [api-http.md](./api-http.md#get-health).
+
+5. **Compaction**: After cleanup, SQLite doesn't shrink the main DB file automatically. To reclaim disk space:
 ```sql
 PRAGMA wal_checkpoint(TRUNCATE);
 VACUUM;
 ```
 The dashboard exposes a "Compact database" button that runs these for you. Expect a brief pause during compaction.
 
-4. **Statistics Aggregation**: Pre-aggregate statistics for common time windows to reduce query complexity.
+6. **Statistics Aggregation**: Pre-aggregate statistics for common time windows to reduce query complexity.
 
 ## API Methods
 
