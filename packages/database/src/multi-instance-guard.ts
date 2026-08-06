@@ -247,6 +247,44 @@ export async function clearHeartbeat(adapter: BunSqlAdapter): Promise<void> {
 }
 
 /**
+ * Retry `clearHeartbeat` on transient failures (SQLITE_BUSY, brief PG
+ * connection errors, etc). Without this, a transient DELETE failure in
+ * the refuse-path cleanup of runStartupGuard leaves the just-written
+ * heartbeat row in place. A fast restart then sees that orphan as a
+ * peer (the new process has a fresh THIS_INSTANCE_ID, so it does not
+ * exclude its own previous row) and refuses startup again for up to
+ * HEARTBEAT_EXPIRY_MS. See tombii/better-ccflare#376 review (Greptile
+ * "Failed cleanup leaves phantom heartbeat") and #383 for the
+ * production crash-loop path that creates the orphans.
+ *
+ * Budget: 3 attempts with exponential backoff (25ms, 50ms, 100ms).
+ * Total worst-case latency ~175ms. If all attempts fail the caller
+ * still surfaces the original refusal; the orphan row then expires
+ * naturally after HEARTBEAT_EXPIRY_MS.
+ */
+export async function clearHeartbeatWithRetry(
+	adapter: BunSqlAdapter,
+	options: { maxAttempts?: number; baseDelayMs?: number } = {},
+): Promise<void> {
+	const maxAttempts = options.maxAttempts ?? 3;
+	const baseDelayMs = options.baseDelayMs ?? 25;
+	let lastErr: Error | undefined;
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		try {
+			await clearHeartbeat(adapter);
+			return;
+		} catch (err) {
+			lastErr = err as Error;
+			if (attempt < maxAttempts) {
+				const delay = baseDelayMs * 2 ** (attempt - 1);
+				await new Promise<void>((resolve) => setTimeout(resolve, delay));
+			}
+		}
+	}
+	throw lastErr ?? new Error("clearHeartbeatWithRetry: no attempts made");
+}
+
+/**
  * Periodic cleanup of stale rows from crashed predecessors. Called on
  * every startup so the table does not grow forever. Returns the number
  * of rows removed.
@@ -300,14 +338,22 @@ export async function runStartupGuard(
 			// again for up to HEARTBEAT_EXPIRY_MS. The lifecycle cleanup
 			// callback is not installed yet (it is wired by the caller after
 			// runStartupGuard returns), so the row would otherwise linger.
-			// Fixes Greptile P1 on PR #376.
+			//
+			// Use the retry helper because a single transient DELETE failure
+			// (SQLITE_BUSY, brief PG connection blip) otherwise leaves the
+			// just-written row in place. The new process on retry gets a
+			// fresh THIS_INSTANCE_ID, so it does not exclude its own previous
+			// orphan and refuses startup again. Addresses Greptile "Failed
+			// cleanup leaves phantom heartbeat" on PR #376.
 			try {
-				await clearHeartbeat(adapter);
+				await clearHeartbeatWithRetry(adapter);
 			} catch (err) {
 				// Best-effort cleanup; surface the original refusal even if
-				// the cleanup itself failed.
+				// the cleanup itself failed. The orphan will expire naturally
+				// after HEARTBEAT_EXPIRY_MS once the next purgeStaleHeartbeats
+				// sweep runs, so this is not a permanent block.
 				log.warn(
-					`heartbeat cleanup during refuse failed: ${(err as Error).message}`,
+					`heartbeat cleanup during refuse failed after retries: ${(err as Error).message}`,
 				);
 			}
 			throw new MultiInstanceRefusedError(result.peers);

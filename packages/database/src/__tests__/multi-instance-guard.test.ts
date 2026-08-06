@@ -17,6 +17,7 @@ import { ensureSchema } from "../migrations";
 import { ensureSchemaPg } from "../migrations-pg";
 import {
 	clearHeartbeat,
+	clearHeartbeatWithRetry,
 	formatGuardMessage,
 	HEARTBEAT_EXPIRY_MS,
 	MultiInstanceRefusedError,
@@ -207,6 +208,197 @@ describe("multi-instance-guard (SQLite)", () => {
 
 		expect(remaining.length).toBe(1);
 		expect(remaining[0].instance_id).toBe("peer-uuid-refuse");
+	});
+
+	it("NEGATIVE 5: refuse-mode cleanup survives a transient DELETE failure (regression: Greptile 'phantom heartbeat' on PR #376)", async () => {
+		// Setup: a peer is already running.
+		const now = Date.now();
+		adapter.getSQLiteDb().run(
+			`INSERT INTO instance_heartbeats
+				(instance_id, hostname, pid, started_at, last_heartbeat,
+				 node_version, db_dialect)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			[
+				"peer-uuid-phantom",
+				"peer-host",
+				4321,
+				now - 5_000,
+				now - 1_000,
+				"v20.0.0",
+				"sqlite",
+			],
+		);
+
+		// Simulate a transient DELETE failure: the first clearHeartbeat
+		// call throws, the second succeeds. This mirrors the Greptile
+		// scenario where SQLite is busy or PG hits a transient connection
+		// error mid-cleanup. Without the retry helper, the catch swallows
+		// the failure and the orphan row survives — a fast restart gets a
+		// new THIS_INSTANCE_ID, sees the orphan as a peer, and refuses
+		// again.
+		const realDb = adapter.getSQLiteDb();
+		const originalRun = realDb.run.bind(realDb);
+		let deleteAttempts = 0;
+		(realDb as unknown as { run: typeof realDb.run }).run = ((
+			sql: unknown,
+			params?: unknown,
+		) => {
+			if (
+				typeof sql === "string" &&
+				sql.includes("DELETE FROM instance_heartbeats")
+			) {
+				deleteAttempts++;
+				if (deleteAttempts === 1) {
+					const e = new Error(
+						"simulated transient DELETE failure (SQLITE_BUSY analogue)",
+					);
+					(e as Error & { code?: string }).code = "SQLITE_BUSY";
+					throw e;
+				}
+			}
+			return (
+				originalRun as unknown as (
+					sql: unknown,
+					params?: unknown,
+				) => unknown
+			)(sql, params);
+		}) as typeof realDb.run;
+
+		try {
+			// Refuse: still throws MultiInstanceRefusedError (original
+			// refusal is surfaced even when cleanup needs to retry).
+			await expect(
+				runStartupGuard(adapter, { now, mode: "refuse" }),
+			).rejects.toThrow(MultiInstanceRefusedError);
+
+			// The retry succeeded: at least 2 DELETE attempts were made and
+			// the second one cleared our row.
+			expect(deleteAttempts).toBeGreaterThanOrEqual(2);
+
+			// After the throw, only the peer row remains. Our row was
+			// cleared by the retry despite the first-attempt failure.
+			// Without clearHeartbeatWithRetry the orphan would be here and a
+			// fast restart would false-positive as a self-detected peer.
+			const remaining = adapter
+				.getSQLiteDb()
+				.query<
+					{ instance_id: string },
+					[]
+				>(
+					"SELECT instance_id FROM instance_heartbeats ORDER BY instance_id",
+				)
+				.all();
+
+			expect(remaining.length).toBe(1);
+			expect(remaining[0].instance_id).toBe("peer-uuid-phantom");
+		} finally {
+			// Restore the original run method so other tests are not affected.
+			(realDb as unknown as { run: typeof realDb.run }).run =
+				originalRun as typeof realDb.run;
+		}
+	});
+
+	it("clearHeartbeatWithRetry: succeeds immediately when no failure occurs", async () => {
+		await writeHeartbeat(adapter);
+		// Should resolve without retrying.
+		await clearHeartbeatWithRetry(adapter);
+		const rows = adapter
+			.getSQLiteDb()
+			.query<{ c: number }, []>(
+				"SELECT COUNT(*) as c FROM instance_heartbeats",
+			)
+			.all();
+		expect(rows[0].c).toBe(0);
+	});
+
+	it("clearHeartbeatWithRetry: retries on transient failures and ultimately succeeds", async () => {
+		await writeHeartbeat(adapter);
+
+		const realDb = adapter.getSQLiteDb();
+		const originalRun = realDb.run.bind(realDb);
+		let attempts = 0;
+		(realDb as unknown as { run: typeof realDb.run }).run = ((
+			sql: unknown,
+			params?: unknown,
+		) => {
+			if (
+				typeof sql === "string" &&
+				sql.includes("DELETE FROM instance_heartbeats")
+			) {
+				attempts++;
+				// Fail the first two attempts; succeed on the third.
+				if (attempts <= 2) {
+					const e = new Error(
+						`simulated transient DELETE failure #${attempts}`,
+					);
+					(e as Error & { code?: string }).code = "SQLITE_BUSY";
+					throw e;
+				}
+			}
+			return (
+				originalRun as unknown as (
+					sql: unknown,
+					params?: unknown,
+				) => unknown
+			)(sql, params);
+		}) as typeof realDb.run;
+
+		try {
+			await clearHeartbeatWithRetry(adapter, {
+				maxAttempts: 3,
+				baseDelayMs: 1,
+			});
+			expect(attempts).toBe(3);
+			const rows = adapter
+				.getSQLiteDb()
+				.query<{ c: number }, []>(
+					"SELECT COUNT(*) as c FROM instance_heartbeats",
+				)
+				.all();
+			expect(rows[0].c).toBe(0);
+		} finally {
+			(realDb as unknown as { run: typeof realDb.run }).run =
+				originalRun as typeof realDb.run;
+		}
+	});
+
+	it("clearHeartbeatWithRetry: rethrows when all attempts fail", async () => {
+		await writeHeartbeat(adapter);
+
+		const realDb = adapter.getSQLiteDb();
+		const originalRun = realDb.run.bind(realDb);
+		let attempts = 0;
+		(realDb as unknown as { run: typeof realDb.run }).run = ((
+			sql: unknown,
+			params?: unknown,
+		) => {
+			if (
+				typeof sql === "string" &&
+				sql.includes("DELETE FROM instance_heartbeats")
+			) {
+				attempts++;
+				throw new Error(`persistent failure #${attempts}`);
+			}
+			return (
+				originalRun as unknown as (
+					sql: unknown,
+					params?: unknown,
+				) => unknown
+			)(sql, params);
+		}) as typeof realDb.run;
+
+		try {
+			await expect(
+				clearHeartbeatWithRetry(adapter, {
+					maxAttempts: 3,
+					baseDelayMs: 1,
+				}),
+			).rejects.toThrow(/persistent failure #3/);
+			expect(attempts).toBe(3);
+		} finally {
+			(realDb as unknown as { run: typeof realDb.run }).run =
+				originalRun as typeof realDb.run;
+		}
 	});
 
 	it("warn mode does NOT throw even when peers are present", async () => {
