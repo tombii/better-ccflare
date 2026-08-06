@@ -38,7 +38,7 @@ The spec called out three traps. All three were hit and handled:
 ## Environment
 
 - Worktree: `/tmp/claude-501/cb-integration-check` (sandbox-allowed; the
-  standard `/Users/vvladescu/.ao/data/worktrees/ccflare/` siblings were
+  standard worktree siblings under the operator's usual layout were
   blocked by the sandbox's write allowlist).
 - `bun install` ran fresh in the worktree's own `node_modules` (NOT a
   symlink to another worktree). Required because `packages/providers`

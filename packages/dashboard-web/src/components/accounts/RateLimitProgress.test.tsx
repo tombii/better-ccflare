@@ -271,7 +271,7 @@ describe("RateLimitProgress", () => {
 	// bug that hid per-window usage in production. See:
 	// https://github.com/zenprocess/better-ccflare for the operator-reported
 	// dashboard dead-branch class.
-	it("renders MiniMax five_hour and seven_day as separate windows from each window's own utilization (ccflare-95)", () => {
+	it("renders MiniMax five_hour and seven_day as separate windows from each window's own utilization", () => {
 		const fiveHourReset = Date.now() + 5 * 60 * 60 * 1000;
 		const sevenDayReset = Date.now() + 5 * 24 * 60 * 60 * 1000;
 		const html = renderToStaticMarkup(
@@ -312,7 +312,7 @@ describe("RateLimitProgress", () => {
 		expect(html).not.toContain("N/A");
 	});
 
-	it("skips the MiniMax 7-day row entirely when seven_day is null (ccflare-95)", () => {
+	it("skips the MiniMax 7-day row entirely when seven_day is null", () => {
 		const fiveHourReset = Date.now() + 5 * 60 * 60 * 1000;
 		const html = renderToStaticMarkup(
 			<RateLimitProgress
@@ -342,7 +342,7 @@ describe("RateLimitProgress", () => {
 		expect(html).not.toContain("N/A");
 	});
 
-	it("does NOT mis-dispatch an Anthropic seven_day payload to the MiniMax branch (ccflare-95)", () => {
+	it("does NOT mis-dispatch an Anthropic seven_day payload to the MiniMax branch", () => {
 		// Anthropic-style inner windows use snake_case `resets_at` (ISO string),
 		// not camelCase `resetAt`. The shape probe on the inner object is what
 		// keeps the legacy Anthropic collector reachable for its payloads.

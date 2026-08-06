@@ -19,7 +19,7 @@ import { describe, expect, it } from "bun:test";
 import { providerShowsWeeklyUsage } from "../../utils/provider-utils";
 
 describe("providerShowsWeeklyUsage", () => {
-	it("returns true for minimax so AccountListItem passes showWeekly=true (ccflare-100)", () => {
+	it("returns true for minimax so AccountListItem passes showWeekly=true", () => {
 		// Gate A for the MiniMax per-window fix. Without this entry the
 		// component renders a single collapsed bar instead of separate
 		// 5-hour and 7-day windows — the dashboard dead-branch bug this
@@ -27,7 +27,7 @@ describe("providerShowsWeeklyUsage", () => {
 		expect(providerShowsWeeklyUsage("minimax")).toBe(true);
 	});
 
-	it("returns true for alibaba-coding-plan so its five_hour/weekly/monthly branch is reachable (ccflare-100)", () => {
+	it("returns true for alibaba-coding-plan so its five_hour/weekly/monthly branch is reachable", () => {
 		// Gate A for the Alibaba per-window fix. Without this entry the
 		// isAlibabaData branch in RateLimitProgress is unreachable and
 		// the pool-usage eligibility set never sees Alibaba accounts.

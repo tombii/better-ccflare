@@ -18,8 +18,8 @@
  *   - peak V8 heap delta (using process.memoryUsage().heapUsed over the run)
  *
  * The pinned 73 015-byte upstream body comes from
- * bench/bun-35093-harness.ts in ccflare-42. We use the same URL so the
- * numbers are directly comparable to ccflare-42's table.
+ * bench/bun-35093-harness.ts in an earlier measurement session. We use the same URL so the
+ * numbers are directly comparable to that earlier table.
  *
  * Run:  bun run bench/drain-strategy-harness.ts
  */
