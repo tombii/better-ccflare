@@ -8,6 +8,7 @@ import {
 	HTTP_STATUS,
 	initializeNanoGPTPricingIfAccountsExist,
 	installOutboundProxy,
+	intervalManager,
 	NETWORK,
 	registerCleanup,
 	registerDisposable,
@@ -333,39 +334,23 @@ const usagePollingRetryTimeouts = new Map<string, NodeJS.Timeout>();
 let tlsEnabled = false;
 
 // Startup maintenance (one-shot): cleanup only (compaction available via API endpoint)
-async function runStartupMaintenance(
-	config: Config,
-	dbOps: DatabaseOperations,
-	retentionState: RetentionStatus,
-) {
+async function runStartupMaintenance(dbOps: DatabaseOperations) {
 	const log = new Logger("StartupMaintenance");
-	try {
-		const payloadDays = config.getDataRetentionDays();
-		const requestDays = config.getRequestRetentionDays();
-		const { removedRequests, removedPayloads } = await dbOps.cleanupOldRequests(
-			payloadDays * 24 * 60 * 60 * 1000,
-			requestDays * 24 * 60 * 60 * 1000,
+	// Runs the "data-retention-cleanup" interval's own callback via
+	// intervalManager.runNow() instead of duplicating its retention logic
+	// here. Two independent code paths writing retentionState could race — a
+	// startup run that outlives the first hourly tick would overwrite that
+	// tick's newer result — because only the periodic registration's
+	// isRunning flag guarded against overlap. runNow() shares that exact flag
+	// (registered with maxConcurrent: 1), so at most one retention run is
+	// ever in flight regardless of whether startup or the interval triggered
+	// it, closing the race entirely (Greptile, PR #390). The interval must
+	// already be registered before this runs — see the call site.
+	const ran = await intervalManager.runNow("data-retention-cleanup");
+	if (!ran) {
+		log.warn(
+			"Skipped startup retention cleanup - periodic run already in progress",
 		);
-		log.info(
-			`Startup cleanup removed ${removedRequests} requests and ${removedPayloads} payloads (payload=${payloadDays}d, requests=${requestDays}d)`,
-		);
-		const removedSnapshots = await dbOps.pruneUsageSnapshots(
-			Date.now() - config.getUsageHistoryRetentionDays() * TIME_CONSTANTS.DAY,
-		);
-		if (removedSnapshots > 0) {
-			log.info(`Pruned ${removedSnapshots} old usage snapshots`);
-		}
-		// Mirrors dataRetentionCleanup's success/failure bookkeeping (#384) — the
-		// hourly job isn't due for up to an hour after boot, so without this a
-		// startup-time retention failure stayed invisible to /health (all-null
-		// retention status) until the next periodic tick surfaced it.
-		retentionState.lastSuccessAt = Date.now();
-		retentionState.lastError = null;
-		retentionState.lastErrorAt = null;
-	} catch (err) {
-		log.error(`Startup cleanup error: ${err}`);
-		retentionState.lastError = err instanceof Error ? err.message : String(err);
-		retentionState.lastErrorAt = Date.now();
 	}
 	try {
 		// Clean up expired OAuth sessions
@@ -871,99 +856,12 @@ export default async function startServer(options?: {
 	};
 	const getRetentionStatus = (): RetentionStatus => ({ ...retentionState });
 
-	const apiRouter = new APIRouter({
-		db,
-		config,
-		dbOps,
-		alertService,
-		modelCatalog: {
-			get: () => getModelCatalog(),
-			refresh: async () => {
-				if (!modelCatalogProxyContext) {
-					return {
-						success: false,
-						error: "Model catalog is not initialized yet",
-					};
-				}
-				const result = await refreshModelCatalog(modelCatalogProxyContext, {
-					trigger: "manual",
-				});
-				return { success: result.success, error: result.error };
-			},
-		},
-		runtime: {
-			port,
-			tlsEnabled,
-		},
-		getAsyncWriterHealth: () => asyncWriter.getHealth(),
-		getUsageWorkerHealth: () => getUsageCollectorHealth(),
-		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
-		getRetentionStatus,
-		getStrategy: () => currentStrategy,
-		internalProbeSecret,
-		localControlSecret,
-	});
-
-	// Initialize AuthService for proxy authentication
-	const authService = new AuthService(
-		dbOps,
-		internalProbeSecret,
-		localControlSecret,
-	);
-
-	// Run startup maintenance once (cleanup only) - fire and forget
-	runStartupMaintenance(config, dbOps, retentionState).catch((err) => {
-		log.error("Startup maintenance failed:", err);
-	});
-	stopRetentionJob = () => {}; // No-op stopper
-
-	// Set up periodic OAuth session cleanup (every hour)
-	const unregisterOAuthCleanup = registerCleanup({
-		id: "oauth-session-cleanup",
-		callback: async () => {
-			try {
-				const removedSessions = await dbOps.cleanupExpiredOAuthSessions();
-				if (removedSessions > 0) {
-					log.debug(`Cleaned up ${removedSessions} expired OAuth sessions`);
-				}
-			} catch (err) {
-				log.error(`OAuth session cleanup error: ${err}`);
-			}
-		},
-		minutes: 60,
-		description: "OAuth session cleanup",
-	});
-
-	stopOAuthCleanupJob = unregisterOAuthCleanup;
-
-	// Set up periodic rate limit cleanup (every hour)
-	const unregisterRateLimitCleanup = registerCleanup({
-		id: "rate-limit-cleanup",
-		callback: async () => {
-			try {
-				const now = Date.now();
-				const clearedRows = await dbOps.clearExpiredRateLimits(now);
-				for (const row of clearedRows) {
-					forceCloseCircuit({ provider: row.provider, accountId: row.id }, now);
-				}
-				if (clearedRows.length > 0) {
-					log.debug(
-						`Cleared ${clearedRows.length} expired rate_limited_until entries`,
-					);
-				}
-			} catch (err) {
-				log.error(`Rate limit cleanup error: ${err}`);
-			}
-		},
-		minutes: 60,
-		description: "Rate limit cleanup",
-	});
-
-	stopRateLimitCleanupJob = unregisterRateLimitCleanup;
-
-	// Set up periodic data retention cleanup every 1 hour.
-	// retentionState (declared above, near the router construction) is
-	// mutated in place below to back getRetentionStatus() for /health (#384).
+	// Registered here (before runStartupMaintenance() below) so intervalManager
+	// has "data-retention-cleanup" on record and runNow() can find it — startup
+	// maintenance triggers the very same callback via runNow() instead of
+	// duplicating this logic, so both the boot-time run and the hourly tick
+	// share one isRunning guard (maxConcurrent: 1) and can never race on
+	// retentionState (Greptile, PR #390).
 	const dataRetentionCleanup = async () => {
 		const startTime = Date.now();
 		try {
@@ -1022,23 +920,113 @@ export default async function startServer(options?: {
 	};
 
 	// Periodic data retention cleanup every 1 hour (reduced from 6 hours for more aggressive cleanup).
-	// runStartupMaintenance() (called above) handles the initial cleanup on boot,
-	// so we don't fire dataRetentionCleanup() immediately to avoid concurrent
-	// large deletes that can spike WAL size and wedge the service.
+	// Registered with immediate: false (default) — runStartupMaintenance()
+	// below fires the first run via intervalManager.runNow() instead, so we
+	// don't double-run at boot.
 	const unregisterDataCleanup = registerCleanup({
 		id: "data-retention-cleanup",
 		callback: dataRetentionCleanup,
 		minutes: 60, // every 1 hour
 		// A batched cleanup can run long on a large backlog (#384) — long enough
-		// to still be in flight when the next hourly tick fires. Without this,
-		// IntervalManager would start a second concurrent run, and the two
-		// completing out of order could overwrite retentionState with a stale
-		// result (e.g. an older failure clobbering a newer success in /health).
+		// to still be in flight when the next hourly tick fires, or when
+		// runStartupMaintenance's runNow() call races a tick. Without this,
+		// IntervalManager would allow overlapping runs, and the two completing
+		// out of order could overwrite retentionState with a stale result (e.g.
+		// an older failure clobbering a newer success in /health).
 		maxConcurrent: 1,
 		description: "Periodic data retention cleanup and incremental vacuum",
 	});
-
 	stopDataCleanupJob = unregisterDataCleanup;
+
+	const apiRouter = new APIRouter({
+		db,
+		config,
+		dbOps,
+		alertService,
+		modelCatalog: {
+			get: () => getModelCatalog(),
+			refresh: async () => {
+				if (!modelCatalogProxyContext) {
+					return {
+						success: false,
+						error: "Model catalog is not initialized yet",
+					};
+				}
+				const result = await refreshModelCatalog(modelCatalogProxyContext, {
+					trigger: "manual",
+				});
+				return { success: result.success, error: result.error };
+			},
+		},
+		runtime: {
+			port,
+			tlsEnabled,
+		},
+		getAsyncWriterHealth: () => asyncWriter.getHealth(),
+		getUsageWorkerHealth: () => getUsageCollectorHealth(),
+		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
+		getRetentionStatus,
+		getStrategy: () => currentStrategy,
+		internalProbeSecret,
+		localControlSecret,
+	});
+
+	// Initialize AuthService for proxy authentication
+	const authService = new AuthService(
+		dbOps,
+		internalProbeSecret,
+		localControlSecret,
+	);
+
+	// Run startup maintenance once (cleanup only) - fire and forget
+	runStartupMaintenance(dbOps).catch((err) => {
+		log.error("Startup maintenance failed:", err);
+	});
+	stopRetentionJob = () => {}; // No-op stopper
+
+	// Set up periodic OAuth session cleanup (every hour)
+	const unregisterOAuthCleanup = registerCleanup({
+		id: "oauth-session-cleanup",
+		callback: async () => {
+			try {
+				const removedSessions = await dbOps.cleanupExpiredOAuthSessions();
+				if (removedSessions > 0) {
+					log.debug(`Cleaned up ${removedSessions} expired OAuth sessions`);
+				}
+			} catch (err) {
+				log.error(`OAuth session cleanup error: ${err}`);
+			}
+		},
+		minutes: 60,
+		description: "OAuth session cleanup",
+	});
+
+	stopOAuthCleanupJob = unregisterOAuthCleanup;
+
+	// Set up periodic rate limit cleanup (every hour)
+	const unregisterRateLimitCleanup = registerCleanup({
+		id: "rate-limit-cleanup",
+		callback: async () => {
+			try {
+				const now = Date.now();
+				const clearedRows = await dbOps.clearExpiredRateLimits(now);
+				for (const row of clearedRows) {
+					forceCloseCircuit({ provider: row.provider, accountId: row.id }, now);
+				}
+				if (clearedRows.length > 0) {
+					log.debug(
+						`Cleared ${clearedRows.length} expired rate_limited_until entries`,
+					);
+				}
+			} catch (err) {
+				log.error(`Rate limit cleanup error: ${err}`);
+			}
+		},
+		minutes: 60,
+		description: "Rate limit cleanup",
+	});
+
+	stopRateLimitCleanupJob = unregisterRateLimitCleanup;
 
 	// Set up periodic WAL checkpoint every 5 minutes to prevent unbounded WAL growth
 	const unregisterWalCheckpoint = registerCleanup({
