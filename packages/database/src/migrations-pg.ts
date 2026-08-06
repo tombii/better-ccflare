@@ -1198,14 +1198,27 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	// to BIGINT (int8). The multi-instance guard writes Date.now() epoch-ms
 	// (~1.79e12), which overflows int4 and crash-loops PG deployments on the
 	// first heartbeat upsert (issue #383). Widening is lossless — every int4
-	// value is a valid int8. Only run the ALTER (and the accompanying purge
-	// of garbage rows left by crash-looping pre-fix incarnations) when the
-	// column is still int4 — this table is shared by every live instance, so
-	// unconditionally deleting rows on every startup would wipe a peer's
-	// fresh heartbeat right before the guard scans for it. Errors are
+	// value is a valid int8. Only run the ALTER when the column is still
+	// int4, so repeat startups after the first are a no-op. Errors are
 	// allowed to propagate: silently swallowing a failed widening would let
 	// startup continue writing epoch-ms into an unchanged int4 column,
 	// reproducing the same overflow crash this migration fixes.
+	//
+	// The type check + ALTER is not synchronised across instances (see the
+	// accounts unique-index migration below for why adapter.transaction()
+	// and pg_advisory_lock both fail to give real atomicity over a pooled
+	// connection). Two instances can both observe int4 and both run the
+	// ALTER; that is harmless since ALTER COLUMN TYPE bigint is idempotent
+	// on an already-bigint column and PostgreSQL serialises the concurrent
+	// DDL. What must NOT happen is a blanket `DELETE FROM instance_heartbeats`
+	// here: that would erase a peer's heartbeat written between this
+	// instance's ALTER and its own scan, defeating the multi-instance guard.
+	// Instead, only purge rows that are actually garbage — int4-overflow
+	// wraparound from crash-looping pre-fix incarnations produces values
+	// wildly outside any plausible epoch-ms range (negative, or before
+	// year 2000), which a live instance's freshly written Date.now() never
+	// is. This scoping makes the purge safe under concurrent startup: it
+	// can never match a row a peer just wrote correctly.
 	const startedAtType = await columnDataType(
 		adapter,
 		"instance_heartbeats",
@@ -1217,7 +1230,12 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			 ALTER COLUMN started_at TYPE bigint,
 			 ALTER COLUMN last_heartbeat TYPE bigint`,
 		);
-		await adapter.unsafe(`DELETE FROM instance_heartbeats`);
+		const MIN_PLAUSIBLE_EPOCH_MS = 946684800000; // 2000-01-01T00:00:00Z
+		await adapter.unsafe(
+			`DELETE FROM instance_heartbeats
+			 WHERE started_at < ${MIN_PLAUSIBLE_EPOCH_MS}
+			    OR last_heartbeat < ${MIN_PLAUSIBLE_EPOCH_MS}`,
+		);
 		log.info("Widened instance_heartbeats timestamps to bigint (issue #383)");
 	}
 
