@@ -674,7 +674,7 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 	});
 
 	it("emits 'truncated' via onTerminalState when upstream EOF lands without a stop_reason", async () => {
-		// Mirrors the ccproxy2/anthropic 8-second 200 with 0 output tokens:
+		// Mirrors the anthropic 8-second 200 with 0 output tokens:
 		// stream closed mid-content with no terminal event ever observed.
 		const original =
 			'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n' +

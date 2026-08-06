@@ -283,7 +283,7 @@ describe("createHealthHandler — pool.usage_exhausted in the response", () => {
 	});
 
 	it("reports routable:0 during a total usage-capped outage (incident 2026-07-30 scenario)", async () => {
-		// Production trace: ccproxy2 was down 116 minutes because every account
+		// Production trace: a proxy instance was down for ~2 hours because every account
 		// was usage-capped. Pre-fix /health reported `routable: 3` because
 		// computePoolStatus called isAccountAvailable(a, now) without the
 		// usage argument. This test guards against that regression directly.

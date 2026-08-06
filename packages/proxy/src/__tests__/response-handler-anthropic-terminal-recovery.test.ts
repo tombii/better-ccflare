@@ -227,7 +227,7 @@ describe("forwardToClient Anthropic terminal recovery integration", () => {
 describe("forwardToClient SSE terminal-state propagation", () => {
 	function makeContentOnlyStream(): ReadableStream<Uint8Array> {
 		// Mid-content only — no terminal message_delta, no message_stop.
-		// Mirrors the ccmax/minimax IncompleteRead signature where bytes
+		// Mirrors the minimax IncompleteRead signature where bytes
 		// flow then the upstream TCP closes before any stop_reason lands.
 		const content =
 			'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n' +

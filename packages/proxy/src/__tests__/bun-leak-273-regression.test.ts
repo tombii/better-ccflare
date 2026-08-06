@@ -8,7 +8,7 @@
  * store is released. Without this, every abandoned Response holds ~100KB
  * off-heap until GC.
  *
- * Why drain and not `body.cancel()`: ccflare-42 measured that
+ * Why drain and not `body.cancel()`: an earlier measurement session showed that
  * `body.cancel()` is a NO-OP on every released Bun (1.3.2 / 1.3.14);
  * draining the body in chunks reduces the leak by ~85% on stock Bun
  * (full table in `bench/drain-strategy-harness.ts`). The drain helper

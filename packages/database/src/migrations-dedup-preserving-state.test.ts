@@ -12,7 +12,7 @@ import { ensureSchema, runMigrations } from "../src/migrations";
  *   live OAuth refresh tokens (the kept row could be the oldest / expired
  *   one), cascade-deleted every combo_slot referencing a discarded id, and
  *   orphaned requests.account_used / usage_snapshots.account_id rows that
- *   pointed at the deleted id. Production ccmax had exactly this state —
+ *   pointed at the deleted id. Production had exactly this state —
  *   two accounts both named "val" with different live traffic — so the
  *   fix is load-bearing, not theoretical.
  *

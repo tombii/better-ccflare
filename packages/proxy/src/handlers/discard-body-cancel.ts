@@ -5,7 +5,7 @@
  *
  * We drain the body in chunks rather than calling `body.cancel()`, because
  * `body.cancel()` is a NO-OP on every released Bun (Bun 1.3.2, 1.3.14, and
- * earlier): ccflare-42 measured 78–83 KB/req leak with `cancel()`,
+ * earlier): an earlier measurement session found 78–83 KB/req leak with `cancel()`,
  * indistinguishable from no cancel at all. Draining the body (reading it to
  * `done` in chunks) actually closes the upstream source and frees the
  * backing store — measured at ~85% reduction in RSS growth on stock Bun

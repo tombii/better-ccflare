@@ -38,7 +38,7 @@ The spec called out three traps. All three were hit and handled:
 ## Environment
 
 - Worktree: `/tmp/claude-501/cb-integration-check` (sandbox-allowed; the
-  standard `/Users/vvladescu/.ao/data/worktrees/ccflare/` siblings were
+  standard worktree siblings under the operator's usual layout were
   blocked by the sandbox's write allowlist).
 - `bun install` ran fresh in the worktree's own `node_modules` (NOT a
   symlink to another worktree). Required because `packages/providers`
@@ -183,7 +183,7 @@ not present here: HEAD's tree differs from upstream/main by 20 files,
 
 - Did NOT push.
 - Did NOT open a PR.
-- Did NOT touch any live service (`ccmax.zp.digital`, etc.).
+- Did NOT touch any live service.
 - Did NOT change the load-balancing strategy.
 - Did NOT merge `24550bed` (V2 tree); ported by hand.
 - Did NOT symlink another worktree's `node_modules`; ran `bun install`
