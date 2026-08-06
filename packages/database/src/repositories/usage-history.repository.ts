@@ -157,10 +157,39 @@ export class UsageHistoryRepository extends BaseRepository<UsageSnapshotRow> {
 	}
 
 	async deleteOlderThan(cutoffTs: number): Promise<number> {
-		return this.runWithChanges(
-			`DELETE FROM usage_snapshots WHERE timestamp < ?`,
-			[cutoffTs],
-		);
+		// Batched like RequestRepository.deleteOlderThan/deletePayloadsOlderThan —
+		// an unbounded DELETE here can exceed the PG statement_timeout once the
+		// table is large, which previously caused retention cleanup to fail
+		// forever and let usage_snapshots grow unbounded (#384).
+		//
+		// usage_snapshots has no surrogate key (append-only time series — see
+		// the CREATE TABLE comment in migrations.ts), so the batch subquery
+		// matches on the natural composite key (account_id, timestamp,
+		// window_key) instead of a single id column. Row-value IN is standard
+		// SQL supported by both SQLite (3.15+) and PostgreSQL, so this works
+		// identically on both dialects. idx_usage_snapshots_ts (on timestamp
+		// alone) makes the inner SELECT efficient.
+		//
+		// The natural key isn't unique, so a batch of BATCH_SIZE selected keys
+		// can match more or fewer than BATCH_SIZE physical rows once duplicates
+		// are deleted in one statement. Comparing `deleted === BATCH_SIZE` to
+		// decide whether to continue is therefore unreliable — it can stop
+		// early and leave eligible rows behind. Loop until a DELETE affects
+		// zero rows instead, which is correct regardless of duplicates (at the
+		// cost of one extra no-op round trip on the final iteration).
+		const BATCH_SIZE = 2000;
+		let total = 0;
+		let deleted: number;
+		do {
+			deleted = await this.runWithChanges(
+				`DELETE FROM usage_snapshots WHERE (account_id, timestamp, window_key) IN (
+					SELECT account_id, timestamp, window_key FROM usage_snapshots WHERE timestamp < ? LIMIT ?
+				)`,
+				[cutoffTs, BATCH_SIZE],
+			);
+			total += deleted;
+		} while (deleted > 0);
+		return total;
 	}
 }
 

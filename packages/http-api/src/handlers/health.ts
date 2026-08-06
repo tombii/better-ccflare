@@ -7,7 +7,12 @@ import {
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
-import type { HealthResponse, IntegrityStatus, PoolStatus } from "../types";
+import type {
+	HealthResponse,
+	IntegrityStatus,
+	PoolStatus,
+	RetentionStatus,
+} from "../types";
 import {
 	getRepresentativeUsageResetMs,
 	isUsageExhausted,
@@ -57,6 +62,7 @@ type UsageWorkerHealthFn = () => {
 	state: string;
 };
 type IntegrityStatusFn = () => IntegrityStatus;
+type RetentionStatusFn = () => RetentionStatus;
 
 export function computePoolStatus(
 	accounts: Account[],
@@ -186,6 +192,7 @@ export function createHealthHandler(
 	getUsageWorkerHealth?: UsageWorkerHealthFn,
 	getIntegrityStatus?: IntegrityStatusFn,
 	getAccountUsageInfo: AccountUsageInfoFn = usageCacheUsageInfo,
+	getRetentionStatus?: RetentionStatusFn,
 ) {
 	const normalCache = new TtlCache<HealthResponse>(2000);
 	const detailCache = new TtlCache<HealthResponse>(2000);
@@ -245,6 +252,7 @@ export function createHealthHandler(
 			response.runtime = runtime;
 			const integrity = getIntegrityStatus();
 			runtime.storage = {
+				...runtime.storage,
 				integrity: {
 					status: integrity.status,
 					runningKind: integrity.runningKind,
@@ -260,6 +268,27 @@ export function createHealthHandler(
 						? new Date(integrity.lastFullCheckAt).toISOString()
 						: null,
 					lastFullResult: integrity.lastFullResult,
+				},
+			};
+		}
+
+		// Add data-retention job telemetry independently — orthogonal to the
+		// blocks above. Lets operators dead-man-alert on lastSuccessAt instead
+		// of only finding out via a swallowed log line (#384).
+		if (getRetentionStatus) {
+			const runtime = response.runtime ?? {};
+			response.runtime = runtime;
+			const retention = getRetentionStatus();
+			runtime.storage = {
+				...runtime.storage,
+				retention: {
+					lastSuccessAt: retention.lastSuccessAt
+						? new Date(retention.lastSuccessAt).toISOString()
+						: null,
+					lastError: retention.lastError,
+					lastErrorAt: retention.lastErrorAt
+						? new Date(retention.lastErrorAt).toISOString()
+						: null,
 				},
 			};
 		}

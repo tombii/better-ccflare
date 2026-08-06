@@ -69,6 +69,7 @@ import { validatePathOrThrow } from "@better-ccflare/security";
 import {
 	type Account,
 	type LoadBalancingStrategy,
+	type RetentionStatus,
 	StrategyName,
 	type StrategyStore,
 } from "@better-ccflare/types";
@@ -846,6 +847,20 @@ export default async function startServer(options?: {
 	// ProxyContext exists — mirrors the getStrategy() lazy-getter pattern above.
 	let modelCatalogProxyContext: ProxyContext | null = null;
 
+	// Minimal retention-job telemetry (#384): the periodic data-retention
+	// cleanup below silently swallowed failures into a log line with no way
+	// to tell "retention healthy" from "retention dead for weeks" apart from
+	// tailing logs. Declared here (mirrors the currentStrategy /
+	// modelCatalogProxyContext mutable-ref pattern above) so the router,
+	// constructed eagerly below, can read it via a getter; the cleanup
+	// callback mutates it in place once defined further down.
+	const retentionState: RetentionStatus = {
+		lastSuccessAt: null,
+		lastError: null,
+		lastErrorAt: null,
+	};
+	const getRetentionStatus = (): RetentionStatus => ({ ...retentionState });
+
 	const apiRouter = new APIRouter({
 		db,
 		config,
@@ -873,6 +888,7 @@ export default async function startServer(options?: {
 		getAsyncWriterHealth: () => asyncWriter.getHealth(),
 		getUsageWorkerHealth: () => getUsageCollectorHealth(),
 		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
+		getRetentionStatus,
 		getStrategy: () => currentStrategy,
 		internalProbeSecret,
 		localControlSecret,
@@ -935,7 +951,9 @@ export default async function startServer(options?: {
 
 	stopRateLimitCleanupJob = unregisterRateLimitCleanup;
 
-	// Set up periodic data retention cleanup every 1 hour
+	// Set up periodic data retention cleanup every 1 hour.
+	// retentionState (declared above, near the router construction) is
+	// mutated in place below to back getRetentionStatus() for /health (#384).
 	const dataRetentionCleanup = async () => {
 		const startTime = Date.now();
 		try {
@@ -982,8 +1000,14 @@ export default async function startServer(options?: {
 			if (removedSnapshots > 0) {
 				log.info(`Pruned ${removedSnapshots} old usage snapshots`);
 			}
+			retentionState.lastSuccessAt = Date.now();
+			retentionState.lastError = null;
+			retentionState.lastErrorAt = null;
 		} catch (err) {
 			log.error(`Periodic data retention cleanup error: ${err}`);
+			retentionState.lastError =
+				err instanceof Error ? err.message : String(err);
+			retentionState.lastErrorAt = Date.now();
 		}
 	};
 

@@ -86,6 +86,103 @@ describe("health runtime payload", () => {
 
 		expect(body).not.toHaveProperty("runtime");
 	});
+
+	// #384: retention cleanup silently swallowed failures into a log line with
+	// no way to distinguish "healthy" from "dead for weeks". getRetentionStatus
+	// surfaces that via runtime.storage.retention, mirroring how
+	// getIntegrityStatus surfaces runtime.storage.integrity.
+	it("includes runtime.storage.retention with lastSuccessAt when retention succeeded", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const lastSuccessAt = Date.now() - 60_000;
+		const handler = createHealthHandler(
+			db,
+			config,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			() => ({
+				lastSuccessAt,
+				lastError: null,
+				lastErrorAt: null,
+			}),
+		);
+
+		const url = new URL("http://localhost/health");
+		const response = await handler(url);
+		const body = (await response.json()) as HealthResponse;
+
+		expect(body.runtime?.storage?.retention).toEqual({
+			lastSuccessAt: new Date(lastSuccessAt).toISOString(),
+			lastError: null,
+			lastErrorAt: null,
+		});
+	});
+
+	it("includes runtime.storage.retention with lastError when retention failed", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const lastErrorAt = Date.now() - 5_000;
+		const handler = createHealthHandler(
+			db,
+			config,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			() => ({
+				lastSuccessAt: null,
+				lastError: "statement timeout",
+				lastErrorAt,
+			}),
+		);
+
+		const url = new URL("http://localhost/health");
+		const response = await handler(url);
+		const body = (await response.json()) as HealthResponse;
+
+		expect(body.runtime?.storage?.retention).toEqual({
+			lastSuccessAt: null,
+			lastError: "statement timeout",
+			lastErrorAt: new Date(lastErrorAt).toISOString(),
+		});
+	});
+
+	it("omits runtime.storage.retention when getRetentionStatus is not provided", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(db, config);
+		const url = new URL("http://localhost/health");
+		const response = await handler(url);
+		const body = (await response.json()) as HealthResponse;
+
+		expect(body.runtime?.storage?.retention).toBeUndefined();
+	});
 });
 
 describe("AsyncDbWriter.getHealth", () => {
@@ -652,8 +749,7 @@ describe("health build-time provenance", () => {
 
 	it("reports build-time provenance when env vars are set", async () => {
 		const saved = snapshotEnv();
-		process.env.CCFLARE_GIT_SHA =
-			"abcdef1234567890abcdef1234567890abcdef12";
+		process.env.CCFLARE_GIT_SHA = "abcdef1234567890abcdef1234567890abcdef12";
 		process.env.CCFLARE_GIT_REF = "deploy/test";
 		process.env.CCFLARE_BUILD_DATE = "2026-08-01T00:00:00Z";
 		process.env.CCFLARE_VERSION = "9.9.9-test";
@@ -670,9 +766,7 @@ describe("health build-time provenance", () => {
 			};
 			expect(response.status).toBe(200);
 			expect(body.version).toBe("9.9.9-test");
-			expect(body.git_sha).toBe(
-				"abcdef1234567890abcdef1234567890abcdef12",
-			);
+			expect(body.git_sha).toBe("abcdef1234567890abcdef1234567890abcdef12");
 			expect(body.git_ref).toBe("deploy/test");
 			expect(body.build_date).toBe("2026-08-01T00:00:00Z");
 		} finally {
