@@ -99,6 +99,7 @@ const CODEX_ERROR_TYPE_BY_CODE: Record<string, string> = {
 
 // Default model mapping: Anthropic model name prefixes → Codex model names
 const DEFAULT_MODEL_MAP: Record<string, string> = {
+	fable: "gpt-5.3-codex",
 	opus: "gpt-5.3-codex",
 	sonnet: "gpt-5.3-codex",
 	haiku: "gpt-5.4-mini",
@@ -691,6 +692,7 @@ export class CodexProvider extends BaseProvider {
 		}
 
 		const lower = anthropicModel.toLowerCase();
+		if (lower.includes("fable")) return DEFAULT_MODEL_MAP.fable;
 		if (lower.includes("haiku")) return DEFAULT_MODEL_MAP.haiku;
 		if (lower.includes("sonnet")) return DEFAULT_MODEL_MAP.sonnet;
 		if (lower.includes("opus")) return DEFAULT_MODEL_MAP.opus;
