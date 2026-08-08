@@ -6,6 +6,7 @@ import type {
 	RequestMeta,
 } from "@better-ccflare/types";
 import {
+	getComboSlotInfo,
 	getModelFamilyExhaustionInfo,
 	selectAccountsForRequest,
 } from "../account-selector";
@@ -231,6 +232,127 @@ describe("selectAccountsForRequest — model-scoped capacity filter (combo routi
 		// Only the non-exhausted slot (acc-2) is returned; the combo pool isn't
 		// fully empty so no fallback and no exhaustion signal.
 		expect(result.map((a) => a.id)).toEqual(["acc-2"]);
+	});
+
+	// -- passthrough slots (empty slot.model) --------------------------------
+	//
+	// A passthrough slot carries no model override, so there is no slot model to
+	// scope the capacity check to. The check must fall back to the model the
+	// CLIENT asked for - that is what will actually be sent upstream on this
+	// slot. Passing the raw empty string makes getModelFamily("") return null,
+	// which turns isAccountCapacityExcluded into a silent no-op and lets a
+	// capacity-exhausted account back into rotation.
+	it("applies the capacity check to a passthrough slot using the REQUEST model", async () => {
+		const acc1 = makeAccount({ id: "acc-1" });
+		const acc2 = makeAccount({ id: "acc-2" });
+		usageCache.set(acc1.id, exhaustedUsage("Sonnet", Date.now()));
+		const combo = makeCombo([
+			{
+				id: "slot-1",
+				combo_id: "combo-1",
+				account_id: "acc-1",
+				model: "", // passthrough
+				priority: 0,
+				enabled: true,
+			},
+			{
+				id: "slot-2",
+				combo_id: "combo-1",
+				account_id: "acc-2",
+				model: "claude-sonnet-4-5",
+				priority: 1,
+				enabled: true,
+			},
+		]);
+		const ctx = makeCtx({
+			accounts: [acc1, acc2],
+			activeCombo: combo,
+			capacityRoutingMode: "exhausted",
+		});
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
+
+		// Without the request-model fallback the empty slot model yields a null
+		// family, the filter no-ops, and acc-1 is returned first.
+		expect(result.map((a) => a.id)).toEqual(["acc-2"]);
+		expect(getComboSlotInfo(meta)?.slots).toEqual([
+			{ accountId: "acc-2", modelOverride: "claude-sonnet-4-5" },
+		]);
+	});
+
+	it("keeps a passthrough slot whose account still has capacity for the request model", async () => {
+		const acc = makeAccount({ id: "acc-healthy" });
+		// Exhausted for a DIFFERENT family than the request - must not exclude.
+		usageCache.set(acc.id, exhaustedUsage("Opus", Date.now()));
+		const combo = makeCombo([
+			{
+				id: "slot-1",
+				combo_id: "combo-1",
+				account_id: "acc-healthy",
+				model: "", // passthrough
+				priority: 0,
+				enabled: true,
+			},
+		]);
+		const ctx = makeCtx({
+			accounts: [acc],
+			activeCombo: combo,
+			capacityRoutingMode: "exhausted",
+		});
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
+
+		expect(result.map((a) => a.id)).toEqual(["acc-healthy"]);
+		expect(getComboSlotInfo(meta)?.slots).toEqual([
+			{ accountId: "acc-healthy", modelOverride: "" },
+		]);
+	});
+
+	// -- non-regression: a populated slot model still wins --------------------
+	//
+	// The request-model fallback is a `||`, so it must only fire for an EMPTY
+	// slot model. When the slot carries its own model, the capacity check stays
+	// scoped to that model.
+	it("still scopes the capacity check to the slot's own model when it diverges from the request model", async () => {
+		const acc = makeAccount({ id: "acc-slot-model" });
+		usageCache.set(acc.id, exhaustedUsage("Sonnet", Date.now()));
+		const combo = makeCombo([
+			{
+				id: "slot-1",
+				combo_id: "combo-1",
+				account_id: "acc-slot-model",
+				model: "claude-opus-4-5",
+				priority: 0,
+				enabled: true,
+			},
+		]);
+		const ctx = makeCtx({
+			accounts: [acc],
+			activeCombo: combo,
+			capacityRoutingMode: "exhausted",
+		});
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
+
+		expect(result.map((a) => a.id)).toEqual(["acc-slot-model"]);
+		expect(getComboSlotInfo(meta)?.slots).toEqual([
+			{ accountId: "acc-slot-model", modelOverride: "claude-opus-4-5" },
+		]);
 	});
 
 	it("falls back to SessionStrategy when every combo slot is exhausted", async () => {

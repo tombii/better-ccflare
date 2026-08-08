@@ -400,9 +400,20 @@ export async function selectAccountsForRequest(
 				const combo = await ctx.dbOps.getActiveComboForFamily(
 					family as ComboFamily,
 				);
-				if (combo) {
+				if (!combo) {
+					// Without this line the detour is silent: a family with no active
+					// combo falls into normal pool routing and can be served by any
+					// provider, with nothing in the log to say so.
 					log.info(
-						`Combo routing active: ${combo.name} for family ${family} (${combo.slots.length} slots)`,
+						`No active combo for family ${family} - falling back to normal routing`,
+					);
+				}
+				if (combo) {
+					const passthroughSlots = combo.slots.filter(
+						(s) => !s.model || s.model.trim().length === 0,
+					).length;
+					log.info(
+						`Combo routing active: ${combo.name} for family ${family} (${combo.slots.length} slots, ${passthroughSlots} passthrough)`,
 					);
 
 					const allAccounts = await ctx.dbOps.getAllAccounts();
@@ -446,8 +457,15 @@ export async function selectAccountsForRequest(
 						// distinct concrete models within the same family.
 						if (
 							capacityRoutingEnabled &&
-							isAccountCapacityExcluded(account, slot.model, capacityNow)
-								.excluded
+							isAccountCapacityExcluded(
+								account,
+								// Passthrough slots (empty model) carry no model of their
+								// own: fall back to the request's model, otherwise
+								// getModelFamily("") returns null and this filter would
+								// silently no-op for those slots.
+								slot.model || model,
+								capacityNow,
+							).excluded
 						) {
 							continue;
 						}

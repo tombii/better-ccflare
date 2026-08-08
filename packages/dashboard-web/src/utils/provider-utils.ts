@@ -21,6 +21,39 @@ export function providerSupportsAutoFeatures(provider: string): boolean {
 }
 
 /**
+ * Providers whose upstream answers by the SAME model ids the client asks for.
+ *
+ * This is the one and only definition of the passthrough rule. An empty model
+ * field means "forward whatever model the client sent, untouched" — which is
+ * only meaningful when the upstream natively accepts Claude model ids, i.e.
+ * Anthropic OAuth accounts and Claude Console API accounts.
+ *
+ * On every other provider the Claude id sent by the client lands on a foreign
+ * catalog and gets coerced by an embedded default map. That is the exact path
+ * that produced `400 The 'gpt-5.3-codex' model is not supported...` on a codex
+ * account. So outside this list, choosing a model is mandatory.
+ *
+ * Never compare `provider === "anthropic"` at a call site: use the helper
+ * below, so the criterion stays in a single place.
+ */
+export const PASSTHROUGH_PROVIDERS: readonly string[] = [
+	PROVIDER_NAMES.ANTHROPIC,
+	PROVIDER_NAMES.CLAUDE_CONSOLE_API,
+];
+
+/**
+ * True when the model field may be left empty (passthrough) for this provider.
+ *
+ * An absent/unknown provider (no account picked yet) is NOT passthrough: we
+ * cannot promise a behaviour we do not know the upstream supports.
+ */
+export function providerAllowsClientModelPassthrough(
+	provider?: string | null,
+): boolean {
+	return PASSTHROUGH_PROVIDERS.includes((provider ?? "").trim());
+}
+
+/**
  * Check if a provider supports custom billing type configuration
  * (anthropic-compatible and openai-compatible providers)
  */
