@@ -22,6 +22,7 @@ import {
 	useRemoveComboSlot,
 	useReorderComboSlots,
 } from "../../hooks/queries";
+import { providerAllowsClientModelPassthrough } from "../../utils/provider-utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -94,7 +95,11 @@ function SortableSlotRow({
 			</div>
 
 			<span className="shrink-0 font-mono text-xs text-muted-foreground">
-				{slot.model}
+				{slot.model?.trim() ? (
+					slot.model
+				) : (
+					<span className="italic">client model</span>
+				)}
 			</span>
 
 			<Button
@@ -159,8 +164,20 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 		});
 	};
 
+	// Derived on every render rather than mirrored into state: the account is
+	// picked in the Select above this field and can be changed after the model
+	// has been typed, so no click order may leave an invalid slot behind.
+	const selectedProvider = accounts.find(
+		(a) => a.id === newAccountId,
+	)?.provider;
+	const passthroughAllowed =
+		providerAllowsClientModelPassthrough(selectedProvider);
+	const missingRequiredModel = !passthroughAllowed && !newModel.trim();
+
 	const handleAddSlot = () => {
-		if (!newAccountId || !newModel.trim()) return;
+		// An empty model means passthrough, which is only valid where the
+		// upstream serves Claude model ids. Elsewhere the model is required.
+		if (!newAccountId || missingRequiredModel) return;
 		addSlot.mutate(
 			{
 				comboId: combo.id,
@@ -230,12 +247,19 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 							</Select>
 						</div>
 						<div className="space-y-1.5">
-							<Label>Model</Label>
+							<Label>{passthroughAllowed ? "Model (optional)" : "Model"}</Label>
 							<Input
 								value={newModel}
 								onChange={(e) => setNewModel(e.target.value)}
-								placeholder="claude-3-opus"
+								placeholder="Model id"
 							/>
+							<p className="text-xs text-muted-foreground">
+								{!newAccountId
+									? "Whether the model is required depends on the provider of the account you pick."
+									: passthroughAllowed
+										? "Leave empty to forward the model the client asked for."
+										: `Required for ${selectedProvider}: this provider does not serve Claude model ids, so there is nothing to forward.`}
+							</p>
 						</div>
 						<div className="flex justify-end gap-2">
 							<Button
@@ -253,7 +277,7 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 								size="sm"
 								onClick={handleAddSlot}
 								disabled={
-									!newAccountId || !newModel.trim() || addSlot.isPending
+									!newAccountId || missingRequiredModel || addSlot.isPending
 								}
 							>
 								{addSlot.isPending ? "Adding..." : "Add"}
