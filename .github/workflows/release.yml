@@ -302,10 +302,10 @@ jobs:
               # determine whether a contributor gets credited.
               GITHUB_UI_PRS=$(git log --merges "$PREV_TAG"..HEAD --format="%s" \
                 | grep -oE "Merge pull request #[0-9]+" \
-                | grep -oE "[0-9]+")
+                | grep -oE "[0-9]+" || true)
               MANUAL_MERGE_PRS=$(git log --merges "$PREV_TAG"..HEAD --format="%s" \
                 | grep -oE "\(PR #[0-9]+\)" \
-                | grep -oE "[0-9]+")
+                | grep -oE "[0-9]+" || true)
 
               ALL_PR_NUMS=$(printf "%s\n%s\n" "$GITHUB_UI_PRS" "$MANUAL_MERGE_PRS" \
                 | sed '/^$/d' | sort -u)
