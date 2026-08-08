@@ -7,6 +7,7 @@ import {
 import { DatabaseFactory } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import {
+	deriveXaiConvId,
 	getRepresentativeUsageSnapshotForProvider,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -32,6 +33,7 @@ import {
 	type RequestJsonBody,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
+	setXaiConvId,
 	validateProviderPath,
 } from "./handlers";
 import {
@@ -238,6 +240,17 @@ export async function handleProxy(
 	requestMeta.clientSessionId = requestBodyContext.getClientId();
 	requestMeta.originalModel = originalModel;
 	requestMeta.appliedModel = appliedModel;
+
+	// xAI cache-native conversation identity (issue #319 minimal slice):
+	// derive once per request and stash on the RequestMeta-keyed side channel
+	// (see account-selector.ts) rather than widening RequestMeta's shape.
+	// deriveXaiConvId is a no-op (returns null) unless CCFLARE_XAI_CACHE_NATIVE
+	// is exactly "1" and clientSessionId is a valid session UUID, so this is
+	// byte-for-byte a no-op when the feature is disabled.
+	const xaiConvId = deriveXaiConvId(requestMeta.clientSessionId);
+	if (xaiConvId) {
+		setXaiConvId(requestMeta, xaiConvId);
+	}
 
 	// 5b. Session volume circuit breaker: a runaway subagent storm shows up as
 	// one client session hammering /v1/messages. Count it here and, when

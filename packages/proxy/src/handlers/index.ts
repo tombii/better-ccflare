@@ -5,11 +5,13 @@ export {
 export {
 	getComboSlotInfo,
 	getModelFamilyExhaustionInfo,
+	getXaiConvId,
 	type ModelFamilyExhaustionInfo,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
 	setComboSlotInfo,
 	setModelFamilyExhaustionInfo,
+	setXaiConvId,
 } from "./account-selector";
 export {
 	type AgentInterceptResult,

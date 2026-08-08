@@ -8,6 +8,7 @@ import { Logger } from "@better-ccflare/logger";
 import {
 	getRepresentativeUsageResetMs,
 	getRepresentativeUtilizationForProvider,
+	isOfficialXaiEndpoint,
 	usageCache,
 } from "@better-ccflare/providers";
 import type {
@@ -88,6 +89,155 @@ export function getModelFamilyExhaustionInfo(
 	meta: RequestMeta,
 ): ModelFamilyExhaustionInfo | null {
 	return exhaustionInfoMap.get(meta) ?? null;
+}
+
+// ── xAI cache-native conversation affinity (issue #319 minimal slice) ──────
+//
+// Module-level WeakMap to store the derived xAI conv id per RequestMeta,
+// mirroring comboSlotInfoMap/exhaustionInfoMap above rather than widening
+// RequestMeta's shape. proxy.ts populates this once per request (only when
+// the opt-in flag is on and a conv id was derivable — see
+// packages/providers/src/providers/xai/cache-native.ts); the header
+// attachment seam (proxy-operations.ts) and the affinity logic below are the
+// only readers.
+const xaiConvIdMap = new WeakMap<RequestMeta, string>();
+
+/** Store a derived xAI conversation id on a RequestMeta for downstream consumption. */
+export function setXaiConvId(meta: RequestMeta, convId: string): void {
+	xaiConvIdMap.set(meta, convId);
+}
+
+/** Retrieve the derived xAI conversation id from a RequestMeta (null if not set). */
+export function getXaiConvId(meta: RequestMeta): string | null {
+	return xaiConvIdMap.get(meta) ?? null;
+}
+
+/**
+ * Sticky conv-id -> account ownership table for xAI cache-native affinity.
+ *
+ * Deliberately module-level (not per-request, not per-strategy-instance):
+ * ownership must persist ACROSS requests within the same xAI conversation to
+ * keep landing on the same upstream cache partition — that persistence is
+ * the entire point of the feature. This is a dedicated mechanism, not a
+ * reuse/extension of SessionAffinityStrategy
+ * (packages/load-balancer/src/strategies/session-affinity.ts): xai's
+ * `requiresSessionTracking` stays `false` in provider-config.ts — cache
+ * affinity is a separate concern from Anthropic-style 5-hour session
+ * windows and must not piggyback on SessionStrategy/
+ * SessionDrainSoonestStrategy.
+ *
+ * Bounded by XAI_AFFINITY_MAX_ENTRIES with oldest-`assignedAt`-first
+ * eviction; entries refresh (their assignedAt bumps forward) on every read
+ * so an active conversation never ages out mid-use.
+ */
+export const XAI_AFFINITY_TTL_MS = 30 * 60 * 1000;
+export const XAI_AFFINITY_MAX_ENTRIES = 1024;
+
+interface XaiAffinityEntry {
+	accountId: string;
+	assignedAt: number;
+}
+
+const xaiConvAffinity = new Map<string, XaiAffinityEntry>();
+
+/**
+ * Test-only: clear sticky xAI affinity state between test cases. The table
+ * is a module-level singleton (by design — see above), so without this,
+ * conv ids reused across test files/cases would leak ownership between
+ * them.
+ */
+export function resetXaiCacheAffinityForTests(): void {
+	xaiConvAffinity.clear();
+}
+
+function evictOldestXaiAffinityEntryIfOverCap(): void {
+	if (xaiConvAffinity.size <= XAI_AFFINITY_MAX_ENTRIES) return;
+	let oldestKey: string | null = null;
+	let oldestAssignedAt = Number.POSITIVE_INFINITY;
+	for (const [key, entry] of xaiConvAffinity) {
+		if (entry.assignedAt < oldestAssignedAt) {
+			oldestAssignedAt = entry.assignedAt;
+			oldestKey = key;
+		}
+	}
+	if (oldestKey !== null) {
+		xaiConvAffinity.delete(oldestKey);
+	}
+}
+
+function recordXaiAffinity(
+	convId: string,
+	accountId: string,
+	now: number,
+): void {
+	xaiConvAffinity.set(convId, { accountId, assignedAt: now });
+	evictOldestXaiAffinityEntryIfOverCap();
+}
+
+/**
+ * Reorders `accounts` so a conv id's sticky xAI account is tried first, when
+ * that account is present in the (already availability-filtered) candidate
+ * list and its ownership hasn't expired. A no-op whenever `meta` carries no
+ * conv id — which is always true when the feature flag is off, since
+ * deriveXaiConvId only ever returns non-null while enabled (see
+ * cache-native.ts) and proxy.ts never calls setXaiConvId otherwise.
+ *
+ * Only called from the two `selectAccountsForRequest` return points that
+ * represent ordinary, non-forced, non-combo selection (see call sites
+ * below). The forced-account header path and combo routing are both
+ * deliberately out of scope for this minimal slice: a forced or
+ * combo-assigned account already has an explicit, higher-precedence reason
+ * to be first, and reordering either would fight that intent.
+ *
+ * On every call, ownership transfers to whichever eligible (xai, official
+ * endpoint) account ends up first in the result — whether that's the
+ * pre-existing owner (promoted) or the strategy's own top pick (owner
+ * absent/expired) — so the next request for this conv id stays sticky to
+ * whichever account actually served this one.
+ */
+function applyXaiCacheAffinity(
+	accounts: Account[],
+	meta: RequestMeta,
+): Account[] {
+	const convId = getXaiConvId(meta);
+	if (!convId) return accounts;
+
+	const now = Date.now();
+	const isEligible = (a: Account) =>
+		a.provider === "xai" && isOfficialXaiEndpoint(a);
+
+	// Promotion is scoped WITHIN the xai candidate subset: the owner moves
+	// ahead of OTHER xai accounts only, never ahead of a non-xai account the
+	// strategy deliberately preferred (mixed pools are common — an operator
+	// running anthropic + xai accounts must not have cross-provider priority
+	// overridden by cache affinity). If the strategy leads with a non-xai
+	// account, that account still serves; affinity only decides WHICH xai
+	// account handles the conversation whenever xai is reached.
+	const existing = xaiConvAffinity.get(convId);
+	let result = accounts;
+	if (existing && now - existing.assignedAt < XAI_AFFINITY_TTL_MS) {
+		const firstXaiIdx = accounts.findIndex(isEligible);
+		const ownerIdx = accounts.findIndex(
+			(a) => a.id === existing.accountId && isEligible(a),
+		);
+		if (firstXaiIdx !== -1 && ownerIdx > firstXaiIdx) {
+			result = accounts.slice();
+			const [owner] = result.splice(ownerIdx, 1);
+			result.splice(firstXaiIdx, 0, owner);
+		}
+	}
+
+	// Ownership transfers (or refreshes) only when an eligible xai account is
+	// the presumptive server — i.e. it leads the result. When a non-xai
+	// account leads, this request won't touch any xai cache partition, so the
+	// existing ownership is left to age naturally rather than being
+	// reassigned to an account that isn't serving.
+	const leader = result[0];
+	if (leader && isEligible(leader)) {
+		recordXaiAffinity(convId, leader.id, now);
+	}
+
+	return result;
 }
 
 /**
@@ -605,9 +755,9 @@ export async function selectAccountsForRequest(
 				});
 				return [];
 			}
-			return available;
+			return applyXaiCacheAffinity(available, meta);
 		}
 	}
 
-	return orderedAccounts;
+	return applyXaiCacheAffinity(orderedAccounts, meta);
 }
