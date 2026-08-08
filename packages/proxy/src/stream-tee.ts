@@ -60,8 +60,20 @@ export function teeStream(
 			}
 		},
 
-		cancel(reason) {
-			return reader.cancel(reason);
+		cancel() {
+			// reader.cancel() is a no-op on Bun (oven-sh/bun#35093) and leaks
+			// the upstream's native buffer; drain to `done` instead — see
+			// handlers/discard-body-cancel.ts for the full rationale (#382).
+			void (async () => {
+				try {
+					while (true) {
+						const { done } = await reader.read();
+						if (done) return;
+					}
+				} catch {
+					// Swallow — cancel() must not throw during teardown.
+				}
+			})();
 		},
 	});
 }
