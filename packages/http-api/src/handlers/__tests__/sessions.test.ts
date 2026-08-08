@@ -143,6 +143,35 @@ describe("createSessionAccountHandler", () => {
 		expect(body.account).toEqual(expected);
 	});
 
+	it("breaks a millisecond timestamp tie by insertion order (rowid), not arbitrarily", async () => {
+		insertAccount(db, { id: "acc-first", name: "First Account" });
+		insertAccount(db, { id: "acc-second", name: "Second Account" });
+		// Two requests in the SAME millisecond: ORDER BY timestamp alone leaves
+		// the rows tied and SQLite may return either. The `rowid DESC`
+		// tiebreaker pins the later-inserted (= later-served) row.
+		insertRequest(db, {
+			id: "r-tie-1",
+			timestamp: 5000,
+			accountUsed: "acc-first",
+			clientSessionId: "session-tie",
+		});
+		insertRequest(db, {
+			id: "r-tie-2",
+			timestamp: 5000,
+			accountUsed: "acc-second",
+			clientSessionId: "session-tie",
+		});
+
+		const handler = createSessionAccountHandler(adapter, accountsHandler);
+		const res = await handler("session-tie");
+		const body = (await res.json()) as {
+			status: string;
+			account?: { id: string };
+		};
+		expect(body.status).toBe("known");
+		expect(body.account?.id).toBe("acc-second");
+	});
+
 	it("resolves to the account from the most recent request row (most-recent-row-wins)", async () => {
 		insertAccount(db, { id: "acc-old", name: "Old Account" });
 		insertAccount(db, { id: "acc-new", name: "New Account" });

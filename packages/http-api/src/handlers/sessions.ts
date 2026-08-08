@@ -74,7 +74,7 @@ export function createSessionAccountHandler(
 			`SELECT account_used
 			 FROM requests
 			 WHERE client_session_id = ? AND account_used IS NOT NULL
-			 ORDER BY timestamp DESC
+			 ORDER BY timestamp DESC, rowid DESC
 			 LIMIT 1`,
 			[sanitized],
 		);
