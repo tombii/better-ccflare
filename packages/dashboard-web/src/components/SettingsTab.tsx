@@ -1,4 +1,5 @@
 import React from "react";
+import { AdvancedSettingsCard } from "./overview/AdvancedSettingsCard";
 import { CacheKeepaliveCard } from "./overview/CacheKeepaliveCard";
 import { DataRetentionCard } from "./overview/DataRetentionCard";
 import { RoutingCard } from "./overview/RoutingCard";
@@ -15,6 +16,7 @@ export const SettingsTab = React.memo(() => {
 				<SystemCacheTtlCard />
 				<UsageThrottlingCard />
 				<DataRetentionCard />
+				<AdvancedSettingsCard />
 			</div>
 		</div>
 	);

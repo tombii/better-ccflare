@@ -12,6 +12,7 @@ export * from "./minimax-usage-fetcher";
 export * from "./nanogpt-usage-fetcher";
 // Export OAuth utilities
 export * from "./oauth";
+export * from "./provider-model-defaults";
 // Factory functions for creating providers
 export {
 	type AnthropicCompatibleConfig,

@@ -2,6 +2,10 @@ import { getEndpointUrl, validateEndpointUrl } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { OpenAIRequest } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
+import {
+	registerProviderModelDefaultFactory,
+	resolveProviderModelDefault,
+} from "../../provider-model-defaults";
 import type { TokenRefreshResult } from "../../types";
 import { OpenAICompatibleProvider } from "../openai/provider";
 
@@ -17,6 +21,17 @@ export const XAI_MODEL_MAPPINGS = {
 	haiku: "grok-4.3",
 	fable: "grok-4.3",
 };
+
+registerProviderModelDefaultFactory("xai", XAI_MODEL_MAPPINGS);
+
+function resolvedXaiModelMappings(): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(XAI_MODEL_MAPPINGS).map(([family, factory]) => [
+			family,
+			resolveProviderModelDefault("xai", family) ?? factory,
+		]),
+	);
+}
 
 export class XaiProvider extends OpenAICompatibleProvider {
 	override name = "xai";
@@ -128,7 +143,7 @@ export class XaiProvider extends OpenAICompatibleProvider {
 			...account,
 			custom_endpoint: account.custom_endpoint ?? XAI_DEFAULT_ENDPOINT,
 			model_mappings:
-				account.model_mappings ?? JSON.stringify(XAI_MODEL_MAPPINGS),
+				account.model_mappings ?? JSON.stringify(resolvedXaiModelMappings()),
 		};
 	}
 
