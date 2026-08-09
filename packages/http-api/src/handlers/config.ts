@@ -1,4 +1,8 @@
-import type { Config } from "@better-ccflare/config";
+import {
+	type Config,
+	filterEnabledProviderModelDefaultOverrides,
+	PROVIDER_MODEL_DEFAULTS_ENV_VAR,
+} from "@better-ccflare/config";
 import {
 	DEFAULT_AGENT_MODEL,
 	NETWORK,
@@ -13,6 +17,11 @@ import {
 	errorResponse,
 	jsonResponse,
 } from "@better-ccflare/http-common";
+import {
+	getProviderModelDefaultFactories,
+	getProviderModelDefaultOverrides,
+	setProviderModelDefaultOverrides,
+} from "@better-ccflare/providers";
 import type { APIContext } from "@better-ccflare/types";
 import {
 	allowedModelErrorMessage,
@@ -248,6 +257,106 @@ export function createConfigHandlers(
 			config.setUsageThrottlingFiveHourEnabled(body.fiveHourEnabled);
 			config.setUsageThrottlingWeeklyEnabled(body.weeklyEnabled);
 			return new Response(null, { status: 204 });
+		},
+
+		getProviderModelDefaults: (): Response => {
+			const enabledProviders = new Set(
+				config.getEnabledProviderModelDefaultProviders(),
+			);
+			const factories = getProviderModelDefaultFactories();
+			const overrides = config.getProviderModelDefaultOverrides();
+			return jsonResponse({
+				providers: Object.entries(factories)
+					.filter(([provider]) => enabledProviders.has(provider))
+					.map(([provider, families]) => ({
+						provider,
+						fields: Object.entries(families).map(([family, factory]) => ({
+							family,
+							factory,
+							override: overrides[provider]?.[family] ?? null,
+							effective:
+								getProviderModelDefaultOverrides()[provider]?.[family] ??
+								factory,
+						})),
+					})),
+			});
+		},
+
+		setProviderModelDefaults: async (req: Request): Promise<Response> => {
+			let body: unknown;
+			try {
+				body = await req.json();
+			} catch {
+				return errorResponse(BadRequest("Body must be JSON"));
+			}
+			const entries = (body as { overrides?: unknown } | null)?.overrides;
+			if (!Array.isArray(entries)) {
+				return errorResponse(
+					BadRequest(
+						"Invalid provider model defaults payload: expected 'overrides' array",
+					),
+				);
+			}
+			const factories = getProviderModelDefaultFactories();
+			const enabledProviders = new Set(
+				config.getEnabledProviderModelDefaultProviders(),
+			);
+			const next = config.getProviderModelDefaultOverrides();
+			for (const entry of entries) {
+				const value = entry as {
+					provider?: unknown;
+					family?: unknown;
+					model?: unknown;
+				} | null;
+				const provider =
+					typeof value?.provider === "string" ? value.provider.trim() : "";
+				const family =
+					typeof value?.family === "string" ? value.family.trim() : "";
+				if (!factories[provider])
+					return errorResponse(
+						BadRequest(`Unknown provider: ${provider || "(empty)"}`),
+					);
+				if (!enabledProviders.has(provider))
+					return errorResponse(
+						BadRequest(
+							`Provider "${provider}" is not editable; set ${PROVIDER_MODEL_DEFAULTS_ENV_VAR} to enable it`,
+						),
+					);
+				if (!factories[provider][family])
+					return errorResponse(
+						BadRequest(
+							`Unknown family '${family || "(empty)"}' for provider '${provider}'`,
+						),
+					);
+				if (typeof value?.model !== "string")
+					return errorResponse(BadRequest("model must be a string"));
+				const model = value.model.trim();
+				if (model) {
+					next[provider] = { ...next[provider], [family]: model };
+				} else if (next[provider]) {
+					delete next[provider][family];
+					if (Object.keys(next[provider]).length === 0) delete next[provider];
+				}
+			}
+			config.setProviderModelDefaultOverrides(next);
+			setProviderModelDefaultOverrides(
+				filterEnabledProviderModelDefaultOverrides(enabledProviders, next),
+			);
+			return jsonResponse({
+				providers: Object.entries(factories)
+					.filter(([provider]) => enabledProviders.has(provider))
+					.map(([provider, families]) => ({
+						provider,
+						fields: Object.entries(families).map(([family, factory]) => ({
+							family,
+							factory,
+							override: next[provider]?.[family] ?? null,
+							effective:
+								getProviderModelDefaultOverrides()[provider]?.[family] ??
+								factory,
+						})),
+					})),
+			});
 		},
 
 		getModelCapacityRouting: (): Response => {

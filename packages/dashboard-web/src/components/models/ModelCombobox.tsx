@@ -44,6 +44,7 @@ export interface ModelComboboxProps {
 	 * Defaults to false — ComboSlotBuilder and AccountModelMappingsDialog do
 	 * not pass this prop, so their behavior remains unchanged.
 	 */
+	hideClientModelOption?: boolean;
 }
 
 interface ModelOptionProps {
@@ -123,6 +124,7 @@ export function ModelCombobox({
 	className,
 	inputClassName,
 	disabled,
+	hideClientModelOption = false,
 }: ModelComboboxProps) {
 	const [open, setOpen] = useState(false);
 	const [filter, setFilter] = useState("");
@@ -240,36 +242,38 @@ export function ModelCombobox({
 					className="max-h-72 overflow-y-auto overscroll-contain p-1"
 					onWheelCapture={(e) => e.stopPropagation()}
 				>
-					<button
-						type="button"
-						onClick={handleUseClientModel}
-						disabled={clientModelDisabled}
-						className={cn(
-							"mb-1 flex w-full items-start gap-2 rounded-sm border border-dashed px-2 py-2 text-left hover:bg-accent hover:text-accent-foreground",
-							usesClientModel &&
-								!clientModelDisabled &&
-								"border-primary bg-accent/60",
-							clientModelDisabled &&
-								"cursor-not-allowed opacity-60 hover:bg-transparent hover:text-inherit",
-						)}
-					>
-						<Check
+					{!hideClientModelOption && (
+						<button
+							type="button"
+							onClick={handleUseClientModel}
+							disabled={clientModelDisabled}
 							className={cn(
-								"mt-0.5 h-3.5 w-3.5 shrink-0",
-								usesClientModel && !clientModelDisabled
-									? "opacity-100"
-									: "opacity-0",
+								"mb-1 flex w-full items-start gap-2 rounded-sm border border-dashed px-2 py-2 text-left hover:bg-accent hover:text-accent-foreground",
+								usesClientModel &&
+									!clientModelDisabled &&
+									"border-primary bg-accent/60",
+								clientModelDisabled &&
+									"cursor-not-allowed opacity-60 hover:bg-transparent hover:text-inherit",
 							)}
-						/>
-						<span className="min-w-0 flex-1">
-							<span className="block text-sm font-medium">
-								{clientModelTitle}
+						>
+							<Check
+								className={cn(
+									"mt-0.5 h-3.5 w-3.5 shrink-0",
+									usesClientModel && !clientModelDisabled
+										? "opacity-100"
+										: "opacity-0",
+								)}
+							/>
+							<span className="min-w-0 flex-1">
+								<span className="block text-sm font-medium">
+									{clientModelTitle}
+								</span>
+								<span className="block text-[11px] text-muted-foreground">
+									{clientModelHint(mode, provider, passthroughAllowed)}
+								</span>
 							</span>
-							<span className="block text-[11px] text-muted-foreground">
-								{clientModelHint(mode, provider, passthroughAllowed)}
-							</span>
-						</span>
-					</button>
+						</button>
+					)}
 
 					{query.isLoading && (
 						<div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">

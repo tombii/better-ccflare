@@ -398,6 +398,12 @@ export class APIRouter {
 		this.handlers.set("POST:/api/config/usage-throttling", (req) =>
 			configHandlers.setUsageThrottling(req),
 		);
+		this.handlers.set("GET:/api/config/provider-model-defaults", () =>
+			configHandlers.getProviderModelDefaults(),
+		);
+		this.handlers.set("POST:/api/config/provider-model-defaults", (req) =>
+			configHandlers.setProviderModelDefaults(req),
+		);
 		this.handlers.set("GET:/api/config/model-capacity-routing", () =>
 			configHandlers.getModelCapacityRouting(),
 		);
@@ -714,6 +720,7 @@ export class APIRouter {
 					modelFallbacksHandler(req, accountId),
 				)(req, url);
 			}
+
 
 			// Account removal
 			if (parts.length === 4 && method === "DELETE") {

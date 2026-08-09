@@ -12,6 +12,10 @@ import {
 } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
+import {
+	registerProviderModelDefaultFactory,
+	resolveProviderModelDefault,
+} from "../../provider-model-defaults";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 import { normalizeCodexInputUsage } from "./usage";
 
@@ -109,6 +113,7 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 	haiku: "gpt-5.4-mini",
 };
 
+registerProviderModelDefaultFactory("codex", DEFAULT_MODEL_MAP);
 
 // Synced from the Codex CLI model cache (~/.codex/models_cache.json,
 // codex-cli 0.144.1). Missing entries mean no context_window block is
@@ -714,13 +719,13 @@ export class CodexProvider extends BaseProvider {
 		const lower = anthropicModel.toLowerCase();
 		// Precedence: combo slot -> account.model_mappings -> global override -> factory map.
 		if (lower.includes("fable"))
-			return DEFAULT_MODEL_MAP.fable;
+			return resolveProviderModelDefault("codex", "fable") ?? anthropicModel;
 		if (lower.includes("haiku"))
-			return DEFAULT_MODEL_MAP.haiku;
+			return resolveProviderModelDefault("codex", "haiku") ?? anthropicModel;
 		if (lower.includes("sonnet"))
-			return DEFAULT_MODEL_MAP.sonnet;
+			return resolveProviderModelDefault("codex", "sonnet") ?? anthropicModel;
 		if (lower.includes("opus"))
-			return DEFAULT_MODEL_MAP.opus;
+			return resolveProviderModelDefault("codex", "opus") ?? anthropicModel;
 		return anthropicModel;
 	}
 
