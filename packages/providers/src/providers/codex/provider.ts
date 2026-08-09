@@ -99,17 +99,22 @@ const CODEX_ERROR_TYPE_BY_CODE: Record<string, string> = {
 
 // Default model mapping: Anthropic model name prefixes → Codex model names
 const DEFAULT_MODEL_MAP: Record<string, string> = {
+	// Same value as opus/sonnet, for consistency in the factory map. ChatGPT
+	// subscription accounts reject 5.3-codex (HTTP 400); in those cases the
+	// fix lives in the layers above — per-account mapping or a global
+	// override in Settings — not here.
 	fable: "gpt-5.3-codex",
 	opus: "gpt-5.3-codex",
 	sonnet: "gpt-5.3-codex",
 	haiku: "gpt-5.4-mini",
 };
 
+
 // Synced from the Codex CLI model cache (~/.codex/models_cache.json,
 // codex-cli 0.144.1). Missing entries mean no context_window block is
 // reported to the client, which disables its context gauge and compaction
 // triggers for that model.
-const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+export const CODEX_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	"gpt-5.3-codex": 272_000,
 	"gpt-5.3-codex-spark": 128_000,
 	"gpt-5.4": 272_000,
@@ -121,6 +126,21 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 };
 
 /**
+ * The Codex model ids ccflare itself knows about, derived from the context
+ * window table above so the two can never drift apart.
+ *
+ * Being on this list means "ccflare ships knowledge of this model", NOT
+ * "the account you are about to use may call it": a ChatGPT-subscription
+ * account rejects gpt-5.3-codex with HTTP 400 even though the model plainly
+ * exists. Callers that surface this list to a human must keep that
+ * distinction visible (see GET /api/models, which tags these as `builtin`
+ * and the models.dev entries as `reference`).
+ */
+export const CODEX_KNOWN_MODELS: readonly string[] = Object.freeze(
+	Object.keys(CODEX_MODEL_CONTEXT_WINDOWS),
+);
+
+/**
  * Exact lookup first, then longest-prefix fallback so dated or suffixed
  * variants the API may return (e.g. "gpt-5.6-sol-2026-05-13") still resolve
  * to their family's window instead of silently losing the client's context
@@ -128,10 +148,10 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
  * "gpt-5.5".
  */
 function lookupContextWindow(model: string): number | undefined {
-	const exact = MODEL_CONTEXT_WINDOWS[model];
+	const exact = CODEX_MODEL_CONTEXT_WINDOWS[model];
 	if (exact) return exact;
 	let bestKey: string | undefined;
-	for (const key of Object.keys(MODEL_CONTEXT_WINDOWS)) {
+	for (const key of Object.keys(CODEX_MODEL_CONTEXT_WINDOWS)) {
 		if (
 			model.startsWith(`${key}-`) &&
 			(bestKey === undefined || key.length > bestKey.length)
@@ -139,7 +159,7 @@ function lookupContextWindow(model: string): number | undefined {
 			bestKey = key;
 		}
 	}
-	return bestKey ? MODEL_CONTEXT_WINDOWS[bestKey] : undefined;
+	return bestKey ? CODEX_MODEL_CONTEXT_WINDOWS[bestKey] : undefined;
 }
 
 // ── Codex Responses API types ─────────────────────────────────────────────────
@@ -692,10 +712,15 @@ export class CodexProvider extends BaseProvider {
 		}
 
 		const lower = anthropicModel.toLowerCase();
-		if (lower.includes("fable")) return DEFAULT_MODEL_MAP.fable;
-		if (lower.includes("haiku")) return DEFAULT_MODEL_MAP.haiku;
-		if (lower.includes("sonnet")) return DEFAULT_MODEL_MAP.sonnet;
-		if (lower.includes("opus")) return DEFAULT_MODEL_MAP.opus;
+		// Precedence: combo slot -> account.model_mappings -> global override -> factory map.
+		if (lower.includes("fable"))
+			return DEFAULT_MODEL_MAP.fable;
+		if (lower.includes("haiku"))
+			return DEFAULT_MODEL_MAP.haiku;
+		if (lower.includes("sonnet"))
+			return DEFAULT_MODEL_MAP.sonnet;
+		if (lower.includes("opus"))
+			return DEFAULT_MODEL_MAP.opus;
 		return anthropicModel;
 	}
 

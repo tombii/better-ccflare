@@ -6,6 +6,9 @@ import {
 } from "@better-ccflare/core";
 import React, { useState } from "react";
 import type { Account } from "../../api";
+import { firstModelInList } from "../../lib/model-api";
+import { providerAllowsClientModelPassthrough } from "../../utils/provider-utils";
+import { ModelCombobox } from "../models/ModelCombobox";
 import { Button } from "../ui/button";
 import {
 	Dialog,
@@ -15,7 +18,6 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "../ui/dialog";
-import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 
 interface AccountModelMappingsDialogProps {
@@ -117,6 +119,13 @@ export function AccountModelMappingsDialog({
 
 	if (!account) return null;
 
+	// Same single rule as the combo slot. Here it does not block Save (mapping
+	// only the families this account actually uses is legitimate), but the
+	// user needs to know that "empty" is not passthrough on this provider.
+	const passthroughAllowed = providerAllowsClientModelPassthrough(
+		account.provider,
+	);
+
 	return (
 		<Dialog open={isOpen} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-[600px] flex flex-col max-h-[85vh]">
@@ -136,56 +145,87 @@ export function AccountModelMappingsDialog({
 							<code className="text-xs bg-muted px-1 rounded">
 								model-a, model-b
 							</code>
-							) to cycle on rate limits.
+							) to cycle on rate limits. Pick from the provider list or type the
+							name; Test sends one real request with the first model of the
+							field and consumes quota.
 						</p>
+						{!passthroughAllowed && (
+							<p className="text-xs text-warning mb-3">
+								{account.provider} does not serve Claude model ids, so a family
+								left empty here is not passthrough: the built-in default map of
+								the provider decides instead, and it may point at a model this
+								account is not entitled to call. Map every family this account
+								is actually used for.
+							</p>
+						)}
 						<div className="grid grid-cols-2 gap-3">
 							<div className="space-y-1">
 								<Label htmlFor="fable" className="text-xs">
 									Fable
 								</Label>
-								<Input
-									id="fable"
-									value={modelMappings.fable}
-									onChange={(e) => handleInputChange("fable", e.target.value)}
-									placeholder={`e.g., ${LATEST_FABLE_MODEL}`}
-									className="h-8"
-								/>
+								<div className="flex items-center gap-1.5">
+									<ModelCombobox
+										id="fable"
+										mode="list"
+										provider={account.provider}
+										value={modelMappings.fable}
+										onChange={(value) => handleInputChange("fable", value)}
+										placeholder={`e.g., ${LATEST_FABLE_MODEL}`}
+										className="flex-1"
+										inputClassName="h-8"
+									/>
+								</div>
 							</div>
 							<div className="space-y-1">
 								<Label htmlFor="opus" className="text-xs">
 									Opus
 								</Label>
-								<Input
-									id="opus"
-									value={modelMappings.opus}
-									onChange={(e) => handleInputChange("opus", e.target.value)}
-									placeholder={`e.g., ${LATEST_OPUS_MODEL}`}
-									className="h-8"
-								/>
+								<div className="flex items-center gap-1.5">
+									<ModelCombobox
+										id="opus"
+										mode="list"
+										provider={account.provider}
+										value={modelMappings.opus}
+										onChange={(value) => handleInputChange("opus", value)}
+										placeholder={`e.g., ${LATEST_OPUS_MODEL}`}
+										className="flex-1"
+										inputClassName="h-8"
+									/>
+								</div>
 							</div>
 							<div className="space-y-1">
 								<Label htmlFor="sonnet" className="text-xs">
 									Sonnet
 								</Label>
-								<Input
-									id="sonnet"
-									value={modelMappings.sonnet}
-									onChange={(e) => handleInputChange("sonnet", e.target.value)}
-									placeholder={`e.g., ${LATEST_SONNET_MODEL}`}
-									className="h-8"
-								/>
+								<div className="flex items-center gap-1.5">
+									<ModelCombobox
+										id="sonnet"
+										mode="list"
+										provider={account.provider}
+										value={modelMappings.sonnet}
+										onChange={(value) => handleInputChange("sonnet", value)}
+										placeholder={`e.g., ${LATEST_SONNET_MODEL}`}
+										className="flex-1"
+										inputClassName="h-8"
+									/>
+								</div>
 							</div>
 							<div className="space-y-1">
 								<Label htmlFor="haiku" className="text-xs">
 									Haiku
 								</Label>
-								<Input
-									id="haiku"
-									value={modelMappings.haiku}
-									onChange={(e) => handleInputChange("haiku", e.target.value)}
-									placeholder={`e.g., ${LATEST_HAIKU_MODEL}`}
-									className="h-8"
-								/>
+								<div className="flex items-center gap-1.5">
+									<ModelCombobox
+										id="haiku"
+										mode="list"
+										provider={account.provider}
+										value={modelMappings.haiku}
+										onChange={(value) => handleInputChange("haiku", value)}
+										placeholder={`e.g., ${LATEST_HAIKU_MODEL}`}
+										className="flex-1"
+										inputClassName="h-8"
+									/>
+								</div>
 							</div>
 						</div>
 					</div>
