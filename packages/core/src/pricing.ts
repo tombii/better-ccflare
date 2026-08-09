@@ -22,6 +22,13 @@ interface ModelDef {
 	id: string;
 	name: string;
 	cost?: ModelCost;
+	/**
+	 * models.dev also publishes each model's modalities. Only read by
+	 * listCatalogueModels (to drop models that provably cannot emit text);
+	 * pricing itself ignores it. Optional because the bundled fallback
+	 * entries do not carry it.
+	 */
+	modalities?: { input?: string[]; output?: string[] };
 }
 
 interface ApiResponse {
@@ -839,6 +846,50 @@ export async function initializeNanoGPTPricingIfAccountsExist(
  */
 export function setPricingLogger(logger: Logger): void {
 	PriceCatalogue.get().setLogger(logger);
+}
+
+export interface CatalogueModelEntry {
+	id: string;
+	name: string;
+}
+
+/**
+ * List the models the shared models.dev catalogue knows for one provider
+ * section (e.g. "openai", "anthropic").
+ *
+ * Deliberately built on PriceCatalogue.getPricing() rather than a second
+ * fetcher: pricing already downloads, merges and caches this exact document
+ * (in memory + on disk, honouring CF_PRICING_OFFLINE and
+ * CF_PRICING_REFRESH_HOURS), so listing models costs no extra network call.
+ *
+ * Models that provably cannot emit text (embeddings, image generation) are
+ * dropped — this list exists to be offered as a chat model. Entries with no
+ * declared modalities are kept: the catalogue is not validated, and absence
+ * of data is not evidence of absence.
+ *
+ * Never throws, and never distinguishes "section is empty" from "catalogue
+ * unavailable" — both return []. Callers must treat an empty list as
+ * inconclusive, not as proof that the provider has no models.
+ */
+export async function listCatalogueModels(
+	providerSection: string,
+): Promise<CatalogueModelEntry[]> {
+	try {
+		const pricing = await PriceCatalogue.get().getPricing();
+		const models = pricing[providerSection]?.models;
+		if (!models) return [];
+		const entries: CatalogueModelEntry[] = [];
+		for (const [key, def] of Object.entries(models)) {
+			const output = def?.modalities?.output;
+			if (Array.isArray(output) && !output.includes("text")) continue;
+			const id = def?.id || key;
+			if (!id) continue;
+			entries.push({ id, name: def?.name || id });
+		}
+		return entries;
+	} catch {
+		return [];
+	}
 }
 
 /**
