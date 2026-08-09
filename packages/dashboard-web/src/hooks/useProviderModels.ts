@@ -1,9 +1,5 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-	fetchProviderModels,
-	type TestModelResult,
-	testAccountModel,
-} from "../lib/model-api";
+import { useQuery } from "@tanstack/react-query";
+import { fetchProviderModels } from "../lib/model-api";
 import { queryKeys } from "../lib/query-keys";
 
 /**
@@ -27,12 +23,3 @@ export const useProviderModels = (
 		retry: false,
 	});
 };
-
-/**
- * Makes ONE real request to the provider. Never call it implicitly: it consumes
- * quota from the tested account.
- */
-export const useTestAccountModel = () =>
-	useMutation<TestModelResult, Error, { accountId: string; model: string }>({
-		mutationFn: ({ accountId, model }) => testAccountModel(accountId, model),
-	});

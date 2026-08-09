@@ -266,20 +266,29 @@ export function createConfigHandlers(
 			);
 			const factories = getProviderModelDefaultFactories();
 			const overrides = config.getProviderModelDefaultOverrides();
+			// Enumerated from the configurable surface, not from what has been
+			// discovered. A provider whose defaults come from a live listing has no
+			// compiled map, and driving the screen off that map hid its fields
+			// entirely — leaving the override reachable by API but not by anyone
+			// using the dashboard, which is the only place it is documented.
+			//
+			// `factory` may therefore be null: nothing has been read yet. That is a
+			// state worth showing, not a reason to hide the row.
 			return jsonResponse({
-				providers: Object.entries(factories)
-					.filter(([provider]) => enabledProviders.has(provider))
-					.map(([provider, families]) => ({
-						provider,
-						fields: Object.entries(families).map(([family, factory]) => ({
+				providers: [...enabledProviders].map((provider) => ({
+					provider,
+					fields: KNOWN_PATTERNS.map((family) => {
+						const factory = factories[provider]?.[family] ?? null;
+						return {
 							family,
 							factory,
 							override: overrides[provider]?.[family] ?? null,
 							effective:
 								getProviderModelDefaultOverrides()[provider]?.[family] ??
 								factory,
-						})),
-					})),
+						};
+					}),
+				})),
 			});
 		},
 

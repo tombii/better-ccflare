@@ -53,6 +53,34 @@ afterEach(() => {
 });
 
 describe("provider model defaults", () => {
+	// The dialog draws its fields from this response. Enumerating it from the
+	// discovered map meant a provider with no compiled defaults and no listing
+	// yet had no rows at all — so the override was reachable by API and invisible
+	// in the only place it is documented.
+	it("still lists the fields when nothing has been discovered", async () => {
+		clearDerivedProviderModelDefaults();
+		const handlers = createConfigHandlers(makeConfig());
+
+		const response = await handlers.getProviderModelDefaults();
+		const body = (await response.json()) as {
+			providers: Array<{
+				provider: string;
+				fields: Array<{ family: string; factory: string | null }>;
+			}>;
+		};
+
+		const codex = body.providers.find((p) => p.provider === "codex");
+		expect(codex).toBeDefined();
+		expect(codex?.fields.map((f) => f.family).sort()).toEqual([
+			"fable",
+			"haiku",
+			"opus",
+			"sonnet",
+		]);
+		// Nothing read yet is a state to show, not a reason to hide the row.
+		expect(codex?.fields.every((f) => f.factory === null)).toBe(true);
+	});
+
 	// The override exists for the case where discovery has not answered — a cold
 	// start, or a listing endpoint that stopped responding. Validating it against
 	// the discovered map closed the escape hatch exactly then.
