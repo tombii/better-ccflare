@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { PROVIDER_MODEL_DEFAULTS_ENV_VAR } from "@better-ccflare/config";
 import {
+	clearDerivedProviderModelDefaults,
 	resolveProviderModelDefault,
+	setDerivedProviderModelDefaults,
 	setProviderModelDefaultOverrides,
 } from "@better-ccflare/providers";
 import { createConfigHandlers } from "../config";
@@ -51,6 +53,20 @@ afterEach(() => {
 });
 
 describe("provider model defaults", () => {
+	// The provider-wide default is no longer a constant: it is whatever the
+	// last listing read from an account of that provider implied. So the
+	// precondition every one of these cases needs is 'a listing was read',
+	// which is what this stands in for.
+	beforeEach(() => {
+		clearDerivedProviderModelDefaults();
+		setDerivedProviderModelDefaults("codex", "acc-seed", {
+			fable: "gpt-5.6-sol",
+			opus: "gpt-5.6-sol",
+			sonnet: "gpt-5.6-terra",
+			haiku: "gpt-5.6-luna",
+		});
+	});
+
 	it("merges one family override without erasing the provider factory map", async () => {
 		const handlers = createConfigHandlers(makeConfig());
 		const response = await handlers.setProviderModelDefaults(
@@ -71,7 +87,7 @@ describe("provider model defaults", () => {
 		).toBe("gpt-custom");
 		expect(
 			codex.fields.find((field) => field.family === "haiku")?.effective,
-		).toBe("gpt-5.4-mini");
+		).toBe("gpt-5.6-luna");
 	});
 
 	it("empty model removes an override and resolver returns factory", async () => {
@@ -83,7 +99,7 @@ describe("provider model defaults", () => {
 			request([{ provider: "codex", family: "opus", model: "" }]),
 		);
 		expect(response.status).toBe(200);
-		expect(resolveProviderModelDefault("codex", "opus")).toBe("gpt-5.3-codex");
+		expect(resolveProviderModelDefault("codex", "opus")).toBe("gpt-5.6-sol");
 	});
 
 	it("rejects unknown providers and families", async () => {
@@ -186,6 +202,6 @@ describe("provider model defaults", () => {
 			request([{ provider: "codex", family: "opus", model: "gpt-custom" }]),
 		);
 		expect(response.status).toBe(400);
-		expect(resolveProviderModelDefault("codex", "opus")).toBe("gpt-5.3-codex");
+		expect(resolveProviderModelDefault("codex", "opus")).toBe("gpt-5.6-sol");
 	});
 });

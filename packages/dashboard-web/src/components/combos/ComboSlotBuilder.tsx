@@ -274,6 +274,7 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 							<div className="flex items-center gap-1.5">
 								<ModelCombobox
 									provider={selectedProvider}
+									accountId={newAccountId || null}
 									value={newModel}
 									onChange={setNewModel}
 									placeholder="Model id"

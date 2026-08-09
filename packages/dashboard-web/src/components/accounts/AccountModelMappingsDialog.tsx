@@ -167,6 +167,7 @@ export function AccountModelMappingsDialog({
 										id="fable"
 										mode="list"
 										provider={account.provider}
+										accountId={account.id}
 										value={modelMappings.fable}
 										onChange={(value) => handleInputChange("fable", value)}
 										placeholder={`e.g., ${LATEST_FABLE_MODEL}`}
@@ -184,6 +185,7 @@ export function AccountModelMappingsDialog({
 										id="opus"
 										mode="list"
 										provider={account.provider}
+										accountId={account.id}
 										value={modelMappings.opus}
 										onChange={(value) => handleInputChange("opus", value)}
 										placeholder={`e.g., ${LATEST_OPUS_MODEL}`}
@@ -201,6 +203,7 @@ export function AccountModelMappingsDialog({
 										id="sonnet"
 										mode="list"
 										provider={account.provider}
+										accountId={account.id}
 										value={modelMappings.sonnet}
 										onChange={(value) => handleInputChange("sonnet", value)}
 										placeholder={`e.g., ${LATEST_SONNET_MODEL}`}
@@ -218,6 +221,7 @@ export function AccountModelMappingsDialog({
 										id="haiku"
 										mode="list"
 										provider={account.provider}
+										accountId={account.id}
 										value={modelMappings.haiku}
 										onChange={(value) => handleInputChange("haiku", value)}
 										placeholder={`e.g., ${LATEST_HAIKU_MODEL}`}

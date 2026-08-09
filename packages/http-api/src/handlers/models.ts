@@ -1,6 +1,5 @@
 import { listCatalogueModels } from "@better-ccflare/core";
 import { errorResponse, jsonResponse } from "@better-ccflare/http-common";
-import { CODEX_KNOWN_MODELS } from "@better-ccflare/providers";
 import type { APIContext } from "../types";
 
 /**
@@ -16,7 +15,16 @@ import type { APIContext } from "../types";
  *                gpt-5.3-codex with HTTP 400 while OpenAI lists it happily.
  *                Never collapse this into the other two.
  */
-export type ModelListingSource = "builtin" | "catalog" | "reference";
+export type ModelListingSource =
+	| "builtin"
+	| "catalog"
+	| "reference"
+	/**
+	 * The provider's own listing for THIS account. The only source that can
+	 * tell an entitled model from one the plan does not reach — which is the
+	 * distinction that matters when the choice ends up in a request.
+	 */
+	| "account";
 
 export interface ProviderModelEntry {
 	id: string;
@@ -31,13 +39,20 @@ export interface ProviderModelEntry {
  * and friends.
  */
 const MODELS_DEV_SECTION_BY_PROVIDER: Record<string, string> = {
-	codex: "openai",
+	// Intentionally empty for providers that answer with a listing of their
+	// own. Add an entry only for a provider whose models ccflare cannot ask
+	// for — the catalogue is the fallback of last resort, not a second opinion.
 };
 
-/** Model ids ccflare ships knowledge of, per provider. */
-const BUILTIN_MODELS_BY_PROVIDER: Record<string, readonly string[]> = {
-	codex: CODEX_KNOWN_MODELS,
-};
+/**
+ * Model ids ccflare ships knowledge of, per provider.
+ *
+ * Empty for codex on purpose: the account's own listing supersedes anything
+ * compiled in, and the compiled list contained `gpt-5.3-codex`, which a
+ * ChatGPT-subscription account refuses. A built-in list is a guess about
+ * entitlement, and a guess is exactly what fails silently.
+ */
+const BUILTIN_MODELS_BY_PROVIDER: Record<string, readonly string[]> = {};
 
 /**
  * Providers served by the live Anthropic catalog. Both auth modes (OAuth and
@@ -65,19 +80,63 @@ function isAnthropicProvider(provider: string): boolean {
 export function createModelsHandler(context: APIContext) {
 	return async (url?: URL): Promise<Response> => {
 		const requested = url?.searchParams.get("provider")?.trim() || "";
+		const accountId = url?.searchParams.get("accountId")?.trim() || "";
+
+		// An account's own listing beats every catalogue: it is the only one
+		// that knows what this subscription may call. Providers without such a
+		// listing fall through to the generic path below, unchanged.
+		if (accountId && context.modelCatalog?.codexModels) {
+			const listing = await context.modelCatalog.codexModels(accountId);
+			if (listing) {
+				return jsonResponse({
+					provider: requested,
+					models: listing.models.map((model) => ({
+						id: model.id,
+						displayName: model.displayName,
+						source: "account" as const,
+						description: model.description,
+						contextWindow: model.contextWindow,
+						supersededBy: model.supersededBy,
+					})),
+					fetchedAt: listing.fetchedAt,
+					source: listing.source,
+					...(listing.source === "shared"
+						? {
+								warning:
+									"This account cannot read its own model list, so this is " +
+									"another account of the same provider. Accounts on " +
+									"different plans can differ.",
+							}
+						: {}),
+				});
+			}
+		}
 
 		if (requested === "" || isAnthropicProvider(requested)) {
 			if (!context.modelCatalog) {
 				return errorResponse("Model catalog is not available");
 			}
 			const catalog = await context.modelCatalog.get();
+			// `fallback` means an on-disk copy or the list bundled into the binary
+			// answered — not the provider. After a restart that would make the
+			// field look answered when nothing has been read.
+			const live = catalog.source === "live";
 			return jsonResponse({
-				...catalog,
 				provider: requested || "anthropic",
-				models: catalog.models.map((model) => ({
-					...model,
-					source: "catalog" as const,
-				})),
+				models: live
+					? catalog.models.map((model) => ({
+							...model,
+							source: "catalog" as const,
+						}))
+					: [],
+				fetchedAt: catalog.fetchedAt,
+				source: live ? "live" : "unavailable",
+				...(live
+					? {}
+					: {
+							warning:
+								"No listing read from the provider yet. The field takes any model id meanwhile.",
+						}),
 			});
 		}
 

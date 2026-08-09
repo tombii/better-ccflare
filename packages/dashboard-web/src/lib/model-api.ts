@@ -21,6 +21,12 @@ export interface ProviderModel {
 	id: string;
 	displayName: string;
 	/**
+	 * Model the provider says replaces this one. Present only when the
+	 * provider has announced the deprecation — picking a model on its way out
+	 * is a decision someone has to undo later.
+	 */
+	supersededBy?: string | null;
+	/**
 	 * "builtin"/"catalog": ccflare knows this model for the provider.
 	 * "reference": it exists in the provider public catalog — which is NOT a
 	 * promise that the account plan can call it.
@@ -33,6 +39,21 @@ export interface ProviderModels {
 	fetchedAt: number | null;
 	source: string | null;
 	models: ProviderModel[];
+}
+
+export interface TestModelResult {
+	ok: boolean;
+	/**
+	 * true when the failure says NOTHING about the model: the account was
+	 * unavailable at that moment (429/503/529). It is not a verdict on the
+	 * model — treating it as rejection produces a false negative.
+	 */
+	inconclusive?: boolean;
+	/** Upstream HTTP status (0 when the request did not get that far). */
+	status: number;
+	/** Raw provider error text — the reason the test button exists. */
+	error?: string;
+	durationMs: number;
 }
 
 const MODEL_SOURCES: ProviderModelSource[] = [
@@ -60,7 +81,16 @@ function normalizeModel(raw: unknown): ProviderModel | null {
 		typeof entry.displayName === "string" && entry.displayName.trim()
 			? entry.displayName.trim()
 			: id;
-	return { id, displayName, source: normalizeSource(entry.source) };
+	const supersededBy =
+		typeof entry.supersededBy === "string" && entry.supersededBy.trim()
+			? entry.supersededBy
+			: null;
+	return {
+		id,
+		displayName,
+		source: normalizeSource(entry.source),
+		supersededBy,
+	};
 }
 
 function asRecord(raw: unknown): Record<string, unknown> {
@@ -70,10 +100,17 @@ function asRecord(raw: unknown): Record<string, unknown> {
 /** Model list for a provider. Tolerant: malformed input becomes an empty list. */
 export async function fetchProviderModels(
 	provider: string,
+	accountId?: string | null,
 ): Promise<ProviderModels> {
+	// With an account the backend can ask the provider what THIS subscription
+	// may call; without one it can only offer the generic catalogue, which
+	// lists models a given plan may not reach.
+	const scope = accountId?.trim()
+		? `&accountId=${encodeURIComponent(accountId.trim())}`
+		: "";
 	const body = asRecord(
 		await api.get<unknown>(
-			`/api/models?provider=${encodeURIComponent(provider)}`,
+			`/api/models?provider=${encodeURIComponent(provider)}${scope}`,
 		),
 	);
 	const list: unknown[] = Array.isArray(body.models) ? body.models : [];
@@ -93,6 +130,48 @@ export async function fetchProviderModels(
 	};
 }
 
+/**
+ * Sends ONE real request to the provider using the supplied account.
+ * It consumes quota — call it only on explicit user action.
+ */
+export async function testAccountModel(
+	accountId: string,
+	model: string,
+): Promise<TestModelResult> {
+	const startedAt = Date.now();
+	try {
+		const body = asRecord(
+			await api.post<unknown>(
+				`/api/accounts/${encodeURIComponent(accountId)}/test-model`,
+				{ model },
+			),
+		);
+		const elapsed = Date.now() - startedAt;
+		const error =
+			typeof body.error === "string" && body.error.trim()
+				? body.error
+				: undefined;
+		return {
+			ok: body.ok === true,
+			inconclusive: body.inconclusive === true,
+			status: typeof body.status === "number" ? body.status : 0,
+			error,
+			durationMs:
+				typeof body.durationMs === "number" ? body.durationMs : elapsed,
+		};
+	} catch (err) {
+		// A transport failure is also a test result: the user asked "does this
+		// model work?", and the honest answer is the raw failure text.
+		return {
+			ok: false,
+			status: err instanceof HttpError ? err.status : 0,
+			error: err instanceof Error ? err.message : String(err),
+			durationMs: Date.now() - startedAt,
+		};
+	}
+}
+
+/** Mapping fields accept a comma-separated list (rotation on 429). */
 export function parseModelList(value: string): string[] {
 	return value
 		.split(",")

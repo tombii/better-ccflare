@@ -113,7 +113,14 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 	haiku: "gpt-5.4-mini",
 };
 
-registerProviderModelDefaultFactory("codex", DEFAULT_MODEL_MAP);
+// Deliberately NOT registered as a factory default any more.
+//
+// A map compiled at build time cannot know what a subscription is entitled
+// to: this one pointed `opus` and `sonnet` at `gpt-5.3-codex`, which a
+// ChatGPT-plan account refuses with HTTP 400 — the incident this whole line
+// of work came from. The account's own listing knows, so it decides; the map
+// below survives only as documentation of the shape and for the tests that
+// exercise family resolution.
 
 // Synced from the Codex CLI model cache (~/.codex/models_cache.json,
 // codex-cli 0.144.1). Missing entries mean no context_window block is
@@ -718,14 +725,23 @@ export class CodexProvider extends BaseProvider {
 
 		const lower = anthropicModel.toLowerCase();
 		// Precedence: combo slot -> account.model_mappings -> global override -> factory map.
+		// Resolved per account: the account's own listing is what decides, and
+		// two accounts of this provider can be on different plans.
+		const id = account?.id;
 		if (lower.includes("fable"))
-			return resolveProviderModelDefault("codex", "fable") ?? anthropicModel;
+			return (
+				resolveProviderModelDefault("codex", "fable", id) ?? anthropicModel
+			);
 		if (lower.includes("haiku"))
-			return resolveProviderModelDefault("codex", "haiku") ?? anthropicModel;
+			return (
+				resolveProviderModelDefault("codex", "haiku", id) ?? anthropicModel
+			);
 		if (lower.includes("sonnet"))
-			return resolveProviderModelDefault("codex", "sonnet") ?? anthropicModel;
+			return (
+				resolveProviderModelDefault("codex", "sonnet", id) ?? anthropicModel
+			);
 		if (lower.includes("opus"))
-			return resolveProviderModelDefault("codex", "opus") ?? anthropicModel;
+			return resolveProviderModelDefault("codex", "opus", id) ?? anthropicModel;
 		return anthropicModel;
 	}
 

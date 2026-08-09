@@ -24,6 +24,11 @@ export {
 	resetDefaultCircuitBreaker as resetDefaultCircuitBreakerProxy,
 	shouldCountAsCircuitFailure,
 } from "./circuit-breaker";
+export type {
+	CodexModelEntry,
+	CodexModelListing,
+} from "./codex-model-catalog";
+export { getCodexModels } from "./codex-model-catalog";
 export {
 	type CodexUsageRefreshOutcome,
 	checkAllAccountsHealth,

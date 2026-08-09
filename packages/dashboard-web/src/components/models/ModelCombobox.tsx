@@ -45,6 +45,11 @@ export interface ModelComboboxProps {
 	 * not pass this prop, so their behavior remains unchanged.
 	 */
 	hideClientModelOption?: boolean;
+	/**
+	 * Account whose own model listing should drive the list. Optional: the
+	 * per-provider default-map screen has no account in context.
+	 */
+	accountId?: string | null;
 }
 
 interface ModelOptionProps {
@@ -125,10 +130,11 @@ export function ModelCombobox({
 	inputClassName,
 	disabled,
 	hideClientModelOption = false,
+	accountId,
 }: ModelComboboxProps) {
 	const [open, setOpen] = useState(false);
 	const [filter, setFilter] = useState("");
-	const query = useProviderModels(provider);
+	const query = useProviderModels(provider, accountId);
 
 	const selected = useMemo(() => parseModelList(value), [value]);
 	const usesClientModel = value.trim().length === 0;

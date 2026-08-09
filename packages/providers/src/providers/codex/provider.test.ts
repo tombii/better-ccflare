@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Account } from "@better-ccflare/types";
+import {
+	clearDerivedProviderModelDefaults,
+	setDerivedProviderModelDefaults,
+} from "../../provider-model-defaults";
 import { fetchCodexUsageOnDemand } from "./on-demand-fetch";
 import {
 	CODEX_CACHE_KEY_MODE_ENV,
@@ -2271,7 +2275,14 @@ describe("CodexProvider.transformRequestBody", () => {
 		});
 	});
 
-	it("maps sonnet-family models to the default Codex model", async () => {
+	// The compiled default map is gone: it could not know what a subscription
+	// is entitled to, and pointing sonnet at a model the plan refuses is how a
+	// routine request came back 400. With no account — hence no listing — the
+	// family is left alone rather than guessed at.
+	it("leaves a sonnet-family model alone when nothing knows better", async () => {
+		// The derived map is process-wide: without this, a case that seeded it
+		// earlier would make this one pass or fail for the wrong reason.
+		clearDerivedProviderModelDefaults();
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {
 			method: "POST",
@@ -2286,14 +2297,13 @@ describe("CodexProvider.transformRequestBody", () => {
 		const transformed = await provider.transformRequestBody(request, undefined);
 		const body = await transformed.json();
 
-		expect(body.model).toBe("gpt-5.3-codex");
+		expect(body.model).toBe("claude-3-7-sonnet");
 	});
 
-	// Regression: the fable entry alone is not enough for codex. mapModel
-	// resolves by substring and had no fable branch, so the map entry would
-	// never be looked up and the Claude model id would reach the upstream
-	// verbatim.
-	it("maps fable-family models to the codex default", async () => {
+	// Regression: mapModel translates by substring and had no branch for
+	// `fable`, so the family was not resolvable at all. It is resolvable now —
+	// what it resolves TO comes from the account, not from a constant.
+	it("resolves a fable-family model from the account listing", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {
 			method: "POST",
@@ -2305,10 +2315,22 @@ describe("CodexProvider.transformRequestBody", () => {
 			}),
 		});
 
-		const transformed = await provider.transformRequestBody(request, undefined);
+		// What the account's own listing implied, recorded when it was read.
+		setDerivedProviderModelDefaults("codex", "acc-1", {
+			fable: "gpt-5.6-sol",
+			opus: "gpt-5.6-sol",
+			sonnet: "gpt-5.6-terra",
+			haiku: "gpt-5.6-luna",
+		});
+		const account = {
+			id: "acc-1",
+			provider: "codex",
+		} as Parameters<typeof provider.transformRequestBody>[1];
+
+		const transformed = await provider.transformRequestBody(request, account);
 		const body = await transformed.json();
 
-		expect(body.model).toBe("gpt-5.3-codex");
+		expect(body.model).toBe("gpt-5.6-sol");
 	});
 
 	it("uses account sonnet mapping for sonnet-family models", async () => {
@@ -2355,9 +2377,21 @@ describe("CodexProvider.transformRequestBody", () => {
 		expect(body.model).toBe("gpt-5.3-codex");
 	});
 
-	it("uses default Codex mapping for families missing from account mappings", async () => {
+	// Before, this asserted the compiled fallback. Now the fallback IS the
+	// account's listing, so the test says which model that listing implied.
+	it("fills families missing from the account mappings from its listing", async () => {
+		setDerivedProviderModelDefaults("codex", "acc-1", {
+			fable: "gpt-5.6-sol",
+			opus: "gpt-5.6-sol",
+			sonnet: "gpt-5.6-terra",
+			haiku: "gpt-5.6-luna",
+		});
 		const provider = new CodexProvider();
 		const account = {
+			// The derived map is keyed by account: two accounts of the same
+			// provider can be on different plans, so there is nothing to look up
+			// without an id.
+			id: "acc-1",
 			model_mappings: JSON.stringify({ sonnet: "gpt-5.3-codex" }),
 		} as Parameters<typeof provider.transformRequestBody>[1];
 		const request = new Request("https://example.com/v1/messages", {
@@ -2373,7 +2407,9 @@ describe("CodexProvider.transformRequestBody", () => {
 		const transformed = await provider.transformRequestBody(request, account);
 		const body = await transformed.json();
 
-		expect(body.model).toBe("gpt-5.4-mini");
+		// The account maps some families explicitly; the ones it does not are
+		// filled from its own listing, never from a constant.
+		expect(body.model).toBe("gpt-5.6-luna");
 	});
 
 	it("passes through unknown model names unchanged", async () => {

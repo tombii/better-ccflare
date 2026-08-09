@@ -55,6 +55,7 @@ import {
 	CacheKeepaliveScheduler,
 	drainUsageCollector,
 	forceCloseCircuit,
+	getCodexModels,
 	getModelCatalog,
 	getUsageCollectorHealth,
 	getValidAccessToken,
@@ -956,6 +957,10 @@ export default async function startServer(options?: {
 		alertService,
 		modelCatalog: {
 			get: () => getModelCatalog(),
+			codexModels: async (accountId: string) => {
+				if (!modelCatalogProxyContext) return null;
+				return getCodexModels(accountId, modelCatalogProxyContext);
+			},
 			refresh: async () => {
 				if (!modelCatalogProxyContext) {
 					return {
