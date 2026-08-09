@@ -262,6 +262,12 @@ export async function getCodexModels(
 
 	try {
 		const models = await fetchLive(account, ctx);
+		// An answer with nothing usable in it is not an answer. Recording it
+		// would mark the account as resolved and stop every later attempt, so a
+		// single odd response would freeze the account with no defaults at all.
+		if (models.length === 0) {
+			throw new Error("the listing came back with no usable models");
+		}
 		const listing: CodexModelListing = {
 			accountId,
 			models,

@@ -5,6 +5,7 @@ import {
 } from "@better-ccflare/config";
 import {
 	DEFAULT_AGENT_MODEL,
+	KNOWN_PATTERNS,
 	NETWORK,
 	STRATEGIES,
 	type StrategyName,
@@ -301,6 +302,12 @@ export function createConfigHandlers(
 			const enabledProviders = new Set(
 				config.getEnabledProviderModelDefaultProviders(),
 			);
+			// What may be configured is not a function of what has been
+			// discovered. A provider whose defaults come from a live listing has
+			// no compiled map, so validating against one would reject the manual
+			// override exactly when it is needed: before the first successful
+			// listing, or after one stops answering.
+			const knownFamilies = new Set<string>(KNOWN_PATTERNS);
 			const next = config.getProviderModelDefaultOverrides();
 			for (const entry of entries) {
 				const value = entry as {
@@ -312,17 +319,18 @@ export function createConfigHandlers(
 					typeof value?.provider === "string" ? value.provider.trim() : "";
 				const family =
 					typeof value?.family === "string" ? value.family.trim() : "";
-				if (!factories[provider])
-					return errorResponse(
-						BadRequest(`Unknown provider: ${provider || "(empty)"}`),
-					);
+				if (!provider)
+					return errorResponse(BadRequest("Unknown provider: (empty)"));
 				if (!enabledProviders.has(provider))
 					return errorResponse(
 						BadRequest(
 							`Provider "${provider}" is not editable; set ${PROVIDER_MODEL_DEFAULTS_ENV_VAR} to enable it`,
 						),
 					);
-				if (!factories[provider][family])
+				// A family this provider already maps is obviously valid; one it does
+				// not is still valid if ccflare knows the family at all, because the
+				// map may simply not have been read yet.
+				if (!factories[provider]?.[family] && !knownFamilies.has(family))
 					return errorResponse(
 						BadRequest(
 							`Unknown family '${family || "(empty)"}' for provider '${provider}'`,

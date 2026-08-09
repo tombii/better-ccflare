@@ -190,6 +190,38 @@ describe("getCodexModels", () => {
 		]);
 	});
 
+	// A 200 carrying nothing usable is not an answer. Recording it would mark the
+	// account as resolved and stop every later attempt, freezing it with no
+	// defaults because of one odd response.
+	it("treats a listing with no usable models as a failure", async () => {
+		clearCodexModelCacheForTests();
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify({ models: [] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			})) as typeof globalThis.fetch;
+
+		expect(
+			await getCodexModels(
+				"acc-empty",
+				makeCtx(makeAccount({ id: "acc-empty" })),
+			),
+		).toBeNull();
+
+		// And the account is not stuck: a later real answer still lands.
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify(LIVE_BODY), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			})) as typeof globalThis.fetch;
+		const listing = await getCodexModels(
+			"acc-empty",
+			makeCtx(makeAccount({ id: "acc-empty" })),
+		);
+
+		expect(listing?.source).toBe("live");
+	});
+
 	it("returns nothing when no account of the provider has ever read", async () => {
 		clearCodexModelCacheForTests();
 		globalThis.fetch = (async () =>

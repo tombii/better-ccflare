@@ -53,6 +53,21 @@ afterEach(() => {
 });
 
 describe("provider model defaults", () => {
+	// The override exists for the case where discovery has not answered — a cold
+	// start, or a listing endpoint that stopped responding. Validating it against
+	// the discovered map closed the escape hatch exactly then.
+	it("accepts an override before any listing has been read", async () => {
+		clearDerivedProviderModelDefaults();
+		const handlers = createConfigHandlers(makeConfig());
+
+		const response = await handlers.setProviderModelDefaults(
+			request([{ provider: "codex", family: "opus", model: "gpt-5.6-sol" }]),
+		);
+
+		expect(response.status).toBe(200);
+		expect(resolveProviderModelDefault("codex", "opus")).toBe("gpt-5.6-sol");
+	});
+
 	// The provider-wide default is no longer a constant: it is whatever the
 	// last listing read from an account of that provider implied. So the
 	// precondition every one of these cases needs is 'a listing was read',
