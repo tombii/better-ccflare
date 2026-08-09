@@ -24,6 +24,7 @@ import {
 } from "../../hooks/queries";
 import { providerAllowsClientModelPassthrough } from "../../utils/provider-utils";
 import { ModelCombobox } from "../models/ModelCombobox";
+import { ModelTestButton } from "../models/ModelTestButton";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -278,6 +279,10 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 									onChange={setNewModel}
 									placeholder="Model id"
 									className="flex-1"
+								/>
+								<ModelTestButton
+									accountId={newAccountId || null}
+									model={newModel}
 								/>
 							</div>
 							<p className="text-[11px] text-muted-foreground">

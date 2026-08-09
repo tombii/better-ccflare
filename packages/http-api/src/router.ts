@@ -88,6 +88,7 @@ import {
 import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
 import { createCleanupHandler } from "./handlers/maintenance";
+import { createAccountModelTestHandler } from "./handlers/model-test";
 import {
 	createModelsHandler,
 	createModelsRefreshHandler,
@@ -692,6 +693,13 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					customEndpointHandler(req, accountId),
+				)(req, url);
+			}
+
+			if (path.endsWith("/test-model") && method === "POST") {
+				const modelTestHandler = createAccountModelTestHandler(this.context);
+				return await this.wrapHandler((req) =>
+					modelTestHandler(req, accountId),
 				)(req, url);
 			}
 

@@ -9,6 +9,7 @@ import type { Account } from "../../api";
 import { firstModelInList } from "../../lib/model-api";
 import { providerAllowsClientModelPassthrough } from "../../utils/provider-utils";
 import { ModelCombobox } from "../models/ModelCombobox";
+import { ModelTestButton } from "../models/ModelTestButton";
 import { Button } from "../ui/button";
 import {
 	Dialog,
@@ -174,6 +175,11 @@ export function AccountModelMappingsDialog({
 										className="flex-1"
 										inputClassName="h-8"
 									/>
+									<ModelTestButton
+										accountId={account.id}
+										model={firstModelInList(modelMappings.fable)}
+										fromList
+									/>
 								</div>
 							</div>
 							<div className="space-y-1">
@@ -190,6 +196,11 @@ export function AccountModelMappingsDialog({
 										placeholder={`e.g., ${LATEST_OPUS_MODEL}`}
 										className="flex-1"
 										inputClassName="h-8"
+									/>
+									<ModelTestButton
+										accountId={account.id}
+										model={firstModelInList(modelMappings.opus)}
+										fromList
 									/>
 								</div>
 							</div>
@@ -208,6 +219,11 @@ export function AccountModelMappingsDialog({
 										className="flex-1"
 										inputClassName="h-8"
 									/>
+									<ModelTestButton
+										accountId={account.id}
+										model={firstModelInList(modelMappings.sonnet)}
+										fromList
+									/>
 								</div>
 							</div>
 							<div className="space-y-1">
@@ -224,6 +240,11 @@ export function AccountModelMappingsDialog({
 										placeholder={`e.g., ${LATEST_HAIKU_MODEL}`}
 										className="flex-1"
 										inputClassName="h-8"
+									/>
+									<ModelTestButton
+										accountId={account.id}
+										model={firstModelInList(modelMappings.haiku)}
+										fromList
 									/>
 								</div>
 							</div>
