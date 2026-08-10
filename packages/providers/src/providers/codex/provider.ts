@@ -109,7 +109,6 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 	haiku: "gpt-5.4-mini",
 };
 
-
 // Synced from the Codex CLI model cache (~/.codex/models_cache.json,
 // codex-cli 0.144.1). Missing entries mean no context_window block is
 // reported to the client, which disables its context gauge and compaction
@@ -713,14 +712,10 @@ export class CodexProvider extends BaseProvider {
 
 		const lower = anthropicModel.toLowerCase();
 		// Precedence: combo slot -> account.model_mappings -> global override -> factory map.
-		if (lower.includes("fable"))
-			return DEFAULT_MODEL_MAP.fable;
-		if (lower.includes("haiku"))
-			return DEFAULT_MODEL_MAP.haiku;
-		if (lower.includes("sonnet"))
-			return DEFAULT_MODEL_MAP.sonnet;
-		if (lower.includes("opus"))
-			return DEFAULT_MODEL_MAP.opus;
+		if (lower.includes("fable")) return DEFAULT_MODEL_MAP.fable;
+		if (lower.includes("haiku")) return DEFAULT_MODEL_MAP.haiku;
+		if (lower.includes("sonnet")) return DEFAULT_MODEL_MAP.sonnet;
+		if (lower.includes("opus")) return DEFAULT_MODEL_MAP.opus;
 		return anthropicModel;
 	}
 

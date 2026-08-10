@@ -6,7 +6,6 @@ import {
 } from "@better-ccflare/core";
 import React, { useState } from "react";
 import type { Account } from "../../api";
-import { firstModelInList } from "../../lib/model-api";
 import { providerAllowsClientModelPassthrough } from "../../utils/provider-utils";
 import { ModelCombobox } from "../models/ModelCombobox";
 import { Button } from "../ui/button";
