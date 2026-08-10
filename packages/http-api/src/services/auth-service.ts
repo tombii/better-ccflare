@@ -66,6 +66,24 @@ function isLocalControlNotifyPath(path: string): boolean {
  * dashboard fetches it and opens the EventSource in the same tick). */
 const STREAM_TOKEN_TTL_MS = 60_000;
 
+/**
+ * Exact shape of the status-line read route GET /api/sessions/:id/account
+ * (#318): five path segments, `/api/sessions/<id>/account`. Kept identical
+ * to router.ts's own dynamic-route match so this exemption never covers a
+ * path the router won't actually serve as this handler — which would
+ * otherwise open an unauthenticated bypass via fall-through to some other
+ * route (or the upstream proxy).
+ */
+function isSessionAccountPath(path: string): boolean {
+	const parts = path.split("/");
+	return (
+		parts.length === 5 &&
+		parts[1] === "api" &&
+		parts[2] === "sessions" &&
+		parts[4] === "account"
+	);
+}
+
 interface StreamTokenRecord {
 	expiresAt: number;
 	apiKeyId?: string;
@@ -299,8 +317,17 @@ export class AuthService {
 	/**
 	 * Check if a path is statically exempt from authentication
 	 * (does not require async DB check)
+	 *
+	 * `method`, when provided, additionally exempts GET
+	 * /api/sessions/:id/account (#318) — a read-only, DB-backed lookup meant
+	 * for local status-line integrations. Deliberately GET-only: without the
+	 * method check, a POST to the same path would also read as exempt, which
+	 * is unnecessary and needlessly widens the bypass. Omitting `method`
+	 * still exempts the path (matching every other static exemption below,
+	 * none of which are method-gated) — only pass `method` when you want the
+	 * narrower GET-only check.
 	 */
-	isStaticPathExempt(path: string): boolean {
+	isStaticPathExempt(path: string, method?: string): boolean {
 		// Health endpoint is always exempt
 		if (path === "/health") {
 			return true;
@@ -315,6 +342,14 @@ export class AuthService {
 		// dashboard's sidebar tile fires this on load with no API key in
 		// headers, so it must be reachable whether or not auth is enabled.
 		if (path === "/api/version/check") {
+			return true;
+		}
+
+		// Session→account lookup for the local status-line badge (#318).
+		if (
+			(method === undefined || method === "GET") &&
+			isSessionAccountPath(path)
+		) {
 			return true;
 		}
 
@@ -351,7 +386,7 @@ export class AuthService {
 		headers?: Headers,
 	): Promise<boolean> {
 		// Static exemptions first (no DB hit)
-		if (this.isStaticPathExempt(path)) {
+		if (this.isStaticPathExempt(path, method)) {
 			return true;
 		}
 
