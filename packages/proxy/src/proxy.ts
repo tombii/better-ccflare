@@ -9,6 +9,7 @@ import { Logger } from "@better-ccflare/logger";
 import {
 	deriveXaiConvId,
 	getRepresentativeUsageSnapshotForProvider,
+	isOfficialXaiEndpoint,
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -31,6 +32,7 @@ import {
 	proxyWithAccount,
 	RequestBodyContext,
 	type RequestJsonBody,
+	recordXaiAffinitySuccess,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
 	setXaiConvId,
@@ -345,6 +347,16 @@ export async function handleProxy(
 		return { available, throttled };
 	};
 
+	// xAI cache-native affinity must be recorded only once a response is
+	// actually served, never at selection time — see recordXaiAffinitySuccess.
+	// A no-op for any non-xai / non-official-endpoint account, or when the
+	// feature is disabled (getXaiConvId returns null and the callee no-ops).
+	const recordXaiAffinityIfServed = (account: Account) => {
+		if (account.provider === "xai" && isOfficialXaiEndpoint(account)) {
+			recordXaiAffinitySuccess(requestMeta, account.id);
+		}
+	};
+
 	const returnComboSessionFallbackDisabled = async (
 		comboName: string,
 		failoverAttempts: number,
@@ -630,6 +642,7 @@ export async function handleProxy(
 		}
 
 		if (response) {
+			recordXaiAffinityIfServed(accounts[i]);
 			return response;
 		}
 
@@ -680,6 +693,7 @@ export async function handleProxy(
 		);
 
 		if (response) {
+			recordXaiAffinityIfServed(accounts[i]);
 			return response;
 		}
 	}
@@ -763,6 +777,7 @@ export async function handleProxy(
 				}
 
 				if (response) {
+					recordXaiAffinityIfServed(fallbackAccounts[i]);
 					return response;
 				}
 			}
@@ -796,6 +811,7 @@ export async function handleProxy(
 				);
 
 				if (response) {
+					recordXaiAffinityIfServed(fallbackAccounts[i]);
 					return response;
 				}
 			}

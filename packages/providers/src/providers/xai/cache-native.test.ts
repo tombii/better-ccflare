@@ -249,4 +249,35 @@ describe("applyXaiConvIdHeader", () => {
 		applyXaiConvIdHeader(headers, "xai", account(), "ccflare-xai-real");
 		expect(headers.get(XAI_CONV_ID_HEADER)).toBe("ccflare-xai-real");
 	});
+
+	// Regression coverage: a client-supplied x-grok-conv-id must never reach
+	// any upstream, including on every early-return (no-op) path below — not
+	// just the happy-path overwrite tested above.
+	it("strips a pre-existing client-supplied header for a non-xai provider", () => {
+		const headers = new Headers({ [XAI_CONV_ID_HEADER]: "client-supplied" });
+		applyXaiConvIdHeader(
+			headers,
+			"anthropic",
+			account({ provider: "anthropic" }),
+			"ccflare-xai-abc123",
+		);
+		expect(headers.has(XAI_CONV_ID_HEADER)).toBe(false);
+	});
+
+	it("strips a pre-existing client-supplied header when the conv id is null", () => {
+		const headers = new Headers({ [XAI_CONV_ID_HEADER]: "client-supplied" });
+		applyXaiConvIdHeader(headers, "xai", account(), null);
+		expect(headers.has(XAI_CONV_ID_HEADER)).toBe(false);
+	});
+
+	it("strips a pre-existing client-supplied header for a custom/proxy xai endpoint", () => {
+		const headers = new Headers({ [XAI_CONV_ID_HEADER]: "client-supplied" });
+		applyXaiConvIdHeader(
+			headers,
+			"xai",
+			account({ custom_endpoint: "https://my-proxy.example.com/v1" }),
+			"ccflare-xai-abc123",
+		);
+		expect(headers.has(XAI_CONV_ID_HEADER)).toBe(false);
+	});
 });

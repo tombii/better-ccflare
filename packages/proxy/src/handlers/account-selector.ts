@@ -175,6 +175,25 @@ function recordXaiAffinity(
 }
 
 /**
+ * Record (or refresh) sticky xAI affinity for `meta`'s conv id onto
+ * `accountId` — the account that actually served the request. Callers must
+ * only invoke this after confirming a response was actually returned by
+ * `accountId`, never at selection time: recording ownership before the
+ * request is attempted would wrongly pin a failed leader, since failover to
+ * a later candidate never gets a chance to correct it (see proxy.ts call
+ * sites, one per `if (response) { return response; }` point). A no-op
+ * whenever `meta` carries no conv id (feature disabled or id underivable).
+ */
+export function recordXaiAffinitySuccess(
+	meta: RequestMeta,
+	accountId: string,
+): void {
+	const convId = getXaiConvId(meta);
+	if (!convId) return;
+	recordXaiAffinity(convId, accountId, Date.now());
+}
+
+/**
  * Reorders `accounts` so a conv id's sticky xAI account is tried first, when
  * that account is present in the (already availability-filtered) candidate
  * list and its ownership hasn't expired. A no-op whenever `meta` carries no
@@ -189,11 +208,12 @@ function recordXaiAffinity(
  * combo-assigned account already has an explicit, higher-precedence reason
  * to be first, and reordering either would fight that intent.
  *
- * On every call, ownership transfers to whichever eligible (xai, official
- * endpoint) account ends up first in the result — whether that's the
- * pre-existing owner (promoted) or the strategy's own top pick (owner
- * absent/expired) — so the next request for this conv id stays sticky to
- * whichever account actually served this one.
+ * Read-only with respect to ownership: this only reorders by the EXISTING
+ * owner, it never writes one. Ownership is recorded solely by
+ * `recordXaiAffinitySuccess`, called from proxy.ts once a response is
+ * actually served — recording it here, at selection time, would wrongly pin
+ * a presumptive leader that then fails and is failed-over away from, since
+ * nothing downstream would get a chance to correct it.
  */
 function applyXaiCacheAffinity(
 	accounts: Account[],
@@ -225,16 +245,6 @@ function applyXaiCacheAffinity(
 			const [owner] = result.splice(ownerIdx, 1);
 			result.splice(firstXaiIdx, 0, owner);
 		}
-	}
-
-	// Ownership transfers (or refreshes) only when an eligible xai account is
-	// the presumptive server — i.e. it leads the result. When a non-xai
-	// account leads, this request won't touch any xai cache partition, so the
-	// existing ownership is left to age naturally rather than being
-	// reassigned to an account that isn't serving.
-	const leader = result[0];
-	if (leader && isEligible(leader)) {
-		recordXaiAffinity(convId, leader.id, now);
 	}
 
 	return result;

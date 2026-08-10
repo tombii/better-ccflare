@@ -7,6 +7,7 @@ export {
 	getModelFamilyExhaustionInfo,
 	getXaiConvId,
 	type ModelFamilyExhaustionInfo,
+	recordXaiAffinitySuccess,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
 	setComboSlotInfo,

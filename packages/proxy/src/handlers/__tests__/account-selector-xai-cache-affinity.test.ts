@@ -6,6 +6,7 @@ import type {
 } from "@better-ccflare/types";
 import {
 	getXaiConvId,
+	recordXaiAffinitySuccess,
 	resetXaiCacheAffinityForTests,
 	selectAccountsForRequest,
 	setXaiConvId,
@@ -136,7 +137,7 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 		expect(result.map((a) => a.id)).toEqual(["xai-a", "xai-b"]);
 	});
 
-	it("records ownership on first use without reordering (nothing to prefer yet)", async () => {
+	it("does not record ownership merely from being selected (selection is read-only)", async () => {
 		const xaiA = makeAccount({ id: "xai-a" });
 		const xaiB = makeAccount({ id: "xai-b" });
 		const ctx = makeCtx({ accounts: [xaiA, xaiB] });
@@ -145,18 +146,26 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 
 		const result = await selectAccountsForRequest(meta, ctx);
 		expect(result.map((a) => a.id)).toEqual(["xai-a", "xai-b"]);
+
+		// Selection alone (no recordXaiAffinitySuccess call) must not have
+		// written ownership: a second request with the strategy order flipped
+		// sees no promotion, proving nothing was recorded above.
+		const ctx2 = makeCtx({ accounts: [xaiB, xaiA] });
+		const meta2 = makeRequestMeta();
+		setXaiConvId(meta2, "conv-first-use");
+		const result2 = await selectAccountsForRequest(meta2, ctx2);
+		expect(result2.map((a) => a.id)).toEqual(["xai-b", "xai-a"]);
 	});
 
 	it("prefers the owning account when it is present and routable on a later request", async () => {
 		const xaiA = makeAccount({ id: "xai-a" });
 		const xaiB = makeAccount({ id: "xai-b" });
 
-		// First request establishes ownership on whichever account the strategy
-		// puts first — xai-a.
-		const ctx1 = makeCtx({ accounts: [xaiA, xaiB] });
+		// First request served by xai-a records ownership explicitly, as
+		// proxy.ts does once a response is actually returned.
 		const meta1 = makeRequestMeta();
 		setXaiConvId(meta1, "conv-owner-preferred");
-		await selectAccountsForRequest(meta1, ctx1);
+		recordXaiAffinitySuccess(meta1, "xai-a");
 
 		// Second request: strategy now ranks xai-b first, but the sticky owner
 		// (xai-a) must still be promoted to the front.
@@ -168,15 +177,14 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 		expect(result.map((a) => a.id)).toEqual(["xai-a", "xai-b"]);
 	});
 
-	it("falls back to normal order and transfers ownership when the owner is absent from the candidate list", async () => {
+	it("falls back to normal order when the owner is absent from the candidate list, and does not transfer ownership on selection alone", async () => {
 		const xaiA = makeAccount({ id: "xai-a" });
 		const xaiB = makeAccount({ id: "xai-b" });
 
-		// Establish ownership on xai-a.
-		const ctx1 = makeCtx({ accounts: [xaiA, xaiB] });
+		// Establish ownership on xai-a (as if a prior request was served by it).
 		const meta1 = makeRequestMeta();
 		setXaiConvId(meta1, "conv-transfer");
-		await selectAccountsForRequest(meta1, ctx1);
+		recordXaiAffinitySuccess(meta1, "xai-a");
 
 		// xai-a is no longer routable/present (e.g. paused/rate-limited and
 		// filtered out upstream) — only xai-b is a candidate.
@@ -186,15 +194,64 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 		const result2 = await selectAccountsForRequest(meta2, ctx2);
 		expect(result2.map((a) => a.id)).toEqual(["xai-b"]);
 
-		// Ownership must have transferred to xai-b: a third request where both
-		// are candidates again, with xai-a ranked first by the strategy, must
-		// still promote xai-b (the new owner), not fall back to stale xai-a
-		// ownership.
+		// Selection alone does not transfer ownership (only a confirmed success
+		// does — see recordXaiAffinitySuccess) — a third request where both are
+		// candidates again still promotes stale owner xai-a, not xai-b.
 		const ctx3 = makeCtx({ accounts: [xaiA, xaiB] });
 		const meta3 = makeRequestMeta();
 		setXaiConvId(meta3, "conv-transfer");
 		const result3 = await selectAccountsForRequest(meta3, ctx3);
+		expect(result3.map((a) => a.id)).toEqual(["xai-a", "xai-b"]);
+	});
+
+	it("transfers ownership once a confirmed success on the new account is recorded", async () => {
+		const xaiA = makeAccount({ id: "xai-a" });
+		const xaiB = makeAccount({ id: "xai-b" });
+
+		const meta1 = makeRequestMeta();
+		setXaiConvId(meta1, "conv-transfer-confirmed");
+		recordXaiAffinitySuccess(meta1, "xai-a");
+
+		// xai-a fails and the request is actually served by xai-b — proxy.ts
+		// records that confirmed success.
+		const meta2 = makeRequestMeta();
+		setXaiConvId(meta2, "conv-transfer-confirmed");
+		recordXaiAffinitySuccess(meta2, "xai-b");
+
+		// A later request with xai-a ranked first by the strategy must now
+		// promote xai-b — the account that actually served — not stale xai-a.
+		const ctx3 = makeCtx({ accounts: [xaiA, xaiB] });
+		const meta3 = makeRequestMeta();
+		setXaiConvId(meta3, "conv-transfer-confirmed");
+		const result3 = await selectAccountsForRequest(meta3, ctx3);
 		expect(result3.map((a) => a.id)).toEqual(["xai-b", "xai-a"]);
+	});
+
+	it("does not let a failed presumptive leader retain ownership after a later candidate is confirmed to have served the request", async () => {
+		// Regression test for the bug where ownership was recorded at
+		// selection time (on the presumptive leader) rather than after a
+		// confirmed response — which would wrongly keep steering subsequent
+		// requests at an account that just failed.
+		const xaiA = makeAccount({ id: "xai-a" });
+		const xaiB = makeAccount({ id: "xai-b" });
+
+		const ctx1 = makeCtx({ accounts: [xaiA, xaiB] });
+		const meta1 = makeRequestMeta();
+		setXaiConvId(meta1, "conv-no-false-pin");
+		const selected1 = await selectAccountsForRequest(meta1, ctx1);
+		expect(selected1.map((a) => a.id)).toEqual(["xai-a", "xai-b"]);
+
+		// xai-a (the presumptive leader) fails; xai-b actually serves the
+		// request. Only the confirmed server's success is recorded.
+		recordXaiAffinitySuccess(meta1, "xai-b");
+
+		// The next request for this conversation must be steered at xai-b
+		// first, not the failed leader xai-a.
+		const ctx2 = makeCtx({ accounts: [xaiA, xaiB] });
+		const meta2 = makeRequestMeta();
+		setXaiConvId(meta2, "conv-no-false-pin");
+		const result2 = await selectAccountsForRequest(meta2, ctx2);
+		expect(result2.map((a) => a.id)).toEqual(["xai-b", "xai-a"]);
 	});
 
 	it("treats an owner past the TTL window as absent", async () => {
@@ -205,10 +262,9 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 
 		try {
 			Date.now = () => baseNow;
-			const ctx1 = makeCtx({ accounts: [xaiA, xaiB] });
 			const meta1 = makeRequestMeta({ timestamp: baseNow });
 			setXaiConvId(meta1, "conv-ttl");
-			await selectAccountsForRequest(meta1, ctx1);
+			recordXaiAffinitySuccess(meta1, "xai-a");
 
 			// Advance past the TTL window.
 			Date.now = () => baseNow + XAI_AFFINITY_TTL_MS + 1;
@@ -228,18 +284,16 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 
 	it("evicts the oldest entry once the cap is exceeded", async () => {
 		const evictedConvId = "conv-cap-0";
-		const ctxSeed = makeCtx({ accounts: [makeAccount({ id: "acc-cap" })] });
 		const metaSeed = makeRequestMeta();
 		setXaiConvId(metaSeed, evictedConvId);
-		await selectAccountsForRequest(metaSeed, ctxSeed);
+		recordXaiAffinitySuccess(metaSeed, "acc-cap");
 
 		// Push the table past its cap with distinct conv ids so the very first
 		// entry (evictedConvId) becomes the oldest and gets evicted.
 		for (let i = 1; i <= XAI_AFFINITY_MAX_ENTRIES; i++) {
-			const ctx = makeCtx({ accounts: [makeAccount({ id: `acc-cap-${i}` })] });
 			const meta = makeRequestMeta();
 			setXaiConvId(meta, `conv-cap-${i}`);
-			await selectAccountsForRequest(meta, ctx);
+			recordXaiAffinitySuccess(meta, `acc-cap-${i}`);
 		}
 
 		// The evicted conv id's former owner ("acc-cap") must no longer be
@@ -258,15 +312,13 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 		const xaiA = makeAccount({ id: "xai-a" });
 		const xaiB = makeAccount({ id: "xai-b" });
 
-		const ctx1 = makeCtx({ accounts: [xaiA, xaiB] });
 		const meta1 = makeRequestMeta();
 		setXaiConvId(meta1, "conv-scope-1");
-		await selectAccountsForRequest(meta1, ctx1);
+		recordXaiAffinitySuccess(meta1, "xai-a");
 
-		const ctx2 = makeCtx({ accounts: [xaiB, xaiA] });
 		const meta2 = makeRequestMeta();
 		setXaiConvId(meta2, "conv-scope-2");
-		await selectAccountsForRequest(meta2, ctx2);
+		recordXaiAffinitySuccess(meta2, "xai-b");
 
 		// conv-scope-1's owner (xai-a) must still be promoted for its own
 		// conversation, independent of conv-scope-2's owner (xai-b).
@@ -285,11 +337,10 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 			provider: "anthropic",
 		});
 
-		// Seed ownership of xai-b (it leads an all-xai pool).
-		const ctxSeed = makeCtx({ accounts: [xaiB, xaiA] });
+		// Seed ownership of xai-b.
 		const metaSeed = makeRequestMeta();
 		setXaiConvId(metaSeed, "conv-mixed-pool");
-		await selectAccountsForRequest(metaSeed, ctxSeed);
+		recordXaiAffinitySuccess(metaSeed, "xai-b");
 
 		// Mixed pool with a non-xai account the strategy put first: affinity
 		// must only reorder WITHIN the xai subset — anthropic-1 keeps the
@@ -301,7 +352,7 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 		expect(result.map((a) => a.id)).toEqual(["anthropic-1", "xai-b", "xai-a"]);
 	});
 
-	it("does not transfer ownership while a non-xai account is the presumptive server", async () => {
+	it("leaves ownership untouched while a non-xai account is the presumptive server (nothing to confirm)", async () => {
 		const xaiA = makeAccount({ id: "xai-a" });
 		const xaiB = makeAccount({ id: "xai-b" });
 		const anthropicAcc = makeAccount({
@@ -310,14 +361,13 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 		});
 
 		// Seed ownership of xai-b.
-		const ctxSeed = makeCtx({ accounts: [xaiB, xaiA] });
 		const metaSeed = makeRequestMeta();
 		setXaiConvId(metaSeed, "conv-no-steal");
-		await selectAccountsForRequest(metaSeed, ctxSeed);
+		recordXaiAffinitySuccess(metaSeed, "xai-b");
 
 		// Non-xai leader: the request won't touch any xai cache partition, so
-		// ownership must NOT be reassigned to xai-a merely for being the
-		// first xai account in this pool.
+		// no affinity success would ever be recorded for this request (proxy.ts
+		// only calls recordXaiAffinitySuccess for an xai/official account).
 		const ctxMixed = makeCtx({ accounts: [anthropicAcc, xaiA, xaiB] });
 		const metaMixed = makeRequestMeta();
 		setXaiConvId(metaMixed, "conv-no-steal");
@@ -355,10 +405,9 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 		const xaiB = makeAccount({ id: "xai-b" });
 
 		// Establish ownership on xai-a for this conv id.
-		const ctx1 = makeCtx({ accounts: [xaiA, xaiB] });
 		const meta1 = makeRequestMeta();
 		setXaiConvId(meta1, "conv-forced");
-		await selectAccountsForRequest(meta1, ctx1);
+		recordXaiAffinitySuccess(meta1, "xai-a");
 
 		// A forced-account request for xai-b must return exactly xai-b,
 		// regardless of xai-a's sticky ownership — the forced-account path
@@ -381,12 +430,10 @@ describe("selectAccountsForRequest — xAI cache-native affinity", () => {
 		// with an xai owner in play.
 		const comboAcc = makeAccount({ id: "combo-acc", provider: "xai" });
 
-		// Establish ownership on xai-a for this conv id via normal (non-combo,
-		// no model) selection first.
-		const ctxSeed = makeCtx({ accounts: [xaiA, xaiB] });
+		// Establish ownership on xai-a for this conv id.
 		const metaSeed = makeRequestMeta();
 		setXaiConvId(metaSeed, "conv-combo");
-		await selectAccountsForRequest(metaSeed, ctxSeed);
+		recordXaiAffinitySuccess(metaSeed, "xai-a");
 
 		// A combo-routed request (model resolves to a known family + an active
 		// combo for it) must return exactly the combo's own slot accounts,

@@ -181,6 +181,7 @@ describe("proxyWithAccount — xAI cache-native conv-id header attachment", () =
 	async function runXaiRequest(
 		accountOverrides: Partial<Account> = {},
 		convId: string | null = "ccflare-xai-test-conv",
+		requestHeaders?: HeadersInit,
 	) {
 		const bodyBuffer = new TextEncoder().encode(
 			JSON.stringify({
@@ -194,8 +195,18 @@ describe("proxyWithAccount — xAI cache-native conv-id header attachment", () =
 			setXaiConvId(requestMeta, convId);
 		}
 		const ctx = makeProxyContext(new XaiProvider());
+		const incomingRequest = requestHeaders
+			? new Request("https://proxy.local/v1/messages", {
+					method: "POST",
+					body: bodyBuffer,
+					headers: {
+						"Content-Type": "application/json",
+						...(requestHeaders as Record<string, string>),
+					},
+				})
+			: makeMessagesRequest(bodyBuffer);
 		const result = await proxyWithAccount(
-			makeMessagesRequest(bodyBuffer),
+			incomingRequest,
 			new URL("https://proxy.local/v1/messages"),
 			makeXaiAccount(accountOverrides),
 			requestMeta,
@@ -256,6 +267,30 @@ describe("proxyWithAccount — xAI cache-native conv-id header attachment", () =
 			ctx,
 		);
 		await result?.text();
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchedRequest?.headers.get(XAI_CONV_ID_HEADER)).toBeNull();
+	});
+
+	// Regression coverage: applyXaiConvIdHeader strips any pre-existing header
+	// value unconditionally, before its own no-op guards — proving that a
+	// client-supplied x-grok-conv-id copied in by provider.prepareHeaders()
+	// never reaches upstream, even on a request that would otherwise no-op.
+	it("strips a client-supplied x-grok-conv-id header instead of forwarding it, even when no conv id is set", async () => {
+		await runXaiRequest({}, null, {
+			[XAI_CONV_ID_HEADER]: "client-supplied-conv-id",
+		});
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchedRequest?.headers.get(XAI_CONV_ID_HEADER)).toBeNull();
+	});
+
+	it("strips a client-supplied x-grok-conv-id header for a custom/proxy xai endpoint", async () => {
+		await runXaiRequest(
+			{ custom_endpoint: "https://my-xai-proxy.example.com/v1" },
+			"ccflare-xai-test-conv",
+			{ [XAI_CONV_ID_HEADER]: "client-supplied-conv-id" },
+		);
 
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(fetchedRequest?.headers.get(XAI_CONV_ID_HEADER)).toBeNull();

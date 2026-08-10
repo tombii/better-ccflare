@@ -123,6 +123,10 @@ export function applyXaiConvIdHeader(
 	account: Account,
 	convId: string | null,
 ): void {
+	// Strip unconditionally first: a client-supplied x-grok-conv-id must never
+	// reach any upstream, including when this function is about to no-op below
+	// (feature disabled, non-xai provider, or a custom/proxy xai endpoint).
+	headers.delete(XAI_CONV_ID_HEADER);
 	if (providerName !== "xai") return;
 	if (!convId) return;
 	if (!isOfficialXaiEndpoint(account)) return;
