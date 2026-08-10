@@ -479,7 +479,7 @@ export class APIRouter {
 		// Model catalog routes
 		const modelsHandler = createModelsHandler(this.context);
 		const modelsRefreshHandler = createModelsRefreshHandler(this.context);
-		this.handlers.set("GET:/api/models", () => modelsHandler());
+		this.handlers.set("GET:/api/models", (_req, url) => modelsHandler(url));
 		this.handlers.set("POST:/api/models/refresh", () => modelsRefreshHandler());
 	}
 

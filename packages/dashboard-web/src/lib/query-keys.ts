@@ -37,4 +37,13 @@ export const queryKeys = {
 	usageHistory: (account?: string, range?: string) =>
 		[...queryKeys.all, "usage-history", { account, range }] as const,
 	models: () => [...queryKeys.all, "models"] as const,
+	// Deliberately kept under the 'models' key: invalidating models() also
+	// invalidates the per-provider lists.
+	providerModels: (provider?: string | null) =>
+		[...queryKeys.all, "models", "provider", provider ?? ""] as const,
+	// Single record for the default-model map per provider+family (today the
+	// last word in the chain, hardcoded). No parameter: the screen reads
+	// and writes everything at once.
+	providerModelDefaults: () =>
+		[...queryKeys.all, "config", "provider-model-defaults"] as const,
 } as const;

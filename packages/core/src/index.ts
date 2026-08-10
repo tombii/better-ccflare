@@ -80,9 +80,11 @@ export {
 	uninstallOutboundProxy,
 } from "./outbound-proxy";
 export {
+	type CatalogueModelEntry,
 	estimateCostUSD,
 	getModelRates,
 	initializeNanoGPTPricingIfAccountsExist,
+	listCatalogueModels,
 	type ModelRates,
 	resetNanoGPTPricingCacheForTest,
 	setPricingLogger,
