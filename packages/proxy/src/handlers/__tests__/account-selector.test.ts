@@ -267,6 +267,43 @@ describe("selectAccountsForRequest — combo routing", () => {
 		expect(slotInfo?.slots[0]?.modelOverride).toBe("claude-opus-4-5");
 	});
 
+	// An empty slot model means passthrough: the client's requested model is
+	// sent upstream untouched. The slot still routes to its account - only the
+	// override is absent. Downstream (proxy-operations.ts) guards with
+	// `if (modelOverride && ...)`, so an empty string already means "do not
+	// overwrite the model"; this test pins that the selector propagates it
+	// verbatim instead of substituting the request model.
+	it("propagates an empty slot model as an empty modelOverride (passthrough slot)", async () => {
+		const acc = makeAccount({ id: "acc-passthrough" });
+		const combo = makeCombo([
+			{
+				id: "slot-1",
+				combo_id: "combo-1",
+				account_id: "acc-passthrough",
+				model: "", // passthrough - no model override
+				priority: 0,
+				enabled: true,
+			},
+		]);
+
+		const ctx = makeCtx({ accounts: [acc], activeCombo: combo });
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
+
+		expect(result.map((a) => a.id)).toEqual(["acc-passthrough"]);
+		const slotInfo = getComboSlotInfo(meta);
+		expect(slotInfo?.comboName).toBe("Test Combo");
+		expect(slotInfo?.slots).toEqual([
+			{ accountId: "acc-passthrough", modelOverride: "" },
+		]);
+		expect(meta.comboName).toBe("Test Combo");
+	});
+
 	it("sets meta.comboName when combo routing is active", async () => {
 		const acc = makeAccount({ id: "acc-1" });
 		const combo = makeCombo([
