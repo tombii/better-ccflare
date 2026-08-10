@@ -26,6 +26,7 @@ import {
 	type AnyUsageData,
 	fetchUsageData,
 	getRepresentativeUtilization,
+	getRepresentativeUtilizationForProvider,
 	getRepresentativeWindow,
 	parseCodexUsageHeaders,
 	type UsageData,
@@ -511,7 +512,19 @@ export function createAccountsListHandler(
 						rate_limited_until: account.rate_limited_until
 							? Number(account.rate_limited_until)
 							: null,
-						usageUtilization,
+						// The STATUS LABEL must be derived from the same signal that
+						// gates admission, not from the display utilization: the
+						// latter includes extra_usage, so a routable account whose
+						// overage pool is spent would be labelled usage_exhausted
+						// while it happily serves traffic. usageUtilization /
+						// usageWindow below still report the pool for display.
+						usageUtilization:
+							getRepresentativeUtilizationForProvider(
+								// FullUsageData is the http-api display shape (nullable
+								// utilization); the provider helpers read the same fields.
+								fullUsageData as AnyUsageData | null,
+								account.provider ?? "anthropic",
+							) ?? usageUtilization,
 						// Shared provider-aware derivation (same as /health) — a plain
 						// extractUsageResetMs(fullUsageData, usageWindow) silently loses
 						// the zai reset because usageWindow is the display label
