@@ -37,7 +37,7 @@ import {
 	extractWeeklyResetTime,
 	fetchCodexUsageOnDemand,
 	getProvider,
-	getRepresentativeUtilizationForProvider,
+	getRankingUtilizationForProvider,
 	usageCache,
 } from "@better-ccflare/providers";
 import {
@@ -1080,7 +1080,10 @@ export default async function startServer(options?: {
 		getAccountUtilization(accountId: string, provider: string): number | null {
 			const data = usageCache.get(accountId);
 			if (!data) return null;
-			return getRepresentativeUtilizationForProvider(data, provider);
+			// Ranking, not gating: this feeds SessionStrategy's water-filling sort
+			// across same-priority accounts, where a spent extra_usage pool is a
+			// legitimate reason to prefer another account.
+			return getRankingUtilizationForProvider(data, provider);
 		},
 		getAccountWeeklyReset(accountId: string, provider: string): number | null {
 			const data = usageCache.get(accountId);
