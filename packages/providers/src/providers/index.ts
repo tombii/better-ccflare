@@ -30,6 +30,13 @@ export { OpenAICompatibleProvider } from "./openai/index";
 export { OpenRouterProvider } from "./openrouter/index";
 export { type VertexAIConfig, VertexAIProvider } from "./vertex-ai/index";
 export {
+	applyXaiConvIdHeader,
+	deriveXaiConvId,
+	isOfficialXaiEndpoint,
+	isValidSessionId,
+	isXaiCacheNativeEnabled,
+	XAI_CACHE_NATIVE_ENV,
+	XAI_CONV_ID_HEADER,
 	XAI_DEFAULT_CLIENT_ID,
 	XAI_DEFAULT_ENDPOINT,
 	XAI_MODEL_MAPPINGS,

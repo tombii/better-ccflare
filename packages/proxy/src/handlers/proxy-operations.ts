@@ -13,6 +13,7 @@ import { Logger } from "@better-ccflare/logger";
 import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
 import {
 	type AnyUsageData,
+	applyXaiConvIdHeader,
 	getProvider,
 	isAnthropicExtraUsageExhausted,
 	isAnthropicOutOfCredits,
@@ -27,6 +28,7 @@ import { cacheBodyStore } from "../cache-body-store";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
+import { getXaiConvId } from "./account-selector";
 import { markFamilyExhausted } from "./model-capacity";
 import {
 	ERROR_MESSAGES,
@@ -670,6 +672,20 @@ export async function proxyWithAccount(
 		// client-supplied copies before providers transform the outbound request.
 		headers.delete(SYNTHETIC_RESPONSE_HEADER);
 		headers.delete(SYNTHETIC_STATUS_HEADER);
+
+		// xAI cache-native conversation identity (issue #319 minimal slice).
+		// Applied here rather than via Provider.prepareHeaders: that hook only
+		// receives (headers, accessToken, apiKey) — no account or RequestMeta —
+		// so the conv id derived in proxy.ts isn't reachable there without
+		// widening the shared Provider interface for one provider's feature.
+		// A no-op for every non-xai request and whenever the feature is
+		// disabled (getXaiConvId returns null — see account-selector.ts).
+		applyXaiConvIdHeader(
+			headers,
+			provider.name,
+			account,
+			getXaiConvId(requestMeta),
+		);
 		const targetUrl = provider.buildUrl(url.pathname, url.search, account);
 
 		const requestInit: RequestInit & { duplex?: "half" } = {
