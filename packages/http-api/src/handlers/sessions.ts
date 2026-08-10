@@ -70,12 +70,22 @@ export function createSessionAccountHandler(
 			return errorResponse(BadRequest("Session id cannot be empty"));
 		}
 
-		const rows = await db.query<{ account_used: string | null }>(
-			`SELECT account_used
+		// Tiebreak by physical insertion order when two rows land in the same
+		// millisecond — SQLite's implicit `rowid` vs PostgreSQL's system `ctid`,
+		// same dual-dialect split used in usage-history.repository.ts.
+		const tieBreakerSql = db.isSQLite
+			? `SELECT account_used
 			 FROM requests
 			 WHERE client_session_id = ? AND account_used IS NOT NULL
 			 ORDER BY timestamp DESC, rowid DESC
-			 LIMIT 1`,
+			 LIMIT 1`
+			: `SELECT account_used
+			 FROM requests
+			 WHERE client_session_id = ? AND account_used IS NOT NULL
+			 ORDER BY timestamp DESC, ctid DESC
+			 LIMIT 1`;
+		const rows = await db.query<{ account_used: string | null }>(
+			tieBreakerSql,
 			[sanitized],
 		);
 		const accountId = rows[0]?.account_used;
