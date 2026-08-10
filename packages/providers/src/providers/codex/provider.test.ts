@@ -2289,6 +2289,28 @@ describe("CodexProvider.transformRequestBody", () => {
 		expect(body.model).toBe("gpt-5.3-codex");
 	});
 
+	// Regression: the fable entry alone is not enough for codex. mapModel
+	// resolves by substring and had no fable branch, so the map entry would
+	// never be looked up and the Claude model id would reach the upstream
+	// verbatim.
+	it("maps fable-family models to the codex default", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-fable-5",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(body.model).toBe("gpt-5.3-codex");
+	});
+
 	it("uses account sonnet mapping for sonnet-family models", async () => {
 		const provider = new CodexProvider();
 		const account = {

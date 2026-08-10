@@ -195,6 +195,7 @@ describe("QwenProvider", () => {
 			const result = provider.beforeConvert({}, account);
 			expect(result).toBeDefined();
 			const mappings = JSON.parse(result?.model_mappings as string);
+			expect(mappings.fable).toBe("coder-model");
 			expect(mappings.opus).toBe("coder-model");
 			expect(mappings.sonnet).toBe("coder-model");
 			expect(mappings.haiku).toBe("coder-model");
