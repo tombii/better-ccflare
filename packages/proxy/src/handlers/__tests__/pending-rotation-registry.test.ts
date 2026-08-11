@@ -321,8 +321,8 @@ describe("flushPendingRotation", () => {
 });
 
 describe("size cap", () => {
-	it("evicts the oldest entry once more than 100 entries are recorded", () => {
-		for (let i = 0; i < 100; i++) {
+	it("evicts the oldest entry once more than 1000 entries are recorded", () => {
+		for (let i = 0; i < 1000; i++) {
 			recordPendingRotation(`acc-${i}`, {
 				accessToken: `access-${i}`,
 				expiresAt: i,
@@ -331,14 +331,14 @@ describe("size cap", () => {
 		}
 		expect(getPendingRotation("acc-0")).toBeDefined();
 
-		recordPendingRotation("acc-100", {
-			accessToken: "access-100",
-			expiresAt: 100,
-			attemptedRefreshToken: "old-100",
+		recordPendingRotation("acc-1000", {
+			accessToken: "access-1000",
+			expiresAt: 1000,
+			attemptedRefreshToken: "old-1000",
 		});
 
 		expect(getPendingRotation("acc-0")).toBeUndefined();
 		expect(getPendingRotation("acc-1")).toBeDefined();
-		expect(getPendingRotation("acc-100")).toBeDefined();
+		expect(getPendingRotation("acc-1000")).toBeDefined();
 	});
 });

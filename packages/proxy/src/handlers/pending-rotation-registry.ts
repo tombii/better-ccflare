@@ -39,7 +39,14 @@ export type PendingRotationDbOps = {
 	): Promise<boolean>;
 };
 
-const MAX_PENDING_ROTATIONS = 100;
+// Safety valve against unbounded growth if persisting rotations stays broken
+// for a long time — not a limit expected to matter in practice. Entries are
+// small (~200 bytes each), so the cap can afford to be generous, and it
+// should be: eviction here durably loses a provider-committed rotation (see
+// the log.error below), so hitting this cap means 1000 accounts are
+// simultaneously mid-rotation during a DB outage, which should be
+// effectively unreachable.
+const MAX_PENDING_ROTATIONS = 1000;
 const pending = new Map<string, PendingRotation>();
 
 /**

@@ -253,13 +253,19 @@ async function adoptDbTokensIfFresher(
 	// longer authoritative, so it is deliberately NOT served in that case.
 	const pendingRotation = getPendingRotation(account.id);
 	const flush = await flushPendingRotation(account.id, ctx.dbOps);
-	if (pendingRotation && (flush === "failed" || flush === "persisted")) {
-		account.access_token = pendingRotation.accessToken;
-		account.expires_at = pendingRotation.expiresAt;
-		if (pendingRotation.refreshToken) {
-			account.refresh_token = pendingRotation.refreshToken;
+	// An entry re-recorded for this account while the flush above was still
+	// awaiting its CAS write (e.g. a concurrent request-triggered refresh
+	// whose own persist also failed) outranks the pre-flush snapshot — it is
+	// strictly newer, so serve/adopt it instead of the stale `pendingRotation`
+	// captured before the flush.
+	const effectivePending = getPendingRotation(account.id) ?? pendingRotation;
+	if (effectivePending && (flush === "failed" || flush === "persisted")) {
+		account.access_token = effectivePending.accessToken;
+		account.expires_at = effectivePending.expiresAt;
+		if (effectivePending.refreshToken) {
+			account.refresh_token = effectivePending.refreshToken;
 		}
-		if (pendingRotation.expiresAt - Date.now() > TOKEN_SAFETY_WINDOW_MS) {
+		if (effectivePending.expiresAt - Date.now() > TOKEN_SAFETY_WINDOW_MS) {
 			log.warn(
 				`Serving rotated token for account ${account.name} from the pending-rotation registry (flush=${flush})`,
 			);
@@ -474,6 +480,11 @@ export async function refreshAccessTokenSafe(
 				// (finding 4) CAS on the attempted refresh token so a refresh
 				// that lost a race to a manual re-auth cannot overwrite newer
 				// credentials with the stale ones it started with.
+				// Set when the persist CAS loses to a manual re-auth or a newer
+				// rotation and the authoritative DB row is adopted below — skips
+				// the general in-memory update further down so the live
+				// `account` object never installs the losing credentials.
+				let adoptAuthoritative = false;
 				try {
 					let persisted: boolean;
 					if (attemptedRefreshToken) {
@@ -501,8 +512,26 @@ export async function refreshAccessTokenSafe(
 						clearPendingRotation(account.id);
 					} else {
 						log.warn(
-							`Skipped persisting refreshed tokens for ${account.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth)`,
+							`Skipped persisting refreshed tokens for ${account.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth) — adopting the authoritative DB credentials instead`,
 						);
+						try {
+							const dbAccount = await ctx.dbOps.getAccount(account.id);
+							if (dbAccount) {
+								account.access_token = dbAccount.access_token;
+								account.expires_at = dbAccount.expires_at;
+								if (dbAccount.refresh_token) {
+									account.refresh_token = dbAccount.refresh_token;
+									account.refresh_token_issued_at =
+										dbAccount.refresh_token_issued_at;
+								}
+								adoptAuthoritative = true;
+							}
+						} catch (readError) {
+							log.warn(
+								`Failed to re-read account ${account.name} after a lost persist CAS — falling back to the in-memory update`,
+								readError,
+							);
+						}
 					}
 				} catch (persistError) {
 					// (round-3 item 1) A rotation the provider has already
@@ -526,10 +555,15 @@ export async function refreshAccessTokenSafe(
 
 				// Update the live in-memory account object immediately
 				// This prevents subsequent requests from seeing stale token data
-				account.access_token = result.accessToken;
-				account.expires_at = result.expiresAt;
-				if (result.refreshToken) {
-					account.refresh_token = result.refreshToken;
+				// — unless the persist-CAS-loss branch above already adopted the
+				// authoritative DB row, in which case installing these (losing)
+				// result values would overwrite it right back.
+				if (!adoptAuthoritative) {
+					account.access_token = result.accessToken;
+					account.expires_at = result.expiresAt;
+					if (result.refreshToken) {
+						account.refresh_token = result.refreshToken;
+					}
 				}
 				account.last_used = Date.now();
 

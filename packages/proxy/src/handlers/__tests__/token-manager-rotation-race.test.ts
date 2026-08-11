@@ -4,6 +4,7 @@ import type { Account } from "@better-ccflare/types";
 import {
 	clearAllPendingRotationsForTests,
 	getPendingRotation,
+	recordPendingRotation,
 } from "../pending-rotation-registry";
 import { refreshAccessTokenSafe } from "../token-manager";
 
@@ -922,5 +923,150 @@ describe("refreshAccessTokenSafe — pending-rotation registry (round 3, item 1)
 		expect(token).toBe("fresh-access-from-db");
 		expect(refreshToken).not.toHaveBeenCalled();
 		expect(account.refresh_token).toBe("RT2");
+	});
+});
+
+describe("refreshAccessTokenSafe — adopts authoritative DB credentials when the persist CAS loses", () => {
+	it("adopts the DB row's newer credentials into `account` instead of the losing rotated ones when the persist CAS returns false", async () => {
+		const accountId = "adopt-authoritative-lost-cas-1";
+		const account = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		// Pre-refresh guard read: identical to the in-memory snapshot, so it
+		// does not short-circuit the refresh below.
+		const preRefreshDb = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		// Post-persist read: a manual re-auth (or a newer rotation) landed
+		// between the refresh attempt and the persist write, so the CAS below
+		// matches 0 rows and this is what the DB now authoritatively holds.
+		const manualReauthDb = makeAccount(accountId, {
+			refresh_token: "RT_manual",
+			access_token: "manual-access",
+			expires_at: Date.now() + 7_200_000,
+			refresh_token_issued_at: Date.now(),
+		});
+		const { ctx } = makeContext({
+			refreshResult: {
+				accessToken: "new-access-from-provider",
+				expiresAt: Date.now() + 3_600_000,
+				refreshToken: "RT2-losing",
+			},
+		});
+		let call = 0;
+		ctx.dbOps.getAccount = mock(async () =>
+			call++ === 0 ? preRefreshDb : manualReauthDb,
+		);
+		ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(
+			async () => false,
+		);
+
+		const token = await refreshAccessTokenSafe(account as never, ctx as never);
+
+		// The current request still gets the provider-valid access token it
+		// just minted.
+		expect(token).toBe("new-access-from-provider");
+		// But the live `account` object adopts the DB's authoritative
+		// credentials rather than the losing rotated ones.
+		expect(account.refresh_token).toBe("RT_manual");
+		expect(account.access_token).toBe("manual-access");
+		expect(account.expires_at).toBe(manualReauthDb.expires_at);
+		expect(account.refresh_token_issued_at).toBe(
+			manualReauthDb.refresh_token_issued_at,
+		);
+	});
+
+	it("falls back to the losing in-memory update when the post-persist re-read fails", async () => {
+		const accountId = "adopt-authoritative-readfail-1";
+		const account = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const preRefreshDb = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const { ctx } = makeContext({
+			refreshResult: {
+				accessToken: "new-access-from-provider",
+				expiresAt: Date.now() + 3_600_000,
+				refreshToken: "RT2-losing",
+			},
+		});
+		let call = 0;
+		ctx.dbOps.getAccount = mock(async () => {
+			if (call++ === 0) return preRefreshDb;
+			throw new Error("db unavailable");
+		});
+		ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(
+			async () => false,
+		);
+
+		const token = await refreshAccessTokenSafe(account as never, ctx as never);
+
+		expect(token).toBe("new-access-from-provider");
+		// Re-read failed — falls back to the pre-existing behavior of
+		// installing the (losing) result values in-memory.
+		expect(account.refresh_token).toBe("RT2-losing");
+		expect(account.access_token).toBe("new-access-from-provider");
+	});
+});
+
+describe("refreshAccessTokenSafe — serves the newest pending entry recorded during a flush", () => {
+	it("serves the entry re-recorded while the flush's CAS write was still in flight, not the pre-flush snapshot", async () => {
+		const accountId = "flush-serves-newest-1";
+		// Seed E1 (RT1 -> RT2) via a successful provider refresh whose persist
+		// write rejects, exactly like the P1 pending-registry seeding pattern.
+		const seedAccount = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const seed = makeContext({
+			dbAccount: null,
+			refreshResult: {
+				accessToken: "access-1",
+				expiresAt: Date.now() + 3_600_000,
+				refreshToken: "RT2",
+			},
+		});
+		seed.ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(async () => {
+			throw new Error("disk full");
+		});
+		await refreshAccessTokenSafe(seedAccount as never, seed.ctx as never);
+		expect(getPendingRotation(accountId)?.accessToken).toBe("access-1");
+
+		// A second caller triggers a flush whose CAS write, before resolving,
+		// simulates a concurrent request-triggered refresh recording a newer
+		// rotation (E2: access-2 / RT3) for the same account.
+		const account = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const { ctx, refreshToken } = makeContext({ dbAccount: null });
+		ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(
+			async (id: string) => {
+				recordPendingRotation(id, {
+					accessToken: "access-2",
+					expiresAt: Date.now() + 3_600_000,
+					refreshToken: "RT3",
+					attemptedRefreshToken: "RT2",
+				});
+				return true;
+			},
+		);
+
+		const token = await refreshAccessTokenSafe(account as never, ctx as never);
+
+		expect(token).toBe("access-2");
+		expect(refreshToken).not.toHaveBeenCalled();
+		expect(getPendingRotation(accountId)?.accessToken).toBe("access-2");
 	});
 });
