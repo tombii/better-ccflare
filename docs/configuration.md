@@ -10,6 +10,7 @@ This guide covers all configuration options for better-ccflare, including file-b
 - [Configuration Options](#configuration-options)
 - [Environment Variables](#environment-variables)
 - [Model Catalog](#model-catalog)
+- [Editable Provider Model Defaults](#editable-provider-model-defaults)
 - [Runtime Configuration API](#runtime-configuration-api)
 - [Example Configurations](#example-configurations)
 - [Auto-Fallback Setup](#auto-fallback-setup)
@@ -151,6 +152,8 @@ These environment variables are not stored in the configuration file and must be
 | `CF_STREAM_TIMEOUT_MS` | Stream processing timeout in milliseconds | `60000` (1 minute) | `CF_STREAM_TIMEOUT_MS=120000` |
 | `PAYLOAD_ENCRYPTION_KEY` | Optional 64-char hex key (32 bytes / AES-256) enabling AES-256-GCM encryption-at-rest for the `request_payloads` table. See [security.md](security.md#payload-encryption-at-rest). | unset (plaintext) | `PAYLOAD_ENCRYPTION_KEY=$(openssl rand -hex 32)` |
 | `BETTER_CCFLARE_OUTBOUND_PROXY` | Routes all outbound HTTP(S) traffic through a forward proxy | unset | `BETTER_CCFLARE_OUTBOUND_PROXY=http://127.0.0.1:3636` |
+| `CCFLARE_MODEL_DEFAULTS_PROVIDERS` | Comma-separated list of providers whose model-default map is editable via `POST /api/config/provider-model-defaults` and the dashboard's Advanced Settings card. Gates only the override *surface* — every provider's built-in factory map keeps translating models regardless | `codex` | `CCFLARE_MODEL_DEFAULTS_PROVIDERS=codex,xai,qwen` |
+| `CCFLARE_XAI_CACHE_NATIVE` | Opt-in: derive a privacy-safe conversation id from the client's Claude session id and attach it as `x-grok-conv-id` on requests to `api.x.ai`, with sticky account affinity so a conversation stays on the account owning its upstream cache partition. Byte-for-byte no-op when unset | unset (off) | `CCFLARE_XAI_CACHE_NATIVE=1` |
 
 ## Outbound Proxy
 
@@ -266,6 +269,22 @@ Any successful `GET /v1/models` response proxied through better-ccflare from a c
 ### Bundled fallback
 
 If no live fetch has ever succeeded (fresh install, no eligible account, or `BETTER_CCFLARE_MODELS_OFFLINE=1`), `GET /api/models` serves a static list bundled with better-ccflare (`CLAUDE_MODEL_IDS` in `packages/core/src/models.ts`). Its response reports `source: "fallback"` and a `fetchedAt` timestamp equal to the bundled list's snapshot date (`BUNDLED_MODELS_AS_OF`), not the current time — this is an intentional, honest "as of `<date>`" provenance rather than a `Date.now()` that would misleadingly imply the list was just fetched. The dashboard surfaces this distinction next to the model catalog's refresh button ("Live model list · fetched ..." vs. "Bundled model list · as of ...").
+
+## Editable Provider Model Defaults
+
+When a request has no combo-slot model and no account-level model mapping, better-ccflare falls back to a per-provider, per-family default model map. For most providers that map is compiled in; for Codex it's derived live from the account's own model listing (`chatgpt.com/backend-api/codex/models`), since the compiled guess (`gpt-5.3-codex` for opus/sonnet) 400s on ChatGPT-subscription accounts that don't support it.
+
+Resolution order:
+
+```
+combo slot model -> account.model_mappings -> global override -> account listing (Codex only) -> factory map
+```
+
+The **global override** is an editable layer in between: an operator-set default per provider+family that applies when no combo slot or account mapping specifies a model. It's stored in the config file, applied via an in-memory registry populated at boot and refreshed on every `POST`, and takes effect immediately — no restart required. Overrides are merged per family, so setting `codex.opus` never clears `codex.haiku`. Setting a family to an empty string removes its override rather than mapping it to an empty model.
+
+Only `codex` is editable by default. `xai` and `qwen` use the same mechanism but are gated behind `CCFLARE_MODEL_DEFAULTS_PROVIDERS` (see [Additional Environment Variables](#additional-environment-variables)) since they haven't been exercised against real accounts as extensively. Disabling a provider doesn't discard its stored override — it just stops applying until the provider is re-enabled.
+
+Manage this via the dashboard (Settings → Advanced → Provider Model Defaults) or directly through the API — see [api-http.md](api-http.md#get-apiconfigprovider-model-defaults).
 
 ## Runtime Configuration API
 

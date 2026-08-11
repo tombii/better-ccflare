@@ -440,6 +440,43 @@ curl -X POST http://localhost:8080/api/accounts/uuid-here/resume
 
 ---
 
+### Sessions
+
+#### GET /api/sessions/:sessionId/account
+
+Resolve the account that most recently served a given client session (the `x-claude-code-session-id` header value). Intended for local status-line integrations that want to show which account is currently serving a session.
+
+DB-backed lookup only: the most recent `requests` row for this session id with a non-null account. There is no live/in-memory path — a session with no recorded requests, or whose serving account was since removed, resolves to `"unknown"`.
+
+This endpoint is **exempt from API key authentication** (matches `GET /api/sessions/:id/account` exactly), since it's meant to be polled locally without credentials.
+
+**Response (`known`):**
+```json
+{
+  "status": "known",
+  "account": {
+    "id": "uuid-here",
+    "name": "account1",
+    "provider": "anthropic",
+    "...": "same shape as GET /api/accounts"
+  }
+}
+```
+
+**Response (`unknown`):**
+```json
+{
+  "status": "unknown"
+}
+```
+
+**Example:**
+```bash
+curl http://localhost:8080/api/sessions/your-session-id/account
+```
+
+---
+
 ### Statistics
 
 #### GET /api/stats
@@ -669,6 +706,59 @@ List all available load balancing strategies.
 **Example:**
 ```bash
 curl http://localhost:8080/api/strategies
+```
+
+#### GET /api/config/provider-model-defaults
+
+Get the editable override layer sitting between account model mappings and each provider's compiled default model map (see [configuration.md](configuration.md#editable-provider-model-defaults)). Only providers enabled via `CCFLARE_MODEL_DEFAULTS_PROVIDERS` (default: `codex` only) are listed.
+
+**Response:**
+```json
+{
+  "providers": [
+    {
+      "provider": "codex",
+      "fields": [
+        {
+          "family": "opus",
+          "factory": "gpt-5.3-codex",
+          "override": null,
+          "effective": "gpt-5.3-codex"
+        }
+      ]
+    }
+  ]
+}
+```
+
+`factory` is the compiled default (`null` if nothing has been discovered yet for a provider that derives its map from a live account listing, e.g. Codex). `override` is the operator-set value, if any. `effective` is what's actually applied (`override` when set, otherwise `factory`).
+
+**Example:**
+```bash
+curl http://localhost:8080/api/config/provider-model-defaults
+```
+
+#### POST /api/config/provider-model-defaults
+
+Set or clear model-default overrides. Overrides are merged per family — updating `codex.opus` doesn't clear `codex.haiku`. Sending an empty string for `model` removes that family's override.
+
+**Request:**
+```json
+{
+  "overrides": [
+    { "provider": "codex", "family": "opus", "model": "gpt-5.3-codex" },
+    { "provider": "codex", "family": "haiku", "model": "" }
+  ]
+}
+```
+
+**Response:** Same shape as `GET /api/config/provider-model-defaults`, reflecting the change immediately (no restart required).
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/config/provider-model-defaults \
+  -H "Content-Type: application/json" \
+  -d '{"overrides": [{"provider": "codex", "family": "opus", "model": "gpt-5.3-codex"}]}'
 ```
 
 ---
