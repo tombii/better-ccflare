@@ -220,6 +220,68 @@ export function extractAuthFailureReason(
 }
 
 /**
+ * Re-reads the account row from the database and adopts fresher credentials
+ * than the caller's in-memory snapshot. The auto-refresh scheduler (and any
+ * long-lived caller) hands us an account object built from a loop-start
+ * SELECT; if another consumer rotated the tokens since, refreshing with the
+ * snapshot's consumed refresh token yields a definitive-looking invalid_grant
+ * that would falsely flag a healthy account for re-auth.
+ *
+ * Returns the adopted access token when the DB row holds one valid beyond
+ * TOKEN_SAFETY_WINDOW_MS (caller must skip the refresh), otherwise null —
+ * after syncing a rotated refresh_token/refresh_token_issued_at into the
+ * snapshot so any refresh that still happens uses the live token.
+ */
+async function adoptDbTokensIfFresher(
+	account: Account,
+	ctx: ProxyContext,
+): Promise<string | null> {
+	let dbAccount: Account | null = null;
+	try {
+		dbAccount = await ctx.dbOps.getAccount(account.id);
+	} catch (error) {
+		log.warn(
+			`Failed to re-read account ${account.name} before refresh — proceeding with in-memory snapshot`,
+			error,
+		);
+		return null;
+	}
+	if (!dbAccount) return null;
+
+	const dbTokenValid =
+		typeof dbAccount.access_token === "string" &&
+		typeof dbAccount.expires_at === "number" &&
+		dbAccount.expires_at - Date.now() > TOKEN_SAFETY_WINDOW_MS;
+
+	if (dbTokenValid && dbAccount.access_token !== account.access_token) {
+		account.access_token = dbAccount.access_token;
+		account.expires_at = dbAccount.expires_at;
+		if (dbAccount.refresh_token) {
+			account.refresh_token = dbAccount.refresh_token;
+		}
+		account.refresh_token_issued_at = dbAccount.refresh_token_issued_at;
+		refreshFailures.delete(account.id);
+		backoffCounters.delete(account.id);
+		log.info(
+			`Adopted fresher tokens from DB for account ${account.name} — skipping refresh`,
+		);
+		return dbAccount.access_token;
+	}
+
+	if (
+		dbAccount.refresh_token &&
+		dbAccount.refresh_token !== account.refresh_token
+	) {
+		account.refresh_token = dbAccount.refresh_token;
+		account.refresh_token_issued_at = dbAccount.refresh_token_issued_at;
+		log.info(
+			`Adopted rotated refresh token from DB for account ${account.name} before refreshing`,
+		);
+	}
+	return null;
+}
+
+/**
  * Safely refreshes an access token with deduplication
  * @param account - The account to refresh token for
  * @param ctx - The proxy context
@@ -317,7 +379,18 @@ export async function refreshAccessTokenSafe(
 		backoffCounters.delete(account.id);
 	}
 
-	// Check if a refresh is already in progress for this account
+	// The caller's account object may be a stale snapshot (the auto-refresh
+	// scheduler builds one from a loop-start SELECT). Re-read the row and adopt
+	// fresher credentials before initiating a refresh — refreshing with an
+	// already-rotated refresh token produces a false-definitive invalid_grant.
+	if (!ctx.refreshInFlight.has(account.id)) {
+		const adopted = await adoptDbTokensIfFresher(account, ctx);
+		if (adopted) return adopted;
+	}
+
+	// Check if a refresh is already in progress for this account.
+	// NOTE: no await may sit between this check and refreshInFlight.set() —
+	// microtask atomicity is what deduplicates concurrent callers.
 	if (!ctx.refreshInFlight.has(account.id)) {
 		// Get the provider for this account
 		const provider = getProvider(account.provider) || ctx.provider;
