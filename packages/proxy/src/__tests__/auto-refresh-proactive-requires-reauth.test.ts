@@ -159,7 +159,7 @@ describe("AutoRefreshScheduler proactive refresh — definitive auth failure", (
 	});
 
 	it("does NOT flag a proactive refresh that fails with a transient network error", async () => {
-		const { db, runCalls } = makeDb([
+		const { db, runWithChangesCalls } = makeDb([
 			{
 				id: "codex-net",
 				name: "codex-net",
@@ -187,7 +187,7 @@ describe("AutoRefreshScheduler proactive refresh — definitive auth failure", (
 			authFailureEvents.off("event", listener);
 		}
 
-		const flagWrite = runCalls.find(([sql]) => sql.includes("requires_reauth"));
+		const flagWrite = runWithChangesCalls.find(([sql]) => sql.includes("requires_reauth"));
 		expect(flagWrite).toBeUndefined();
 		expect(emittedCount).toBe(0);
 	});

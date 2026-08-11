@@ -500,8 +500,8 @@ export async function refreshAccessTokenSafe(
 				// requires_reauth so the account is pulled from routing until a manual
 				// re-auth clears it. Detection runs on the RAW provider message (which
 				// preserves the machine error code) here, BEFORE it is wrapped into
-				// TokenRefreshError (whose .message is a fixed string). Mirrors the
-				// success-path enqueue idiom. Transient failures never match.
+				// TokenRefreshError (whose .message is a fixed string). Transient failures
+				// never match.
 				const authFailureReason = extractAuthFailureReason(
 					originalError,
 					account.name,
