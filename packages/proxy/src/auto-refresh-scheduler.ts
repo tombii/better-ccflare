@@ -15,6 +15,11 @@ import {
 	getValidAccessToken,
 	INTERNAL_PROBE_SECRET_HEADER,
 } from "./handlers";
+import {
+	flushPendingRotation,
+	getPendingRotation,
+	recordPendingRotation,
+} from "./handlers/pending-rotation-registry";
 import type { ProxyContext } from "./proxy";
 
 const log = new Logger("AutoRefreshScheduler");
@@ -804,6 +809,23 @@ export class AutoRefreshScheduler {
 		);
 
 		for (const row of accounts) {
+			// (round-3 item 2; hardened in round-3 final review, I1) Flush any
+			// rotation from an earlier cycle before touching this row again. Any
+			// outcome other than "none" means this row's snapshot predates that
+			// flush: "failed" means the registry's unpersisted rotation is still
+			// the account's live credentials; "persisted"/"superseded" both mean
+			// the refresh_token this row shows was just consumed (by the flush
+			// itself or by whatever superseded it) — refreshing with it now
+			// would replay an already-consumed token. Skip this row for this
+			// cycle either way; the next cycle re-reads it fresh.
+			const flush = await flushPendingRotation(row.id, this.proxyContext.dbOps);
+			if (flush !== "none") {
+				log.warn(
+					`Skipping proactive ${row.provider} refresh for ${row.name} this cycle: row snapshot predates a pending-rotation flush (${flush})`,
+				);
+				continue;
+			}
+
 			// Skip if a refresh is already in-flight for this account (deduplication)
 			if (this.proxyContext.refreshInFlight.has(row.id)) {
 				log.debug(
@@ -865,23 +887,60 @@ export class AutoRefreshScheduler {
 					.refreshToken(account, this.proxyContext.runtime.clientId)
 					.then(async (result) => {
 						const newRefreshToken = result.refreshToken ?? row.refresh_token;
-						await this.db.run(
-							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
-							[
-								result.accessToken,
-								result.expiresAt,
-								newRefreshToken,
-								Date.now(),
-								row.id,
-							],
-						);
-						log.info(
-							`${row.provider} token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
-						);
+						// CAS: only persist if the row still holds the refresh token this
+						// attempt used — a rotation that landed underneath (manual re-auth,
+						// or a request-triggered refresh joining the same account) must not
+						// be overwritten with the tokens from this now-superseded attempt.
+						// Routed through the retry-wrapped dbOps helper instead of raw SQL
+						// so this write benefits from the same transient-failure retries on
+						// Postgres as the token-manager funnel.
+						try {
+							const persisted =
+								await this.proxyContext.dbOps.updateAccountTokensIfRefreshTokenMatches(
+									row.id,
+									row.refresh_token,
+									result.accessToken,
+									result.expiresAt,
+									newRefreshToken,
+								);
+							if (!persisted) {
+								log.warn(
+									`Skipped persisting refreshed ${row.provider} token for ${row.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth)`,
+								);
+							} else {
+								log.info(
+									`${row.provider} token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+								);
+							}
+						} catch (persistError) {
+							// (round-3 item 2) A rotation the provider has already
+							// committed must never be silently dropped: the DB still
+							// holds the consumed token, and a later stale consumer would
+							// replay it, get invalid_grant, and CAS-flag a healthy
+							// account. Record it so every subsequent touchpoint retries
+							// the persist and suppresses flagging meanwhile.
+							recordPendingRotation(row.id, {
+								accessToken: result.accessToken,
+								expiresAt: result.expiresAt,
+								refreshToken: newRefreshToken,
+								attemptedRefreshToken: row.refresh_token,
+							});
+							log.error(
+								`Failed to persist refreshed ${row.provider} token for ${row.name} — rotation queued for re-persist`,
+								persistError,
+							);
+						}
 						return result.accessToken;
 					})
 					.finally(() => {
-						this.proxyContext.refreshInFlight.delete(row.id);
+						// Identity-safe: never delete a newer entry installed by a manual
+						// reauth or a concurrent request-triggered refresh that ran while
+						// this promise was still settling.
+						if (
+							this.proxyContext.refreshInFlight.get(row.id) === refreshPromise
+						) {
+							this.proxyContext.refreshInFlight.delete(row.id);
+						}
 					});
 
 				this.proxyContext.refreshInFlight.set(row.id, refreshPromise);
@@ -941,6 +1000,24 @@ export class AutoRefreshScheduler {
 		);
 
 		for (const row of accounts) {
+			// (round-3 item 2; hardened in round-3 final review, I1) Flush any
+			// rotation from an earlier cycle before touching this row again. Any
+			// outcome other than "none" means this row's snapshot predates that
+			// flush: "failed" means the registry's unpersisted rotation is still
+			// the account's live credentials; "persisted"/"superseded" both mean
+			// the refresh_token this row shows was just consumed (by the flush
+			// itself or by whatever superseded it) — refreshing with it now
+			// would replay an already-consumed token, and on Codex specifically
+			// reuse-detection can invalidate the whole token family. Skip this
+			// row for this cycle either way; the next cycle re-reads it fresh.
+			const flush = await flushPendingRotation(row.id, this.proxyContext.dbOps);
+			if (flush !== "none") {
+				log.warn(
+					`Skipping proactive Codex refresh for ${row.name} this cycle: row snapshot predates a pending-rotation flush (${flush})`,
+				);
+				continue;
+			}
+
 			// Skip if a refresh is already in-flight for this account (deduplication)
 			if (this.proxyContext.refreshInFlight.has(row.id)) {
 				log.debug(
@@ -1000,23 +1077,60 @@ export class AutoRefreshScheduler {
 					.refreshToken(account, this.proxyContext.runtime.clientId)
 					.then(async (result) => {
 						const newRefreshToken = result.refreshToken ?? row.refresh_token;
-						await this.db.run(
-							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
-							[
-								result.accessToken,
-								result.expiresAt,
-								newRefreshToken,
-								Date.now(),
-								row.id,
-							],
-						);
-						log.info(
-							`Codex token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
-						);
+						// CAS: only persist if the row still holds the refresh token this
+						// attempt used — a rotation that landed underneath (manual re-auth,
+						// or a request-triggered refresh joining the same account) must not
+						// be overwritten with the tokens from this now-superseded attempt.
+						// Routed through the retry-wrapped dbOps helper instead of raw SQL
+						// so this write benefits from the same transient-failure retries on
+						// Postgres as the token-manager funnel.
+						try {
+							const persisted =
+								await this.proxyContext.dbOps.updateAccountTokensIfRefreshTokenMatches(
+									row.id,
+									row.refresh_token,
+									result.accessToken,
+									result.expiresAt,
+									newRefreshToken,
+								);
+							if (!persisted) {
+								log.warn(
+									`Skipped persisting refreshed Codex token for ${row.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth)`,
+								);
+							} else {
+								log.info(
+									`Codex token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+								);
+							}
+						} catch (persistError) {
+							// (round-3 item 2) A rotation the provider has already
+							// committed must never be silently dropped: the DB still
+							// holds the consumed token, and a later stale consumer would
+							// replay it, get invalid_grant, and CAS-flag a healthy
+							// account. Record it so every subsequent touchpoint retries
+							// the persist and suppresses flagging meanwhile.
+							recordPendingRotation(row.id, {
+								accessToken: result.accessToken,
+								expiresAt: result.expiresAt,
+								refreshToken: newRefreshToken,
+								attemptedRefreshToken: row.refresh_token,
+							});
+							log.error(
+								`Failed to persist refreshed Codex token for ${row.name} — rotation queued for re-persist`,
+								persistError,
+							);
+						}
 						return result.accessToken;
 					})
 					.finally(() => {
-						this.proxyContext.refreshInFlight.delete(row.id);
+						// Identity-safe: never delete a newer entry installed by a manual
+						// reauth or a concurrent request-triggered refresh that ran while
+						// this promise was still settling.
+						if (
+							this.proxyContext.refreshInFlight.get(row.id) === refreshPromise
+						) {
+							this.proxyContext.refreshInFlight.delete(row.id);
+						}
 					});
 
 				this.proxyContext.refreshInFlight.set(row.id, refreshPromise);
@@ -1045,29 +1159,52 @@ export class AutoRefreshScheduler {
 	 */
 	private async flagIfDefinitiveAuthFailure(
 		error: unknown,
-		row: { id: string; name: string; provider: string },
+		row: { id: string; name: string; provider: string; refresh_token: string },
 	): Promise<void> {
 		const message = error instanceof Error ? error.message : String(error);
 		const reason = extractAuthFailureReason(message, row.name);
 		if (!reason) return;
 
-		try {
-			await this.db.run(
-				`UPDATE accounts SET requires_reauth = 1 WHERE id = ?`,
-				[row.id],
+		// (round-3 item 2) A pending unpersisted rotation means WE rotated
+		// successfully moments ago — this failure is a replay of the consumed
+		// token, not a dead account.
+		if (getPendingRotation(row.id)) {
+			log.warn(
+				`Skipping requires_reauth for ${row.name}: a successful rotation is awaiting persist (replayed a consumed token)`,
 			);
-			log.error(
-				`Account ${row.name} requires re-authentication — proactive ${row.provider} refresh returned ${reason}`,
-			);
-		} catch (writeError) {
-			log.error(
-				`Failed to persist requires_reauth for ${row.name}:`,
-				writeError,
-			);
+			return;
 		}
 
-		// Emit regardless of the write outcome — the alert is the operator's only
-		// signal that the account is dead, and it is fire-and-forget.
+		// Atomic rotation-race guard (CAS): condemn the account only if it still
+		// holds the exact refresh token this attempt used. A rotation that landed
+		// after our snapshot makes the write a no-op — no flag, no alert. A DB
+		// error leaves the flag unset: "unable to verify" is not evidence of a
+		// dead token; the next scheduler pass retries with the live row. Routed
+		// through the retry-wrapped dbOps helper (shared with the token-manager
+		// funnel) instead of raw SQL so this write benefits from the same
+		// transient-failure retries on Postgres.
+		let flagged = false;
+		try {
+			flagged = await this.proxyContext.dbOps.flagRequiresReauthIfTokenMatches(
+				row.id,
+				row.refresh_token,
+			);
+		} catch (writeError) {
+			log.warn(
+				`Could not verify-and-flag requires_reauth for ${row.name} — leaving unset (unverified ${reason})`,
+				writeError,
+			);
+			return;
+		}
+		if (!flagged) {
+			log.warn(
+				`Skipping requires_reauth for ${row.name}: the failed ${row.provider} refresh used a superseded refresh token (rotation race)`,
+			);
+			return;
+		}
+		log.error(
+			`Account ${row.name} requires re-authentication — proactive ${row.provider} refresh returned ${reason}`,
+		);
 		authFailureEvents.emit("event", {
 			accountId: row.id,
 			accountName: row.name,

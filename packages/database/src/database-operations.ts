@@ -793,6 +793,76 @@ OAuth tokens will need to be re-authenticated.
 		);
 	}
 
+	/**
+	 * Compare-and-set variant of {@link updateAccountTokens} guarded on the
+	 * expected refresh token — see
+	 * {@link AccountRepository.updateTokensIfRefreshTokenMatches}.
+	 */
+	async updateAccountTokensIfRefreshTokenMatches(
+		accountId: string,
+		expectedRefreshToken: string,
+		accessToken: string,
+		expiresAt: number,
+		refreshToken?: string,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() =>
+				this.accounts.updateTokensIfRefreshTokenMatches(
+					accountId,
+					expectedRefreshToken,
+					accessToken,
+					expiresAt,
+					refreshToken,
+				),
+			this.retryConfig,
+			"updateAccountTokensIfRefreshTokenMatches",
+		);
+	}
+
+	/**
+	 * Compare-and-set variant of {@link updateAccountTokens} guarded on the
+	 * account currently having no refresh token — see
+	 * {@link AccountRepository.updateTokensIfRefreshTokenAbsent}.
+	 */
+	async updateAccountTokensIfRefreshTokenAbsent(
+		accountId: string,
+		accessToken: string,
+		expiresAt: number,
+		refreshToken?: string,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() =>
+				this.accounts.updateTokensIfRefreshTokenAbsent(
+					accountId,
+					accessToken,
+					expiresAt,
+					refreshToken,
+				),
+			this.retryConfig,
+			"updateAccountTokensIfRefreshTokenAbsent",
+		);
+	}
+
+	/**
+	 * Compare-and-set variant of {@link setRequiresReauth}(accountId, true)
+	 * guarded on the expected refresh token — see
+	 * {@link AccountRepository.flagRequiresReauthIfTokenMatches}.
+	 */
+	async flagRequiresReauthIfTokenMatches(
+		accountId: string,
+		expectedRefreshToken: string,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() =>
+				this.accounts.flagRequiresReauthIfTokenMatches(
+					accountId,
+					expectedRefreshToken,
+				),
+			this.retryConfig,
+			"flagRequiresReauthIfTokenMatches",
+		);
+	}
+
 	async updateAccountUsage(accountId: string): Promise<void> {
 		const sessionDuration =
 			this.runtime?.sessionDurationMs || 5 * 60 * 60 * 1000;

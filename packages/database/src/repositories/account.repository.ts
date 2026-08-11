@@ -120,6 +120,98 @@ export class AccountRepository extends BaseRepository<Account> {
 		]);
 	}
 
+	/**
+	 * Compare-and-set variant of {@link updateTokens}, guarded on the caller's
+	 * expected `refresh_token`. If a rotation lands between the caller's read
+	 * and this write (e.g. a concurrent refresh cycle already rotated the
+	 * token), the WHERE clause matches no row and the write becomes a no-op
+	 * instead of overwriting the newer token with a stale one. See the
+	 * rotation-race hardening design.
+	 *
+	 * @returns `true` if a row was updated, `false` if the refresh token no
+	 * longer matched (or the account doesn't exist).
+	 */
+	async updateTokensIfRefreshTokenMatches(
+		accountId: string,
+		expectedRefreshToken: string,
+		accessToken: string,
+		expiresAt: number,
+		refreshToken?: string,
+	): Promise<boolean> {
+		const now = Date.now();
+		if (refreshToken) {
+			const changes = await this.runWithChanges(
+				`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ?, requires_reauth = 0 WHERE id = ? AND refresh_token = ?`,
+				[
+					accessToken,
+					expiresAt,
+					refreshToken,
+					now,
+					accountId,
+					expectedRefreshToken,
+				],
+			);
+			return changes > 0;
+		}
+		const changes = await this.runWithChanges(
+			`UPDATE accounts SET access_token = ?, expires_at = ?, requires_reauth = 0 WHERE id = ? AND refresh_token = ?`,
+			[accessToken, expiresAt, accountId, expectedRefreshToken],
+		);
+		return changes > 0;
+	}
+
+	/**
+	 * Compare-and-set variant of {@link updateTokens}, guarded on the account
+	 * currently having no refresh token (`NULL` or `''`). Used when a token
+	 * refresh cycle started from an account that had no refresh token to
+	 * begin with — if a concurrent rotation has since given the account a
+	 * real refresh token, the WHERE clause matches no row and this write
+	 * becomes a no-op instead of clobbering the newer token.
+	 *
+	 * @returns `true` if a row was updated, `false` if the account already
+	 * has a refresh token (or the account doesn't exist).
+	 */
+	async updateTokensIfRefreshTokenAbsent(
+		accountId: string,
+		accessToken: string,
+		expiresAt: number,
+		refreshToken?: string,
+	): Promise<boolean> {
+		const now = Date.now();
+		if (refreshToken) {
+			const changes = await this.runWithChanges(
+				`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ?, requires_reauth = 0 WHERE id = ? AND (refresh_token IS NULL OR refresh_token = '')`,
+				[accessToken, expiresAt, refreshToken, now, accountId],
+			);
+			return changes > 0;
+		}
+		const changes = await this.runWithChanges(
+			`UPDATE accounts SET access_token = ?, expires_at = ?, requires_reauth = 0 WHERE id = ? AND (refresh_token IS NULL OR refresh_token = '')`,
+			[accessToken, expiresAt, accountId],
+		);
+		return changes > 0;
+	}
+
+	/**
+	 * Compare-and-set variant of {@link setRequiresReauth}(accountId, true),
+	 * guarded on the caller's expected `refresh_token`. Prevents condemning a
+	 * healthy account whose refresh token was rotated by a concurrent refresh
+	 * cycle between the failed-refresh read and this flagging write.
+	 *
+	 * @returns `true` if a row was flagged, `false` if the refresh token no
+	 * longer matched (or the account doesn't exist).
+	 */
+	async flagRequiresReauthIfTokenMatches(
+		accountId: string,
+		expectedRefreshToken: string,
+	): Promise<boolean> {
+		const changes = await this.runWithChanges(
+			`UPDATE accounts SET requires_reauth = 1 WHERE id = ? AND refresh_token = ?`,
+			[accountId, expectedRefreshToken],
+		);
+		return changes > 0;
+	}
+
 	async incrementUsage(
 		accountId: string,
 		sessionDurationMs: number,

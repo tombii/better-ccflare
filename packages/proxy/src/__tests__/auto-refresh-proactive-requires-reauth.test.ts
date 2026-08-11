@@ -19,6 +19,10 @@ interface ProactiveRow {
 function makeDb(queryRows: ProactiveRow[]) {
 	const runCalls: Array<[string, unknown[]]> = [];
 	const queries: string[] = [];
+	const flagCalls: Array<[string, string]> = [];
+	const persistCalls: Array<
+		[string, string, string, number, string | undefined]
+	> = [];
 	const db = {
 		run: mock(async (sql: string, params: unknown[]) => {
 			runCalls.push([sql, params]);
@@ -28,15 +32,51 @@ function makeDb(queryRows: ProactiveRow[]) {
 			return queryRows;
 		}),
 	};
-	return { db, runCalls, queries };
+	const dbOps = {
+		// flagIfDefinitiveAuthFailure persists requires_reauth via this CAS
+		// helper — return true so the write reports as "landed" (matches the
+		// real UPDATE ... WHERE refresh_token = ? matching the row's current
+		// token in these fixtures).
+		flagRequiresReauthIfTokenMatches: mock(
+			async (accountId: string, expectedRefreshToken: string) => {
+				flagCalls.push([accountId, expectedRefreshToken]);
+				return true;
+			},
+		),
+		// The proactive persist paths route their token-rotation CAS write
+		// through this helper too — return true so it reports as "landed"
+		// (these tests only exercise the failure path, so it's never asserted
+		// on directly, but must resolve for the success branch to log cleanly).
+		updateAccountTokensIfRefreshTokenMatches: mock(
+			async (
+				accountId: string,
+				expectedRefreshToken: string,
+				accessToken: string,
+				expiresAt: number,
+				refreshToken?: string,
+			) => {
+				persistCalls.push([
+					accountId,
+					expectedRefreshToken,
+					accessToken,
+					expiresAt,
+					refreshToken,
+				]);
+				return true;
+			},
+		),
+		updateAccountTokensIfRefreshTokenAbsent: mock(async () => true),
+	};
+	return { db, dbOps, runCalls, flagCalls, persistCalls, queries };
 }
 
-function makeScheduler(db: unknown) {
+function makeScheduler(db: unknown, dbOps: unknown) {
 	return new AutoRefreshScheduler(
 		db as never,
 		{
 			runtime: { port: 8080, clientId: "test-client" },
 			refreshInFlight: new Map(),
+			dbOps,
 		} as never,
 	) as unknown as {
 		checkAndRefreshOpenAICompatibleOAuthTokens(): Promise<void>;
@@ -51,8 +91,8 @@ afterEach(() => {
 
 describe("AutoRefreshScheduler proactive refresh — requires_reauth guard", () => {
 	it("excludes flagged accounts from the OpenAI-compatible eligibility query", async () => {
-		const { db, queries } = makeDb([]);
-		const scheduler = makeScheduler(db);
+		const { db, dbOps, queries } = makeDb([]);
+		const scheduler = makeScheduler(db, dbOps);
 
 		await scheduler.checkAndRefreshOpenAICompatibleOAuthTokens();
 
@@ -62,8 +102,8 @@ describe("AutoRefreshScheduler proactive refresh — requires_reauth guard", () 
 	});
 
 	it("excludes flagged accounts from the Codex eligibility query", async () => {
-		const { db, queries } = makeDb([]);
-		const scheduler = makeScheduler(db);
+		const { db, dbOps, queries } = makeDb([]);
+		const scheduler = makeScheduler(db, dbOps);
 
 		await scheduler.checkAndRefreshCodexTokens();
 
@@ -75,7 +115,7 @@ describe("AutoRefreshScheduler proactive refresh — requires_reauth guard", () 
 
 describe("AutoRefreshScheduler proactive refresh — definitive auth failure", () => {
 	it("flags an xAI account whose proactive refresh returns invalid_grant and emits the event", async () => {
-		const { db, runCalls } = makeDb([
+		const { db, dbOps, flagCalls } = makeDb([
 			{
 				id: "xai-dead",
 				name: "xai-dead",
@@ -99,12 +139,10 @@ describe("AutoRefreshScheduler proactive refresh — definitive auth failure", (
 		const emitted: AuthFailureEvt[] = [];
 		authFailureEvents.once("event", (event) => emitted.push(event));
 
-		const scheduler = makeScheduler(db);
+		const scheduler = makeScheduler(db, dbOps);
 		await scheduler.checkAndRefreshOpenAICompatibleOAuthTokens();
 
-		const flagWrite = runCalls.find(([sql]) => sql.includes("requires_reauth"));
-		expect(flagWrite).toBeDefined();
-		expect(flagWrite?.[1]).toEqual(["xai-dead"]);
+		expect(flagCalls).toEqual([["xai-dead", "rt"]]);
 		expect(emitted).toHaveLength(1);
 		expect(emitted[0]).toMatchObject({
 			accountId: "xai-dead",
@@ -114,7 +152,7 @@ describe("AutoRefreshScheduler proactive refresh — definitive auth failure", (
 	});
 
 	it("flags a Codex account whose proactive refresh returns refresh_token_reused", async () => {
-		const { db, runCalls } = makeDb([
+		const { db, dbOps, flagCalls } = makeDb([
 			{
 				id: "codex-dead",
 				name: "codex-dead",
@@ -135,18 +173,16 @@ describe("AutoRefreshScheduler proactive refresh — definitive auth failure", (
 		const emitted: AuthFailureEvt[] = [];
 		authFailureEvents.once("event", (event) => emitted.push(event));
 
-		const scheduler = makeScheduler(db);
+		const scheduler = makeScheduler(db, dbOps);
 		await scheduler.checkAndRefreshCodexTokens();
 
-		const flagWrite = runCalls.find(([sql]) => sql.includes("requires_reauth"));
-		expect(flagWrite).toBeDefined();
-		expect(flagWrite?.[1]).toEqual(["codex-dead"]);
+		expect(flagCalls).toEqual([["codex-dead", "rt"]]);
 		expect(emitted).toHaveLength(1);
 		expect(emitted[0]?.reason).toBe("refresh_token_reused");
 	});
 
 	it("does NOT flag a proactive refresh that fails with a transient network error", async () => {
-		const { db, runCalls } = makeDb([
+		const { db, dbOps, flagCalls } = makeDb([
 			{
 				id: "codex-net",
 				name: "codex-net",
@@ -168,14 +204,13 @@ describe("AutoRefreshScheduler proactive refresh — definitive auth failure", (
 		authFailureEvents.on("event", listener);
 
 		try {
-			const scheduler = makeScheduler(db);
+			const scheduler = makeScheduler(db, dbOps);
 			await scheduler.checkAndRefreshCodexTokens();
 		} finally {
 			authFailureEvents.off("event", listener);
 		}
 
-		const flagWrite = runCalls.find(([sql]) => sql.includes("requires_reauth"));
-		expect(flagWrite).toBeUndefined();
+		expect(flagCalls).toHaveLength(0);
 		expect(emittedCount).toBe(0);
 	});
 });

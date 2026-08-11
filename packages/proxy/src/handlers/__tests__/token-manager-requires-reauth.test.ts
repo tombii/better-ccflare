@@ -60,6 +60,8 @@ function makeContext(refreshError: Error) {
 			dbOps: {
 				getAccount: mock(async () => null),
 				setRequiresReauth,
+				updateAccountTokensIfRefreshTokenMatches: mock(async () => true),
+				flagRequiresReauthIfTokenMatches: mock(async () => true),
 			},
 			runtime: { clientId: "test-client" },
 			refreshInFlight: new Map(),
@@ -136,8 +138,8 @@ describe("extractAuthFailureReason / isDefinitiveAuthFailure", () => {
 });
 
 describe("refreshAccessTokenSafe requires_reauth detection", () => {
-	it("enqueues the flag for a realistic invalid_grant refresh error and propagates it", async () => {
-		const { ctx, queuedJobs, setRequiresReauth } = makeContext(
+	it("flags requires_reauth via the direct CAS write for a realistic invalid_grant refresh error and propagates it", async () => {
+		const { ctx } = makeContext(
 			new Error(
 				"Failed to refresh token for account test-account: invalid_grant: Refresh token is invalid or has been revoked.",
 			),
@@ -149,9 +151,10 @@ describe("refreshAccessTokenSafe requires_reauth detection", () => {
 			refreshAccessTokenSafe(makeAccount("invalid-grant"), ctx as never),
 		).rejects.toThrow("Failed to refresh access token");
 
-		expect(queuedJobs).toHaveLength(1);
-		await queuedJobs[0]();
-		expect(setRequiresReauth).toHaveBeenCalledWith("invalid-grant", true);
+		expect(ctx.dbOps.flagRequiresReauthIfTokenMatches).toHaveBeenCalledWith(
+			"invalid-grant",
+			"refresh-token",
+		);
 		expect(emitted).toHaveLength(1);
 		expect(emitted[0]).toMatchObject({
 			accountId: "invalid-grant",
@@ -175,6 +178,7 @@ describe("refreshAccessTokenSafe requires_reauth detection", () => {
 
 		expect(queuedJobs).toHaveLength(0);
 		expect(setRequiresReauth).not.toHaveBeenCalled();
+		expect(ctx.dbOps.flagRequiresReauthIfTokenMatches).not.toHaveBeenCalled();
 	});
 
 	it("ignores invalid_grant in the account name when the provider error is harmless", async () => {
@@ -193,5 +197,6 @@ describe("refreshAccessTokenSafe requires_reauth detection", () => {
 
 		expect(queuedJobs).toHaveLength(0);
 		expect(setRequiresReauth).not.toHaveBeenCalled();
+		expect(ctx.dbOps.flagRequiresReauthIfTokenMatches).not.toHaveBeenCalled();
 	});
 });
