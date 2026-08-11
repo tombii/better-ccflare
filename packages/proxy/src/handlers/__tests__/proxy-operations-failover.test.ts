@@ -946,6 +946,17 @@ describe("proxyWithAccount — 529 failover", () => {
 		);
 		expect(await isModelUnavailableError(response)).toBe(false);
 	});
+
+	it("isModelUnavailableError returns true for a top-level detail field naming an unsupported model (issue #393)", async () => {
+		const response = new Response(
+			JSON.stringify({
+				detail:
+					"The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.",
+			}),
+			{ status: 400, headers: { "content-type": "application/json" } },
+		);
+		expect(await isModelUnavailableError(response)).toBe(true);
+	});
 });
 
 describe("proxyWithAccount — 529 in-place retry", () => {

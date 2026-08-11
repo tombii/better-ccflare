@@ -451,6 +451,20 @@ export async function isModelUnavailableError(
 		) {
 			return true;
 		}
+
+		// Codex/ChatGPT-backend format: message sits on a top-level "detail"
+		// field rather than under "error". See issue #393 — e.g.
+		// {"detail": "The 'gpt-5.3-codex' model is not supported when using
+		// Codex with a ChatGPT account."}
+		if (
+			typeof json.detail === "string" &&
+			json.detail.toLowerCase().includes("model") &&
+			(json.detail.toLowerCase().includes("not supported") ||
+				json.detail.toLowerCase().includes("not found") ||
+				json.detail.toLowerCase().includes("does not exist"))
+		) {
+			return true;
+		}
 	} catch {
 		// Ignore parse errors
 	}
