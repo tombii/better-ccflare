@@ -11,6 +11,12 @@ import {
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { TOKEN_REFRESH_BACKOFF_MS, TOKEN_SAFETY_WINDOW_MS } from "../constants";
+import {
+	clearPendingRotation,
+	flushPendingRotation,
+	getPendingRotation,
+	recordPendingRotation,
+} from "./pending-rotation-registry";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 import {
 	checkRefreshTokenHealth,
@@ -236,6 +242,33 @@ async function adoptDbTokensIfFresher(
 	account: Account,
 	ctx: ProxyContext,
 ): Promise<string | null> {
+	// (round-3 item 1) A pending unpersisted rotation outranks anything the DB
+	// says: flush it first, and — if the flush landed ("persisted") or is
+	// still failing ("failed") — serve/use its credentials rather than
+	// replaying the consumed token from a stale row. Captured BEFORE the
+	// flush call: a successful flush clears the registry entry immediately,
+	// so the data must be read out while it still exists. A "superseded"
+	// flush means the DB already moved past the attempted token (a manual
+	// re-auth or a newer rotation landed first) — that pending data is no
+	// longer authoritative, so it is deliberately NOT served in that case.
+	const pendingRotation = getPendingRotation(account.id);
+	const flush = await flushPendingRotation(account.id, ctx.dbOps);
+	if (pendingRotation && (flush === "failed" || flush === "persisted")) {
+		account.access_token = pendingRotation.accessToken;
+		account.expires_at = pendingRotation.expiresAt;
+		if (pendingRotation.refreshToken) {
+			account.refresh_token = pendingRotation.refreshToken;
+		}
+		if (pendingRotation.expiresAt - Date.now() > TOKEN_SAFETY_WINDOW_MS) {
+			log.warn(
+				`Serving rotated token for account ${account.name} from the pending-rotation registry (flush=${flush})`,
+			);
+			return account.access_token;
+		}
+		// expired pending: fall through — the refresh below now uses the
+		// rotated refresh token instead of the consumed one.
+	}
+
 	let dbAccount: Account | null = null;
 	try {
 		dbAccount = await ctx.dbOps.getAccount(account.id);
@@ -253,6 +286,16 @@ async function adoptDbTokensIfFresher(
 		typeof dbAccount.expires_at === "number" &&
 		dbAccount.expires_at - Date.now() > TOKEN_SAFETY_WINDOW_MS;
 
+	// (round-3 item 3) Hoisted so the adoption branch below and the
+	// standalone RT-sync branch share the SAME staleness guard. A DB row
+	// that predates issued-at tracking (dbIssuedAt === null) is never
+	// trusted over a snapshot that DOES have an issued-at, since we cannot
+	// tell whether the untracked DB write happened before or after it.
+	const dbIssuedAt = dbAccount.refresh_token_issued_at ?? null;
+	const memIssuedAt = account.refresh_token_issued_at ?? null;
+	const dbRefreshTokenNotOlder =
+		memIssuedAt === null || (dbIssuedAt !== null && dbIssuedAt >= memIssuedAt);
+
 	// (finding 6) Adopt on strictly-newer expiry (monotonic), not on string
 	// inequality — a delayed DB read must never look "different, therefore
 	// fresher": two access tokens minted moments apart can differ as strings
@@ -260,7 +303,11 @@ async function adoptDbTokensIfFresher(
 	if (dbTokenValid && (dbAccount.expires_at ?? 0) > (account.expires_at ?? 0)) {
 		account.access_token = dbAccount.access_token;
 		account.expires_at = dbAccount.expires_at;
-		if (dbAccount.refresh_token) {
+		// (round-3 item 3) A newer access token does not imply a newer
+		// refresh token: never regress account.refresh_token to an older one
+		// merely because the DB row happens to carry some (possibly stale)
+		// value alongside the fresher access token.
+		if (dbAccount.refresh_token && dbRefreshTokenNotOlder) {
 			account.refresh_token = dbAccount.refresh_token;
 			account.refresh_token_issued_at = dbAccount.refresh_token_issued_at;
 		}
@@ -273,16 +320,11 @@ async function adoptDbTokensIfFresher(
 	}
 
 	// (finding 6) Sync a rotated refresh token only when the DB's is not
-	// provably older than the in-memory snapshot's. A DB row that predates
-	// issued-at tracking (dbIssuedAt === null) is never trusted over a
-	// snapshot that DOES have an issued-at, since we cannot tell whether the
-	// untracked DB write happened before or after it.
-	const dbIssuedAt = dbAccount.refresh_token_issued_at ?? null;
-	const memIssuedAt = account.refresh_token_issued_at ?? null;
+	// provably older than the in-memory snapshot's.
 	if (
 		dbAccount.refresh_token &&
 		dbAccount.refresh_token !== account.refresh_token &&
-		(memIssuedAt === null || (dbIssuedAt !== null && dbIssuedAt >= memIssuedAt))
+		dbRefreshTokenNotOlder
 	) {
 		account.refresh_token = dbAccount.refresh_token;
 		account.refresh_token_issued_at = dbAccount.refresh_token_issued_at;
@@ -444,22 +486,40 @@ export async function refreshAccessTokenSafe(
 								result.refreshToken,
 							);
 					} else {
-						await ctx.dbOps.updateAccountTokens(
+						// (round-3 item 4) Null-safe CAS: an account that refreshed
+						// without a refresh token must not blind-overwrite
+						// credentials a concurrent manual re-auth may have just
+						// written.
+						persisted = await ctx.dbOps.updateAccountTokensIfRefreshTokenAbsent(
 							account.id,
 							result.accessToken,
 							result.expiresAt,
 							result.refreshToken,
 						);
-						persisted = true;
 					}
-					if (!persisted) {
+					if (persisted) {
+						clearPendingRotation(account.id);
+					} else {
 						log.warn(
 							`Skipped persisting refreshed tokens for ${account.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth)`,
 						);
 					}
 				} catch (persistError) {
+					// (round-3 item 1) A rotation the provider has already
+					// committed must never be silently dropped: the DB still
+					// holds the consumed token, and a later stale consumer would
+					// replay it, get invalid_grant, and CAS-flag a healthy
+					// account. Record it so every subsequent touchpoint retries
+					// the persist, serves the rotated credentials, and
+					// suppresses flagging meanwhile.
+					recordPendingRotation(account.id, {
+						accessToken: result.accessToken,
+						expiresAt: result.expiresAt,
+						refreshToken: result.refreshToken,
+						attemptedRefreshToken: attemptedRefreshToken ?? "",
+					});
 					log.error(
-						`Failed to persist refreshed tokens for ${account.name} — continuing with in-memory tokens`,
+						`Failed to persist refreshed tokens for ${account.name} — rotation queued for re-persist`,
 						persistError,
 					);
 				}
@@ -507,6 +567,15 @@ export async function refreshAccessTokenSafe(
 					account.name,
 				);
 				if (authFailureReason) {
+					// (round-3 item 1) A pending unpersisted rotation means WE
+					// rotated successfully moments ago — this failure is a
+					// replay of the consumed token, not a dead account.
+					if (getPendingRotation(account.id)) {
+						log.warn(
+							`Skipping requires_reauth for ${account.name}: a successful rotation is awaiting persist (replayed a consumed token)`,
+						);
+						throw new TokenRefreshError(account.id, new Error(enhancedMessage));
+					}
 					// Rotation-race guard: a definitive rejection of a refresh token
 					// that is no longer the account's current one means another
 					// consumer rotated successfully after our snapshot was taken.

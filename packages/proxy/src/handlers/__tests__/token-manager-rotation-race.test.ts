@@ -1,7 +1,15 @@
-import { describe, expect, it, mock } from "bun:test";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { type AuthFailureEvt, authFailureEvents } from "@better-ccflare/core";
 import type { Account } from "@better-ccflare/types";
+import {
+	clearAllPendingRotationsForTests,
+	getPendingRotation,
+} from "../pending-rotation-registry";
 import { refreshAccessTokenSafe } from "../token-manager";
+
+beforeEach(() => {
+	clearAllPendingRotationsForTests();
+});
 
 function makeAccount(id: string, overrides: Partial<Account> = {}): Account {
 	return {
@@ -73,6 +81,7 @@ function makeContext(opts: {
 				setRequiresReauth,
 				updateAccountTokens: mock(async () => {}),
 				updateAccountTokensIfRefreshTokenMatches: mock(async () => true),
+				updateAccountTokensIfRefreshTokenAbsent: mock(async () => true),
 				flagRequiresReauthIfTokenMatches: mock(async () => true),
 			},
 			runtime: { clientId: "test-client" },
@@ -616,7 +625,7 @@ describe("refreshAccessTokenSafe — accounts with no refresh token to CAS again
 	// refresh token" shape in this codebase is an empty string, not null. This
 	// still exercises the exact `!attemptedRefreshToken` falsy branch.
 
-	it("falls back to the plain updateAccountTokens write on success (no CAS possible)", async () => {
+	it("P5: uses the null-safe CAS write on success instead of the plain updateAccountTokens (round-3 item 4)", async () => {
 		const account = makeAccount("no-rt-success-1", {
 			refresh_token: "",
 			access_token: "stale-access",
@@ -633,15 +642,38 @@ describe("refreshAccessTokenSafe — accounts with no refresh token to CAS again
 		const token = await refreshAccessTokenSafe(account as never, ctx as never);
 
 		expect(token).toBe("brand-new");
-		expect(ctx.dbOps.updateAccountTokens).toHaveBeenCalledWith(
+		expect(
+			ctx.dbOps.updateAccountTokensIfRefreshTokenAbsent,
+		).toHaveBeenCalledWith(
 			"no-rt-success-1",
 			"brand-new",
 			expect.any(Number),
 			undefined,
 		);
+		expect(ctx.dbOps.updateAccountTokens).not.toHaveBeenCalled();
 		expect(
 			ctx.dbOps.updateAccountTokensIfRefreshTokenMatches,
 		).not.toHaveBeenCalled();
+	});
+
+	it("P5b: warns and skips without throwing when the null-safe CAS write is superseded", async () => {
+		const account = makeAccount("no-rt-cas-false-1", {
+			refresh_token: "",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const { ctx } = makeContext({
+			dbAccount: null,
+			refreshResult: {
+				accessToken: "brand-new",
+				expiresAt: Date.now() + 3_600_000,
+			},
+		});
+		ctx.dbOps.updateAccountTokensIfRefreshTokenAbsent = mock(async () => false);
+
+		const token = await refreshAccessTokenSafe(account as never, ctx as never);
+
+		expect(token).toBe("brand-new");
 	});
 
 	it("does not flag or emit on invalid_grant failure — unverifiable without a refresh token to CAS against", async () => {
@@ -668,5 +700,171 @@ describe("refreshAccessTokenSafe — accounts with no refresh token to CAS again
 
 		expect(ctx.dbOps.flagRequiresReauthIfTokenMatches).not.toHaveBeenCalled();
 		expect(events).toHaveLength(0);
+	});
+});
+
+describe("refreshAccessTokenSafe — pending-rotation registry (round 3, item 1) and RT-regression guard (item 3)", () => {
+	it("P1: records a pending rotation when the persist write rejects and serves the rotated token", async () => {
+		const account = makeAccount("pending-persist-fail-1", {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const { ctx } = makeContext({
+			dbAccount: null,
+			refreshResult: {
+				accessToken: "new-access",
+				expiresAt: Date.now() + 3_600_000,
+				refreshToken: "RT2",
+			},
+		});
+		ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(async () => {
+			throw new Error("disk full");
+		});
+
+		const token = await refreshAccessTokenSafe(account as never, ctx as never);
+
+		expect(token).toBe("new-access");
+		const pending = getPendingRotation("pending-persist-fail-1");
+		expect(pending).toBeTruthy();
+		expect(pending?.attemptedRefreshToken).toBe("RT1");
+		expect(pending?.refreshToken).toBe("RT2");
+		expect(pending?.accessToken).toBe("new-access");
+	});
+
+	it("P2: flushes the pending rotation before the next refresh and skips the replay", async () => {
+		const accountId = "pending-flush-skip-replay-1";
+		// Seed a pending rotation the same way P1 does: a successful provider
+		// refresh whose persist write rejects.
+		const seedAccount = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const seed = makeContext({
+			dbAccount: null,
+			refreshResult: {
+				accessToken: "rotated-access",
+				expiresAt: Date.now() + 3_600_000,
+				refreshToken: "RT2",
+			},
+		});
+		seed.ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(async () => {
+			throw new Error("disk full");
+		});
+		await refreshAccessTokenSafe(seedAccount as never, seed.ctx as never);
+		expect(getPendingRotation(accountId)).toBeTruthy();
+
+		// A fresh caller shows up with a STALE snapshot (still RT1, still
+		// expired) and its own ctx/refreshInFlight map. getAccount is rigged to
+		// return the same STALE row regardless of the flush's outcome, so any
+		// skip of the refresh below can only be explained by the new
+		// pending-rotation short-circuit, not the pre-existing DB-adoption path.
+		const staleAccount = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const staleDbRow = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const { ctx, refreshToken } = makeContext({ dbAccount: staleDbRow });
+		// This time the CAS write underlying the flush succeeds.
+		ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(async () => true);
+
+		const token = await refreshAccessTokenSafe(
+			staleAccount as never,
+			ctx as never,
+		);
+
+		expect(token).toBe("rotated-access");
+		expect(refreshToken).not.toHaveBeenCalled();
+		expect(getPendingRotation(accountId)).toBeUndefined();
+	});
+
+	it("P3: does not flag when a definitive failure hits an account with a pending rotation", async () => {
+		const accountId = "pending-blocks-flag-1";
+		// Seed a pending rotation with NO rotated refresh token and an
+		// already-expired pending access token, so the flush-serve
+		// short-circuit falls through to a real refresh attempt using the
+		// still-unrotated RT1 — exactly what a replayed consumed token looks
+		// like from the caller's perspective.
+		const seedAccount = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const seed = makeContext({
+			dbAccount: null,
+			refreshResult: {
+				accessToken: "rotated-access-expired",
+				expiresAt: 2,
+			},
+		});
+		seed.ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(async () => {
+			throw new Error("disk full");
+		});
+		await refreshAccessTokenSafe(seedAccount as never, seed.ctx as never);
+		expect(getPendingRotation(accountId)).toBeTruthy();
+
+		const account = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const staleDbRow = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const invalidGrant = new Error(
+			"Status 400, Error: invalid_grant: Refresh token not found or invalid",
+		);
+		const { ctx } = makeContext({
+			dbAccount: staleDbRow,
+			refreshError: invalidGrant,
+		});
+		// The flush keeps failing.
+		ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(async () => {
+			throw new Error("disk still full");
+		});
+
+		const events: AuthFailureEvt[] = [];
+		const listener = (e: AuthFailureEvt) => events.push(e);
+		authFailureEvents.on("event", listener);
+		try {
+			await expect(
+				refreshAccessTokenSafe(account as never, ctx as never),
+			).rejects.toThrow();
+		} finally {
+			authFailureEvents.off("event", listener);
+		}
+
+		expect(ctx.dbOps.flagRequiresReauthIfTokenMatches).not.toHaveBeenCalled();
+		expect(events).toHaveLength(0);
+	});
+
+	it("P4: does not regress the refresh token when adopting a newer access token (round-3 item 3)", async () => {
+		const account = makeAccount("no-regress-rt-1", {
+			refresh_token: "RT2",
+			refresh_token_issued_at: 2000,
+			access_token: "expired-mem",
+			expires_at: 1,
+		});
+		const dbAccount = makeAccount("no-regress-rt-1", {
+			refresh_token: "RT1",
+			refresh_token_issued_at: 1000,
+			access_token: "fresh-access-from-db",
+			expires_at: Date.now() + 3_600_000,
+		});
+		const { ctx, refreshToken } = makeContext({ dbAccount });
+
+		const token = await refreshAccessTokenSafe(account as never, ctx as never);
+
+		expect(token).toBe("fresh-access-from-db");
+		expect(refreshToken).not.toHaveBeenCalled();
+		expect(account.refresh_token).toBe("RT2");
 	});
 });
