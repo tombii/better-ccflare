@@ -18,17 +18,26 @@ interface ProactiveRow {
 
 function makeDb(queryRows: ProactiveRow[]) {
 	const runCalls: Array<[string, unknown[]]> = [];
+	const runWithChangesCalls: Array<[string, unknown[]]> = [];
 	const queries: string[] = [];
 	const db = {
 		run: mock(async (sql: string, params: unknown[]) => {
 			runCalls.push([sql, params]);
+		}),
+		// flagIfDefinitiveAuthFailure persists requires_reauth via the CAS
+		// helper (runWithChanges), not run — return 1 so the mocked write
+		// reports as "landed" (matches the real UPDATE ... WHERE refresh_token
+		// = ? matching the row's current token in these fixtures).
+		runWithChanges: mock(async (sql: string, params: unknown[]) => {
+			runWithChangesCalls.push([sql, params]);
+			return 1;
 		}),
 		query: mock(async (sql: string) => {
 			queries.push(sql);
 			return queryRows;
 		}),
 	};
-	return { db, runCalls, queries };
+	return { db, runCalls, runWithChangesCalls, queries };
 }
 
 function makeScheduler(db: unknown) {
@@ -75,7 +84,7 @@ describe("AutoRefreshScheduler proactive refresh — requires_reauth guard", () 
 
 describe("AutoRefreshScheduler proactive refresh — definitive auth failure", () => {
 	it("flags an xAI account whose proactive refresh returns invalid_grant and emits the event", async () => {
-		const { db, runCalls } = makeDb([
+		const { db, runWithChangesCalls } = makeDb([
 			{
 				id: "xai-dead",
 				name: "xai-dead",
@@ -102,9 +111,11 @@ describe("AutoRefreshScheduler proactive refresh — definitive auth failure", (
 		const scheduler = makeScheduler(db);
 		await scheduler.checkAndRefreshOpenAICompatibleOAuthTokens();
 
-		const flagWrite = runCalls.find(([sql]) => sql.includes("requires_reauth"));
+		const flagWrite = runWithChangesCalls.find(([sql]) =>
+			sql.includes("requires_reauth"),
+		);
 		expect(flagWrite).toBeDefined();
-		expect(flagWrite?.[1]).toEqual(["xai-dead"]);
+		expect(flagWrite?.[1]).toEqual(["xai-dead", "rt"]);
 		expect(emitted).toHaveLength(1);
 		expect(emitted[0]).toMatchObject({
 			accountId: "xai-dead",
@@ -114,7 +125,7 @@ describe("AutoRefreshScheduler proactive refresh — definitive auth failure", (
 	});
 
 	it("flags a Codex account whose proactive refresh returns refresh_token_reused", async () => {
-		const { db, runCalls } = makeDb([
+		const { db, runWithChangesCalls } = makeDb([
 			{
 				id: "codex-dead",
 				name: "codex-dead",
@@ -138,9 +149,11 @@ describe("AutoRefreshScheduler proactive refresh — definitive auth failure", (
 		const scheduler = makeScheduler(db);
 		await scheduler.checkAndRefreshCodexTokens();
 
-		const flagWrite = runCalls.find(([sql]) => sql.includes("requires_reauth"));
+		const flagWrite = runWithChangesCalls.find(([sql]) =>
+			sql.includes("requires_reauth"),
+		);
 		expect(flagWrite).toBeDefined();
-		expect(flagWrite?.[1]).toEqual(["codex-dead"]);
+		expect(flagWrite?.[1]).toEqual(["codex-dead", "rt"]);
 		expect(emitted).toHaveLength(1);
 		expect(emitted[0]?.reason).toBe("refresh_token_reused");
 	});
