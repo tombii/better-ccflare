@@ -967,10 +967,12 @@ describe("refreshAccessTokenSafe — adopts authoritative DB credentials when th
 
 		const token = await refreshAccessTokenSafe(account as never, ctx as never);
 
-		// The current request still gets the provider-valid access token it
-		// just minted.
-		expect(token).toBe("new-access-from-provider");
-		// But the live `account` object adopts the DB's authoritative
+		// The adopted DB row's access token is still comfortably valid, so the
+		// caller must be served THAT token — not the losing rotated one, which
+		// may already be dead if the winning manual re-auth revoked its session
+		// family.
+		expect(token).toBe("manual-access");
+		// The live `account` object also adopts the DB's authoritative
 		// credentials rather than the losing rotated ones.
 		expect(account.refresh_token).toBe("RT_manual");
 		expect(account.access_token).toBe("manual-access");
@@ -978,6 +980,53 @@ describe("refreshAccessTokenSafe — adopts authoritative DB credentials when th
 		expect(account.refresh_token_issued_at).toBe(
 			manualReauthDb.refresh_token_issued_at,
 		);
+	});
+
+	it("falls back to the losing rotated access token when the adopted DB row's access token is already expired", async () => {
+		const accountId = "adopt-authoritative-expired-1";
+		const account = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const preRefreshDb = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		// Post-persist read: the winning writer's row is authoritative for the
+		// refresh token, but its access token is already expired (e.g. a manual
+		// re-auth that hasn't refreshed yet) — not servable to this caller.
+		const expiredManualReauthDb = makeAccount(accountId, {
+			refresh_token: "RT_manual",
+			access_token: "manual-access-expired",
+			expires_at: Date.now() - 1000,
+			refresh_token_issued_at: Date.now(),
+		});
+		const { ctx } = makeContext({
+			refreshResult: {
+				accessToken: "new-access-from-provider",
+				expiresAt: Date.now() + 3_600_000,
+				refreshToken: "RT2-losing",
+			},
+		});
+		let call = 0;
+		ctx.dbOps.getAccount = mock(async () =>
+			call++ === 0 ? preRefreshDb : expiredManualReauthDb,
+		);
+		ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(
+			async () => false,
+		);
+
+		const token = await refreshAccessTokenSafe(account as never, ctx as never);
+
+		// The adopted access token is not servable, so the caller still gets
+		// the token this refresh just minted.
+		expect(token).toBe("new-access-from-provider");
+		// But the refresh token (and other DB-authoritative fields) are still
+		// adopted into the live `account` object.
+		expect(account.refresh_token).toBe("RT_manual");
+		expect(account.access_token).toBe("manual-access-expired");
 	});
 
 	it("falls back to the losing in-memory update when the post-persist re-read fails", async () => {

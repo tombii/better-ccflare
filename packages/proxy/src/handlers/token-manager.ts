@@ -485,6 +485,12 @@ export async function refreshAccessTokenSafe(
 				// the general in-memory update further down so the live
 				// `account` object never installs the losing credentials.
 				let adoptAuthoritative = false;
+				// Token this call resolves with — defaults to the just-minted
+				// (possibly losing) refresh result; overwritten below if the
+				// adopted DB row's access token is itself servable, since the
+				// losing token's session family may have been revoked by the
+				// winning manual re-auth.
+				let resolveWithToken = result.accessToken;
 				try {
 					let persisted: boolean;
 					if (attemptedRefreshToken) {
@@ -525,6 +531,22 @@ export async function refreshAccessTokenSafe(
 										dbAccount.refresh_token_issued_at;
 								}
 								adoptAuthoritative = true;
+								// The winning writer (manual re-auth or a newer rotation)
+								// may have revoked the losing token's session family —
+								// serve the adopted access token instead when it is
+								// itself servable, so the caller isn't handed a token
+								// that fails auth despite valid credentials sitting in
+								// memory.
+								const adoptedTokenIsServable =
+									typeof dbAccount.access_token === "string" &&
+									typeof dbAccount.expires_at === "number" &&
+									dbAccount.expires_at - Date.now() > TOKEN_SAFETY_WINDOW_MS;
+								if (adoptedTokenIsServable && dbAccount.access_token) {
+									resolveWithToken = dbAccount.access_token;
+								}
+								log.warn(
+									`Persist CAS lost for ${account.name} — serving the ${adoptedTokenIsServable ? "adopted authoritative" : "just-minted (losing)"} access token`,
+								);
 							}
 						} catch (readError) {
 							log.warn(
@@ -577,7 +599,7 @@ export async function refreshAccessTokenSafe(
 					newRefreshToken: result.refreshToken !== account.refresh_token,
 					provider: account.provider,
 				});
-				return result.accessToken;
+				return resolveWithToken;
 			})
 			.catch(async (error) => {
 				// Record the failure timestamp for backoff
