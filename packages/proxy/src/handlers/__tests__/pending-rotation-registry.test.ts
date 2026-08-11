@@ -137,9 +137,69 @@ describe("flushPendingRotation — identity-guarded delete (round-3 final review
 		expect(entry).toBeDefined();
 		expect(entry?.accessToken).toBe("access-2");
 		expect(entry?.refreshToken).toBe("RT3");
-		// Anchor compression applies here too: the newer entry was recorded
-		// while the original (RT1-anchored) entry was still present.
-		expect(entry?.attemptedRefreshToken).toBe("RT1");
+		// Anchor compression at record time set this to "RT1" — but the CAS
+		// that just landed moved the DB from "RT1" to "RT2", so the survivor's
+		// anchor is rebased onto that (round-3, Codex concurrent flush/
+		// re-record race) instead of staying at "RT1", which the DB no longer
+		// holds.
+		expect(entry?.attemptedRefreshToken).toBe("RT2");
+	});
+});
+
+describe("flushPendingRotation — rebases the survivor's anchor after a concurrent flush lands", () => {
+	it("rebases the anchor onto the just-persisted refresh token instead of misreading the DB as superseded on the next flush", async () => {
+		let resolveCas: (value: boolean) => void = () => {};
+		const casPromise = new Promise<boolean>((resolve) => {
+			resolveCas = resolve;
+		});
+		const dbOps = makeDbOps({
+			updateAccountTokensIfRefreshTokenMatches: mock(() => casPromise),
+		});
+
+		recordPendingRotation("acc-1", {
+			accessToken: "access-1",
+			expiresAt: 1,
+			refreshToken: "RT2",
+			attemptedRefreshToken: "RT1",
+		});
+
+		const flushPromise = flushPendingRotation("acc-1", dbOps);
+
+		// A newer rotation is recorded while the flush above's CAS write is
+		// still in flight. Anchor compression sets its attemptedRefreshToken
+		// to "RT1" (the existing entry's anchor) — that's the bug's
+		// precondition: E2's anchor still points at a token the DB is about
+		// to move past.
+		recordPendingRotation("acc-1", {
+			accessToken: "access-2",
+			expiresAt: 2,
+			refreshToken: "RT3",
+			attemptedRefreshToken: "RT2",
+		});
+
+		resolveCas(true);
+		const outcome = await flushPromise;
+
+		expect(outcome).toBe("persisted");
+		const survivor = getPendingRotation("acc-1");
+		expect(survivor).toBeDefined();
+		// The CAS that just landed moved the DB's refresh token from "RT1" to
+		// "RT2" — the survivor's anchor must be rebased onto that instead of
+		// staying at "RT1", which the DB no longer holds.
+		expect(survivor?.attemptedRefreshToken).toBe("RT2");
+		expect(survivor?.refreshToken).toBe("RT3");
+		expect(survivor?.accessToken).toBe("access-2");
+
+		const secondDbOps = makeDbOps({
+			updateAccountTokensIfRefreshTokenMatches: mock(async () => true),
+		});
+		const secondOutcome = await flushPendingRotation("acc-1", secondDbOps);
+
+		expect(secondOutcome).toBe("persisted");
+		expect(
+			secondDbOps.updateAccountTokensIfRefreshTokenMatches,
+		).toHaveBeenCalledWith("acc-1", "RT2", "access-2", 2, "RT3");
+		expect(getPendingRotation("acc-1")).toBeUndefined();
 	});
 });
 

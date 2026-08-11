@@ -111,7 +111,10 @@ export function clearAllPendingRotationsForTests(): void {
 /**
  * Attempts to persist a pending rotation for the account.
  * - "none": no entry for this account.
- * - "persisted": CAS landed; entry cleared.
+ * - "persisted": CAS landed; entry cleared — unless a newer rotation was
+ *   recorded for this account while the CAS write was in flight, in which
+ *   case that survivor is kept and its anchor is rebased onto the refresh
+ *   token this flush just persisted (see below).
  * - "superseded": CAS matched 0 rows — the DB moved past the consumed token
  *   (manual re-auth or a newer rotation persisted); entry cleared, the DB is
  *   the source of truth now.
@@ -125,6 +128,16 @@ export function clearAllPendingRotationsForTests(): void {
  * flush's CAS write is still in flight (a flapping DB, or a concurrent
  * request-triggered refresh); an unguarded delete would silently discard
  * that newer entry even though it was never flushed.
+ *
+ * Anchor rebase on a surviving entry (round-3, Codex concurrent
+ * flush/re-record race): when the CAS lands but a newer entry survived the
+ * identity guard above, that survivor's `attemptedRefreshToken` anchor was
+ * compressed against the *pre-flush* DB state and no longer matches what the
+ * DB now holds. Left alone, the survivor's own next flush would CAS against
+ * a stale anchor, match 0 rows, get misread as "superseded", and be
+ * discarded — even though it's the only in-memory copy of its refresh token.
+ * Rebasing the anchor onto `entry.refreshToken` (what this CAS just wrote)
+ * keeps the survivor's next flush aligned with reality.
  */
 export async function flushPendingRotation(
 	accountId: string,
@@ -150,7 +163,20 @@ export async function flushPendingRotation(
 				);
 
 		if (persisted) {
-			if (pending.get(accountId) === entry) pending.delete(accountId);
+			const current = pending.get(accountId);
+			if (current === entry) {
+				pending.delete(accountId);
+			} else if (current) {
+				// A newer rotation was recorded while this flush's CAS write was
+				// still in flight. The CAS we just landed moved the DB's refresh
+				// token to entry.refreshToken (or left it at the anchor when the
+				// rotation carried no new one) — rebase the survivor's anchor
+				// onto that, so its own flush matches the DB instead of reading
+				// 0 rows, getting misclassified "superseded", and discarding the
+				// newest credentials.
+				current.attemptedRefreshToken =
+					entry.refreshToken ?? entry.attemptedRefreshToken;
+			}
 			return "persisted";
 		}
 		if (pending.get(accountId) === entry) pending.delete(accountId);
