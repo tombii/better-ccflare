@@ -698,6 +698,34 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 		expect(onCancelError).not.toHaveBeenCalled();
 	});
 
+	it("aborts drainAbort once drainDeadlineMs elapses, to actually terminate the stuck fetch", async () => {
+		// releaseLock() alone only frees the reader object for another
+		// consumer — it does not touch the underlying connection. The only way
+		// to actually kill an in-flight fetch is to abort a signal that was
+		// part of its `init.signal` at creation time (Greptile follow-up on
+		// PR #406, second review pass).
+		const source = controllableStream();
+		const drainAbort = new AbortController();
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 5,
+			drainDeadlineMs: 15,
+			drainAbort,
+		});
+		const result = new Response(body).text();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		await expect(result).resolves.toBe(
+			`${terminalDelta}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
+		);
+		// Deliberately never close/error/enqueue on `source` — only the
+		// deadline can end this drain.
+		expect(drainAbort.signal.aborted).toBe(false);
+
+		await new Promise((resolve) => setTimeout(resolve, 40));
+
+		expect(drainAbort.signal.aborted).toBe(true);
+	});
+
 	it("emits 'client_cancelled' via onTerminalState when downstream cancels before terminal events", async () => {
 		// Claude Code cancels streams routinely (Esc, tool interrupts).
 		// The wrapper must classify client-side cancellation distinctly
