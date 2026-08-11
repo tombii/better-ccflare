@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { clearDerivedProviderModelDefaults } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import {
 	clearCodexModelCacheForTests,
@@ -86,6 +87,10 @@ beforeEach(() => {
 
 afterEach(() => {
 	globalThis.fetch = originalFetch;
+	// getCodexModels() writes into the process-wide derived-defaults registry
+	// (provider-model-defaults.ts); left uncleared it leaks into any other
+	// test file that runs in the same bun process, e.g. provider.test.ts.
+	clearDerivedProviderModelDefaults();
 });
 
 describe("getCodexModels", () => {
