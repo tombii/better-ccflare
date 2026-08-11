@@ -257,10 +257,7 @@ async function adoptDbTokensIfFresher(
 	// inequality — a delayed DB read must never look "different, therefore
 	// fresher": two access tokens minted moments apart can differ as strings
 	// while the DB's is actually the OLDER of the two.
-	if (
-		dbTokenValid &&
-		(dbAccount.expires_at ?? 0) > (account.expires_at ?? 0)
-	) {
+	if (dbTokenValid && (dbAccount.expires_at ?? 0) > (account.expires_at ?? 0)) {
 		account.access_token = dbAccount.access_token;
 		account.expires_at = dbAccount.expires_at;
 		if (dbAccount.refresh_token) {
@@ -285,8 +282,7 @@ async function adoptDbTokensIfFresher(
 	if (
 		dbAccount.refresh_token &&
 		dbAccount.refresh_token !== account.refresh_token &&
-		(memIssuedAt === null ||
-			(dbIssuedAt !== null && dbIssuedAt >= memIssuedAt))
+		(memIssuedAt === null || (dbIssuedAt !== null && dbIssuedAt >= memIssuedAt))
 	) {
 		account.refresh_token = dbAccount.refresh_token;
 		account.refresh_token_issued_at = dbAccount.refresh_token_issued_at;
