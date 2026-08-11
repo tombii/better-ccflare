@@ -46,6 +46,22 @@ const pending = new Map<string, PendingRotation>();
  * Records a rotation that a provider call completed but that has not (yet)
  * been durably persisted. Replaces any existing entry for the account.
  *
+ * Anchor compression (round-3 final review, C1): if an entry already exists
+ * for this account, the new rotation's `attemptedRefreshToken` is discarded
+ * in favor of the existing entry's, and `recordedAt` is likewise carried
+ * over instead of reset. An entry can only still be present here because
+ * every flush attempt since it was recorded has failed — the DB never moved,
+ * so its `attemptedRefreshToken` is still the token the DB actually holds.
+ * A chain of rotations recorded while the DB is down (RT1→RT2, then RT2→RT3,
+ * …) must keep CASing against RT1: RT2 was only ever consumed in-memory by
+ * the provider call that produced the second (also-unpersisted) rotation,
+ * and a flush keyed on RT2 would match 0 rows, get misread as "superseded",
+ * and abandon the still-live RT1 anchor. (If the DB truly moved — a manual
+ * re-auth — the anchored CAS simply returns 0 rows on the next flush and is
+ * correctly classified "superseded" then.) Preserving `recordedAt` keeps
+ * this replace's FIFO-eviction position consistent with a plain replace
+ * instead of jumping the entry to the back of the eviction queue.
+ *
  * Bounded to MAX_PENDING_ROTATIONS entries: if recording this rotation would
  * exceed the cap, the oldest entry (by insertion order) is evicted first. An
  * eviction means a rotation is durably lost — the account will lose its
@@ -65,7 +81,14 @@ export function recordPendingRotation(
 			);
 		}
 	}
-	pending.set(accountId, { ...rotation, recordedAt: Date.now() });
+	const existing = pending.get(accountId);
+	pending.set(accountId, {
+		...rotation,
+		attemptedRefreshToken: existing
+			? existing.attemptedRefreshToken
+			: rotation.attemptedRefreshToken,
+		recordedAt: existing ? existing.recordedAt : Date.now(),
+	});
 }
 
 /** Returns the pending rotation for the account, if any. */
@@ -93,6 +116,15 @@ export function clearAllPendingRotationsForTests(): void {
  *   (manual re-auth or a newer rotation persisted); entry cleared, the DB is
  *   the source of truth now.
  * - "failed": the write threw; entry kept for the next flush attempt.
+ *
+ * Identity-guarded delete (round-3 final review, I2): both the "persisted"
+ * and "superseded" branches only delete the entry that was actually flushed
+ * — captured up front as `entry` — not whatever `pending.get(accountId)`
+ * happens to return by the time the awaited CAS settles. A caller can
+ * `recordPendingRotation` a newer rotation for this account while this
+ * flush's CAS write is still in flight (a flapping DB, or a concurrent
+ * request-triggered refresh); an unguarded delete would silently discard
+ * that newer entry even though it was never flushed.
  */
 export async function flushPendingRotation(
 	accountId: string,
@@ -118,10 +150,10 @@ export async function flushPendingRotation(
 				);
 
 		if (persisted) {
-			pending.delete(accountId);
+			if (pending.get(accountId) === entry) pending.delete(accountId);
 			return "persisted";
 		}
-		pending.delete(accountId);
+		if (pending.get(accountId) === entry) pending.delete(accountId);
 		log.warn(
 			`Pending rotation for account ${accountId} was superseded — the DB moved past the consumed token (manual re-auth or a newer rotation)`,
 		);

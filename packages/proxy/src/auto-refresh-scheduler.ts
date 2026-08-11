@@ -809,15 +809,19 @@ export class AutoRefreshScheduler {
 		);
 
 		for (const row of accounts) {
-			// (round-3 item 2) Flush any rotation from an earlier cycle that
-			// succeeded at the provider but failed to persist, before touching
-			// this row again. A still-failing flush means the account's live
-			// credentials are the ones sitting in the registry, not the row we
-			// just read — refreshing again this cycle would race the retry.
+			// (round-3 item 2; hardened in round-3 final review, I1) Flush any
+			// rotation from an earlier cycle before touching this row again. Any
+			// outcome other than "none" means this row's snapshot predates that
+			// flush: "failed" means the registry's unpersisted rotation is still
+			// the account's live credentials; "persisted"/"superseded" both mean
+			// the refresh_token this row shows was just consumed (by the flush
+			// itself or by whatever superseded it) — refreshing with it now
+			// would replay an already-consumed token. Skip this row for this
+			// cycle either way; the next cycle re-reads it fresh.
 			const flush = await flushPendingRotation(row.id, this.proxyContext.dbOps);
-			if (flush === "failed") {
+			if (flush !== "none") {
 				log.warn(
-					`Skipping proactive ${row.provider} refresh for ${row.name} this cycle — a pending rotation is still awaiting persist`,
+					`Skipping proactive ${row.provider} refresh for ${row.name} this cycle: row snapshot predates a pending-rotation flush (${flush})`,
 				);
 				continue;
 			}
@@ -996,15 +1000,20 @@ export class AutoRefreshScheduler {
 		);
 
 		for (const row of accounts) {
-			// (round-3 item 2) Flush any rotation from an earlier cycle that
-			// succeeded at the provider but failed to persist, before touching
-			// this row again. A still-failing flush means the account's live
-			// credentials are the ones sitting in the registry, not the row we
-			// just read — refreshing again this cycle would race the retry.
+			// (round-3 item 2; hardened in round-3 final review, I1) Flush any
+			// rotation from an earlier cycle before touching this row again. Any
+			// outcome other than "none" means this row's snapshot predates that
+			// flush: "failed" means the registry's unpersisted rotation is still
+			// the account's live credentials; "persisted"/"superseded" both mean
+			// the refresh_token this row shows was just consumed (by the flush
+			// itself or by whatever superseded it) — refreshing with it now
+			// would replay an already-consumed token, and on Codex specifically
+			// reuse-detection can invalidate the whole token family. Skip this
+			// row for this cycle either way; the next cycle re-reads it fresh.
 			const flush = await flushPendingRotation(row.id, this.proxyContext.dbOps);
-			if (flush === "failed") {
+			if (flush !== "none") {
 				log.warn(
-					`Skipping proactive Codex refresh for ${row.name} this cycle — a pending rotation is still awaiting persist`,
+					`Skipping proactive Codex refresh for ${row.name} this cycle: row snapshot predates a pending-rotation flush (${flush})`,
 				);
 				continue;
 			}

@@ -846,6 +846,62 @@ describe("refreshAccessTokenSafe — pending-rotation registry (round 3, item 1)
 		expect(events).toHaveLength(0);
 	});
 
+	it("P1b: preserves the original anchor across a second failed-persist rotation while the first is still pending (round-3 final review, C1)", async () => {
+		const accountId = "pending-chain-anchor-1";
+		// Seed exactly like P1: a successful provider refresh (RT1 -> RT2)
+		// whose persist rejects. Use an already-expired pending access token
+		// (like P3) so the second call below falls through to a REAL second
+		// refresh instead of just serving the seeded credentials.
+		const seedAccount = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const seed = makeContext({
+			dbAccount: null,
+			refreshResult: {
+				accessToken: "access-2-expired",
+				expiresAt: 2,
+				refreshToken: "RT2",
+			},
+		});
+		seed.ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(async () => {
+			throw new Error("disk full");
+		});
+		await refreshAccessTokenSafe(seedAccount as never, seed.ctx as never);
+		const seeded = getPendingRotation(accountId);
+		expect(seeded?.attemptedRefreshToken).toBe("RT1");
+		expect(seeded?.refreshToken).toBe("RT2");
+
+		// A second caller shows up with a stale (still-RT1) snapshot. Its own
+		// provider call rotates RT2 -> RT3 (via the pending-rotation fallthrough
+		// adopting RT2 first), and its persist ALSO rejects.
+		const secondAccount = makeAccount(accountId, {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const second = makeContext({
+			dbAccount: null,
+			refreshResult: {
+				accessToken: "access-3",
+				expiresAt: Date.now() + 3_600_000,
+				refreshToken: "RT3",
+			},
+		});
+		second.ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(
+			async () => {
+				throw new Error("disk still full");
+			},
+		);
+
+		await refreshAccessTokenSafe(secondAccount as never, second.ctx as never);
+
+		const chained = getPendingRotation(accountId);
+		expect(chained?.attemptedRefreshToken).toBe("RT1");
+		expect(chained?.refreshToken).toBe("RT3");
+	});
+
 	it("P4: does not regress the refresh token when adopting a newer access token (round-3 item 3)", async () => {
 		const account = makeAccount("no-regress-rt-1", {
 			refresh_token: "RT2",

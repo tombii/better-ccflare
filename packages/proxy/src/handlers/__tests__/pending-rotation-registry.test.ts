@@ -42,7 +42,7 @@ describe("recordPendingRotation / getPendingRotation", () => {
 		expect(getPendingRotation("missing-acc")).toBeUndefined();
 	});
 
-	it("replaces an existing entry for the same account id", () => {
+	it("replaces accessToken/expiresAt but preserves the original attemptedRefreshToken anchor", () => {
 		recordPendingRotation("acc-1", {
 			accessToken: "access-1",
 			expiresAt: 1,
@@ -57,7 +57,89 @@ describe("recordPendingRotation / getPendingRotation", () => {
 		const entry = getPendingRotation("acc-1");
 		expect(entry?.accessToken).toBe("access-2");
 		expect(entry?.expiresAt).toBe(2);
-		expect(entry?.attemptedRefreshToken).toBe("old-2");
+		// (round-3 final review, C1) The anchor stays "old-1" — the token the
+		// DB actually still holds — not "old-2", which the second rotation
+		// only ever consumed in-memory.
+		expect(entry?.attemptedRefreshToken).toBe("old-1");
+	});
+});
+
+describe("recordPendingRotation — anchor compression across chained rotations (round-3 final review, C1)", () => {
+	it("keeps the original anchor through a 3-link chain and flushes against it", async () => {
+		recordPendingRotation("acc-1", {
+			accessToken: "access-2",
+			expiresAt: 2,
+			refreshToken: "RT2",
+			attemptedRefreshToken: "RT1",
+		});
+		recordPendingRotation("acc-1", {
+			accessToken: "access-3",
+			expiresAt: 3,
+			refreshToken: "RT3",
+			attemptedRefreshToken: "RT2",
+		});
+
+		const entry = getPendingRotation("acc-1");
+		expect(entry?.attemptedRefreshToken).toBe("RT1");
+		expect(entry?.refreshToken).toBe("RT3");
+		expect(entry?.accessToken).toBe("access-3");
+		expect(entry?.expiresAt).toBe(3);
+
+		const dbOps = makeDbOps({
+			updateAccountTokensIfRefreshTokenMatches: mock(async () => true),
+		});
+		const outcome = await flushPendingRotation("acc-1", dbOps);
+
+		expect(outcome).toBe("persisted");
+		expect(dbOps.updateAccountTokensIfRefreshTokenMatches).toHaveBeenCalledWith(
+			"acc-1",
+			"RT1",
+			"access-3",
+			3,
+			"RT3",
+		);
+	});
+});
+
+describe("flushPendingRotation — identity-guarded delete (round-3 final review, I2)", () => {
+	it("does not delete a newer entry re-recorded while the CAS write is still in flight", async () => {
+		let resolveCas: (value: boolean) => void = () => {};
+		const casPromise = new Promise<boolean>((resolve) => {
+			resolveCas = resolve;
+		});
+		const dbOps = makeDbOps({
+			updateAccountTokensIfRefreshTokenMatches: mock(() => casPromise),
+		});
+		recordPendingRotation("acc-1", {
+			accessToken: "access-1",
+			expiresAt: 1,
+			refreshToken: "RT2",
+			attemptedRefreshToken: "RT1",
+		});
+
+		const flushPromise = flushPendingRotation("acc-1", dbOps);
+
+		// A newer rotation lands in the registry while the CAS write above is
+		// still awaiting resolution (e.g. a concurrent request-triggered
+		// refresh's own failed persist).
+		recordPendingRotation("acc-1", {
+			accessToken: "access-2",
+			expiresAt: 2,
+			refreshToken: "RT3",
+			attemptedRefreshToken: "RT2",
+		});
+
+		resolveCas(true);
+		const outcome = await flushPromise;
+
+		expect(outcome).toBe("persisted");
+		const entry = getPendingRotation("acc-1");
+		expect(entry).toBeDefined();
+		expect(entry?.accessToken).toBe("access-2");
+		expect(entry?.refreshToken).toBe("RT3");
+		// Anchor compression applies here too: the newer entry was recorded
+		// while the original (RT1-anchored) entry was still present.
+		expect(entry?.attemptedRefreshToken).toBe("RT1");
 	});
 });
 
