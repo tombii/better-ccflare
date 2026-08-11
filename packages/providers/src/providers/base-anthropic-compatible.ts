@@ -41,6 +41,27 @@ const HARD_LIMIT_STATUSES = new Set([
 
 const log = new Logger("BaseAnthropicCompatibleProvider");
 
+/**
+ * Drain a reader to `done`, dropping each chunk. `reader.cancel()` is a
+ * no-op on every released Bun (oven-sh/bun#35093) and leaks the upstream's
+ * native buffer; draining actually releases it. Errors are swallowed since
+ * this is best-effort cleanup, not part of the caller's control flow (#382).
+ */
+async function drainReader(
+	reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+	try {
+		while (true) {
+			const { done } = await reader.read();
+			if (done) return;
+		}
+	} catch {
+		// Swallow — draining must not throw during cleanup.
+	} finally {
+		reader.releaseLock();
+	}
+}
+
 export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	protected config: AnthropicCompatibleConfig;
 	name: string; // Make name concrete instead of abstract
@@ -366,7 +387,9 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		try {
 			while (buffered.length < maxBytes) {
 				if (Date.now() - startTime > READ_TIMEOUT_MS) {
-					await reader.cancel();
+					// Fire and forget — awaiting would block this throw on a
+					// network round-trip already being abandoned.
+					void drainReader(reader);
 					throw new Error("Stream read timeout while extracting usage info");
 				}
 
@@ -517,7 +540,11 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 				}
 			}
 		} finally {
-			reader.cancel().catch(() => {});
+			// Fire and forget — the read loop typically breaks early (as soon
+			// as message_delta usage is seen), well before the upstream body
+			// is exhausted; draining releases the native buffer without
+			// blocking the return here.
+			void drainReader(reader);
 		}
 
 		// For streaming responses, message_delta always contains the final authoritative token counts

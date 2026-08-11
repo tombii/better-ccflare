@@ -134,13 +134,28 @@ export function createAnthropicTerminalRecoveryStream(
 		recoveryWaitStartedAt = null;
 	};
 
-	const cancelUpstream = (reason: unknown): Promise<void> => {
-		if (upstreamCancelPromise) return upstreamCancelPromise;
+	// `reader.cancel()` is a documented no-op on every released Bun version
+	// (oven-sh/bun#35093): it never releases the native off-heap buffer
+	// backing the upstream fetch Response body, leaking RSS while JS heap
+	// stays flat (issue #382). Draining the reader to `done` instead actually
+	// releases the buffer — same fix as `discard-body-cancel.ts`'s
+	// `drainBody`, adapted here because `reader` is already an obtained
+	// `ReadableStreamDefaultReader` (the stream is locked to it), not a raw
+	// stream `drainBody` could call `.getReader()` on again.
+	const drainUpstreamReader = async (): Promise<void> => {
 		try {
-			upstreamCancelPromise = reader.cancel(reason);
-		} catch (error) {
-			upstreamCancelPromise = Promise.reject(error);
+			while (true) {
+				const { done } = await reader.read();
+				if (done) return;
+			}
+		} finally {
+			reader.releaseLock();
 		}
+	};
+
+	const cancelUpstream = (_reason: unknown): Promise<void> => {
+		if (upstreamCancelPromise) return upstreamCancelPromise;
+		upstreamCancelPromise = drainUpstreamReader();
 		return upstreamCancelPromise;
 	};
 

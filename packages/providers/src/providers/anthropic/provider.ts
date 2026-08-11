@@ -97,6 +97,27 @@ export async function isAnthropicExtraUsageExhausted(
 
 const log = new Logger("AnthropicProvider");
 
+/**
+ * Drain a reader to `done` instead of calling `reader.cancel()`, which is a
+ * no-op on every released Bun (oven-sh/bun#35093) and leaks the upstream's
+ * native buffer — see handlers/discard-body-cancel.ts for the full
+ * rationale (#382).
+ */
+async function drainReader(
+	reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+	try {
+		while (true) {
+			const { done } = await reader.read();
+			if (done) return;
+		}
+	} catch {
+		// Swallow — draining must not throw during teardown.
+	} finally {
+		reader.releaseLock();
+	}
+}
+
 export class AnthropicProvider extends BaseProvider {
 	name = "anthropic";
 
@@ -576,8 +597,10 @@ export class AnthropicProvider extends BaseProvider {
 					}
 				}
 			},
-			cancel(reason) {
-				reader.cancel(reason);
+			cancel() {
+				// reader.cancel() is a no-op on Bun and leaks the native buffer;
+				// drain to `done` instead — see drainReader() above (#382).
+				void drainReader(reader);
 			},
 		});
 
@@ -665,7 +688,7 @@ export class AnthropicProvider extends BaseProvider {
 					while (buffered.length < maxBytes) {
 						// Check for timeout
 						if (Date.now() - startTime > READ_TIMEOUT_MS) {
-							await reader.cancel();
+							void drainReader(reader);
 							throw new Error(
 								"Stream read timeout while extracting usage info",
 							);
@@ -719,8 +742,8 @@ export class AnthropicProvider extends BaseProvider {
 						}
 					}
 				} finally {
-					// Cancel the reader to prevent hanging
-					reader.cancel().catch(() => {});
+					// Drain the reader to prevent hanging and release the native buffer
+					void drainReader(reader);
 				}
 
 				if (!foundMessageStart) return null;
