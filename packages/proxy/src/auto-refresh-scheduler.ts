@@ -865,23 +865,41 @@ export class AutoRefreshScheduler {
 					.refreshToken(account, this.proxyContext.runtime.clientId)
 					.then(async (result) => {
 						const newRefreshToken = result.refreshToken ?? row.refresh_token;
-						await this.db.run(
-							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
+						// CAS: only persist if the row still holds the refresh token this
+						// attempt used — a rotation that landed underneath (manual re-auth,
+						// or a request-triggered refresh joining the same account) must not
+						// be overwritten with the tokens from this now-superseded attempt.
+						const changes = await this.db.runWithChanges(
+							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ? AND refresh_token = ?`,
 							[
 								result.accessToken,
 								result.expiresAt,
 								newRefreshToken,
 								Date.now(),
 								row.id,
+								row.refresh_token,
 							],
 						);
-						log.info(
-							`${row.provider} token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
-						);
+						if (changes === 0) {
+							log.warn(
+								`Skipped persisting refreshed ${row.provider} token for ${row.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth)`,
+							);
+						} else {
+							log.info(
+								`${row.provider} token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+							);
+						}
 						return result.accessToken;
 					})
 					.finally(() => {
-						this.proxyContext.refreshInFlight.delete(row.id);
+						// Identity-safe: never delete a newer entry installed by a manual
+						// reauth or a concurrent request-triggered refresh that ran while
+						// this promise was still settling.
+						if (
+							this.proxyContext.refreshInFlight.get(row.id) === refreshPromise
+						) {
+							this.proxyContext.refreshInFlight.delete(row.id);
+						}
 					});
 
 				this.proxyContext.refreshInFlight.set(row.id, refreshPromise);
@@ -1000,23 +1018,41 @@ export class AutoRefreshScheduler {
 					.refreshToken(account, this.proxyContext.runtime.clientId)
 					.then(async (result) => {
 						const newRefreshToken = result.refreshToken ?? row.refresh_token;
-						await this.db.run(
-							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
+						// CAS: only persist if the row still holds the refresh token this
+						// attempt used — a rotation that landed underneath (manual re-auth,
+						// or a request-triggered refresh joining the same account) must not
+						// be overwritten with the tokens from this now-superseded attempt.
+						const changes = await this.db.runWithChanges(
+							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ? AND refresh_token = ?`,
 							[
 								result.accessToken,
 								result.expiresAt,
 								newRefreshToken,
 								Date.now(),
 								row.id,
+								row.refresh_token,
 							],
 						);
-						log.info(
-							`Codex token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
-						);
+						if (changes === 0) {
+							log.warn(
+								`Skipped persisting refreshed Codex token for ${row.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth)`,
+							);
+						} else {
+							log.info(
+								`Codex token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+							);
+						}
 						return result.accessToken;
 					})
 					.finally(() => {
-						this.proxyContext.refreshInFlight.delete(row.id);
+						// Identity-safe: never delete a newer entry installed by a manual
+						// reauth or a concurrent request-triggered refresh that ran while
+						// this promise was still settling.
+						if (
+							this.proxyContext.refreshInFlight.get(row.id) === refreshPromise
+						) {
+							this.proxyContext.refreshInFlight.delete(row.id);
+						}
 					});
 
 				this.proxyContext.refreshInFlight.set(row.id, refreshPromise);
@@ -1051,46 +1087,34 @@ export class AutoRefreshScheduler {
 		const reason = extractAuthFailureReason(message, row.name);
 		if (!reason) return;
 
-		// Rotation-race guard: if the account's current refresh token is no
-		// longer the one this attempt used, another consumer rotated it after our
-		// loop-start snapshot — the rejection condemned a superseded token, not
-		// the account. Skip flagging; the next scheduler pass uses the live row.
+		// Atomic rotation-race guard (CAS): condemn the account only if it still
+		// holds the exact refresh token this attempt used. A rotation that landed
+		// after our snapshot makes the UPDATE a no-op — no flag, no alert. A DB
+		// error leaves the flag unset: "unable to verify" is not evidence of a
+		// dead token; the next scheduler pass retries with the live row.
+		let flagged = false;
 		try {
-			const rows = await this.db.query<{ refresh_token: string | null }>(
-				`SELECT refresh_token FROM accounts WHERE id = ?`,
-				[row.id],
+			const changes = await this.db.runWithChanges(
+				`UPDATE accounts SET requires_reauth = 1 WHERE id = ? AND refresh_token = ?`,
+				[row.id, row.refresh_token],
 			);
-			const currentRefreshToken = rows[0]?.refresh_token ?? null;
-			if (currentRefreshToken && currentRefreshToken !== row.refresh_token) {
-				log.warn(
-					`Skipping requires_reauth for ${row.name}: the failed ${row.provider} refresh used a superseded refresh token (rotation race)`,
-				);
-				return;
-			}
-		} catch (readError) {
-			log.warn(
-				`Could not verify current refresh token for ${row.name} — treating ${reason} as definitive`,
-				readError,
-			);
-		}
-
-		try {
-			await this.db.run(
-				`UPDATE accounts SET requires_reauth = 1 WHERE id = ?`,
-				[row.id],
-			);
-			log.error(
-				`Account ${row.name} requires re-authentication — proactive ${row.provider} refresh returned ${reason}`,
-			);
+			flagged = changes > 0;
 		} catch (writeError) {
-			log.error(
-				`Failed to persist requires_reauth for ${row.name}:`,
+			log.warn(
+				`Could not verify-and-flag requires_reauth for ${row.name} — leaving unset (unverified ${reason})`,
 				writeError,
 			);
+			return;
 		}
-
-		// Emit regardless of the write outcome — the alert is the operator's only
-		// signal that the account is dead, and it is fire-and-forget.
+		if (!flagged) {
+			log.warn(
+				`Skipping requires_reauth for ${row.name}: the failed ${row.provider} refresh used a superseded refresh token (rotation race)`,
+			);
+			return;
+		}
+		log.error(
+			`Account ${row.name} requires re-authentication — proactive ${row.provider} refresh returned ${reason}`,
+		);
 		authFailureEvents.emit("event", {
 			accountId: row.id,
 			accountName: row.name,
