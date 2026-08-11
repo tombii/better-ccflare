@@ -1,15 +1,13 @@
 import { api } from "../api";
 
 /**
- * Adapter for the two endpoints used by the model selector.
+ * Adapter for the endpoint used by the model selector.
  *
  * Everything the dashboard knows about these response shapes lives here: if
  * the backend changes the contract, this is the only file to update.
  *
  *   GET  /api/models?provider=<anthropic|codex|...>
  *     -> { provider, fetchedAt, source, models: [{ id, displayName, source }] }
- *   POST /api/accounts/:id/test-model    body { model }
- *     -> { ok, inconclusive?, status, error?, durationMs }
  *
  * Authentication comes for free from the shared `api` client, which injects
  * `x-api-key` into every request and opens the auth dialog on 401.
@@ -20,6 +18,12 @@ export type ProviderModelSource = "builtin" | "catalog" | "reference";
 export interface ProviderModel {
 	id: string;
 	displayName: string;
+	/**
+	 * Model the provider says replaces this one. Present only when the
+	 * provider has announced the deprecation — picking a model on its way out
+	 * is a decision someone has to undo later.
+	 */
+	supersededBy?: string | null;
 	/**
 	 * "builtin"/"catalog": ccflare knows this model for the provider.
 	 * "reference": it exists in the provider public catalog — which is NOT a
@@ -60,7 +64,16 @@ function normalizeModel(raw: unknown): ProviderModel | null {
 		typeof entry.displayName === "string" && entry.displayName.trim()
 			? entry.displayName.trim()
 			: id;
-	return { id, displayName, source: normalizeSource(entry.source) };
+	const supersededBy =
+		typeof entry.supersededBy === "string" && entry.supersededBy.trim()
+			? entry.supersededBy
+			: null;
+	return {
+		id,
+		displayName,
+		source: normalizeSource(entry.source),
+		supersededBy,
+	};
 }
 
 function asRecord(raw: unknown): Record<string, unknown> {
@@ -70,10 +83,17 @@ function asRecord(raw: unknown): Record<string, unknown> {
 /** Model list for a provider. Tolerant: malformed input becomes an empty list. */
 export async function fetchProviderModels(
 	provider: string,
+	accountId?: string | null,
 ): Promise<ProviderModels> {
+	// With an account the backend can ask the provider what THIS subscription
+	// may call; without one it can only offer the generic catalogue, which
+	// lists models a given plan may not reach.
+	const scope = accountId?.trim()
+		? `&accountId=${encodeURIComponent(accountId.trim())}`
+		: "";
 	const body = asRecord(
 		await api.get<unknown>(
-			`/api/models?provider=${encodeURIComponent(provider)}`,
+			`/api/models?provider=${encodeURIComponent(provider)}${scope}`,
 		),
 	);
 	const list: unknown[] = Array.isArray(body.models) ? body.models : [];
@@ -93,6 +113,7 @@ export async function fetchProviderModels(
 	};
 }
 
+/** Mapping fields accept a comma-separated list (rotation on 429). */
 export function parseModelList(value: string): string[] {
 	return value
 		.split(",")

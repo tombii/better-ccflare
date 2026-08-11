@@ -25,6 +25,7 @@ import type {
 	RequestMeta,
 } from "@better-ccflare/types";
 import { cacheBodyStore } from "../cache-body-store";
+import { ensureCodexModelDefaults } from "../codex-model-catalog";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
@@ -703,6 +704,12 @@ export async function proxyWithAccount(
 		}
 
 		const providerRequest = new Request(targetUrl, requestInit);
+
+		// The provider is about to translate the Claude family into one of its
+		// own models, and only this account's listing knows which. Loading it
+		// here costs one await on the account's first request in this process;
+		// after that it is memory.
+		await ensureCodexModelDefaults(account, ctx);
 
 		let transformedRequest = provider.transformRequestBody
 			? await provider.transformRequestBody(providerRequest, account)

@@ -1,6 +1,11 @@
-import type { Config } from "@better-ccflare/config";
+import {
+	type Config,
+	filterEnabledProviderModelDefaultOverrides,
+	PROVIDER_MODEL_DEFAULTS_ENV_VAR,
+} from "@better-ccflare/config";
 import {
 	DEFAULT_AGENT_MODEL,
+	KNOWN_PATTERNS,
 	NETWORK,
 	STRATEGIES,
 	type StrategyName,
@@ -13,6 +18,11 @@ import {
 	errorResponse,
 	jsonResponse,
 } from "@better-ccflare/http-common";
+import {
+	getProviderModelDefaultFactories,
+	getProviderModelDefaultOverrides,
+	setProviderModelDefaultOverrides,
+} from "@better-ccflare/providers";
 import type { APIContext } from "@better-ccflare/types";
 import {
 	allowedModelErrorMessage,
@@ -248,6 +258,122 @@ export function createConfigHandlers(
 			config.setUsageThrottlingFiveHourEnabled(body.fiveHourEnabled);
 			config.setUsageThrottlingWeeklyEnabled(body.weeklyEnabled);
 			return new Response(null, { status: 204 });
+		},
+
+		getProviderModelDefaults: (): Response => {
+			const enabledProviders = new Set(
+				config.getEnabledProviderModelDefaultProviders(),
+			);
+			const factories = getProviderModelDefaultFactories();
+			const overrides = config.getProviderModelDefaultOverrides();
+			// Enumerated from the configurable surface, not from what has been
+			// discovered. A provider whose defaults come from a live listing has no
+			// compiled map, and driving the screen off that map hid its fields
+			// entirely — leaving the override reachable by API but not by anyone
+			// using the dashboard, which is the only place it is documented.
+			//
+			// `factory` may therefore be null: nothing has been read yet. That is a
+			// state worth showing, not a reason to hide the row.
+			return jsonResponse({
+				providers: [...enabledProviders].map((provider) => ({
+					provider,
+					fields: KNOWN_PATTERNS.map((family) => {
+						const factory = factories[provider]?.[family] ?? null;
+						return {
+							family,
+							factory,
+							override: overrides[provider]?.[family] ?? null,
+							effective:
+								getProviderModelDefaultOverrides()[provider]?.[family] ??
+								factory,
+						};
+					}),
+				})),
+			});
+		},
+
+		setProviderModelDefaults: async (req: Request): Promise<Response> => {
+			let body: unknown;
+			try {
+				body = await req.json();
+			} catch {
+				return errorResponse(BadRequest("Body must be JSON"));
+			}
+			const entries = (body as { overrides?: unknown } | null)?.overrides;
+			if (!Array.isArray(entries)) {
+				return errorResponse(
+					BadRequest(
+						"Invalid provider model defaults payload: expected 'overrides' array",
+					),
+				);
+			}
+			const factories = getProviderModelDefaultFactories();
+			const enabledProviders = new Set(
+				config.getEnabledProviderModelDefaultProviders(),
+			);
+			// What may be configured is not a function of what has been
+			// discovered. A provider whose defaults come from a live listing has
+			// no compiled map, so validating against one would reject the manual
+			// override exactly when it is needed: before the first successful
+			// listing, or after one stops answering.
+			const knownFamilies = new Set<string>(KNOWN_PATTERNS);
+			const next = config.getProviderModelDefaultOverrides();
+			for (const entry of entries) {
+				const value = entry as {
+					provider?: unknown;
+					family?: unknown;
+					model?: unknown;
+				} | null;
+				const provider =
+					typeof value?.provider === "string" ? value.provider.trim() : "";
+				const family =
+					typeof value?.family === "string" ? value.family.trim() : "";
+				if (!provider)
+					return errorResponse(BadRequest("Unknown provider: (empty)"));
+				if (!enabledProviders.has(provider))
+					return errorResponse(
+						BadRequest(
+							`Provider "${provider}" is not editable; set ${PROVIDER_MODEL_DEFAULTS_ENV_VAR} to enable it`,
+						),
+					);
+				// A family this provider already maps is obviously valid; one it does
+				// not is still valid if ccflare knows the family at all, because the
+				// map may simply not have been read yet.
+				if (!factories[provider]?.[family] && !knownFamilies.has(family))
+					return errorResponse(
+						BadRequest(
+							`Unknown family '${family || "(empty)"}' for provider '${provider}'`,
+						),
+					);
+				if (typeof value?.model !== "string")
+					return errorResponse(BadRequest("model must be a string"));
+				const model = value.model.trim();
+				if (model) {
+					next[provider] = { ...next[provider], [family]: model };
+				} else if (next[provider]) {
+					delete next[provider][family];
+					if (Object.keys(next[provider]).length === 0) delete next[provider];
+				}
+			}
+			config.setProviderModelDefaultOverrides(next);
+			setProviderModelDefaultOverrides(
+				filterEnabledProviderModelDefaultOverrides(enabledProviders, next),
+			);
+			return jsonResponse({
+				providers: Object.entries(factories)
+					.filter(([provider]) => enabledProviders.has(provider))
+					.map(([provider, families]) => ({
+						provider,
+						fields: Object.entries(families).map(([family, factory]) => ({
+							family,
+							factory,
+							override: next[provider]?.[family] ?? null,
+							effective:
+								getProviderModelDefaultOverrides()[provider]?.[family] ??
+								factory,
+						})),
+					})),
+			});
 		},
 
 		getModelCapacityRouting: (): Response => {

@@ -1,6 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { Config, type RuntimeConfig } from "@better-ccflare/config";
+import {
+	Config,
+	filterEnabledProviderModelDefaultOverrides,
+	type RuntimeConfig,
+} from "@better-ccflare/config";
 import {
 	CACHE,
 	DEFAULT_STRATEGY,
@@ -38,6 +42,7 @@ import {
 	fetchCodexUsageOnDemand,
 	getProvider,
 	getRankingUtilizationForProvider,
+	setProviderModelDefaultOverrides,
 	usageCache,
 } from "@better-ccflare/providers";
 import {
@@ -50,6 +55,7 @@ import {
 	CacheKeepaliveScheduler,
 	drainUsageCollector,
 	forceCloseCircuit,
+	getCodexModels,
 	getModelCatalog,
 	getUsageCollectorHealth,
 	getValidAccessToken,
@@ -733,6 +739,12 @@ export default async function startServer(options?: {
 
 	// Initialize components
 	const config = container.resolve<Config>(SERVICE_KEYS.Config);
+	setProviderModelDefaultOverrides(
+		filterEnabledProviderModelDefaultOverrides(
+			config.getEnabledProviderModelDefaultProviders(),
+			config.getProviderModelDefaultOverrides(),
+		),
+	);
 	installOutboundProxy(() => config.getOutboundProxy());
 	const outboundProxyUrl = config.getOutboundProxy();
 	if (outboundProxyUrl) {
@@ -945,6 +957,10 @@ export default async function startServer(options?: {
 		alertService,
 		modelCatalog: {
 			get: () => getModelCatalog(),
+			codexModels: async (accountId: string) => {
+				if (!modelCatalogProxyContext) return null;
+				return getCodexModels(accountId, modelCatalogProxyContext);
+			},
 			refresh: async () => {
 				if (!modelCatalogProxyContext) {
 					return {

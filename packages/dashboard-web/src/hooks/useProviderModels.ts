@@ -6,11 +6,15 @@ import { queryKeys } from "../lib/query-keys";
  * Provider model list. Disabled while the provider is unknown (no selected
  * account), so the combobox never suggests the wrong provider list.
  */
-export const useProviderModels = (provider?: string | null) => {
+export const useProviderModels = (
+	provider?: string | null,
+	accountId?: string | null,
+) => {
 	const normalized = provider?.trim() ?? "";
+	const account = accountId?.trim() ?? "";
 	return useQuery({
-		queryKey: queryKeys.providerModels(normalized),
-		queryFn: () => fetchProviderModels(normalized),
+		queryKey: queryKeys.providerModels(normalized, account),
+		queryFn: () => fetchProviderModels(normalized, account),
 		enabled: normalized.length > 0,
 		staleTime: 5 * 60 * 1000,
 		gcTime: 30 * 60 * 1000,

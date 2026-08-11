@@ -12,6 +12,10 @@ import {
 } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
+import {
+	registerProviderModelDefaultFactory,
+	resolveProviderModelDefault,
+} from "../../provider-model-defaults";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 import { normalizeCodexInputUsage } from "./usage";
 
@@ -108,6 +112,15 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 	sonnet: "gpt-5.3-codex",
 	haiku: "gpt-5.4-mini",
 };
+
+// Deliberately NOT registered as a factory default any more.
+//
+// A map compiled at build time cannot know what a subscription is entitled
+// to: this one pointed `opus` and `sonnet` at `gpt-5.3-codex`, which a
+// ChatGPT-plan account refuses with HTTP 400 — the incident this whole line
+// of work came from. The account's own listing knows, so it decides; the map
+// below survives only as documentation of the shape and for the tests that
+// exercise family resolution.
 
 // Synced from the Codex CLI model cache (~/.codex/models_cache.json,
 // codex-cli 0.144.1). Missing entries mean no context_window block is
@@ -712,10 +725,23 @@ export class CodexProvider extends BaseProvider {
 
 		const lower = anthropicModel.toLowerCase();
 		// Precedence: combo slot -> account.model_mappings -> global override -> factory map.
-		if (lower.includes("fable")) return DEFAULT_MODEL_MAP.fable;
-		if (lower.includes("haiku")) return DEFAULT_MODEL_MAP.haiku;
-		if (lower.includes("sonnet")) return DEFAULT_MODEL_MAP.sonnet;
-		if (lower.includes("opus")) return DEFAULT_MODEL_MAP.opus;
+		// Resolved per account: the account's own listing is what decides, and
+		// two accounts of this provider can be on different plans.
+		const id = account?.id;
+		if (lower.includes("fable"))
+			return (
+				resolveProviderModelDefault("codex", "fable", id) ?? anthropicModel
+			);
+		if (lower.includes("haiku"))
+			return (
+				resolveProviderModelDefault("codex", "haiku", id) ?? anthropicModel
+			);
+		if (lower.includes("sonnet"))
+			return (
+				resolveProviderModelDefault("codex", "sonnet", id) ?? anthropicModel
+			);
+		if (lower.includes("opus"))
+			return resolveProviderModelDefault("codex", "opus", id) ?? anthropicModel;
 		return anthropicModel;
 	}
 

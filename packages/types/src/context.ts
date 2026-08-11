@@ -73,6 +73,24 @@ export interface APIContext {
 			source: "live" | "fallback";
 		}>;
 		refresh: () => Promise<{ success: boolean; error?: string }>;
+		/**
+		 * Models one account can actually call, from the provider's own
+		 * per-account listing. Null when the account is unknown, is not of a
+		 * provider with such a listing, or none has ever been read.
+		 */
+		codexModels?: (accountId: string) => Promise<{
+			models: Array<{
+				id: string;
+				displayName: string;
+				description: string | null;
+				contextWindow: number | null;
+				supersededBy: string | null;
+			}>;
+			fetchedAt: number;
+			/** "shared" = read from another account of the same provider. */
+			source: "live" | "cached" | "shared";
+			borrowedFrom?: string;
+		} | null>;
 	};
 	/**
 	 * Process-local secret gating internal-probe requests (auto-refresh /
