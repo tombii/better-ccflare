@@ -669,6 +669,35 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 		);
 	});
 
+	it("gives up on the background drain once drainDeadlineMs elapses, without erroring", async () => {
+		// A stuck-but-open upstream (never closes, never errors, never sends
+		// another byte) is exactly the case recover()'s timeout path exists
+		// for. Before the deadline bound, drainUpstreamReader's `reader.read()`
+		// would hang forever here — holding the socket open indefinitely
+		// where the no-op `reader.cancel()` it replaced would have resolved
+		// instantly (issue #382 follow-up, Greptile review on PR #406).
+		const source = controllableStream();
+		const onCancelError = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 5,
+			drainDeadlineMs: 15,
+			onCancelError,
+		});
+		const result = new Response(body).text();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		await expect(result).resolves.toBe(
+			`${terminalDelta}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
+		);
+		// Deliberately never close/error/enqueue on `source` — the drain must
+		// still settle on its own via the deadline.
+		await new Promise((resolve) => setTimeout(resolve, 40));
+
+		// The deadline path is a clean give-up, not a failure: it must not be
+		// reported through onCancelError.
+		expect(onCancelError).not.toHaveBeenCalled();
+	});
+
 	it("emits 'client_cancelled' via onTerminalState when downstream cancels before terminal events", async () => {
 		// Claude Code cancels streams routinely (Esc, tool interrupts).
 		// The wrapper must classify client-side cancellation distinctly

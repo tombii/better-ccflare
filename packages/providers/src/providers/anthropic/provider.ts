@@ -9,6 +9,7 @@ import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 import { transformRequestBodyModel } from "../../utils/model-mapping";
+import { drainReader } from "../../utils/stream-drain";
 
 // Hard rate limit statuses that should block account usage
 const HARD_LIMIT_STATUSES = new Set([
@@ -96,27 +97,6 @@ export async function isAnthropicExtraUsageExhausted(
 }
 
 const log = new Logger("AnthropicProvider");
-
-/**
- * Drain a reader to `done` instead of calling `reader.cancel()`, which is a
- * no-op on every released Bun (oven-sh/bun#35093) and leaks the upstream's
- * native buffer — see handlers/discard-body-cancel.ts for the full
- * rationale (#382).
- */
-async function drainReader(
-	reader: ReadableStreamDefaultReader<Uint8Array>,
-): Promise<void> {
-	try {
-		while (true) {
-			const { done } = await reader.read();
-			if (done) return;
-		}
-	} catch {
-		// Swallow — draining must not throw during teardown.
-	} finally {
-		reader.releaseLock();
-	}
-}
 
 export class AnthropicProvider extends BaseProvider {
 	name = "anthropic";
@@ -686,9 +666,9 @@ export class AnthropicProvider extends BaseProvider {
 
 				try {
 					while (buffered.length < maxBytes) {
-						// Check for timeout
+						// Check for timeout — the enclosing `finally` drains the
+						// reader on every exit path, including this throw.
 						if (Date.now() - startTime > READ_TIMEOUT_MS) {
-							void drainReader(reader);
 							throw new Error(
 								"Stream read timeout while extracting usage info",
 							);

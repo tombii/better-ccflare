@@ -10,6 +10,7 @@ import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../types";
 import { transformRequestBodyModel } from "../utils/model-mapping";
+import { drainReader } from "../utils/stream-drain";
 
 // Configuration interface for Anthropic-compatible providers
 export interface AnthropicCompatibleConfig {
@@ -40,27 +41,6 @@ const HARD_LIMIT_STATUSES = new Set([
 ]);
 
 const log = new Logger("BaseAnthropicCompatibleProvider");
-
-/**
- * Drain a reader to `done`, dropping each chunk. `reader.cancel()` is a
- * no-op on every released Bun (oven-sh/bun#35093) and leaks the upstream's
- * native buffer; draining actually releases it. Errors are swallowed since
- * this is best-effort cleanup, not part of the caller's control flow (#382).
- */
-async function drainReader(
-	reader: ReadableStreamDefaultReader<Uint8Array>,
-): Promise<void> {
-	try {
-		while (true) {
-			const { done } = await reader.read();
-			if (done) return;
-		}
-	} catch {
-		// Swallow — draining must not throw during cleanup.
-	} finally {
-		reader.releaseLock();
-	}
-}
 
 export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	protected config: AnthropicCompatibleConfig;
@@ -387,9 +367,8 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		try {
 			while (buffered.length < maxBytes) {
 				if (Date.now() - startTime > READ_TIMEOUT_MS) {
-					// Fire and forget — awaiting would block this throw on a
-					// network round-trip already being abandoned.
-					void drainReader(reader);
+					// The enclosing `finally` drains the reader on every exit
+					// path, including this throw — no separate call needed here.
 					throw new Error("Stream read timeout while extracting usage info");
 				}
 

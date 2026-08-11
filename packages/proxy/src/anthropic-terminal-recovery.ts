@@ -3,6 +3,19 @@ export const ANTHROPIC_MESSAGE_STOP_FRAME =
 
 export const ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS = 10_000;
 
+/**
+ * Upper bound on how long the post-finalize upstream drain (see
+ * `drainUpstreamReader` below) will wait for `reader.read()` to settle.
+ * Without this, a stuck-but-still-open upstream (exactly the scenario
+ * `recover()`'s timeout path exists for) would hold the socket and its
+ * native buffer open forever instead of the fast Bun `cancel()` no-op it
+ * replaced — trading a memory leak for a connection leak. Once the deadline
+ * fires the reader's lock is released without awaiting `reader.cancel()`
+ * (also a no-op); the socket is reclaimed when Bun eventually times it out
+ * or the upstream closes on its own.
+ */
+export const ANTHROPIC_DRAIN_DEADLINE_MS = 30_000;
+
 const encoder = new TextEncoder();
 const messageStopBytes = encoder.encode(ANTHROPIC_MESSAGE_STOP_FRAME);
 const MAX_PENDING_EVENT_CHARS = 64 * 1024;
@@ -55,6 +68,8 @@ export type AnthropicTerminalState = (typeof ANTHROPIC_TERMINAL_STATES)[number];
 export interface AnthropicTerminalRecoveryOptions {
 	/** @internal Override only in deterministic unit tests. */
 	gracePeriodMs?: number;
+	/** @internal Override only in deterministic unit tests. */
+	drainDeadlineMs?: number;
 	onRecovery?: (reason: AnthropicTerminalRecoveryReason) => void;
 	onCancelError?: (
 		error: unknown,
@@ -87,6 +102,8 @@ export function createAnthropicTerminalRecoveryStream(
 ): ReadableStream<Uint8Array> {
 	const gracePeriodMs =
 		options.gracePeriodMs ?? ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS;
+	const drainDeadlineMs =
+		options.drainDeadlineMs ?? ANTHROPIC_DRAIN_DEADLINE_MS;
 	const reader = upstream.getReader();
 	const decoder = new TextDecoder();
 
@@ -142,13 +159,27 @@ export function createAnthropicTerminalRecoveryStream(
 	// `drainBody`, adapted here because `reader` is already an obtained
 	// `ReadableStreamDefaultReader` (the stream is locked to it), not a raw
 	// stream `drainBody` could call `.getReader()` on again.
+	//
+	// Bounded by `drainDeadlineMs`: a stuck-but-open upstream (the case
+	// `recover()`'s timeout path exists for) would otherwise leave this loop
+	// pending forever, holding the socket open where the no-op `cancel()` it
+	// replaced would have resolved instantly. On deadline the lock is
+	// released without waiting on any further read.
 	const drainUpstreamReader = async (): Promise<void> => {
+		let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
 		try {
+			const deadline = new Promise<{ done: true }>((resolve) => {
+				deadlineTimer = setTimeout(
+					() => resolve({ done: true }),
+					drainDeadlineMs,
+				);
+			});
 			while (true) {
-				const { done } = await reader.read();
+				const { done } = await Promise.race([reader.read(), deadline]);
 				if (done) return;
 			}
 		} finally {
+			if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
 			reader.releaseLock();
 		}
 	};
