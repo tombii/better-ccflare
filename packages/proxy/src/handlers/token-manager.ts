@@ -258,8 +258,8 @@ async function adoptDbTokensIfFresher(
 		account.expires_at = dbAccount.expires_at;
 		if (dbAccount.refresh_token) {
 			account.refresh_token = dbAccount.refresh_token;
+			account.refresh_token_issued_at = dbAccount.refresh_token_issued_at;
 		}
-		account.refresh_token_issued_at = dbAccount.refresh_token_issued_at;
 		refreshFailures.delete(account.id);
 		backoffCounters.delete(account.id);
 		log.info(
@@ -491,7 +491,7 @@ export async function refreshAccessTokenSafe(
 							return dbAccount.access_token;
 						}
 						log.warn(
-							`Refresh for ${account.name} used a superseded refresh token (${authFailureReason}) — not flagging re-auth; will retry with the rotated token`,
+							`Refresh for ${account.name} used a superseded refresh token (${authFailureReason}) — not flagging re-auth; the rotated token will be used after the refresh backoff`,
 						);
 						throw new TokenRefreshError(account.id, new Error(enhancedMessage));
 					}
