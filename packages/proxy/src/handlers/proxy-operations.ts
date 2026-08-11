@@ -503,6 +503,11 @@ export async function proxyUnauthenticated(
 	);
 
 	try {
+		// Dedicated controller so a stuck-upstream drain deadline (see
+		// anthropic-terminal-recovery.ts) can abort this specific fetch's
+		// connection after the fact — a signal not part of `init.signal` at
+		// fetch-creation time cannot retroactively attach to it.
+		const drainAbortController = new AbortController();
 		const response = await makeProxyRequest(
 			targetUrl,
 			req.method,
@@ -510,8 +515,10 @@ export async function proxyUnauthenticated(
 			createBodyStream,
 			!!req.body,
 			// Abort upstream when the client disconnects; this path builds no
-			// Request object, so the signal has to be passed explicitly.
-			req.signal,
+			// Request object, so the signal has to be passed explicitly. Merged
+			// with drainAbortController so the terminal-recovery drain deadline
+			// can also abort this same fetch later.
+			AbortSignal.any([req.signal, drainAbortController.signal]),
 		);
 
 		return forwardToClient(
@@ -537,6 +544,7 @@ export async function proxyUnauthenticated(
 				comboName: requestMeta.comboName,
 				apiKeyId,
 				apiKeyName,
+				drainAbort: drainAbortController,
 			},
 			ctx,
 		);
@@ -581,13 +589,21 @@ export async function proxyWithAccount(
 	returnRateLimitedResponseOnExhaustion = false,
 ): Promise<Response | null> {
 	try {
+		// Dedicated controller so a stuck-upstream drain deadline (see
+		// anthropic-terminal-recovery.ts) can abort this request's fetch
+		// connection after the fact — a signal not part of `init.signal` at
+		// fetch-creation time cannot retroactively attach to it.
+		const drainAbortController = new AbortController();
+
 		// Every upstream call stays tied to the client connection: when the client
 		// disconnects, the upstream fetch must be aborted instead of running on.
 		// The signal is passed explicitly instead of relying on the Request object
 		// to carry it, because provider body transforms rebuild the Request from
 		// its URL and drop the signal (see providers/src/utils/model-mapping.ts and
 		// the openai/codex providers). One guarantee at the call site beats an
-		// invariant that every provider has to remember.
+		// invariant that every provider has to remember. Merged with
+		// drainAbortController so the terminal-recovery drain deadline can also
+		// abort this same fetch later.
 		const forwardUpstream = (target: Request) =>
 			makeProxyRequest(
 				target,
@@ -595,7 +611,7 @@ export async function proxyWithAccount(
 				undefined,
 				undefined,
 				undefined,
-				req.signal,
+				AbortSignal.any([req.signal, drainAbortController.signal]),
 			);
 		if (
 			process.env.DEBUG?.includes("proxy") ||
@@ -1505,6 +1521,7 @@ export async function proxyWithAccount(
 						comboName: requestMeta.comboName,
 						apiKeyId,
 						apiKeyName,
+						drainAbort: drainAbortController,
 					},
 					{ ...ctx, provider },
 				);
@@ -1537,6 +1554,7 @@ export async function proxyWithAccount(
 				comboName: requestMeta.comboName,
 				apiKeyId,
 				apiKeyName,
+				drainAbort: drainAbortController,
 			},
 			{ ...ctx, provider },
 		);

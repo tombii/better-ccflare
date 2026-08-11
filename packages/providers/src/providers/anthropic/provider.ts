@@ -9,6 +9,7 @@ import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 import { transformRequestBodyModel } from "../../utils/model-mapping";
+import { drainReader } from "../../utils/stream-drain";
 
 // Hard rate limit statuses that should block account usage
 const HARD_LIMIT_STATUSES = new Set([
@@ -576,8 +577,10 @@ export class AnthropicProvider extends BaseProvider {
 					}
 				}
 			},
-			cancel(reason) {
-				reader.cancel(reason);
+			cancel() {
+				// reader.cancel() is a no-op on Bun and leaks the native buffer;
+				// drain to `done` instead — see drainReader() above (#382).
+				void drainReader(reader);
 			},
 		});
 
@@ -663,9 +666,9 @@ export class AnthropicProvider extends BaseProvider {
 
 				try {
 					while (buffered.length < maxBytes) {
-						// Check for timeout
+						// Check for timeout — the enclosing `finally` drains the
+						// reader on every exit path, including this throw.
 						if (Date.now() - startTime > READ_TIMEOUT_MS) {
-							await reader.cancel();
 							throw new Error(
 								"Stream read timeout while extracting usage info",
 							);
@@ -719,8 +722,8 @@ export class AnthropicProvider extends BaseProvider {
 						}
 					}
 				} finally {
-					// Cancel the reader to prevent hanging
-					reader.cancel().catch(() => {});
+					// Drain the reader to prevent hanging and release the native buffer
+					void drainReader(reader);
 				}
 
 				if (!foundMessageStart) return null;

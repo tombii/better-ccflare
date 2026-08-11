@@ -114,6 +114,13 @@ export interface ResponseHandlerOptions {
 	comboName?: string | null;
 	originalModel?: string | null;
 	appliedModel?: string | null;
+	/**
+	 * Controller whose signal was merged into the upstream fetch's
+	 * `init.signal` (see proxy-operations.ts). Passed through to the
+	 * terminal-recovery stream so a stuck-upstream drain deadline can abort
+	 * the actual connection instead of only releasing the reader lock.
+	 */
+	drainAbort?: AbortController;
 }
 
 /**
@@ -147,6 +154,7 @@ export async function forwardToClient(
 		comboName,
 		originalModel,
 		appliedModel,
+		drainAbort,
 	} = options;
 
 	// Always strip compression headers *before* we do anything else
@@ -279,11 +287,7 @@ export async function forwardToClient(
 				// applied in proxy-operations.ts (3 sites) and
 				// response-processor.ts — closing the gap flagged on merged
 				// upstream PR #196 (greptile-apps).
-				const isKeepalive = isInternalProbe(
-					requestHeaders,
-					ctx,
-					"keepalive",
-				);
+				const isKeepalive = isInternalProbe(requestHeaders, ctx, "keepalive");
 				if (isKeepalive) {
 					log.warn(
 						`Keepalive replay for ${account.name} hit mid-stream rate-limit — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
@@ -397,6 +401,7 @@ export async function forwardToClient(
 		let streamTerminalState: AnthropicTerminalState | null = null;
 		const responseBody = isAnthropicMessagesSseResponse
 			? createAnthropicTerminalRecoveryStream(response.body, {
+					drainAbort,
 					onRecovery(reason) {
 						log.warn("anthropic_terminal_message_stop_recovered", {
 							requestId,

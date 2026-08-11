@@ -37,6 +37,27 @@ function controllableStream(
 	return { stream, controller: () => controller, cancel };
 }
 
+/**
+ * Simulates what actually happens in production when the downstream
+ * consumer stops reading: `reader.cancel()` (a Bun no-op, oven-sh/bun#35093)
+ * is no longer called, so the pending `reader.read()` inside the drain loop
+ * only settles once the upstream connection itself ends — in `stream-tee.ts`
+ * this is bounded by the caller's fetch() abort signal rejecting the read
+ * (see its `cancel()` comment). A `controllableStream()` has no real network
+ * connection to abort, so tests that exercise the post-cancel drain must
+ * close the source explicitly, standing in for that eventual abort/EOF.
+ */
+async function settleDrain(
+	source: ReturnType<typeof controllableStream>,
+): Promise<void> {
+	try {
+		source.controller().close();
+	} catch {
+		// Already closed/errored — fine, the drain loop will still resolve.
+	}
+	await new Promise((resolve) => setTimeout(resolve, 20));
+}
+
 const terminalDelta =
 	'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":42}}\n\n';
 const messageStop = 'event: message_stop\ndata: {"type":"message_stop"}\n\n';
@@ -87,7 +108,10 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 			`${terminalDelta}${ping}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
 		);
 		expect(onRecovery).toHaveBeenCalledTimes(1);
-		expect(source.cancel).toHaveBeenCalledTimes(1);
+		// The fix must not call the upstream reader's cancel() — draining
+		// alone releases the native buffer (Bun's cancel() is a no-op,
+		// oven-sh/bun#35093, issue #382).
+		expect(source.cancel).not.toHaveBeenCalled();
 	});
 
 	it("does not let ping events defer recovery", async () => {
@@ -168,7 +192,7 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 			`${terminalDelta}${partialPing}\n\n${ANTHROPIC_MESSAGE_STOP_FRAME}`,
 		);
 		expect(onRecovery).toHaveBeenCalledTimes(1);
-		expect(source.cancel).toHaveBeenCalledTimes(1);
+		expect(source.cancel).not.toHaveBeenCalled();
 	});
 
 	it("does not duplicate a real message_stop buffered at the timeout boundary", async () => {
@@ -188,7 +212,7 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 			`${terminalDelta}${partialMessageStop}\n\n`,
 		);
 		expect(onRecovery).not.toHaveBeenCalled();
-		expect(source.cancel).toHaveBeenCalledTimes(1);
+		expect(source.cancel).not.toHaveBeenCalled();
 	});
 
 	it("closes a message_stop data line that only lacks its final blank line", async () => {
@@ -206,7 +230,7 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 
 		await expect(result).resolves.toBe(`${terminalDelta}${messageStop}`);
 		expect(onRecovery).not.toHaveBeenCalled();
-		expect(source.cancel).toHaveBeenCalledTimes(1);
+		expect(source.cancel).not.toHaveBeenCalled();
 	});
 
 	it("preserves a message_stop that completes shortly before the timeout", async () => {
@@ -573,7 +597,7 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 		expect(onRecovery).not.toHaveBeenCalled();
 	});
 
-	it("cancels upstream once and disarms recovery when downstream cancels", async () => {
+	it("drains upstream once and disarms recovery when downstream cancels", async () => {
 		const source = controllableStream();
 		const onRecovery = mock(() => undefined);
 		const body = createAnthropicTerminalRecoveryStream(source.stream, {
@@ -584,16 +608,24 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 
 		source.controller().enqueue(bytes(terminalDelta));
 		await expect(reader.read()).resolves.toMatchObject({ done: false });
-		await reader.cancel("client disconnected");
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		// reader.cancel() on the *outer* stream fires the wrapper's own
+		// cancel(reason) handler, which now drains the inner upstream
+		// reader to done instead of calling its cancel() (a Bun no-op,
+		// oven-sh/bun#35093, issue #382). The drain's pending read only
+		// settles once the upstream source closes — settleDrain() stands
+		// in for the real fetch abort signal that bounds it in production.
+		const cancelPromise = reader.cancel("client disconnected");
+		await settleDrain(source);
+		await cancelPromise;
 
-		expect(source.cancel).toHaveBeenCalledTimes(1);
+		// The fix must not call the upstream reader's cancel() — draining
+		// alone releases the native buffer.
+		expect(source.cancel).not.toHaveBeenCalled();
 		expect(onRecovery).not.toHaveBeenCalled();
 	});
 
-	it("propagates an upstream cancellation failure to downstream cancel", async () => {
-		const cancelError = new Error("upstream cancel failed");
-		const source = controllableStream(() => Promise.reject(cancelError));
+	it("propagates an upstream drain failure to downstream cancel", async () => {
+		const source = controllableStream();
 		const onCancelError = mock(() => undefined);
 		const body = createAnthropicTerminalRecoveryStream(source.stream, {
 			gracePeriodMs: 20,
@@ -603,17 +635,16 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 
 		source.controller().enqueue(bytes(terminalDelta));
 		await expect(reader.read()).resolves.toMatchObject({ done: false });
-		await expect(reader.cancel("client disconnected")).rejects.toThrow(
-			"upstream cancel failed",
-		);
+		const cancelPromise = reader.cancel("client disconnected");
+		source.controller().error(new Error("drain failed"));
+		await expect(cancelPromise).rejects.toThrow("drain failed");
 
-		expect(source.cancel).toHaveBeenCalledTimes(1);
+		expect(source.cancel).not.toHaveBeenCalled();
 		expect(onCancelError).not.toHaveBeenCalled();
 	});
 
-	it("reports a recovery cancellation failure after completing downstream", async () => {
-		const cancelError = new Error("recovery cancel failed");
-		const source = controllableStream(() => Promise.reject(cancelError));
+	it("reports a recovery drain failure after completing downstream", async () => {
+		const source = controllableStream();
 		const onCancelError = mock(() => undefined);
 		const body = createAnthropicTerminalRecoveryStream(source.stream, {
 			gracePeriodMs: 20,
@@ -625,10 +656,74 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 		await expect(result).resolves.toBe(
 			`${terminalDelta}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
 		);
-		await new Promise((resolve) => setTimeout(resolve, 0));
+		// recover() fires the background drain via cancelAfterForcedClose;
+		// error the source so the drain's pending read rejects, exercising
+		// the onCancelError reporting path.
+		source.controller().error(new Error("recovery drain failed"));
+		await new Promise((resolve) => setTimeout(resolve, 20));
 
 		expect(onCancelError).toHaveBeenCalledTimes(1);
-		expect(onCancelError).toHaveBeenCalledWith(cancelError, "timeout");
+		expect(onCancelError).toHaveBeenCalledWith(
+			expect.objectContaining({ message: "recovery drain failed" }),
+			"timeout",
+		);
+	});
+
+	it("gives up on the background drain once drainDeadlineMs elapses, without erroring", async () => {
+		// A stuck-but-open upstream (never closes, never errors, never sends
+		// another byte) is exactly the case recover()'s timeout path exists
+		// for. Before the deadline bound, drainUpstreamReader's `reader.read()`
+		// would hang forever here — holding the socket open indefinitely
+		// where the no-op `reader.cancel()` it replaced would have resolved
+		// instantly (issue #382 follow-up, Greptile review on PR #406).
+		const source = controllableStream();
+		const onCancelError = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 5,
+			drainDeadlineMs: 15,
+			onCancelError,
+		});
+		const result = new Response(body).text();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		await expect(result).resolves.toBe(
+			`${terminalDelta}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
+		);
+		// Deliberately never close/error/enqueue on `source` — the drain must
+		// still settle on its own via the deadline.
+		await new Promise((resolve) => setTimeout(resolve, 40));
+
+		// The deadline path is a clean give-up, not a failure: it must not be
+		// reported through onCancelError.
+		expect(onCancelError).not.toHaveBeenCalled();
+	});
+
+	it("aborts drainAbort once drainDeadlineMs elapses, to actually terminate the stuck fetch", async () => {
+		// releaseLock() alone only frees the reader object for another
+		// consumer — it does not touch the underlying connection. The only way
+		// to actually kill an in-flight fetch is to abort a signal that was
+		// part of its `init.signal` at creation time (Greptile follow-up on
+		// PR #406, second review pass).
+		const source = controllableStream();
+		const drainAbort = new AbortController();
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 5,
+			drainDeadlineMs: 15,
+			drainAbort,
+		});
+		const result = new Response(body).text();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		await expect(result).resolves.toBe(
+			`${terminalDelta}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
+		);
+		// Deliberately never close/error/enqueue on `source` — only the
+		// deadline can end this drain.
+		expect(drainAbort.signal.aborted).toBe(false);
+
+		await new Promise((resolve) => setTimeout(resolve, 40));
+
+		expect(drainAbort.signal.aborted).toBe(true);
 	});
 
 	it("emits 'client_cancelled' via onTerminalState when downstream cancels before terminal events", async () => {
@@ -647,7 +742,11 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 
 		source.controller().enqueue(bytes(terminalDelta));
 		await expect(reader.read()).resolves.toMatchObject({ done: false });
-		await reader.cancel("client disconnect");
+		// onTerminalState fires synchronously inside cancel(), before the
+		// background drain of the inner upstream reader — no need to wait
+		// for the drain (which only settles once the source closes) to
+		// observe it.
+		void reader.cancel("client disconnect");
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
 		expect(onTerminalState).toHaveBeenCalledTimes(1);
@@ -666,7 +765,7 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 		});
 		const reader = body.getReader();
 
-		await reader.cancel("client disconnect");
+		void reader.cancel("client disconnect");
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
 		expect(onTerminalState).toHaveBeenCalledTimes(1);

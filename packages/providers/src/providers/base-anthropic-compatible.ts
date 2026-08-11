@@ -10,6 +10,7 @@ import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../types";
 import { transformRequestBodyModel } from "../utils/model-mapping";
+import { drainReader } from "../utils/stream-drain";
 
 // Configuration interface for Anthropic-compatible providers
 export interface AnthropicCompatibleConfig {
@@ -366,7 +367,8 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		try {
 			while (buffered.length < maxBytes) {
 				if (Date.now() - startTime > READ_TIMEOUT_MS) {
-					await reader.cancel();
+					// The enclosing `finally` drains the reader on every exit
+					// path, including this throw — no separate call needed here.
 					throw new Error("Stream read timeout while extracting usage info");
 				}
 
@@ -517,7 +519,11 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 				}
 			}
 		} finally {
-			reader.cancel().catch(() => {});
+			// Fire and forget — the read loop typically breaks early (as soon
+			// as message_delta usage is seen), well before the upstream body
+			// is exhausted; draining releases the native buffer without
+			// blocking the return here.
+			void drainReader(reader);
 		}
 
 		// For streaming responses, message_delta always contains the final authoritative token counts

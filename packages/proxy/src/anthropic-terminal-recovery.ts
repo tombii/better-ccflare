@@ -3,6 +3,19 @@ export const ANTHROPIC_MESSAGE_STOP_FRAME =
 
 export const ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS = 10_000;
 
+/**
+ * Upper bound on how long the post-finalize upstream drain (see
+ * `drainUpstreamReader` below) will wait for `reader.read()` to settle.
+ * Without this, a stuck-but-still-open upstream (exactly the scenario
+ * `recover()`'s timeout path exists for) would hold the socket and its
+ * native buffer open forever instead of the fast Bun `cancel()` no-op it
+ * replaced — trading a memory leak for a connection leak. Once the deadline
+ * fires, `drainAbort` (when supplied) is aborted to actually tear down the
+ * underlying fetch's connection — releasing the reader's lock alone does not
+ * do that, it only frees the reader object for another consumer.
+ */
+export const ANTHROPIC_DRAIN_DEADLINE_MS = 30_000;
+
 const encoder = new TextEncoder();
 const messageStopBytes = encoder.encode(ANTHROPIC_MESSAGE_STOP_FRAME);
 const MAX_PENDING_EVENT_CHARS = 64 * 1024;
@@ -55,6 +68,18 @@ export type AnthropicTerminalState = (typeof ANTHROPIC_TERMINAL_STATES)[number];
 export interface AnthropicTerminalRecoveryOptions {
 	/** @internal Override only in deterministic unit tests. */
 	gracePeriodMs?: number;
+	/** @internal Override only in deterministic unit tests. */
+	drainDeadlineMs?: number;
+	/**
+	 * Controller whose signal is part of the `init.signal` the upstream
+	 * `fetch()` was created with (see request-handler.ts's `effectiveSignal`).
+	 * Aborting it is the only way to actually terminate that in-flight
+	 * fetch's connection — a signal from an unrelated/later controller cannot
+	 * retroactively attach. Optional so tests and callers without a wired
+	 * fetch-level controller keep working; without it, deadline expiry falls
+	 * back to releasing the reader lock only.
+	 */
+	drainAbort?: AbortController;
 	onRecovery?: (reason: AnthropicTerminalRecoveryReason) => void;
 	onCancelError?: (
 		error: unknown,
@@ -87,6 +112,9 @@ export function createAnthropicTerminalRecoveryStream(
 ): ReadableStream<Uint8Array> {
 	const gracePeriodMs =
 		options.gracePeriodMs ?? ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS;
+	const drainDeadlineMs =
+		options.drainDeadlineMs ?? ANTHROPIC_DRAIN_DEADLINE_MS;
+	const drainAbort = options.drainAbort;
 	const reader = upstream.getReader();
 	const decoder = new TextDecoder();
 
@@ -134,13 +162,45 @@ export function createAnthropicTerminalRecoveryStream(
 		recoveryWaitStartedAt = null;
 	};
 
-	const cancelUpstream = (reason: unknown): Promise<void> => {
-		if (upstreamCancelPromise) return upstreamCancelPromise;
+	// `reader.cancel()` is a documented no-op on every released Bun version
+	// (oven-sh/bun#35093): it never releases the native off-heap buffer
+	// backing the upstream fetch Response body, leaking RSS while JS heap
+	// stays flat (issue #382). Draining the reader to `done` instead actually
+	// releases the buffer — same fix as `discard-body-cancel.ts`'s
+	// `drainBody`, adapted here because `reader` is already an obtained
+	// `ReadableStreamDefaultReader` (the stream is locked to it), not a raw
+	// stream `drainBody` could call `.getReader()` on again.
+	//
+	// Bounded by `drainDeadlineMs`: a stuck-but-open upstream (the case
+	// `recover()`'s timeout path exists for) would otherwise leave this loop
+	// pending forever, holding the socket open where the no-op `cancel()` it
+	// replaced would have resolved instantly. On deadline, `drainAbort` (when
+	// supplied) is aborted so the fetch's underlying connection is actually
+	// torn down — `reader.releaseLock()` alone only frees the reader object,
+	// it does not touch the connection, so without an abort signal the socket
+	// would be left to whatever timeout Bun applies on its own.
+	const drainUpstreamReader = async (): Promise<void> => {
+		let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
 		try {
-			upstreamCancelPromise = reader.cancel(reason);
-		} catch (error) {
-			upstreamCancelPromise = Promise.reject(error);
+			const deadline = new Promise<{ done: true }>((resolve) => {
+				deadlineTimer = setTimeout(() => {
+					drainAbort?.abort(new Error("Drain deadline exceeded"));
+					resolve({ done: true });
+				}, drainDeadlineMs);
+			});
+			while (true) {
+				const { done } = await Promise.race([reader.read(), deadline]);
+				if (done) return;
+			}
+		} finally {
+			if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+			reader.releaseLock();
 		}
+	};
+
+	const cancelUpstream = (_reason: unknown): Promise<void> => {
+		if (upstreamCancelPromise) return upstreamCancelPromise;
+		upstreamCancelPromise = drainUpstreamReader();
 		return upstreamCancelPromise;
 	};
 
