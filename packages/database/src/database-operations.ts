@@ -820,6 +820,30 @@ OAuth tokens will need to be re-authenticated.
 	}
 
 	/**
+	 * Compare-and-set variant of {@link updateAccountTokens} guarded on the
+	 * account currently having no refresh token — see
+	 * {@link AccountRepository.updateTokensIfRefreshTokenAbsent}.
+	 */
+	async updateAccountTokensIfRefreshTokenAbsent(
+		accountId: string,
+		accessToken: string,
+		expiresAt: number,
+		refreshToken?: string,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() =>
+				this.accounts.updateTokensIfRefreshTokenAbsent(
+					accountId,
+					accessToken,
+					expiresAt,
+					refreshToken,
+				),
+			this.retryConfig,
+			"updateAccountTokensIfRefreshTokenAbsent",
+		);
+	}
+
+	/**
 	 * Compare-and-set variant of {@link setRequiresReauth}(accountId, true)
 	 * guarded on the expected refresh token — see
 	 * {@link AccountRepository.flagRequiresReauthIfTokenMatches}.
