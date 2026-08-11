@@ -15,6 +15,11 @@ import {
 	getValidAccessToken,
 	INTERNAL_PROBE_SECRET_HEADER,
 } from "./handlers";
+import {
+	flushPendingRotation,
+	getPendingRotation,
+	recordPendingRotation,
+} from "./handlers/pending-rotation-registry";
 import type { ProxyContext } from "./proxy";
 
 const log = new Logger("AutoRefreshScheduler");
@@ -804,6 +809,19 @@ export class AutoRefreshScheduler {
 		);
 
 		for (const row of accounts) {
+			// (round-3 item 2) Flush any rotation from an earlier cycle that
+			// succeeded at the provider but failed to persist, before touching
+			// this row again. A still-failing flush means the account's live
+			// credentials are the ones sitting in the registry, not the row we
+			// just read — refreshing again this cycle would race the retry.
+			const flush = await flushPendingRotation(row.id, this.proxyContext.dbOps);
+			if (flush === "failed") {
+				log.warn(
+					`Skipping proactive ${row.provider} refresh for ${row.name} this cycle — a pending rotation is still awaiting persist`,
+				);
+				continue;
+			}
+
 			// Skip if a refresh is already in-flight for this account (deduplication)
 			if (this.proxyContext.refreshInFlight.has(row.id)) {
 				log.debug(
@@ -869,24 +887,43 @@ export class AutoRefreshScheduler {
 						// attempt used — a rotation that landed underneath (manual re-auth,
 						// or a request-triggered refresh joining the same account) must not
 						// be overwritten with the tokens from this now-superseded attempt.
-						const changes = await this.db.runWithChanges(
-							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ? AND refresh_token = ?`,
-							[
-								result.accessToken,
-								result.expiresAt,
-								newRefreshToken,
-								Date.now(),
-								row.id,
-								row.refresh_token,
-							],
-						);
-						if (changes === 0) {
-							log.warn(
-								`Skipped persisting refreshed ${row.provider} token for ${row.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth)`,
-							);
-						} else {
-							log.info(
-								`${row.provider} token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+						// Routed through the retry-wrapped dbOps helper instead of raw SQL
+						// so this write benefits from the same transient-failure retries on
+						// Postgres as the token-manager funnel.
+						try {
+							const persisted =
+								await this.proxyContext.dbOps.updateAccountTokensIfRefreshTokenMatches(
+									row.id,
+									row.refresh_token,
+									result.accessToken,
+									result.expiresAt,
+									newRefreshToken,
+								);
+							if (!persisted) {
+								log.warn(
+									`Skipped persisting refreshed ${row.provider} token for ${row.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth)`,
+								);
+							} else {
+								log.info(
+									`${row.provider} token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+								);
+							}
+						} catch (persistError) {
+							// (round-3 item 2) A rotation the provider has already
+							// committed must never be silently dropped: the DB still
+							// holds the consumed token, and a later stale consumer would
+							// replay it, get invalid_grant, and CAS-flag a healthy
+							// account. Record it so every subsequent touchpoint retries
+							// the persist and suppresses flagging meanwhile.
+							recordPendingRotation(row.id, {
+								accessToken: result.accessToken,
+								expiresAt: result.expiresAt,
+								refreshToken: newRefreshToken,
+								attemptedRefreshToken: row.refresh_token,
+							});
+							log.error(
+								`Failed to persist refreshed ${row.provider} token for ${row.name} — rotation queued for re-persist`,
+								persistError,
 							);
 						}
 						return result.accessToken;
@@ -959,6 +996,19 @@ export class AutoRefreshScheduler {
 		);
 
 		for (const row of accounts) {
+			// (round-3 item 2) Flush any rotation from an earlier cycle that
+			// succeeded at the provider but failed to persist, before touching
+			// this row again. A still-failing flush means the account's live
+			// credentials are the ones sitting in the registry, not the row we
+			// just read — refreshing again this cycle would race the retry.
+			const flush = await flushPendingRotation(row.id, this.proxyContext.dbOps);
+			if (flush === "failed") {
+				log.warn(
+					`Skipping proactive Codex refresh for ${row.name} this cycle — a pending rotation is still awaiting persist`,
+				);
+				continue;
+			}
+
 			// Skip if a refresh is already in-flight for this account (deduplication)
 			if (this.proxyContext.refreshInFlight.has(row.id)) {
 				log.debug(
@@ -1022,24 +1072,43 @@ export class AutoRefreshScheduler {
 						// attempt used — a rotation that landed underneath (manual re-auth,
 						// or a request-triggered refresh joining the same account) must not
 						// be overwritten with the tokens from this now-superseded attempt.
-						const changes = await this.db.runWithChanges(
-							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ? AND refresh_token = ?`,
-							[
-								result.accessToken,
-								result.expiresAt,
-								newRefreshToken,
-								Date.now(),
-								row.id,
-								row.refresh_token,
-							],
-						);
-						if (changes === 0) {
-							log.warn(
-								`Skipped persisting refreshed Codex token for ${row.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth)`,
-							);
-						} else {
-							log.info(
-								`Codex token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+						// Routed through the retry-wrapped dbOps helper instead of raw SQL
+						// so this write benefits from the same transient-failure retries on
+						// Postgres as the token-manager funnel.
+						try {
+							const persisted =
+								await this.proxyContext.dbOps.updateAccountTokensIfRefreshTokenMatches(
+									row.id,
+									row.refresh_token,
+									result.accessToken,
+									result.expiresAt,
+									newRefreshToken,
+								);
+							if (!persisted) {
+								log.warn(
+									`Skipped persisting refreshed Codex token for ${row.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth)`,
+								);
+							} else {
+								log.info(
+									`Codex token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+								);
+							}
+						} catch (persistError) {
+							// (round-3 item 2) A rotation the provider has already
+							// committed must never be silently dropped: the DB still
+							// holds the consumed token, and a later stale consumer would
+							// replay it, get invalid_grant, and CAS-flag a healthy
+							// account. Record it so every subsequent touchpoint retries
+							// the persist and suppresses flagging meanwhile.
+							recordPendingRotation(row.id, {
+								accessToken: result.accessToken,
+								expiresAt: result.expiresAt,
+								refreshToken: newRefreshToken,
+								attemptedRefreshToken: row.refresh_token,
+							});
+							log.error(
+								`Failed to persist refreshed Codex token for ${row.name} — rotation queued for re-persist`,
+								persistError,
 							);
 						}
 						return result.accessToken;
@@ -1087,18 +1156,30 @@ export class AutoRefreshScheduler {
 		const reason = extractAuthFailureReason(message, row.name);
 		if (!reason) return;
 
+		// (round-3 item 2) A pending unpersisted rotation means WE rotated
+		// successfully moments ago — this failure is a replay of the consumed
+		// token, not a dead account.
+		if (getPendingRotation(row.id)) {
+			log.warn(
+				`Skipping requires_reauth for ${row.name}: a successful rotation is awaiting persist (replayed a consumed token)`,
+			);
+			return;
+		}
+
 		// Atomic rotation-race guard (CAS): condemn the account only if it still
 		// holds the exact refresh token this attempt used. A rotation that landed
-		// after our snapshot makes the UPDATE a no-op — no flag, no alert. A DB
+		// after our snapshot makes the write a no-op — no flag, no alert. A DB
 		// error leaves the flag unset: "unable to verify" is not evidence of a
-		// dead token; the next scheduler pass retries with the live row.
+		// dead token; the next scheduler pass retries with the live row. Routed
+		// through the retry-wrapped dbOps helper (shared with the token-manager
+		// funnel) instead of raw SQL so this write benefits from the same
+		// transient-failure retries on Postgres.
 		let flagged = false;
 		try {
-			const changes = await this.db.runWithChanges(
-				`UPDATE accounts SET requires_reauth = 1 WHERE id = ? AND refresh_token = ?`,
-				[row.id, row.refresh_token],
+			flagged = await this.proxyContext.dbOps.flagRequiresReauthIfTokenMatches(
+				row.id,
+				row.refresh_token,
 			);
-			flagged = changes > 0;
 		} catch (writeError) {
 			log.warn(
 				`Could not verify-and-flag requires_reauth for ${row.name} — leaving unset (unverified ${reason})`,
