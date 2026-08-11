@@ -12,10 +12,7 @@ import {
 } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
-import {
-	registerProviderModelDefaultFactory,
-	resolveProviderModelDefault,
-} from "../../provider-model-defaults";
+import { resolveProviderModelDefault } from "../../provider-model-defaults";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 import { normalizeCodexInputUsage } from "./usage";
 
@@ -102,7 +99,7 @@ const CODEX_ERROR_TYPE_BY_CODE: Record<string, string> = {
 };
 
 // Default model mapping: Anthropic model name prefixes → Codex model names
-const DEFAULT_MODEL_MAP: Record<string, string> = {
+const _DEFAULT_MODEL_MAP: Record<string, string> = {
 	// Same value as opus/sonnet, for consistency in the factory map. ChatGPT
 	// subscription accounts reject 5.3-codex (HTTP 400); in those cases the
 	// fix lives in the layers above — per-account mapping or a global
