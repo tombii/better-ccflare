@@ -72,6 +72,8 @@ function makeContext(opts: {
 				getAccount: mock(async () => opts.dbAccount ?? null),
 				setRequiresReauth,
 				updateAccountTokens: mock(async () => {}),
+				updateAccountTokensIfRefreshTokenMatches: mock(async () => true),
+				flagRequiresReauthIfTokenMatches: mock(async () => true),
 			},
 			runtime: { clientId: "test-client" },
 			refreshInFlight: new Map(),
@@ -181,6 +183,59 @@ describe("refreshAccessTokenSafe — rotation-race pre-refresh guard", () => {
 		expect(token).toBe("brand-new");
 		expect(refreshToken).toHaveBeenCalledTimes(1);
 	});
+
+	it("does not adopt an older refresh token from a delayed DB state (finding 6, test F)", async () => {
+		// account (memory) already rotated to RT2 at t=2000; the DB row is a
+		// delayed snapshot still showing RT1 issued at t=1000. A DB read that
+		// merely differs from memory must never be treated as "fresher" —
+		// only a strictly newer issued_at may override the in-memory RT.
+		const account = makeAccount("no-adopt-older-rt-1", {
+			refresh_token: "RT2",
+			refresh_token_issued_at: 2000,
+			access_token: "expired-mem",
+			expires_at: 1,
+		});
+		const dbAccount = makeAccount("no-adopt-older-rt-1", {
+			refresh_token: "RT1",
+			refresh_token_issued_at: 1000,
+			access_token: "also-expired-db",
+			expires_at: 2,
+		});
+		const { ctx, refreshCalls } = makeContext({
+			dbAccount,
+			refreshResult: {
+				accessToken: "brand-new",
+				expiresAt: Date.now() + 3_600_000,
+			},
+		});
+
+		await refreshAccessTokenSafe(account as never, ctx as never);
+
+		expect(refreshCalls[0]?.refreshTokenAtCall).toBe("RT2");
+		expect(account.refresh_token).toBe("RT2");
+	});
+
+	it("adopts when DB expiry is strictly newer even if access token string equal (finding 6, test G)", async () => {
+		const sharedAccessToken = "same-access-token-string";
+		const account = makeAccount("adopt-newer-expiry-1", {
+			refresh_token: "RT1",
+			access_token: sharedAccessToken,
+			expires_at: 1,
+		});
+		const dbAccount = makeAccount("adopt-newer-expiry-1", {
+			refresh_token: "RT1",
+			access_token: sharedAccessToken,
+			expires_at: Date.now() + 2 * 60 * 60 * 1000,
+			refresh_token_issued_at: Date.now(),
+		});
+		const { ctx, refreshToken } = makeContext({ dbAccount });
+
+		const token = await refreshAccessTokenSafe(account as never, ctx as never);
+
+		expect(token).toBe(sharedAccessToken);
+		expect(refreshToken).not.toHaveBeenCalled();
+		expect(account.expires_at).toBe(dbAccount.expires_at);
+	});
 });
 
 describe("refreshAccessTokenSafe — benign race on invalid_grant", () => {
@@ -266,7 +321,7 @@ describe("refreshAccessTokenSafe — benign race on invalid_grant", () => {
 		expect(account.refresh_token).toBe("RT2-current");
 	});
 
-	it("still flags requires_reauth when the rejected RT is the account's current one", async () => {
+	it("still flags requires_reauth via the CAS write when the rejected RT is the account's current one", async () => {
 		const account = makeAccount("race-catch-flag-1", {
 			refresh_token: "RT1-dead",
 			access_token: "stale",
@@ -277,17 +332,215 @@ describe("refreshAccessTokenSafe — benign race on invalid_grant", () => {
 			access_token: "stale",
 			expires_at: 1,
 		});
-		const { ctx, setRequiresReauth, queuedJobs } = makeContext({
+		const { ctx } = makeContext({
 			refreshError: invalidGrant,
 		});
 		ctx.dbOps.getAccount = mock(async () => sameDb);
 
+		const events: AuthFailureEvt[] = [];
+		const listener = (e: AuthFailureEvt) => events.push(e);
+		authFailureEvents.on("event", listener);
+		try {
+			await expect(
+				refreshAccessTokenSafe(account as never, ctx as never),
+			).rejects.toThrow();
+		} finally {
+			authFailureEvents.off("event", listener);
+		}
+
+		expect(ctx.dbOps.flagRequiresReauthIfTokenMatches).toHaveBeenCalledWith(
+			"race-catch-flag-1",
+			"RT1-dead",
+		);
+		expect(events).toHaveLength(1);
+	});
+
+	it("emits the auth-failure event only when the CAS flag write actually succeeds (finding 2, test B)", async () => {
+		const account = makeAccount("flag-cas-fail-1", {
+			refresh_token: "RT1-dead",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const sameDb = makeAccount("flag-cas-fail-1", {
+			refresh_token: "RT1-dead",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const { ctx } = makeContext({ refreshError: invalidGrant });
+		ctx.dbOps.getAccount = mock(async () => sameDb);
+		// Someone rotated the token between our verification read and the flag
+		// write — the CAS write is a no-op and must not be treated as success.
+		ctx.dbOps.flagRequiresReauthIfTokenMatches = mock(async () => false);
+
+		const events: AuthFailureEvt[] = [];
+		const listener = (e: AuthFailureEvt) => events.push(e);
+		authFailureEvents.on("event", listener);
+		try {
+			await expect(
+				refreshAccessTokenSafe(account as never, ctx as never),
+			).rejects.toThrow();
+		} finally {
+			authFailureEvents.off("event", listener);
+		}
+
+		expect(ctx.dbOps.flagRequiresReauthIfTokenMatches).toHaveBeenCalledWith(
+			"flag-cas-fail-1",
+			"RT1-dead",
+		);
+		expect(events).toHaveLength(0);
+	});
+
+	it("does not flag when the recovery DB read fails (finding 3, test C)", async () => {
+		const account = makeAccount("no-flag-db-read-fail-1", {
+			refresh_token: "RT1-dead",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const { ctx } = makeContext({ refreshError: invalidGrant });
+		// Every getAccount call fails: the pre-refresh guard swallows its own
+		// failure internally and proceeds; the post-failure recovery read is
+		// the one that matters here and must leave requires_reauth unverified.
+		ctx.dbOps.getAccount = mock(async () => {
+			throw new Error("db unavailable");
+		});
+
+		const events: AuthFailureEvt[] = [];
+		const listener = (e: AuthFailureEvt) => events.push(e);
+		authFailureEvents.on("event", listener);
+		try {
+			await expect(
+				refreshAccessTokenSafe(account as never, ctx as never),
+			).rejects.toThrow();
+		} finally {
+			authFailureEvents.off("event", listener);
+		}
+
+		expect(ctx.dbOps.flagRequiresReauthIfTokenMatches).not.toHaveBeenCalled();
+		expect(events).toHaveLength(0);
+	});
+});
+
+describe("refreshAccessTokenSafe — persist-in-promise and identity-safe cleanup", () => {
+	it("persists rotated tokens via the awaited CAS write before the refresh promise resolves (finding 1, test A)", async () => {
+		const account = makeAccount("persist-order-1", {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const { ctx, queuedJobs } = makeContext({
+			dbAccount: null,
+			refreshResult: {
+				accessToken: "brand-new",
+				expiresAt: Date.now() + 3_600_000,
+				refreshToken: "RT2",
+			},
+		});
+		let persisted = false;
+		ctx.dbOps.updateAccountTokensIfRefreshTokenMatches = mock(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			persisted = true;
+			return true;
+		});
+
+		const token = await refreshAccessTokenSafe(account as never, ctx as never);
+
+		expect(token).toBe("brand-new");
+		// The CAS write's tick-delayed resolution must have already happened by
+		// the time refreshAccessTokenSafe itself resolves — proving the write
+		// is awaited INSIDE the shared promise, not fired-and-forgotten.
+		expect(persisted).toBe(true);
+		expect(
+			ctx.dbOps.updateAccountTokensIfRefreshTokenMatches,
+		).toHaveBeenCalledWith(
+			"persist-order-1",
+			"RT1",
+			"brand-new",
+			expect.any(Number),
+			"RT2",
+		);
+		// The lossy asyncWriter queue must never be used for the token write.
+		expect(queuedJobs).toHaveLength(0);
+	});
+
+	it("finally does not delete a newer in-flight entry installed while it was still settling (finding 4, test D)", async () => {
+		const account = makeAccount("finally-identity-1", {
+			refresh_token: "RT1",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const { ctx } = makeContext({ dbAccount: null });
+		ctx.provider.refreshToken = mock(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			return {
+				accessToken: "brand-new",
+				expiresAt: Date.now() + 3_600_000,
+			};
+		});
+
+		const pending = refreshAccessTokenSafe(account as never, ctx as never);
+
+		// Let the synchronous setup (adoption guard's await + refreshInFlight
+		// install) run to completion before mutating the map — both are
+		// microtask-only, so they finish before this real timer fires.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		const sentinel = Promise.resolve("sentinel-token");
+		ctx.refreshInFlight.delete(account.id);
+		ctx.refreshInFlight.set(account.id, sentinel);
+
+		await pending;
+
+		expect(ctx.refreshInFlight.get(account.id)).toBe(sentinel);
+	});
+});
+
+describe("refreshAccessTokenSafe — join in-flight before backoff", () => {
+	it("lets a concurrent caller join an in-flight refresh even while the account is in backoff (finding 5, test E)", async () => {
+		const account = makeAccount("join-inflight-backoff-1", {
+			refresh_token: "RT1",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const networkError = new Error("upstream 503 timeout");
+		const { ctx, refreshToken } = makeContext({
+			dbAccount: null,
+			refreshError: networkError,
+		});
+
+		// Seed a recent (transient, non-auth) failure so the account is now in
+		// its backoff window.
 		await expect(
 			refreshAccessTokenSafe(account as never, ctx as never),
 		).rejects.toThrow();
+		expect(ctx.refreshInFlight.has(account.id)).toBe(false);
+		expect(refreshToken).toHaveBeenCalledTimes(1);
 
-		for (const job of queuedJobs) await job();
-		expect(setRequiresReauth).toHaveBeenCalledTimes(1);
-		expect(setRequiresReauth).toHaveBeenCalledWith("race-catch-flag-1", true);
+		// Simulate a refresh already in flight via another path that shares
+		// this same ctx.refreshInFlight map — e.g. the auto-refresh scheduler,
+		// which registers its own promise directly into the map
+		// (auto-refresh-scheduler.ts) so concurrent request-triggered
+		// refreshes can join it.
+		const joinedRefresh = mock(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			return {
+				accessToken: "refresh-1-token",
+				expiresAt: Date.now() + 3_600_000,
+			};
+		});
+		ctx.provider.refreshToken = joinedRefresh;
+		const inFlightPromise = joinedRefresh().then(
+			(result: { accessToken: string }) => result.accessToken,
+		);
+		ctx.refreshInFlight.set(account.id, inFlightPromise);
+
+		// Still well within the backoff window — a fresh caller with no
+		// in-flight entry would be blocked here; this caller must instead join
+		// the in-flight promise rather than throw ServiceUnavailableError.
+		const joined = await refreshAccessTokenSafe(account as never, ctx as never);
+
+		expect(joined).toBe("refresh-1-token");
+		// The original seeding mock was never called again by the joiner...
+		expect(refreshToken).toHaveBeenCalledTimes(1);
+		// ...and the joiner did not start a second refresh of its own either.
+		expect(joinedRefresh).toHaveBeenCalledTimes(1);
 	});
 });

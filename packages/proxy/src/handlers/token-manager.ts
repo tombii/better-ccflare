@@ -253,7 +253,14 @@ async function adoptDbTokensIfFresher(
 		typeof dbAccount.expires_at === "number" &&
 		dbAccount.expires_at - Date.now() > TOKEN_SAFETY_WINDOW_MS;
 
-	if (dbTokenValid && dbAccount.access_token !== account.access_token) {
+	// (finding 6) Adopt on strictly-newer expiry (monotonic), not on string
+	// inequality — a delayed DB read must never look "different, therefore
+	// fresher": two access tokens minted moments apart can differ as strings
+	// while the DB's is actually the OLDER of the two.
+	if (
+		dbTokenValid &&
+		(dbAccount.expires_at ?? 0) > (account.expires_at ?? 0)
+	) {
 		account.access_token = dbAccount.access_token;
 		account.expires_at = dbAccount.expires_at;
 		if (dbAccount.refresh_token) {
@@ -268,9 +275,18 @@ async function adoptDbTokensIfFresher(
 		return dbAccount.access_token;
 	}
 
+	// (finding 6) Sync a rotated refresh token only when the DB's is not
+	// provably older than the in-memory snapshot's. A DB row that predates
+	// issued-at tracking (dbIssuedAt === null) is never trusted over a
+	// snapshot that DOES have an issued-at, since we cannot tell whether the
+	// untracked DB write happened before or after it.
+	const dbIssuedAt = dbAccount.refresh_token_issued_at ?? null;
+	const memIssuedAt = account.refresh_token_issued_at ?? null;
 	if (
 		dbAccount.refresh_token &&
-		dbAccount.refresh_token !== account.refresh_token
+		dbAccount.refresh_token !== account.refresh_token &&
+		(memIssuedAt === null ||
+			(dbIssuedAt !== null && dbIssuedAt >= memIssuedAt))
 	) {
 		account.refresh_token = dbAccount.refresh_token;
 		account.refresh_token_issued_at = dbAccount.refresh_token_issued_at;
@@ -293,6 +309,15 @@ export async function refreshAccessTokenSafe(
 	account: Account,
 	ctx: ProxyContext,
 ): Promise<string> {
+	// (finding 5) Join an in-flight refresh FIRST — before backoff — so a
+	// concurrent caller shares the outcome instead of failing on a backoff
+	// seeded by an earlier, unrelated failure (e.g. the auto-refresh
+	// scheduler registers its own in-flight promise into this same map;
+	// a request-triggered caller must join that refresh, not bounce off a
+	// stale backoff record for the account).
+	const inFlight = ctx.refreshInFlight.get(account.id);
+	if (inFlight) return inFlight;
+
 	// Proactively clean expired entries before checking
 	cleanupExpiredFailures();
 
@@ -403,18 +428,47 @@ export async function refreshAccessTokenSafe(
 		// Create a new refresh promise and store it
 		const refreshPromise = provider
 			.refreshToken(account, ctx.runtime.clientId)
-			.then((result: TokenRefreshResult) => {
-				// 1. Persist to database asynchronously
-				ctx.asyncWriter.enqueue(() =>
-					ctx.dbOps.updateAccountTokens(
-						account.id,
-						result.accessToken,
-						result.expiresAt,
-						result.refreshToken,
-					),
-				);
+			.then(async (result: TokenRefreshResult) => {
+				// (finding 1) Persist INSIDE the shared promise so refreshInFlight
+				// stays installed until the write commits, and never via the
+				// lossy asyncWriter queue (a queued write's failure was
+				// previously unobservable to anyone awaiting this refresh).
+				// (finding 4) CAS on the attempted refresh token so a refresh
+				// that lost a race to a manual re-auth cannot overwrite newer
+				// credentials with the stale ones it started with.
+				try {
+					let persisted: boolean;
+					if (attemptedRefreshToken) {
+						persisted =
+							await ctx.dbOps.updateAccountTokensIfRefreshTokenMatches(
+								account.id,
+								attemptedRefreshToken,
+								result.accessToken,
+								result.expiresAt,
+								result.refreshToken,
+							);
+					} else {
+						await ctx.dbOps.updateAccountTokens(
+							account.id,
+							result.accessToken,
+							result.expiresAt,
+							result.refreshToken,
+						);
+						persisted = true;
+					}
+					if (!persisted) {
+						log.warn(
+							`Skipped persisting refreshed tokens for ${account.name}: refresh token changed underneath (superseded by a newer rotation or manual re-auth)`,
+						);
+					}
+				} catch (persistError) {
+					log.error(
+						`Failed to persist refreshed tokens for ${account.name} — continuing with in-memory tokens`,
+						persistError,
+					);
+				}
 
-				// 2. Update the live in-memory account object immediately
+				// Update the live in-memory account object immediately
 				// This prevents subsequent requests from seeing stale token data
 				account.access_token = result.accessToken;
 				account.expires_at = result.expiresAt;
@@ -462,11 +516,13 @@ export async function refreshAccessTokenSafe(
 					// consumer rotated successfully after our snapshot was taken.
 					// Recover from the DB instead of condemning a healthy account.
 					let dbAccount: Account | null = null;
+					let dbReadFailed = false;
 					try {
 						dbAccount = await ctx.dbOps.getAccount(account.id);
 					} catch (readError) {
+						dbReadFailed = true;
 						log.warn(
-							`Could not re-read account ${account.name} after ${authFailureReason} — treating failure as definitive`,
+							`Could not re-read account ${account.name} after ${authFailureReason} — leaving requires_reauth unset (unverified)`,
 							readError,
 						);
 					}
@@ -495,21 +551,38 @@ export async function refreshAccessTokenSafe(
 						);
 						throw new TokenRefreshError(account.id, new Error(enhancedMessage));
 					}
-					// Accepted race (documented, not synchronized): a manual re-auth that
-					// clears the flag via a direct DB write could be overtaken by this
-					// still-queued set(true) under a pathologically backlogged async
-					// writer. Likelihood is negligible — a human OAuth round-trip versus a
-					// millisecond queue drain — and recovery is simply to re-authenticate
-					// again, so building synchronization here is not worth the complexity.
-					ctx.asyncWriter.enqueue(() =>
-						ctx.dbOps.setRequiresReauth(account.id, true),
-					);
-					authFailureEvents.emit("event", {
-						accountId: account.id,
-						accountName: account.name,
-						provider: account.provider,
-						reason: authFailureReason,
-					});
+					// (finding 3) Unverifiable → do NOT flag; the backoff entry recorded
+					// above already keeps this account out of routing for a while.
+					if (dbReadFailed || !attemptedRefreshToken) {
+						throw new TokenRefreshError(account.id, new Error(enhancedMessage));
+					}
+					// (finding 2) Atomic flag: only condemn the account if the DB still
+					// holds the exact refresh token the provider just rejected — a CAS
+					// write closes the gap between this read and the flag write itself.
+					// Emit the auth-failure event only when the flag actually lands.
+					try {
+						const flagged = await ctx.dbOps.flagRequiresReauthIfTokenMatches(
+							account.id,
+							attemptedRefreshToken,
+						);
+						if (flagged) {
+							authFailureEvents.emit("event", {
+								accountId: account.id,
+								accountName: account.name,
+								provider: account.provider,
+								reason: authFailureReason,
+							});
+						} else {
+							log.warn(
+								`Skipped requires_reauth for ${account.name}: refresh token rotated between verification and flag write (rotation race)`,
+							);
+						}
+					} catch (flagError) {
+						log.warn(
+							`Could not persist requires_reauth for ${account.name} — leaving unset (unverified)`,
+							flagError,
+						);
+					}
 				}
 				log.error(
 					`Token refresh failed for account ${account.name}: ${enhancedMessage}`,
@@ -518,8 +591,12 @@ export async function refreshAccessTokenSafe(
 				throw new TokenRefreshError(account.id, new Error(enhancedMessage));
 			})
 			.finally(() => {
-				// Clean up the map when done (success or failure)
-				ctx.refreshInFlight.delete(account.id);
+				// (finding 4) Identity-safe: never delete a newer entry installed by
+				// a manual reauth or cache-clear that ran while this promise was
+				// still settling.
+				if (ctx.refreshInFlight.get(account.id) === refreshPromise) {
+					ctx.refreshInFlight.delete(account.id);
+				}
 			});
 		ctx.refreshInFlight.set(account.id, refreshPromise);
 	}
