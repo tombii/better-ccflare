@@ -1045,11 +1045,34 @@ export class AutoRefreshScheduler {
 	 */
 	private async flagIfDefinitiveAuthFailure(
 		error: unknown,
-		row: { id: string; name: string; provider: string },
+		row: { id: string; name: string; provider: string; refresh_token: string },
 	): Promise<void> {
 		const message = error instanceof Error ? error.message : String(error);
 		const reason = extractAuthFailureReason(message, row.name);
 		if (!reason) return;
+
+		// Rotation-race guard: if the account's current refresh token is no
+		// longer the one this attempt used, another consumer rotated it after our
+		// loop-start snapshot — the rejection condemned a superseded token, not
+		// the account. Skip flagging; the next scheduler pass uses the live row.
+		try {
+			const rows = await this.db.query<{ refresh_token: string | null }>(
+				`SELECT refresh_token FROM accounts WHERE id = ?`,
+				[row.id],
+			);
+			const currentRefreshToken = rows[0]?.refresh_token ?? null;
+			if (currentRefreshToken && currentRefreshToken !== row.refresh_token) {
+				log.warn(
+					`Skipping requires_reauth for ${row.name}: the failed ${row.provider} refresh used a superseded refresh token (rotation race)`,
+				);
+				return;
+			}
+		} catch (readError) {
+			log.warn(
+				`Could not verify current refresh token for ${row.name} — treating ${reason} as definitive`,
+				readError,
+			);
+		}
 
 		try {
 			await this.db.run(
