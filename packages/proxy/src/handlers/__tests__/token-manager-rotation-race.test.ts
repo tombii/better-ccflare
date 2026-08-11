@@ -418,6 +418,44 @@ describe("refreshAccessTokenSafe — benign race on invalid_grant", () => {
 		expect(ctx.dbOps.flagRequiresReauthIfTokenMatches).not.toHaveBeenCalled();
 		expect(events).toHaveLength(0);
 	});
+
+	it("does not flag and rejects with TokenRefreshError when the CAS flag write itself rejects", async () => {
+		const account = makeAccount("flag-cas-rejects-1", {
+			refresh_token: "RT1-dead",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const sameDb = makeAccount("flag-cas-rejects-1", {
+			refresh_token: "RT1-dead",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const { ctx } = makeContext({ refreshError: invalidGrant });
+		ctx.dbOps.getAccount = mock(async () => sameDb);
+		// The CAS write itself throws (e.g. a transient DB error), not merely
+		// resolving false — the surrounding try/catch must swallow it and leave
+		// requires_reauth unset rather than letting it propagate unexpectedly.
+		ctx.dbOps.flagRequiresReauthIfTokenMatches = mock(async () => {
+			throw new Error("db write failed");
+		});
+
+		const events: AuthFailureEvt[] = [];
+		const listener = (e: AuthFailureEvt) => events.push(e);
+		authFailureEvents.on("event", listener);
+		try {
+			await expect(
+				refreshAccessTokenSafe(account as never, ctx as never),
+			).rejects.toThrow("Failed to refresh access token");
+		} finally {
+			authFailureEvents.off("event", listener);
+		}
+
+		expect(ctx.dbOps.flagRequiresReauthIfTokenMatches).toHaveBeenCalledWith(
+			"flag-cas-rejects-1",
+			"RT1-dead",
+		);
+		expect(events).toHaveLength(0);
+	});
 });
 
 describe("refreshAccessTokenSafe — persist-in-promise and identity-safe cleanup", () => {
@@ -460,6 +498,34 @@ describe("refreshAccessTokenSafe — persist-in-promise and identity-safe cleanu
 		);
 		// The lossy asyncWriter queue must never be used for the token write.
 		expect(queuedJobs).toHaveLength(0);
+	});
+
+	it("calls the CAS write with undefined as the 5th arg when the provider returns no rotated refresh token", async () => {
+		const account = makeAccount("undefined-rt-arg-1", {
+			refresh_token: "RT1",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const { ctx } = makeContext({
+			dbAccount: null,
+			refreshResult: {
+				accessToken: "brand-new",
+				expiresAt: Date.now() + 3_600_000,
+				// no refreshToken key: the provider did not rotate this time.
+			},
+		});
+
+		await refreshAccessTokenSafe(account as never, ctx as never);
+
+		expect(
+			ctx.dbOps.updateAccountTokensIfRefreshTokenMatches,
+		).toHaveBeenCalledWith(
+			"undefined-rt-arg-1",
+			"RT1",
+			"brand-new",
+			expect.any(Number),
+			undefined,
+		);
 	});
 
 	it("finally does not delete a newer in-flight entry installed while it was still settling (finding 4, test D)", async () => {
@@ -542,5 +608,65 @@ describe("refreshAccessTokenSafe — join in-flight before backoff", () => {
 		expect(refreshToken).toHaveBeenCalledTimes(1);
 		// ...and the joiner did not start a second refresh of its own either.
 		expect(joinedRefresh).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("refreshAccessTokenSafe — accounts with no refresh token to CAS against", () => {
+	// Account.refresh_token is typed as `string` (not nullable) — the "no
+	// refresh token" shape in this codebase is an empty string, not null. This
+	// still exercises the exact `!attemptedRefreshToken` falsy branch.
+
+	it("falls back to the plain updateAccountTokens write on success (no CAS possible)", async () => {
+		const account = makeAccount("no-rt-success-1", {
+			refresh_token: "",
+			access_token: "stale-access",
+			expires_at: 1,
+		});
+		const { ctx } = makeContext({
+			dbAccount: null,
+			refreshResult: {
+				accessToken: "brand-new",
+				expiresAt: Date.now() + 3_600_000,
+			},
+		});
+
+		const token = await refreshAccessTokenSafe(account as never, ctx as never);
+
+		expect(token).toBe("brand-new");
+		expect(ctx.dbOps.updateAccountTokens).toHaveBeenCalledWith(
+			"no-rt-success-1",
+			"brand-new",
+			expect.any(Number),
+			undefined,
+		);
+		expect(
+			ctx.dbOps.updateAccountTokensIfRefreshTokenMatches,
+		).not.toHaveBeenCalled();
+	});
+
+	it("does not flag or emit on invalid_grant failure — unverifiable without a refresh token to CAS against", async () => {
+		const account = makeAccount("no-rt-failure-1", {
+			refresh_token: "",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const noRtInvalidGrant = new Error(
+			"Status 400, Error: invalid_grant: Refresh token not found or invalid",
+		);
+		const { ctx } = makeContext({ refreshError: noRtInvalidGrant });
+
+		const events: AuthFailureEvt[] = [];
+		const listener = (e: AuthFailureEvt) => events.push(e);
+		authFailureEvents.on("event", listener);
+		try {
+			await expect(
+				refreshAccessTokenSafe(account as never, ctx as never),
+			).rejects.toThrow("Failed to refresh access token");
+		} finally {
+			authFailureEvents.off("event", listener);
+		}
+
+		expect(ctx.dbOps.flagRequiresReauthIfTokenMatches).not.toHaveBeenCalled();
+		expect(events).toHaveLength(0);
 	});
 });
