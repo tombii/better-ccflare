@@ -395,6 +395,11 @@ export async function refreshAccessTokenSafe(
 		// Get the provider for this account
 		const provider = getProvider(account.provider) || ctx.provider;
 
+		// Captured for the rotation-race guard in the catch handler: if the DB's
+		// refresh token differs from this one by the time the refresh fails, the
+		// failure condemned a superseded token, not the account.
+		const attemptedRefreshToken = account.refresh_token;
+
 		// Create a new refresh promise and store it
 		const refreshPromise = provider
 			.refreshToken(account, ctx.runtime.clientId)
@@ -430,7 +435,7 @@ export async function refreshAccessTokenSafe(
 				});
 				return result.accessToken;
 			})
-			.catch((error) => {
+			.catch(async (error) => {
 				// Record the failure timestamp for backoff
 				refreshFailures.set(account.id, Date.now());
 				// Enforce size limit after adding a new entry
@@ -452,6 +457,44 @@ export async function refreshAccessTokenSafe(
 					account.name,
 				);
 				if (authFailureReason) {
+					// Rotation-race guard: a definitive rejection of a refresh token
+					// that is no longer the account's current one means another
+					// consumer rotated successfully after our snapshot was taken.
+					// Recover from the DB instead of condemning a healthy account.
+					let dbAccount: Account | null = null;
+					try {
+						dbAccount = await ctx.dbOps.getAccount(account.id);
+					} catch (readError) {
+						log.warn(
+							`Could not re-read account ${account.name} after ${authFailureReason} — treating failure as definitive`,
+							readError,
+						);
+					}
+					if (
+						dbAccount?.refresh_token &&
+						dbAccount.refresh_token !== attemptedRefreshToken
+					) {
+						account.refresh_token = dbAccount.refresh_token;
+						account.refresh_token_issued_at = dbAccount.refresh_token_issued_at;
+						const dbTokenValid =
+							typeof dbAccount.access_token === "string" &&
+							typeof dbAccount.expires_at === "number" &&
+							dbAccount.expires_at - Date.now() > TOKEN_SAFETY_WINDOW_MS;
+						if (dbTokenValid && dbAccount.access_token) {
+							account.access_token = dbAccount.access_token;
+							account.expires_at = dbAccount.expires_at;
+							refreshFailures.delete(account.id);
+							backoffCounters.delete(account.id);
+							log.warn(
+								`Refresh for ${account.name} lost a rotation race (${authFailureReason} on a superseded token) — adopted current tokens from DB`,
+							);
+							return dbAccount.access_token;
+						}
+						log.warn(
+							`Refresh for ${account.name} used a superseded refresh token (${authFailureReason}) — not flagging re-auth; will retry with the rotated token`,
+						);
+						throw new TokenRefreshError(account.id, new Error(enhancedMessage));
+					}
 					// Accepted race (documented, not synchronized): a manual re-auth that
 					// clears the flag via a direct DB write could be overtaken by this
 					// still-queued set(true) under a pathologically backlogged async

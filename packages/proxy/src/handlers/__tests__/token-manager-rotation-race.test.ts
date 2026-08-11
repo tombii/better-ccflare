@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
+import { type AuthFailureEvt, authFailureEvents } from "@better-ccflare/core";
 import type { Account } from "@better-ccflare/types";
 import { refreshAccessTokenSafe } from "../token-manager";
 
@@ -179,5 +180,114 @@ describe("refreshAccessTokenSafe — rotation-race pre-refresh guard", () => {
 
 		expect(token).toBe("brand-new");
 		expect(refreshToken).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("refreshAccessTokenSafe — benign race on invalid_grant", () => {
+	const invalidGrant = new Error(
+		"Status 400, Error: invalid_grant: Refresh token not found or invalid",
+	);
+
+	it("recovers with DB tokens instead of flagging when the RT was rotated meanwhile", async () => {
+		const account = makeAccount("race-catch-recover-1", {
+			refresh_token: "RT1-consumed",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const dbAccount = makeAccount("race-catch-recover-1", {
+			refresh_token: "RT2-current",
+			access_token: "fresh-access",
+			expires_at: Date.now() + 3_600_000,
+		});
+		// getAccount: first call (pre-refresh guard) must NOT short-circuit, so
+		// return the stale state first, then the rotated state for the catch.
+		const staleDb = makeAccount("race-catch-recover-1", {
+			refresh_token: "RT1-consumed",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const { ctx, setRequiresReauth, queuedJobs } = makeContext({
+			refreshError: invalidGrant,
+		});
+		let call = 0;
+		ctx.dbOps.getAccount = mock(async () =>
+			call++ === 0 ? staleDb : dbAccount,
+		);
+
+		const events: AuthFailureEvt[] = [];
+		const listener = (e: AuthFailureEvt) => events.push(e);
+		authFailureEvents.on("event", listener);
+		try {
+			const token = await refreshAccessTokenSafe(
+				account as never,
+				ctx as never,
+			);
+			expect(token).toBe("fresh-access");
+		} finally {
+			authFailureEvents.off("event", listener);
+		}
+
+		for (const job of queuedJobs) await job();
+		expect(setRequiresReauth).not.toHaveBeenCalled();
+		expect(events).toHaveLength(0);
+		expect(account.refresh_token).toBe("RT2-current");
+	});
+
+	it("does not flag when the RT was rotated but no valid access token exists yet (throws, retries later)", async () => {
+		const account = makeAccount("race-catch-noflag-1", {
+			refresh_token: "RT1-consumed",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const staleDb = makeAccount("race-catch-noflag-1", {
+			refresh_token: "RT1-consumed",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const rotatedDb = makeAccount("race-catch-noflag-1", {
+			refresh_token: "RT2-current",
+			access_token: "also-expired",
+			expires_at: 2,
+		});
+		const { ctx, setRequiresReauth, queuedJobs } = makeContext({
+			refreshError: invalidGrant,
+		});
+		let call = 0;
+		ctx.dbOps.getAccount = mock(async () =>
+			call++ === 0 ? staleDb : rotatedDb,
+		);
+
+		await expect(
+			refreshAccessTokenSafe(account as never, ctx as never),
+		).rejects.toThrow();
+
+		for (const job of queuedJobs) await job();
+		expect(setRequiresReauth).not.toHaveBeenCalled();
+		expect(account.refresh_token).toBe("RT2-current");
+	});
+
+	it("still flags requires_reauth when the rejected RT is the account's current one", async () => {
+		const account = makeAccount("race-catch-flag-1", {
+			refresh_token: "RT1-dead",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const sameDb = makeAccount("race-catch-flag-1", {
+			refresh_token: "RT1-dead",
+			access_token: "stale",
+			expires_at: 1,
+		});
+		const { ctx, setRequiresReauth, queuedJobs } = makeContext({
+			refreshError: invalidGrant,
+		});
+		ctx.dbOps.getAccount = mock(async () => sameDb);
+
+		await expect(
+			refreshAccessTokenSafe(account as never, ctx as never),
+		).rejects.toThrow();
+
+		for (const job of queuedJobs) await job();
+		expect(setRequiresReauth).toHaveBeenCalledTimes(1);
+		expect(setRequiresReauth).toHaveBeenCalledWith("race-catch-flag-1", true);
 	});
 });
