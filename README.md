@@ -785,7 +785,7 @@ Full documentation available in [`docs/`](docs/):
 
 <p align="left">
   <a href="https://signpath.io/">
-    <img src="https://signpath.org/assets/logo.svg" alt="SignPath" height="40">
+    <img src="https://avatars.githubusercontent.com/u/34448643?s=200&v=4" alt="SignPath" height="40">
   </a>
 </p>
 
