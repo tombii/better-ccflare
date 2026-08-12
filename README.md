@@ -783,13 +783,9 @@ Full documentation available in [`docs/`](docs/):
 
 ## Sponsors
 
-<p align="left">
-  <a href="https://signpath.io/">
-    <img src="https://avatars.githubusercontent.com/u/34448643?s=200&v=4" alt="SignPath" height="40">
-  </a>
-</p>
-
-Free code signing on Windows provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+| | |
+|---|---|
+| <a href="https://signpath.io/"><img src="https://avatars.githubusercontent.com/u/34448643?s=200&v=4" alt="SignPath" height="40"></a> | Free code signing on Windows provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). |
 
 ## Acknowledgements
 
