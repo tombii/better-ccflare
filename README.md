@@ -781,6 +781,16 @@ Full documentation available in [`docs/`](docs/):
 **Not supported:**
 - ARM32 devices (Raspberry Pi Zero, Pi 1, Pi 2, or 32-bit OS)
 
+## Sponsors
+
+<p align="left">
+  <a href="https://signpath.io/">
+    <img src="https://signpath.org/assets/logo.svg" alt="SignPath" height="40">
+  </a>
+</p>
+
+Free code signing on Windows provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
 ## Acknowledgements
 
 Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks for the original idea and implementation!
