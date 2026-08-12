@@ -190,14 +190,22 @@ async function main() {
 	// Build worker first
 	await buildWorker();
 
-	// Build for all platforms
-	for (const platform of platforms) {
+	const skip = (process.env.CCFLARE_SKIP_PLATFORMS ?? "")
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	const platformsToBuild = platforms.filter(
+		(p) => !skip.includes(p.target) && !skip.includes(p.outfile),
+	);
+
+	// Build for selected platforms
+	for (const platform of platformsToBuild) {
 		await buildPlatform(platform);
 	}
 
 	console.log("🎉 All builds completed successfully!");
 	console.log("\n📦 Built binaries:");
-	for (const platform of platforms) {
+	for (const platform of platformsToBuild) {
 		console.log(`   - dist/${platform.outfile} (${platform.description})`);
 	}
 }

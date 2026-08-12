@@ -70,10 +70,10 @@ jobs:
       - name: Build dashboard
         run: bun run build:dashboard
 
-      - name: Build all architectures
+      - name: Build non-Windows architectures
         run: |
           cd apps/cli
-          bun run build:multi
+          CCFLARE_SKIP_PLATFORMS=bun-windows-x64 bun run build:multi
 
       - name: Verify binaries
         run: |
@@ -380,5 +380,5 @@ jobs:
             ./apps/cli/dist/better-ccflare-linux-arm64 \
             ./apps/cli/dist/better-ccflare-macos-x86_64 \
             ./apps/cli/dist/better-ccflare-macos-arm64 \
-            ./apps/cli/dist/better-ccflare-windows-x64.exe \
             --clobber
+          # Windows binary is uploaded separately by signpath-release.yml after signing (production cert requires manual approval)

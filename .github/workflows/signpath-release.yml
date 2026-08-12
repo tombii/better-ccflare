@@ -1,0 +1,84 @@
+name: Sign and Upload Windows Release Binary
+
+on:
+  push:
+    tags:
+      - 'v*'  # Matches all v* tags (stable and pre-release)
+  workflow_dispatch:
+
+jobs:
+  sign-and-upload:
+    name: Sign Windows Binary and Upload to Release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build dashboard
+        run: bun run build:dashboard
+
+      - name: Build Windows binary
+        run: |
+          cd apps/cli
+          bun run build:windows-x64
+          ls -lh dist/better-ccflare-windows-x64.exe
+
+      - name: Upload unsigned Windows binary
+        id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: apps/cli/dist/better-ccflare-windows-x64.exe
+          retention-days: 1
+
+      - name: Submit Windows binary for production signing
+        # Requires manual approval in the SignPath dashboard under the
+        # release-signing policy (production certificate anti-abuse gate).
+        # This job can block here until approved; it runs independently of
+        # release.yml so the rest of the release is never held up.
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: 'better-ccflare'
+          signing-policy-slug: 'release-signing'
+          artifact-configuration-slug: 'release'
+          github-artifact-id: '${{ steps.upload-unsigned.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'signed'
+
+      - name: Wait for GitHub release to exist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # release.yml creates the GitHub release in parallel with this workflow;
+          # poll until it shows up so the upload step below doesn't fail on a race.
+          for i in $(seq 1 30); do
+            if gh release view "${{ github.ref_name }}" &>/dev/null; then
+              echo "Release ${{ github.ref_name }} found."
+              exit 0
+            fi
+            echo "Release ${{ github.ref_name }} not found yet, waiting (attempt $i/30)..."
+            sleep 20
+          done
+          echo "Timed out waiting for release ${{ github.ref_name }} to be created."
+          exit 1
+
+      - name: Upload signed Windows binary to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            ./signed/better-ccflare-windows-x64.exe \
+            --clobber
