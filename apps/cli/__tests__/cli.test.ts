@@ -167,13 +167,17 @@ describe("CLI Integration Tests", () => {
 			expect(result.stdout).toContain("--compact");
 		});
 
-		it("should show account mode options", async () => {
+		it("should show every accepted account mode", async () => {
 			const result = await runCLI(["--help"]);
 
 			expect(result.stdout).toContain("claude-oauth");
 			expect(result.stdout).toContain("console");
 			expect(result.stdout).toContain("zai");
 			expect(result.stdout).toContain("openai-compatible");
+			// ollama is accepted by --mode validation and must be discoverable here.
+			// Keeping this assertion next to the validation test prevents the help
+			// surface from drifting silently when a provider mode is added.
+			expect(result.stdout).toContain("ollama");
 		});
 
 		it("should exit quickly for help command", async () => {
@@ -245,6 +249,7 @@ describe("CLI Integration Tests", () => {
 			expect(output).toContain("Please provide --mode to specify account type");
 			expect(output).toContain("--mode");
 			expect(output).toContain("--priority");
+			expect(output).toContain("ollama");
 		});
 
 		it("should show example usage for add account", async () => {
