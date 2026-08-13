@@ -856,7 +856,7 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|xai>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|xai|ollama>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
@@ -871,6 +871,7 @@ Options:
       alibaba-coding-plan: Alibaba Coding Plan International provider (API key)
       codex: Codex (OpenAI OAuth) provider
       xai: xAI/Grok provider (imports local Grok CLI OAuth credentials)
+      ollama: Ollama local provider (no API key required)
     --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
@@ -1038,6 +1039,9 @@ Examples:
 			);
 			console.error(
 				"  --mode xai                 xAI/Grok (Grok CLI OAuth) provider",
+			);
+			console.error(
+				"  --mode ollama              Ollama local provider (no API key required)",
 			);
 			console.error("\nExample:");
 			console.error(
