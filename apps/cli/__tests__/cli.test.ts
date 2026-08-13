@@ -170,14 +170,27 @@ describe("CLI Integration Tests", () => {
 		it("should show every accepted account mode", async () => {
 			const result = await runCLI(["--help"]);
 
-			expect(result.stdout).toContain("claude-oauth");
-			expect(result.stdout).toContain("console");
-			expect(result.stdout).toContain("zai");
-			expect(result.stdout).toContain("openai-compatible");
-			// ollama is accepted by --mode validation and must be discoverable here.
-			// Keeping this assertion next to the validation test prevents the help
-			// surface from drifting silently when a provider mode is added.
-			expect(result.stdout).toContain("ollama");
+			// Every mode accepted by --mode validation must be discoverable here.
+			// Looping over the full list (instead of asserting a subset) prevents
+			// the help surface from drifting silently when a mode is added/removed.
+			const acceptedModes = [
+				"claude-oauth",
+				"console",
+				"zai",
+				"minimax",
+				"nanogpt",
+				"anthropic-compatible",
+				"openai-compatible",
+				"bedrock",
+				"kilo",
+				"alibaba-coding-plan",
+				"codex",
+				"xai",
+				"ollama",
+			];
+			for (const mode of acceptedModes) {
+				expect(result.stdout).toContain(mode);
+			}
 		});
 
 		it("should exit quickly for help command", async () => {
