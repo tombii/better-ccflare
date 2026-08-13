@@ -69,6 +69,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 - [Security Considerations](./security.md) - Authentication, encryption, and best practices
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions
 - [Contributing](./contributing.md) - Development setup and contribution guidelines
+- [Acknowledgements](./acknowledgements.md) - Full details on community contributions
 
 ### API Reference
 - [Anthropic API Changelog](./anthropic-api-changelog.md) - Track changes to Anthropic's usage API responses
