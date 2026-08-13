@@ -58,6 +58,163 @@ const eventLine = (name: string, data: unknown) => [
 	"",
 ];
 
+describe("CodexProvider stream liveness", () => {
+	it("keeps a silent SSE stream alive until response.completed arrives", async () => {
+		const provider = new CodexProvider({
+			streamHeartbeatIntervalMs: 20,
+			streamRawSilenceTimeoutMs: 200,
+		});
+		let upstreamController: ReadableStreamDefaultController<Uint8Array>;
+		let upstreamCancelReason: unknown;
+		const upstream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				upstreamController = controller;
+				controller.enqueue(
+					new TextEncoder().encode(
+						sseBody(
+							eventLine("response.in_progress", {
+								type: "response.in_progress",
+								response: { id: "resp_silent", model: "gpt-5.6-sol" },
+							}),
+						),
+					),
+				);
+			},
+			cancel(reason) {
+				upstreamCancelReason = reason;
+			},
+		});
+		const transformed = await provider.processResponse(
+			new Response(upstream, {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+			null,
+		);
+		const reader = transformed.body?.getReader();
+		if (!reader) throw new Error("transformed response has no body");
+		const decoder = new TextDecoder();
+
+		const first = await reader.read();
+		expect(decoder.decode(first.value)).toBe(
+			'event: ping\ndata: {"type":"ping"}\n\n',
+		);
+		const second = await Promise.race([
+			reader.read(),
+			Bun.sleep(100).then(() => {
+				throw new Error("Codex heartbeat did not arrive");
+			}),
+		]);
+		expect(decoder.decode(second.value)).toBe(
+			'event: ping\ndata: {"type":"ping"}\n\n',
+		);
+
+		upstreamController.enqueue(
+			new TextEncoder().encode(
+				sseBody(
+					eventLine("response.completed", {
+						type: "response.completed",
+						response: {
+							id: "resp_silent",
+							model: "gpt-5.6-sol",
+							usage: { input_tokens: 1, output_tokens: 0 },
+						},
+					}),
+				),
+			),
+		);
+
+		let terminalBody = "";
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			terminalBody += decoder.decode(value, { stream: true });
+		}
+		expect(terminalBody).toContain("event: message_stop");
+		expect(terminalBody).not.toContain("event: ping");
+		expect(upstreamCancelReason).toBeDefined();
+	});
+
+	it("terminates raw upstream silence after synthetic heartbeats", async () => {
+		const provider = new CodexProvider({
+			streamHeartbeatIntervalMs: 15,
+			streamRawSilenceTimeoutMs: 70,
+		});
+		let upstreamCancelReason: unknown;
+		const upstream = new ReadableStream<Uint8Array>({
+			cancel(reason) {
+				upstreamCancelReason = reason;
+				return new Promise<void>(() => {});
+			},
+		});
+		const transformed = await provider.processResponse(
+			new Response(upstream, {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+			null,
+		);
+
+		const body = await Promise.race([
+			transformed.text(),
+			Bun.sleep(300).then(() => {
+				throw new Error("timed-out Codex stream did not terminate");
+			}),
+		]);
+		expect(upstreamCancelReason).toBeInstanceOf(Error);
+		expect(body).toContain("event: error");
+		expect(body).toContain(
+			"Codex upstream timed out while waiting for response data.",
+		);
+		expect(body).not.toContain("rawSilenceTimeoutMs");
+	});
+
+	it("does not await a hanging upstream cancellation after a terminal event", async () => {
+		const provider = new CodexProvider({
+			streamHeartbeatIntervalMs: 100,
+			streamRawSilenceTimeoutMs: 500,
+		});
+		let cancelCalls = 0;
+		const upstream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(
+					new TextEncoder().encode(
+						sseBody(
+							eventLine("response.completed", {
+								type: "response.completed",
+								response: {
+									id: "resp_terminal_cancel",
+									model: "gpt-5.6-sol",
+									usage: { input_tokens: 1, output_tokens: 0 },
+								},
+							}),
+						),
+					),
+				);
+			},
+			cancel() {
+				cancelCalls++;
+				return new Promise<void>(() => {});
+			},
+		});
+		const transformed = await provider.processResponse(
+			new Response(upstream, {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+			null,
+		);
+		const body = await Promise.race([
+			transformed.text(),
+			Bun.sleep(300).then(() => {
+				throw new Error("terminal Codex stream did not reach EOF");
+			}),
+		]);
+		expect(body).toContain("event: message_stop");
+		expect(cancelCalls).toBe(1);
+	});
+});
+
 describe("CodexProvider request conversion", () => {
 	it("handles messages and synthetic count_tokens paths", () => {
 		const provider = new CodexProvider();

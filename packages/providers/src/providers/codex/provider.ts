@@ -14,6 +14,10 @@ import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import { resolveProviderModelDefault } from "../../provider-model-defaults";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
+import {
+	CodexStreamLiveness,
+	type CodexStreamLivenessOptions,
+} from "./stream-liveness";
 import { normalizeCodexInputUsage } from "./usage";
 
 const log = new Logger("CodexProvider");
@@ -386,8 +390,22 @@ function isCodexSubscriptionEndpoint(account?: Account): boolean {
 	}
 }
 
+export interface CodexProviderOptionsForTests {
+	streamHeartbeatIntervalMs?: number;
+	streamRawSilenceTimeoutMs?: number;
+}
+
 export class CodexProvider extends BaseProvider {
 	name = "codex";
+	private readonly streamLivenessOptions: CodexStreamLivenessOptions;
+
+	constructor(options: CodexProviderOptionsForTests = {}) {
+		super();
+		this.streamLivenessOptions = {
+			heartbeatIntervalMs: options.streamHeartbeatIntervalMs,
+			rawSilenceTimeoutMs: options.streamRawSilenceTimeoutMs,
+		};
+	}
 	// Fallback map: proxy-operations.ts injects x-better-ccflare-request-id and
 	// x-better-ccflare-request-stream into the upstream response before calling
 	// processResponse, so headerRequestedStream is normally set. This map covers
@@ -1560,6 +1578,7 @@ export class CodexProvider extends BaseProvider {
 		const writer = writable.getWriter();
 		const encoder = new TextEncoder();
 		const decoder = new TextDecoder();
+		const streamLiveness = new CodexStreamLiveness(this.streamLivenessOptions);
 
 		const writeSSE = async (event: string, data: unknown) => {
 			const payload =
@@ -1603,6 +1622,7 @@ export class CodexProvider extends BaseProvider {
 			}
 			const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 			await writer.write(encoder.encode(line));
+			streamLiveness.recordDownstreamWrite();
 		};
 		const ensureMessageStart = async () => {
 			if (state.hasSentMessageStart) return;
@@ -1634,12 +1654,62 @@ export class CodexProvider extends BaseProvider {
 		};
 
 		const processEvents = async () => {
+			const reader = response.body?.getReader();
+			let upstreamCancelStarted = false;
+			const cancelUpstreamOnce = (reason: unknown): void => {
+				if (upstreamCancelStarted || !reader) return;
+				upstreamCancelStarted = true;
+				try {
+					void reader.cancel(reason).catch(() => undefined);
+				} catch {
+					// Cancellation is best effort; downstream termination must still finish.
+				}
+			};
 			try {
-				const reader = response.body?.getReader();
 				if (!reader) throw new Error("Response body is not readable");
 
 				while (true) {
-					const { value, done } = await reader.read();
+					const outcome = await streamLiveness.next(reader);
+					if (outcome.type === "stopped") break;
+					if (outcome.type === "heartbeat_due") {
+						// A silent Codex stream (long reasoning turns) must still look
+						// alive to the Anthropic client and to any intermediary idle
+						// timeout. A ping carries no content and cannot disturb the
+						// message/content-block sequence.
+						if (state.hasSentTerminalEvents) break;
+						if (streamLiveness.canEmitHeartbeat()) {
+							await writeSSE("ping", { type: "ping" });
+							streamLiveness.recordDownstreamWrite();
+						}
+						continue;
+					}
+					if (outcome.type === "raw_silence_timeout") {
+						// Synthetic pings must never keep a byte-silent upstream alive
+						// forever: surface a terminal error instead of hanging.
+						const timeoutMessage =
+							"Codex upstream timed out while waiting for response data.";
+						cancelUpstreamOnce(new Error(timeoutMessage));
+						if (!state.hasSentTerminalEvents) {
+							await ensureMessageStart();
+							if (state.hasSentContentBlockStart) {
+								await writeSSE("content_block_stop", {
+									type: "content_block_stop",
+									index: state.contentBlockIndex,
+								});
+								state.contentBlockIndex++;
+								state.hasSentContentBlockStart = false;
+							}
+							await writeSSE("error", {
+								type: "error",
+								error: { type: "api_error", message: timeoutMessage },
+							});
+							state.hasSentTerminalEvents = true;
+						}
+						return;
+					}
+					if (outcome.type === "upstream_error") throw outcome.error;
+
+					const { value, done } = outcome.result;
 					if (done) break;
 
 					state.buffer += decoder.decode(value, { stream: true });
@@ -1680,6 +1750,11 @@ export class CodexProvider extends BaseProvider {
 							writeSSE,
 							ensureMessageStart,
 						);
+						if (state.hasSentTerminalEvents) {
+							streamLiveness.stop();
+							cancelUpstreamOnce("Codex terminal response received");
+							break;
+						}
 					}
 				}
 
@@ -1712,7 +1787,10 @@ export class CodexProvider extends BaseProvider {
 				}
 			} catch (error) {
 				log.error("Error processing Codex SSE stream:", error);
+				cancelUpstreamOnce(error);
 			} finally {
+				streamLiveness.stop();
+				await streamLiveness.settlePendingReadForCleanup();
 				await writer.close();
 			}
 		};
