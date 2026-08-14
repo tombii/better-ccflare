@@ -1,4 +1,8 @@
-import { getModelFamily, parseModelMappings } from "@better-ccflare/core";
+import {
+	getModelFamily,
+	isForceAccountModelEnabled,
+	parseModelMappings,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 
@@ -51,6 +55,12 @@ export function getModelName(
 	anthropicModel: string,
 	account: Account | undefined,
 ): string {
+	// Sibling of core's mapModelName, and it needs the same guard: with "force
+	// account model" on, no mapping may rename the request. Missing it here
+	// would leave exactly one provider (vertex-ai, the only caller) still
+	// rewriting models while the setting promises nothing does.
+	if (isForceAccountModelEnabled()) return anthropicModel;
+
 	if (!anthropicModel || !account?.model_mappings) {
 		return anthropicModel;
 	}

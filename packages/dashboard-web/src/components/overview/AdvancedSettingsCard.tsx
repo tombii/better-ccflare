@@ -61,6 +61,52 @@ const ADVANCED_SETTINGS_ITEMS: AdvancedSettingItem[] = [
 			</ConfigFlagDialog>
 		),
 	},
+	{
+		id: "force-account-model",
+		title: "Force Account Model",
+		description:
+			"Send the model that was asked for, or nothing — no combo, no mapping, no substitute.",
+		dialog: (
+			<ConfigFlagDialog
+				title="Force Account Model"
+				description="Whether the model a client asks for must be the model that is sent."
+				path="/api/config/force-account-model"
+				switchLabel="Only serve the requested model"
+			>
+				<p>
+					On, nothing renames a request on its way out. Account selection keeps
+					only accounts that can serve the model as written, and a request with
+					no such account gets a 503 (
+					<code>force_account_model_no_account</code>) instead of a different
+					model. Switching account to serve the same model is still fine.
+				</p>
+				<p className="font-medium text-foreground">
+					It turns off three things you may be relying on:
+				</p>
+				<ul className="ml-4 list-disc space-y-0.5">
+					<li>combos — no slot model is applied</li>
+					<li>
+						account model mappings, the global provider defaults, and the
+						built-in map
+					</li>
+					<li>
+						the meaning of a Claude family name: asking for a Claude model now
+						reaches only accounts that speak Claude ids, so name the model you
+						actually want (for example the provider's own model id) in your
+						client
+					</li>
+				</ul>
+				<p>
+					Accounts that have listed their own models are checked against that
+					list. For the rest — nothing is persisted, so listings start empty
+					after each restart — the account's provider decides, which is coarse:
+					with several non-Claude providers configured a request can still reach
+					the wrong one. That surfaces as an upstream error, never as a silent
+					substitution.
+				</p>
+			</ConfigFlagDialog>
+		),
+	},
 ];
 
 export function AdvancedSettingsCard() {

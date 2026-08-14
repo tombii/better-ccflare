@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+	isForceAccountModelEnabled,
 	mapModelName,
 	ValidationError,
 	validateEndpointUrl,
@@ -776,6 +777,12 @@ export class CodexProvider extends BaseProvider {
 	// ── Private helpers ──────────────────────────────────────────────────────
 
 	private mapModel(anthropicModel: string, account?: Account): string {
+		// "Force account model" forbids every substitution below, including the
+		// family defaults derived from the account's own listing: those answer
+		// "which model should a Claude family become here", a question nobody
+		// asked when the client named the model outright.
+		if (isForceAccountModelEnabled()) return anthropicModel;
+
 		if (account) {
 			const mapped = mapModelName(anthropicModel, account);
 			if (mapped !== anthropicModel) {

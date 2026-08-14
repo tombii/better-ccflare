@@ -7,6 +7,7 @@ export {
 	getModelFamilyExhaustionInfo,
 	getXaiConvId,
 	isComboSessionFallbackDisabled,
+	isForceAccountModelEnabled,
 	type ModelFamilyExhaustionInfo,
 	recordXaiAffinitySuccess,
 	resolveEffectiveModel,

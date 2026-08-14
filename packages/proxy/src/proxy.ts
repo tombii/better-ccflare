@@ -25,6 +25,7 @@ import {
 	getUsageThrottleUntil,
 	interceptAndModifyRequest,
 	isComboSessionFallbackDisabled,
+	isForceAccountModelEnabled,
 	isInternalProbe,
 	isRefreshTokenLikelyExpired,
 	type ProxyContext,
@@ -71,6 +72,33 @@ function createComboSessionFallbackDisabledResponse(
 				message: "Service temporarily unavailable. Please try again later.",
 				code: "combo_session_fallback_disabled",
 				combo: comboName,
+			},
+		}),
+		{
+			status: 503,
+			headers: { "Content-Type": "application/json" },
+		},
+	);
+}
+
+/**
+ * No account can serve the model that was asked for, and "force account model"
+ * forbids serving a different one.
+ *
+ * 503 rather than 400: the request is well formed, and the same model may well
+ * be servable in a minute — an account may be rate-limited right now, or its
+ * model listing not yet read. The model is named in the body because that is
+ * the one thing the caller can act on.
+ */
+function createForceAccountModelResponse(model: string): Response {
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "service_unavailable_error",
+				message: `No available account can serve "${model}", and forcing the account model is enabled so no substitute was used.`,
+				code: "force_account_model_no_account",
+				model,
 			},
 		}),
 		{
@@ -353,12 +381,21 @@ export async function handleProxy(
 		}
 	};
 
-	const returnComboSessionFallbackDisabled = async (
-		comboName: string,
+	/**
+	 * Return a refusal that was decided before any upstream was contacted, and
+	 * record it as a request all the same.
+	 *
+	 * Recording matters: a routing rule that silently drops requests would make
+	 * the dashboard show a quiet, healthy proxy while clients get 503s. Shared
+	 * by every deliberate refusal so they cannot drift in what they report.
+	 */
+	const returnRefusal = async (
+		refusalResponse: Response,
+		errorCode: string,
 		failoverAttempts: number,
+		comboName: string | null,
 	): Promise<Response> => {
-		const disabledFallbackResponse =
-			createComboSessionFallbackDisabledResponse(comboName);
+		const disabledFallbackResponse = refusalResponse;
 		const collector = tryGetUsageCollector();
 		if (collector) {
 			collector.handleStart({
@@ -398,11 +435,11 @@ export async function handleProxy(
 					type: "end",
 					requestId: requestMeta.id,
 					success: false,
-					error: "combo_session_fallback_disabled",
+					error: errorCode,
 				});
 			} catch (err) {
 				log.error(
-					`handleEnd failed for combo fallback disabled request ${requestMeta.id}`,
+					`handleEnd failed for refused request ${requestMeta.id} (${errorCode})`,
 					err,
 				);
 			}
@@ -411,6 +448,17 @@ export async function handleProxy(
 		return disabledFallbackResponse;
 	};
 
+	const returnComboSessionFallbackDisabled = (
+		comboName: string,
+		failoverAttempts: number,
+	): Promise<Response> =>
+		returnRefusal(
+			createComboSessionFallbackDisabledResponse(comboName),
+			"combo_session_fallback_disabled",
+			failoverAttempts,
+			comboName,
+		);
+
 	const { available: accounts, throttled: throttledAccounts } =
 		applyUsageThrottling(selectedAccounts);
 
@@ -418,6 +466,19 @@ export async function handleProxy(
 	if (accounts.length === 0) {
 		if (requestMeta.comboName && isComboSessionFallbackDisabled(ctx)) {
 			return await returnComboSessionFallbackDisabled(requestMeta.comboName, 0);
+		}
+
+		// Nothing can serve the model that was asked for, and substituting one
+		// is exactly what this setting forbids. Answering here — rather than
+		// letting the generic pool_exhausted 503 answer — is what tells the
+		// caller which model went unserved.
+		if (effectiveModel && isForceAccountModelEnabled(ctx)) {
+			return await returnRefusal(
+				createForceAccountModelResponse(effectiveModel),
+				"force_account_model_no_account",
+				0,
+				null,
+			);
 		}
 
 		// Model-scoped capacity filter (account-selector.ts) emptied the
