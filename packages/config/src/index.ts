@@ -676,6 +676,77 @@ export class Config extends EventEmitter {
 	}
 
 	/**
+	 * Same, for the routing switches the dashboard owns: file > default, with
+	 * no environment layer at all.
+	 *
+	 * Deliberately not resolveEnvFileFlag. A switch on screen that an
+	 * environment variable can override has to be drawn disabled, with an
+	 * explanation, or it accepts a click and silently does nothing — and a
+	 * control that lies is worse than no control. The legacy variables are
+	 * still honoured, but once, as a migration into this file (see
+	 * adoptLegacyRoutingSettings) rather than as a permanent veto.
+	 */
+	private resolveFlag(
+		fileValue: boolean | undefined,
+		defaultValue: boolean,
+	): { value: boolean; source: "file" | "default" } {
+		if (typeof fileValue === "boolean") {
+			return { value: fileValue, source: "file" };
+		}
+		return { value: defaultValue, source: "default" };
+	}
+
+	/**
+	 * One-time adoption of the environment variables that used to control combo
+	 * routing, so upgrading never changes what an install was already doing.
+	 *
+	 * Runs at boot, only for fields absent from the config file, and writes
+	 * what it decides — so it happens once and a later deliberate change is
+	 * never undone. Returns one line per adoption for the caller to log:
+	 * silently rewriting someone's routing config, even faithfully, is the
+	 * kind of help nobody asked for.
+	 *
+	 * @param hasCombos whether any combo exists in the database
+	 */
+	adoptLegacyRoutingSettings(hasCombos: boolean): string[] {
+		const notes: string[] = [];
+
+		if (this.getCombosEnabledSource() === "default") {
+			const fromEnv = parseEnabledEnvFlag(
+				process.env.BETTER_CCFLARE_SHOW_COMBOS,
+			);
+			if (fromEnv !== undefined) {
+				this.setCombosEnabled(fromEnv);
+				notes.push(
+					`combos ${fromEnv ? "enabled" : "disabled"}: adopted from BETTER_CCFLARE_SHOW_COMBOS, which no longer takes effect on its own — the switch now lives in the dashboard's Combos tab`,
+				);
+			} else if (hasCombos) {
+				this.setCombosEnabled(true);
+				notes.push(
+					"combos enabled: this install already has combos, so the routing it was already doing is kept. Turn it off in the dashboard's Combos tab",
+				);
+			}
+		}
+
+		if (this.getComboSessionFallbackSource() === "default") {
+			const raw = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
+			if (raw !== undefined && raw !== "") {
+				// The old variable is a DISABLE flag, so it inverts into the
+				// positively-stored setting. Its permissive spelling is kept:
+				// narrowing it here would misread a `yes` that someone is
+				// relying on at the exact moment it is read for the last time.
+				const allowed = !/^(1|true|yes|on)$/i.test(raw);
+				this.setComboSessionFallback(allowed);
+				notes.push(
+					`combo session fallback ${allowed ? "allowed" : "blocked"}: adopted from CCFLARE_DISABLE_COMBO_SESSION_FALLBACK, which no longer takes effect on its own — the switch now lives in Settings → Advanced`,
+				);
+			}
+		}
+
+		return notes;
+	}
+
+	/**
 	 * Resolve the effective load-balancing strategy plus its source, using the
 	 * same env > file > default precedence getStrategy() has always used.
 	 * Backs both getStrategy() and getStrategySource() so they cannot drift.
@@ -730,91 +801,56 @@ export class Config extends EventEmitter {
 		this.set("model_scoped_capacity_routing", mode);
 	}
 
-	private resolveCombosEnabled(): {
-		value: boolean;
-		source: "env" | "file" | "default";
-	} {
-		return this.resolveEnvFileFlag(
-			process.env.BETTER_CCFLARE_SHOW_COMBOS,
-			this.data.combos_enabled,
-			false,
-		);
-	}
-
 	/**
 	 * Whether combos take part in routing at all.
 	 *
 	 * `BETTER_CCFLARE_SHOW_COMBOS` used to gate only the dashboard's combos tab
 	 * (via /api/features): nothing in the proxy ever read it, so a combo hidden
 	 * from the UI kept steering traffic with no way to see or edit it. This
-	 * setting is the switch the flag looked like — the account selector reads
-	 * it — and the env var is kept as an override so existing beta users keep
-	 * exactly the behaviour they configured. The env var now also accepts "1",
-	 * matching every other flag here; it previously required the literal
-	 * "true".
+	 * setting is the switch that flag looked like — the account selector reads
+	 * it — and it is owned by the dashboard, not by the environment. The old
+	 * variable is adopted once at boot (adoptLegacyRoutingSettings) and then
+	 * stops mattering.
 	 *
-	 * Defaults to false, so combos stay opt-in for a fresh install. An install
-	 * that already has combos is seeded to true on boot (seedCombosEnabled in
-	 * apps/server) — upgrading must not silently change anyone's routing.
+	 * Defaults to false: combos are opt-in. An install that already has combos
+	 * adopts true on boot, because upgrading must not silently change anyone's
+	 * routing.
 	 */
 	getCombosEnabled(): boolean {
-		return this.resolveCombosEnabled().value;
+		return this.resolveFlag(this.data.combos_enabled, false).value;
 	}
 
-	/**
-	 * Where the effective combos setting comes from, mirroring the precedence
-	 * in getCombosEnabled(). The dashboard uses "env" to lock the control,
-	 * because a POST that writes the file field is ineffective while the env
-	 * var overrides it.
-	 */
-	getCombosEnabledSource(): "env" | "file" | "default" {
-		return this.resolveCombosEnabled().source;
+	/** "file" once anyone has set it, "default" while nobody has. */
+	getCombosEnabledSource(): "file" | "default" {
+		return this.resolveFlag(this.data.combos_enabled, false).source;
 	}
 
 	setCombosEnabled(value: boolean): void {
 		this.set("combos_enabled", value);
 	}
 
-	private resolveComboSessionFallback(): {
-		value: boolean;
-		source: "env" | "file" | "default";
-	} {
-		// The env var is a DISABLE flag, so a truthy value means "no fallback".
-		// It keeps its own permissive spelling (1/true/yes/on) rather than
-		// moving to parseEnabledEnvFlag: narrowing it would silently ignore a
-		// `yes` that is switching this off for someone today.
-		const raw = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
-		if (raw !== undefined && raw !== "") {
-			return { value: !/^(1|true|yes|on)$/i.test(raw), source: "env" };
-		}
-		const fromFile = this.data.combo_session_fallback;
-		if (typeof fromFile === "boolean") {
-			return { value: fromFile, source: "file" };
-		}
-		return { value: true, source: "default" };
-	}
-
 	/**
 	 * Whether a combo-routed request may fall through to normal SessionStrategy
 	 * routing once every slot in its combo has failed.
 	 *
-	 * True (the default) is the historical behaviour. False keeps explicit
-	 * combo chains isolated, which is the point when combos deliberately
-	 * separate provider pools — an Anthropic-only Opus combo next to a
-	 * Codex-only Sonnet one — and a fallthrough would serve the request from
-	 * the wrong pool.
+	 * Defaults to false — the fallthrough is blocked. Someone who built a combo
+	 * named the accounts that may serve a family; spilling out of that list when
+	 * they are all busy answers a question nobody asked, and it is how a request
+	 * for one provider ends up served by another. Allowing it stays one click
+	 * away for whoever wants the older, looser behaviour.
 	 *
-	 * Stored positively even though the env var is a disable flag, because a
-	 * switch labelled by what it allows is far easier to reason about on
-	 * screen than a double negative.
+	 * Stored positively — the switch says whether the fallthrough is allowed —
+	 * because a control labelled by what it permits beats a double negative on
+	 * screen. The old CCFLARE_DISABLE_COMBO_SESSION_FALLBACK inverts into it,
+	 * once, at boot (adoptLegacyRoutingSettings).
 	 */
 	getComboSessionFallback(): boolean {
-		return this.resolveComboSessionFallback().value;
+		return this.resolveFlag(this.data.combo_session_fallback, false).value;
 	}
 
-	/** Where the effective value comes from; "env" locks the dashboard control. */
-	getComboSessionFallbackSource(): "env" | "file" | "default" {
-		return this.resolveComboSessionFallback().source;
+	/** "file" once anyone has set it, "default" while nobody has. */
+	getComboSessionFallbackSource(): "file" | "default" {
+		return this.resolveFlag(this.data.combo_session_fallback, false).source;
 	}
 
 	setComboSessionFallback(value: boolean): void {

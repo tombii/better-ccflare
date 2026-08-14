@@ -12,93 +12,168 @@ function makeConfig(): { config: Config; cleanup: () => void } {
 	};
 }
 
-describe("getCombosEnabled / setCombosEnabled", () => {
-	const originalEnv = process.env.BETTER_CCFLARE_SHOW_COMBOS;
+describe("combos and combo session fallback settings", () => {
+	const originalShow = process.env.BETTER_CCFLARE_SHOW_COMBOS;
+	const originalDisable = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
 
 	beforeEach(() => {
 		delete process.env.BETTER_CCFLARE_SHOW_COMBOS;
+		delete process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
 	});
 
 	afterEach(() => {
-		if (originalEnv === undefined) {
+		if (originalShow === undefined) {
 			delete process.env.BETTER_CCFLARE_SHOW_COMBOS;
 		} else {
-			process.env.BETTER_CCFLARE_SHOW_COMBOS = originalEnv;
+			process.env.BETTER_CCFLARE_SHOW_COMBOS = originalShow;
+		}
+		if (originalDisable === undefined) {
+			delete process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
+		} else {
+			process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = originalDisable;
 		}
 	});
 
-	it("defaults to off, reported as coming from the default", () => {
+	it("starts with combos off and the fallback blocked", () => {
 		const { config, cleanup } = makeConfig();
 		try {
 			expect(config.getCombosEnabled()).toBe(false);
 			expect(config.getCombosEnabledSource()).toBe("default");
+			expect(config.getComboSessionFallback()).toBe(false);
+			expect(config.getComboSessionFallbackSource()).toBe("default");
 		} finally {
 			cleanup();
 		}
 	});
 
-	it("honors the legacy env var, which used to gate only the dashboard tab", () => {
+	it("is not overridden by the environment, so the dashboard switch cannot lie", () => {
+		// This is the whole point of the move: a variable that could win would
+		// force the UI to draw a control that accepts a click and does nothing.
 		process.env.BETTER_CCFLARE_SHOW_COMBOS = "true";
+		process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = "true";
 		const { config, cleanup } = makeConfig();
 		try {
-			expect(config.getCombosEnabled()).toBe(true);
-			expect(config.getCombosEnabledSource()).toBe("env");
-		} finally {
-			cleanup();
-		}
-	});
-
-	it('accepts "1" as well, matching every other flag in this file', () => {
-		process.env.BETTER_CCFLARE_SHOW_COMBOS = "1";
-		const { config, cleanup } = makeConfig();
-		try {
-			expect(config.getCombosEnabled()).toBe(true);
-		} finally {
-			cleanup();
-		}
-	});
-
-	it("treats any other env value as an explicit off", () => {
-		process.env.BETTER_CCFLARE_SHOW_COMBOS = "false";
-		const { config, cleanup } = makeConfig();
-		try {
+			config.setCombosEnabled(false);
+			config.setComboSessionFallback(true);
 			expect(config.getCombosEnabled()).toBe(false);
-			expect(config.getCombosEnabledSource()).toBe("env");
-		} finally {
-			cleanup();
-		}
-	});
-
-	it("honors a config-file value when no env var is set", () => {
-		const { config, cleanup } = makeConfig();
-		try {
-			config.setCombosEnabled(true);
-			expect(config.getCombosEnabled()).toBe(true);
+			expect(config.getComboSessionFallback()).toBe(true);
 			expect(config.getCombosEnabledSource()).toBe("file");
 		} finally {
 			cleanup();
 		}
 	});
 
-	it("lets the env var win over the file, so the write is reported as ineffective", () => {
-		process.env.BETTER_CCFLARE_SHOW_COMBOS = "false";
-		const { config, cleanup } = makeConfig();
-		try {
-			config.setCombosEnabled(true);
-			// The write landed in the file, but the env var still decides — this
-			// is what the dashboard shows as an env-locked control.
-			expect(config.getCombosEnabled()).toBe(false);
-			expect(config.getCombosEnabledSource()).toBe("env");
-		} finally {
-			cleanup();
-		}
+	describe("adoptLegacyRoutingSettings", () => {
+		it("adopts the old show-combos variable once, then leaves it alone", () => {
+			process.env.BETTER_CCFLARE_SHOW_COMBOS = "true";
+			const { config, cleanup } = makeConfig();
+			try {
+				const notes = config.adoptLegacyRoutingSettings(false);
+				expect(config.getCombosEnabled()).toBe(true);
+				expect(config.getCombosEnabledSource()).toBe("file");
+				expect(notes.length).toBe(1);
+
+				// Second boot: the field exists now, so a deliberate off stays off
+				// even with the variable still sitting in the environment.
+				config.setCombosEnabled(false);
+				expect(config.adoptLegacyRoutingSettings(false)).toEqual([]);
+				expect(config.getCombosEnabled()).toBe(false);
+			} finally {
+				cleanup();
+			}
+		});
+
+		it("inverts the old disable-fallback variable into the positive setting", () => {
+			process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = "true";
+			const { config, cleanup } = makeConfig();
+			try {
+				config.adoptLegacyRoutingSettings(false);
+				expect(config.getComboSessionFallback()).toBe(false);
+				expect(config.getComboSessionFallbackSource()).toBe("file");
+			} finally {
+				cleanup();
+			}
+		});
+
+		it("keeps the permissive spellings the old variable accepted", () => {
+			for (const raw of ["1", "yes", "on", "TRUE"]) {
+				process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = raw;
+				const { config, cleanup } = makeConfig();
+				try {
+					config.adoptLegacyRoutingSettings(false);
+					expect(config.getComboSessionFallback()).toBe(false);
+				} finally {
+					cleanup();
+				}
+			}
+		});
+
+		it("reads an unrecognised value as not disabling, and still records it", () => {
+			process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = "maybe";
+			const { config, cleanup } = makeConfig();
+			try {
+				config.adoptLegacyRoutingSettings(false);
+				expect(config.getComboSessionFallback()).toBe(true);
+				expect(config.getComboSessionFallbackSource()).toBe("file");
+			} finally {
+				cleanup();
+			}
+		});
+
+		it("ignores an empty variable, which is not an opinion", () => {
+			process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = "";
+			const { config, cleanup } = makeConfig();
+			try {
+				config.adoptLegacyRoutingSettings(false);
+				expect(config.getComboSessionFallbackSource()).toBe("default");
+			} finally {
+				cleanup();
+			}
+		});
+
+		it("turns combos on for an install that already has them", () => {
+			const { config, cleanup } = makeConfig();
+			try {
+				const notes = config.adoptLegacyRoutingSettings(true);
+				expect(config.getCombosEnabled()).toBe(true);
+				expect(notes.length).toBe(1);
+			} finally {
+				cleanup();
+			}
+		});
+
+		it("leaves a fresh install alone", () => {
+			const { config, cleanup } = makeConfig();
+			try {
+				expect(config.adoptLegacyRoutingSettings(false)).toEqual([]);
+				expect(config.getCombosEnabledSource()).toBe("default");
+				expect(config.getComboSessionFallbackSource()).toBe("default");
+			} finally {
+				cleanup();
+			}
+		});
+
+		it("prefers the variable over the has-combos guess when both apply", () => {
+			process.env.BETTER_CCFLARE_SHOW_COMBOS = "false";
+			const { config, cleanup } = makeConfig();
+			try {
+				config.adoptLegacyRoutingSettings(true);
+				// Someone wrote the variable on purpose; the database is only a
+				// fallback for installs that never expressed anything.
+				expect(config.getCombosEnabled()).toBe(false);
+			} finally {
+				cleanup();
+			}
+		});
 	});
 
-	it("surfaces the effective value in getAllSettings", () => {
+	it("surfaces both effective values in getAllSettings", () => {
 		const { config, cleanup } = makeConfig();
 		try {
 			config.setCombosEnabled(true);
+			config.setComboSessionFallback(true);
 			expect(config.getAllSettings().combos_enabled).toBe(true);
+			expect(config.getAllSettings().combo_session_fallback).toBe(true);
 		} finally {
 			cleanup();
 		}

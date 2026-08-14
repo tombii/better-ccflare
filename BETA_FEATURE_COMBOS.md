@@ -36,31 +36,31 @@ requested one exactly when an environment variable overrides it.
 
 ### From the environment
 
-```env
-BETTER_CCFLARE_SHOW_COMBOS=true
-```
+`BETTER_CCFLARE_SHOW_COMBOS` is legacy. It is read once, at boot, when the
+config field is absent — so an install that was using it keeps behaving the
+same — and is never consulted again.
 
-Still supported, and it wins over the dashboard switch — which is then shown
-disabled, with the reason, instead of accepting a click that would be silently
-ignored. Remove the variable to control combos from the UI.
+It does not override the switch, deliberately. A control the environment can
+veto has to be drawn disabled with an explanation, or it accepts a click and
+silently does nothing; the switch owns the setting instead.
 
 ## Upgrading
 
-An install that already has combos configured is seeded to enabled on first
-boot, with a line in the startup log. Upgrading therefore keeps serving exactly
-the routing it was serving before; the opt-in default only applies to installs
-with no combos.
+An install that already has combos configured adopts enabled on first boot,
+with a line in the startup log — as does one that had `BETTER_CCFLARE_SHOW_COMBOS`
+set. Upgrading therefore keeps serving exactly the routing it was serving
+before; the opt-in default only applies to installs with neither.
 
 ## Implementation Details
 
-- **Config**: `combos_enabled` in the config file, resolved as
-  env > file > default (`Config#getCombosEnabled`)
+- **Config**: `combos_enabled` in the config file, read from the file only
+  (`Config#getCombosEnabled`)
 - **Routing**: read by the account selector — this is what makes the switch
   real rather than cosmetic
 - **Backend**: `GET`/`POST /api/config/combos-enabled`; `/api/features` reports
   `showCombos` from the same setting, so the tab and routing can no longer
   disagree
-- **Seeding**: `seedCombosEnabled` at server start; writes the field once, so a
-  later deliberate off is never undone
+- **Adoption**: `Config#adoptLegacyRoutingSettings` at server start; writes the
+  field once, so a later deliberate off is never undone
 - The combos API endpoints (`/api/combos`, `/api/families`, …) remain reachable
   regardless of the switch, for programmatic access

@@ -46,19 +46,17 @@ const ADVANCED_SETTINGS_ITEMS: AdvancedSettingItem[] = [
 				description="What happens when every slot in a combo has failed."
 				path="/api/config/combo-session-fallback"
 				switchLabel="Fall through to normal routing when a combo is exhausted"
-				envVar="CCFLARE_DISABLE_COMBO_SESSION_FALLBACK"
 			>
 				<p>
-					On (the default) is the historical behaviour: once every slot in the
-					combo has failed, the request is retried against the whole account
-					pool.
+					Off by default: a combo names the accounts that may serve a family, so
+					when they have all failed the request stops there. It ends in a 503,
+					recorded as <code>combo_session_fallback_disabled</code>, instead of
+					being served by an account you did not choose — which is how a request
+					meant for one provider ends up on another.
 				</p>
 				<p>
-					Turn it off to keep combo chains isolated. That is what you want when
-					combos deliberately separate provider pools — an Anthropic-only Opus
-					combo next to a Codex-only Sonnet one — because a fallthrough would
-					serve the request from the wrong pool. Requests then end in a 503
-					instead, recorded as <code>combo_session_fallback_disabled</code>.
+					Turn it on for the looser behaviour: once every slot has failed, the
+					request is retried against the whole account pool.
 				</p>
 			</ConfigFlagDialog>
 		),

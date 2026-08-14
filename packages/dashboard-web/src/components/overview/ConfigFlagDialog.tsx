@@ -16,17 +16,16 @@ import { Switch } from "../ui/switch";
 /**
  * One on/off setting behind its own dialog, for the Advanced card.
  *
- * Shared rather than copied per setting because the honest part is always the
- * same: read the value with its source, and when an environment variable is
- * the source, disable the switch and say which variable — writing the config
- * file would be accepted and then ignored, which is worse than refusing.
+ * Shared rather than copied per setting: each of these is a switch, a sentence
+ * saying what turning it on costs, and nothing else. These settings are read
+ * from the config file only — no environment variable can override them —
+ * precisely so this control never has to be drawn disabled with an apology.
  */
 export function ConfigFlagDialog({
 	title,
 	description,
 	path,
 	switchLabel,
-	envVar,
 	children,
 	triggerLabel = "Configure",
 }: {
@@ -36,8 +35,6 @@ export function ConfigFlagDialog({
 	path: string;
 	/** Label next to the switch, phrased by what being on allows. */
 	switchLabel: string;
-	/** Environment variable that overrides this setting, if any. */
-	envVar?: string;
 	/** Explanation shown under the switch. */
 	children: ReactNode;
 	triggerLabel?: string;
@@ -46,7 +43,6 @@ export function ConfigFlagDialog({
 	const saveFlag = useSaveConfigFlag(path);
 
 	const enabled = flagQuery.data?.enabled ?? false;
-	const envLocked = flagQuery.data?.source === "env";
 	const busy = flagQuery.isLoading || saveFlag.isPending;
 	const switchId = `config-flag-${path.replace(/[^a-z0-9]+/gi, "-")}`;
 
@@ -74,7 +70,7 @@ export function ConfigFlagDialog({
 						<Switch
 							id={switchId}
 							checked={enabled}
-							disabled={busy || envLocked}
+							disabled={busy}
 							onCheckedChange={(next) => saveFlag.mutate(next)}
 						/>
 					</div>
@@ -82,13 +78,6 @@ export function ConfigFlagDialog({
 
 				<div className="space-y-2 text-xs leading-relaxed text-muted-foreground">
 					{children}
-					{envLocked && envVar && (
-						<p>
-							Currently set by the <code>{envVar}</code> environment variable,
-							which overrides this switch. Remove it to control the setting from
-							here.
-						</p>
-					)}
 					{saveFlag.isError && (
 						<p className="text-destructive">
 							Could not save the setting. Try again.

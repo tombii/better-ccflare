@@ -378,7 +378,6 @@ describe("handleProxy Step-10 combo-fallback control flow (v3 Fix3)", () => {
 	});
 
 	it("can disable Step-10 SessionStrategy fallback after combo slots fail", async () => {
-		process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = "true";
 		const handleStart = mock(() => {});
 		const handleEnd = mock(() => Promise.resolve());
 		const collectorSpy = spyOn(
@@ -415,6 +414,9 @@ describe("handleProxy Step-10 combo-fallback control flow (v3 Fix3)", () => {
 
 		const ctx = makeComboContext([acc1, acc2], combo);
 		ctx.config.getModelScopedCapacityRouting = () => "off";
+		// Set through the config, not the environment: the old variable is
+		// adopted into the config once at boot and no longer decides per request.
+		ctx.config.getComboSessionFallback = () => false;
 		const select = ctx.strategy.select as ReturnType<typeof mock>;
 		const request = new Request("https://proxy.local/v1/messages", {
 			method: "POST",

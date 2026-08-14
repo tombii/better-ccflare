@@ -423,9 +423,8 @@ export function createConfigHandlers(
 			}
 			config.setCombosEnabled(body.enabled);
 			// Same shape as setModelCapacityRouting: report the post-set EFFECTIVE
-			// value, because a BETTER_CCFLARE_SHOW_COMBOS env var still overrides
-			// the file we just wrote and the dashboard needs to say so instead of
-			// showing a switch that silently did nothing.
+			// value, so the dashboard shows what the server confirmed rather than
+			// what it asked for.
 			return jsonResponse({
 				success: true,
 				enabled: body.enabled,

@@ -6,18 +6,19 @@ import { api } from "../api";
  *   GET  <path>                  -> { enabled: boolean, source: "env"|"file"|"default" }
  *   POST <path>  { enabled }     -> { success, enabled, source, effective }
  *
- * `source` is what lets the UI be honest: when an environment variable is
- * setting the value, writing the config file has no effect, so the switch is
- * shown locked with the reason instead of silently doing nothing.
+ * `source` says whether anyone has set the value yet ("file") or it is still
+ * the built-in default. These settings are read from the config file only —
+ * no environment variable overrides them — so a write always takes effect.
  *
- * `effective` on the POST response is the value in force AFTER the write —
- * which differs from the requested one exactly in the env-locked case.
+ * `effective` on the POST response is the value in force AFTER the write. It
+ * is what the cache is updated with, so the UI never shows a value the server
+ * did not confirm.
  *
  * Authentication comes for free from the shared `api` client, which injects
  * `x-api-key` into every request and opens the auth dialog on 401.
  */
 
-export type ConfigFlagSource = "env" | "file" | "default";
+export type ConfigFlagSource = "file" | "default";
 
 export interface ConfigFlag {
 	enabled: boolean;
@@ -29,7 +30,7 @@ function asRecord(raw: unknown): Record<string, unknown> {
 }
 
 function asSource(raw: unknown): ConfigFlagSource {
-	return raw === "env" || raw === "file" ? raw : "default";
+	return raw === "file" ? "file" : "default";
 }
 
 /** Reads a flag. A malformed body degrades to "off, by default". */

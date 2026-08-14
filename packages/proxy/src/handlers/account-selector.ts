@@ -277,16 +277,16 @@ function areCombosEnabled(ctx: ProxyContext): boolean {
  * Whether a combo whose slots are all unavailable must stop instead of falling
  * through to normal routing.
  *
- * Reads the config when there is one, and otherwise the env var directly —
- * exactly as this did before the setting existed. A ProxyContext without a
- * config is a caller or test that never had one to consult, and silently
- * changing what happens for them is not this change's business.
+ * Reads the config, and only the config: CCFLARE_DISABLE_COMBO_SESSION_FALLBACK
+ * is adopted into that config once at boot and never consulted again, so that
+ * the dashboard switch is the answer rather than one opinion among two.
+ *
+ * A context without a config means there is no operator to ask — a caller or
+ * test that never had one — and gets the historical looseness rather than the
+ * new default, since nobody chose the new default for them.
  */
 export function isComboSessionFallbackDisabled(ctx: ProxyContext): boolean {
-	const allowed = ctx.config?.getComboSessionFallback?.();
-	if (allowed !== undefined) return !allowed;
-	const value = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
-	return /^(1|true|yes|on)$/i.test(value ?? "");
+	return !(ctx.config?.getComboSessionFallback?.() ?? true);
 }
 
 /**

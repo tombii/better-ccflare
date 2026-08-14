@@ -26,7 +26,6 @@ export function CombosIntroCard() {
 	const saveFlag = useSaveConfigFlag(COMBOS_ENABLED_PATH);
 
 	const enabled = flagQuery.data?.enabled ?? false;
-	const envLocked = flagQuery.data?.source === "env";
 	const busy = flagQuery.isLoading || saveFlag.isPending;
 
 	return (
@@ -75,7 +74,7 @@ export function CombosIntroCard() {
 						</span>
 						<Switch
 							checked={enabled}
-							disabled={busy || envLocked}
+							disabled={busy}
 							onCheckedChange={(next) => saveFlag.mutate(next)}
 							aria-label="Use combos for routing"
 						/>
@@ -83,14 +82,7 @@ export function CombosIntroCard() {
 				</div>
 			</CardHeader>
 			<CardContent className="space-y-2 text-sm text-muted-foreground">
-				{envLocked && (
-					<p>
-						Set by the <code>BETTER_CCFLARE_SHOW_COMBOS</code> environment
-						variable, which overrides this switch. Remove it to control combos
-						from here.
-					</p>
-				)}
-				{!enabled && !envLocked && (
+				{!enabled && (
 					<p>
 						Combos are off: the combos below are saved but do not affect
 						routing.

@@ -340,34 +340,33 @@ const usagePollingRetryTimeouts = new Map<string, NodeJS.Timeout>();
 let tlsEnabled = false;
 
 /**
- * One-time seed of the combos setting for installs that predate it.
+ * Adopt, once, what the combo environment variables used to decide.
  *
- * Combo routing used to depend only on what the database held — the
- * BETTER_CCFLARE_SHOW_COMBOS flag hid the tab and nothing else. Now that the
- * setting gates routing, an upgrade of an install that already has combos
- * would silently stop routing them, which is precisely the kind of invisible
- * change this switch exists to prevent. So: if nobody has expressed an
- * opinion yet (no env var, no config field) and combos exist, adopt the
- * behaviour that was already running.
+ * The switches for combo routing and its session fallback now live in the
+ * dashboard and are read from the config file only — an environment variable
+ * that could override them would force the UI to draw a control that accepts a
+ * click and does nothing. So the old variables are read here, at boot, written
+ * into the file, and never consulted again.
  *
- * Writing the field makes the source "file", so this never runs twice and a
- * later deliberate "off" is never undone. A fresh install with no combos is
- * left untouched and keeps the opt-in default.
+ * The same pass covers an install that has combos but never set the variable:
+ * it was routing through them, and an upgrade must not stop that in silence.
+ *
+ * Failure is not fatal: the settings stay at their defaults and the operator
+ * can set them in the dashboard, which is the whole point of moving them there.
  */
-async function seedCombosEnabled(config: Config, dbOps: DatabaseOperations) {
-	if (config.getCombosEnabledSource() !== "default") return;
+async function adoptLegacyRoutingSettings(
+	config: Config,
+	dbOps: DatabaseOperations,
+) {
+	const log = new Logger("Startup");
 	try {
 		const combos = await dbOps.listCombos();
-		if (combos.length === 0) return;
-		config.setCombosEnabled(true);
-		new Logger("Startup").info(
-			`Combos enabled: ${combos.length} combo(s) already configured, adopting the routing that was already running. Turn it off in the dashboard's Combos tab.`,
-		);
+		for (const note of config.adoptLegacyRoutingSettings(combos.length > 0)) {
+			log.info(note);
+		}
 	} catch (err) {
-		// A failed seed must not stop the server: the setting simply stays at
-		// its default and the operator can flip it in the dashboard.
-		new Logger("Startup").warn(
-			`Could not seed the combos setting: ${err instanceof Error ? err.message : String(err)}`,
+		log.warn(
+			`Could not adopt the legacy combo settings: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}
 }
@@ -810,7 +809,7 @@ export default async function startServer(options?: {
 
 	// Before anything can route: adopt the combo behaviour this install was
 	// already running, so upgrading is never a silent routing change.
-	await seedCombosEnabled(config, dbOps);
+	await adoptLegacyRoutingSettings(config, dbOps);
 
 	// One-time migration: promote pre-existing DBs from auto_vacuum=NONE to
 	// INCREMENTAL. Fresh DBs created since ensureSchema() started issuing
