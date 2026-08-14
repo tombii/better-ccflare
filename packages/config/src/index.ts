@@ -121,6 +121,7 @@ export interface ConfigData {
 	usage_throttling_five_hour_enabled?: boolean;
 	usage_throttling_weekly_enabled?: boolean;
 	model_scoped_capacity_routing?: ModelScopedCapacityRoutingMode;
+	combos_enabled?: boolean;
 	provider_model_default_overrides?: ProviderModelDefaultOverrides;
 	agent_frontmatter_model_fallback?: boolean;
 	model_catalog_oauth_refresh_enabled?: boolean;
@@ -653,6 +654,27 @@ export class Config extends EventEmitter {
 	}
 
 	/**
+	 * Boolean sibling of resolveEnvFileSetting, for flags parsed by
+	 * parseEnabledEnvFlag. Kept separate because that helper is generic over
+	 * string unions, and a boolean is not one — sharing it would mean storing
+	 * flags as "true"/"false" strings just to satisfy the type.
+	 */
+	private resolveEnvFileFlag(
+		envValue: string | undefined,
+		fileValue: boolean | undefined,
+		defaultValue: boolean,
+	): { value: boolean; source: "env" | "file" | "default" } {
+		const fromEnv = parseEnabledEnvFlag(envValue);
+		if (fromEnv !== undefined) {
+			return { value: fromEnv, source: "env" };
+		}
+		if (typeof fileValue === "boolean") {
+			return { value: fileValue, source: "file" };
+		}
+		return { value: defaultValue, source: "default" };
+	}
+
+	/**
 	 * Resolve the effective load-balancing strategy plus its source, using the
 	 * same env > file > default precedence getStrategy() has always used.
 	 * Backs both getStrategy() and getStrategySource() so they cannot drift.
@@ -705,6 +727,51 @@ export class Config extends EventEmitter {
 			);
 		}
 		this.set("model_scoped_capacity_routing", mode);
+	}
+
+	private resolveCombosEnabled(): {
+		value: boolean;
+		source: "env" | "file" | "default";
+	} {
+		return this.resolveEnvFileFlag(
+			process.env.BETTER_CCFLARE_SHOW_COMBOS,
+			this.data.combos_enabled,
+			false,
+		);
+	}
+
+	/**
+	 * Whether combos take part in routing at all.
+	 *
+	 * `BETTER_CCFLARE_SHOW_COMBOS` used to gate only the dashboard's combos tab
+	 * (via /api/features): nothing in the proxy ever read it, so a combo hidden
+	 * from the UI kept steering traffic with no way to see or edit it. This
+	 * setting is the switch the flag looked like — the account selector reads
+	 * it — and the env var is kept as an override so existing beta users keep
+	 * exactly the behaviour they configured. The env var now also accepts "1",
+	 * matching every other flag here; it previously required the literal
+	 * "true".
+	 *
+	 * Defaults to false, so combos stay opt-in for a fresh install. An install
+	 * that already has combos is seeded to true on boot (seedCombosEnabled in
+	 * apps/server) — upgrading must not silently change anyone's routing.
+	 */
+	getCombosEnabled(): boolean {
+		return this.resolveCombosEnabled().value;
+	}
+
+	/**
+	 * Where the effective combos setting comes from, mirroring the precedence
+	 * in getCombosEnabled(). The dashboard uses "env" to lock the control,
+	 * because a POST that writes the file field is ineffective while the env
+	 * var overrides it.
+	 */
+	getCombosEnabledSource(): "env" | "file" | "default" {
+		return this.resolveCombosEnabled().source;
+	}
+
+	setCombosEnabled(value: boolean): void {
+		this.set("combos_enabled", value);
 	}
 
 	getProviderModelDefaultOverrides(): ProviderModelDefaultOverrides {
@@ -924,6 +991,7 @@ export class Config extends EventEmitter {
 				this.getUsageThrottlingFiveHourEnabled(),
 			usage_throttling_weekly_enabled: this.getUsageThrottlingWeeklyEnabled(),
 			model_scoped_capacity_routing: this.getModelScopedCapacityRouting(),
+			combos_enabled: this.getCombosEnabled(),
 			agent_frontmatter_model_fallback: this.getAgentFrontmatterModelFallback(),
 			model_catalog_oauth_refresh_enabled:
 				this.getModelCatalogOAuthRefreshEnabled(),

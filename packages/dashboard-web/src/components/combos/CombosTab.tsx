@@ -10,6 +10,7 @@ import { Button } from "../ui/button";
 import { Separator } from "../ui/separator";
 import { ComboCard } from "./ComboCard";
 import { ComboDialog } from "./ComboDialog";
+import { CombosIntroCard } from "./CombosIntroCard";
 import { FamilyActivationSection } from "./FamilyActivationSection";
 
 export function CombosTab() {
@@ -34,6 +35,8 @@ export function CombosTab() {
 
 	return (
 		<div className="space-y-6">
+			<CombosIntroCard />
+
 			<FamilyActivationSection />
 
 			<Separator />

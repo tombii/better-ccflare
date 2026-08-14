@@ -242,7 +242,7 @@ export class APIRouter {
 		const cleanupHandler = createCleanupHandler(dbOps, config);
 		const systemInfoHandler = createSystemInfoHandler();
 		const versionCheckHandler = createVersionCheckHandler();
-		const featuresHandler = createFeaturesHandler();
+		const featuresHandler = createFeaturesHandler(config);
 
 		// Debug/profiling handlers
 		const heapStatsHandler = createHeapStatsHandler();
@@ -410,6 +410,12 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/config/model-capacity-routing", (req) =>
 			configHandlers.setModelCapacityRouting(req),
+		);
+		this.handlers.set("GET:/api/config/combos-enabled", () =>
+			configHandlers.getCombosEnabled(),
+		);
+		this.handlers.set("POST:/api/config/combos-enabled", (req) =>
+			configHandlers.setCombosEnabled(req),
 		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
@@ -721,7 +727,6 @@ export class APIRouter {
 					modelFallbacksHandler(req, accountId),
 				)(req, url);
 			}
-
 
 			// Account removal
 			if (parts.length === 4 && method === "DELETE") {

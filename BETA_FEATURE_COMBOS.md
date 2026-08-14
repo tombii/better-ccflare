@@ -1,58 +1,66 @@
-# Beta Feature: Combos UI Toggle
+# Beta Feature: Combos
 
 ## Overview
 
-The combos feature can now be conditionally shown in the web UI using an environment variable. This allows beta testing of the combos functionality without exposing it to all users.
+Combos are opt-in. The switch lives in the dashboard, on the Combos tab, and it
+decides two things at once: whether the tab is shown, and whether combos take
+part in routing.
+
+That pairing is the point. The switch used to be `BETTER_CCFLARE_SHOW_COMBOS`
+and it only hid the tab — the proxy went on routing through whatever combos the
+database held. A combo could therefore steer every request for a model family
+while being invisible and uneditable in the UI.
 
 ## Usage
 
-### Enable Combos UI
+### From the dashboard
 
-Set the environment variable:
+Combos tab → the switch in the header card. Off by default; turning it off
+leaves your combos saved but inert, and every request goes back to normal pool
+routing.
+
+### From the API
 
 ```bash
-export BETTER_CCFLARE_SHOW_COMBOS=true
+curl http://localhost:8080/api/config/combos-enabled
+# { "enabled": false, "source": "default" }
+
+curl -X POST http://localhost:8080/api/config/combos-enabled \
+  -H 'content-type: application/json' -d '{"enabled":true}'
+# { "success": true, "enabled": true, "source": "file", "effective": true }
 ```
 
-Or add it to your `.env` file:
+`source` reports where the value in force comes from — `env`, `file` or
+`default`. `effective` is the value after the write, which differs from the
+requested one exactly when an environment variable overrides it.
+
+### From the environment
 
 ```env
 BETTER_CCFLARE_SHOW_COMBOS=true
 ```
 
-### Disable Combos UI (Default)
+Still supported, and it wins over the dashboard switch — which is then shown
+disabled, with the reason, instead of accepting a click that would be silently
+ignored. Remove the variable to control combos from the UI.
 
-By default, combos are hidden. To explicitly disable:
+## Upgrading
 
-```bash
-export BETTER_CCFLARE_SHOW_COMBOS=false
-```
-
-Or omit the variable entirely.
-
-## What Happens
-
-When `BETTER_CCFLARE_SHOW_COMBOS=true`:
-
-- The "Combos" navigation item appears in the sidebar between "Accounts" and "Agents"
-- The `/combos` route becomes accessible
-- All combos management features are available in the UI
-
-When `BETTER_CCFLARE_SHOW_COMBOS=false` or unset:
-
-- The "Combos" navigation item is hidden
-- The `/combos` route is not accessible
-- The combos backend API endpoints remain functional (for programmatic access)
+An install that already has combos configured is seeded to enabled on first
+boot, with a line in the startup log. Upgrading therefore keeps serving exactly
+the routing it was serving before; the opt-in default only applies to installs
+with no combos.
 
 ## Implementation Details
 
-- **Backend**: `/api/features` endpoint returns `{ showCombos: boolean }`
-- **Frontend**: Fetches features on app load after authentication
-- **Dynamic routing**: The combos route is conditionally added based on the flag
-- **Navigation**: The combos nav item is conditionally rendered based on the flag
-
-## Notes
-
-- This feature flag only affects UI visibility, not backend functionality
-- The combos API endpoints (`/api/combos`, `/api/families`, etc.) remain active regardless of this flag
-- Changes to this env var require restarting the server to take effect
+- **Config**: `combos_enabled` in the config file, resolved as
+  env > file > default (`Config#getCombosEnabled`)
+- **Routing**: read by the account selector — this is what makes the switch
+  real rather than cosmetic
+- **Backend**: `GET`/`POST /api/config/combos-enabled`; `/api/features` reports
+  `showCombos` from the same setting, so the tab and routing can no longer
+  disagree
+- **Seeding**: `seedCombosEnabled` at server start; writes the field once, so a
+  later deliberate off is never undone
+- The combos API endpoints (`/api/combos`, `/api/families`, …) remain reachable
+  regardless of the switch, for programmatic access

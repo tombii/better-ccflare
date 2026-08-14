@@ -57,4 +57,8 @@ export const queryKeys = {
 	// and writes everything at once.
 	providerModelDefaults: () =>
 		[...queryKeys.all, "config", "provider-model-defaults"] as const,
+	// One key per on/off config setting, named by its endpoint path so two
+	// settings can never share a cache entry.
+	configFlag: (path: string) =>
+		[...queryKeys.all, "config", "flag", path] as const,
 } as const;

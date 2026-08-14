@@ -339,6 +339,39 @@ const usagePollingRetryTimeouts = new Map<string, NodeJS.Timeout>();
 // SSL/TLS configuration
 let tlsEnabled = false;
 
+/**
+ * One-time seed of the combos setting for installs that predate it.
+ *
+ * Combo routing used to depend only on what the database held — the
+ * BETTER_CCFLARE_SHOW_COMBOS flag hid the tab and nothing else. Now that the
+ * setting gates routing, an upgrade of an install that already has combos
+ * would silently stop routing them, which is precisely the kind of invisible
+ * change this switch exists to prevent. So: if nobody has expressed an
+ * opinion yet (no env var, no config field) and combos exist, adopt the
+ * behaviour that was already running.
+ *
+ * Writing the field makes the source "file", so this never runs twice and a
+ * later deliberate "off" is never undone. A fresh install with no combos is
+ * left untouched and keeps the opt-in default.
+ */
+async function seedCombosEnabled(config: Config, dbOps: DatabaseOperations) {
+	if (config.getCombosEnabledSource() !== "default") return;
+	try {
+		const combos = await dbOps.listCombos();
+		if (combos.length === 0) return;
+		config.setCombosEnabled(true);
+		new Logger("Startup").info(
+			`Combos enabled: ${combos.length} combo(s) already configured, adopting the routing that was already running. Turn it off in the dashboard's Combos tab.`,
+		);
+	} catch (err) {
+		// A failed seed must not stop the server: the setting simply stays at
+		// its default and the operator can flip it in the dashboard.
+		new Logger("Startup").warn(
+			`Could not seed the combos setting: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+}
+
 // Startup maintenance (one-shot): cleanup only (compaction available via API endpoint)
 async function runStartupMaintenance(dbOps: DatabaseOperations) {
 	const log = new Logger("StartupMaintenance");
@@ -774,6 +807,10 @@ export default async function startServer(options?: {
 
 	DatabaseFactory.initialize(undefined, runtime);
 	const dbOps = await DatabaseFactory.getInstanceAsync();
+
+	// Before anything can route: adopt the combo behaviour this install was
+	// already running, so upgrading is never a silent routing change.
+	await seedCombosEnabled(config, dbOps);
 
 	// One-time migration: promote pre-existing DBs from auto_vacuum=NONE to
 	// INCREMENTAL. Fresh DBs created since ensureSchema() started issuing

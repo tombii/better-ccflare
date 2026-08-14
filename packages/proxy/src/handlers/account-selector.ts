@@ -260,6 +260,19 @@ function isCapacityRoutingEnabled(ctx: ProxyContext): boolean {
 	return ctx.config?.getModelScopedCapacityRouting?.() === "exhausted";
 }
 
+/**
+ * Whether combos participate in routing. Reads `ctx.config` defensively, and
+ * treats an absent config as enabled — not as the feature's "off" default.
+ * The distinction matters: a missing config means there is no operator to ask
+ * (a caller or test that built a ProxyContext without one), and before this
+ * setting existed routing always consulted the database. Defaulting to "off"
+ * there would silently disable combo routing for such callers, which is the
+ * exact failure this switch is meant to prevent.
+ */
+function areCombosEnabled(ctx: ProxyContext): boolean {
+	return ctx.config?.getCombosEnabled?.() ?? true;
+}
+
 function isComboSessionFallbackDisabled(): boolean {
 	const value = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
 	return /^(1|true|yes|on)$/i.test(value ?? "");
@@ -544,8 +557,9 @@ export async function selectAccountsForRequest(
 	};
 
 	// Try combo-aware routing if a model is provided (skipped entirely when
-	// skipCombo is set — see the `options` doc above).
-	if (model && !options?.skipCombo) {
+	// skipCombo is set — see the `options` doc above, or when combos are
+	// switched off).
+	if (model && !options?.skipCombo && areCombosEnabled(ctx)) {
 		const family = getModelFamily(model);
 		if (family) {
 			const validFamilies: readonly string[] = [

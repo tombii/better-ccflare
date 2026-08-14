@@ -404,5 +404,34 @@ export function createConfigHandlers(
 				effective: config.getModelScopedCapacityRouting(),
 			});
 		},
+
+		getCombosEnabled: (): Response => {
+			return jsonResponse({
+				enabled: config.getCombosEnabled(),
+				source: config.getCombosEnabledSource(),
+			});
+		},
+
+		setCombosEnabled: async (req: Request): Promise<Response> => {
+			const body = await req.json();
+			if (typeof body.enabled !== "boolean") {
+				return errorResponse(
+					BadRequest(
+						"Invalid combos payload: expected 'enabled' to be a boolean",
+					),
+				);
+			}
+			config.setCombosEnabled(body.enabled);
+			// Same shape as setModelCapacityRouting: report the post-set EFFECTIVE
+			// value, because a BETTER_CCFLARE_SHOW_COMBOS env var still overrides
+			// the file we just wrote and the dashboard needs to say so instead of
+			// showing a switch that silently did nothing.
+			return jsonResponse({
+				success: true,
+				enabled: body.enabled,
+				source: config.getCombosEnabledSource(),
+				effective: config.getCombosEnabled(),
+			});
+		},
 	};
 }
