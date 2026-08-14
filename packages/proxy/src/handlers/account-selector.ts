@@ -273,7 +273,18 @@ function areCombosEnabled(ctx: ProxyContext): boolean {
 	return ctx.config?.getCombosEnabled?.() ?? true;
 }
 
-function isComboSessionFallbackDisabled(): boolean {
+/**
+ * Whether a combo whose slots are all unavailable must stop instead of falling
+ * through to normal routing.
+ *
+ * Reads the config when there is one, and otherwise the env var directly —
+ * exactly as this did before the setting existed. A ProxyContext without a
+ * config is a caller or test that never had one to consult, and silently
+ * changing what happens for them is not this change's business.
+ */
+export function isComboSessionFallbackDisabled(ctx: ProxyContext): boolean {
+	const allowed = ctx.config?.getComboSessionFallback?.();
+	if (allowed !== undefined) return !allowed;
 	const value = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
 	return /^(1|true|yes|on)$/i.test(value ?? "");
 }
@@ -669,7 +680,7 @@ export async function selectAccountsForRequest(
 					// All slots unavailable — fall back to normal routing. Combo state
 					// is deliberately left unset (never was set above) so this fallthrough
 					// is treated as ordinary, non-combo selection downstream.
-					if (isComboSessionFallbackDisabled()) {
+					if (isComboSessionFallbackDisabled(ctx)) {
 						setComboSlotInfo(meta, { comboName: combo.name, slots: [] });
 						meta.comboName = combo.name;
 						log.warn(

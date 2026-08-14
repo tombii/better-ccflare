@@ -417,6 +417,12 @@ export class APIRouter {
 		this.handlers.set("POST:/api/config/combos-enabled", (req) =>
 			configHandlers.setCombosEnabled(req),
 		);
+		this.handlers.set("GET:/api/config/combo-session-fallback", () =>
+			configHandlers.getComboSessionFallback(),
+		);
+		this.handlers.set("POST:/api/config/combo-session-fallback", (req) =>
+			configHandlers.setComboSessionFallback(req),
+		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
 		this.handlers.set("GET:/api/version/check", () => versionCheckHandler());

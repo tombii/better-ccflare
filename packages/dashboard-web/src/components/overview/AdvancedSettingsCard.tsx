@@ -7,6 +7,7 @@ import {
 	CardTitle,
 } from "../ui/card";
 import { Separator } from "../ui/separator";
+import { ConfigFlagDialog } from "./ConfigFlagDialog";
 import { ProviderModelDefaultsDialog } from "./ProviderModelDefaultsDialog";
 
 /**
@@ -33,6 +34,34 @@ const ADVANCED_SETTINGS_ITEMS: AdvancedSettingItem[] = [
 		description:
 			"Built-in fallback model per provider and Claude family, used only as a last resort.",
 		dialog: <ProviderModelDefaultsDialog />,
+	},
+	{
+		id: "combo-session-fallback",
+		title: "Combo Session Fallback",
+		description:
+			"Whether a combo whose slots have all failed may fall through to normal routing.",
+		dialog: (
+			<ConfigFlagDialog
+				title="Combo Session Fallback"
+				description="What happens when every slot in a combo has failed."
+				path="/api/config/combo-session-fallback"
+				switchLabel="Fall through to normal routing when a combo is exhausted"
+				envVar="CCFLARE_DISABLE_COMBO_SESSION_FALLBACK"
+			>
+				<p>
+					On (the default) is the historical behaviour: once every slot in the
+					combo has failed, the request is retried against the whole account
+					pool.
+				</p>
+				<p>
+					Turn it off to keep combo chains isolated. That is what you want when
+					combos deliberately separate provider pools — an Anthropic-only Opus
+					combo next to a Codex-only Sonnet one — because a fallthrough would
+					serve the request from the wrong pool. Requests then end in a 503
+					instead, recorded as <code>combo_session_fallback_disabled</code>.
+				</p>
+			</ConfigFlagDialog>
+		),
 	},
 ];
 

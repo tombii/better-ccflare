@@ -122,6 +122,7 @@ export interface ConfigData {
 	usage_throttling_weekly_enabled?: boolean;
 	model_scoped_capacity_routing?: ModelScopedCapacityRoutingMode;
 	combos_enabled?: boolean;
+	combo_session_fallback?: boolean;
 	provider_model_default_overrides?: ProviderModelDefaultOverrides;
 	agent_frontmatter_model_fallback?: boolean;
 	model_catalog_oauth_refresh_enabled?: boolean;
@@ -774,6 +775,52 @@ export class Config extends EventEmitter {
 		this.set("combos_enabled", value);
 	}
 
+	private resolveComboSessionFallback(): {
+		value: boolean;
+		source: "env" | "file" | "default";
+	} {
+		// The env var is a DISABLE flag, so a truthy value means "no fallback".
+		// It keeps its own permissive spelling (1/true/yes/on) rather than
+		// moving to parseEnabledEnvFlag: narrowing it would silently ignore a
+		// `yes` that is switching this off for someone today.
+		const raw = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
+		if (raw !== undefined && raw !== "") {
+			return { value: !/^(1|true|yes|on)$/i.test(raw), source: "env" };
+		}
+		const fromFile = this.data.combo_session_fallback;
+		if (typeof fromFile === "boolean") {
+			return { value: fromFile, source: "file" };
+		}
+		return { value: true, source: "default" };
+	}
+
+	/**
+	 * Whether a combo-routed request may fall through to normal SessionStrategy
+	 * routing once every slot in its combo has failed.
+	 *
+	 * True (the default) is the historical behaviour. False keeps explicit
+	 * combo chains isolated, which is the point when combos deliberately
+	 * separate provider pools — an Anthropic-only Opus combo next to a
+	 * Codex-only Sonnet one — and a fallthrough would serve the request from
+	 * the wrong pool.
+	 *
+	 * Stored positively even though the env var is a disable flag, because a
+	 * switch labelled by what it allows is far easier to reason about on
+	 * screen than a double negative.
+	 */
+	getComboSessionFallback(): boolean {
+		return this.resolveComboSessionFallback().value;
+	}
+
+	/** Where the effective value comes from; "env" locks the dashboard control. */
+	getComboSessionFallbackSource(): "env" | "file" | "default" {
+		return this.resolveComboSessionFallback().source;
+	}
+
+	setComboSessionFallback(value: boolean): void {
+		this.set("combo_session_fallback", value);
+	}
+
 	getProviderModelDefaultOverrides(): ProviderModelDefaultOverrides {
 		const raw = this.data.provider_model_default_overrides;
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -992,6 +1039,7 @@ export class Config extends EventEmitter {
 			usage_throttling_weekly_enabled: this.getUsageThrottlingWeeklyEnabled(),
 			model_scoped_capacity_routing: this.getModelScopedCapacityRouting(),
 			combos_enabled: this.getCombosEnabled(),
+			combo_session_fallback: this.getComboSessionFallback(),
 			agent_frontmatter_model_fallback: this.getAgentFrontmatterModelFallback(),
 			model_catalog_oauth_refresh_enabled:
 				this.getModelCatalogOAuthRefreshEnabled(),
