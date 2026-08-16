@@ -429,15 +429,27 @@ export class AlertService {
 		const baselineWindowMinutes = config.anomalyBaselineWindowMinutes;
 		const intervalMinutes = config.anomalyIntervalMinutes;
 		// Query one wider window spanning both the baseline history and the
-		// scoring interval (baseline is typically the larger of the two), then
-		// partition client-side below into two GENUINELY DISJOINT sets: rows
-		// strictly before scoringSince feed the baseline, rows at/after
-		// scoringSince are what gets scored. This keeps the DB hit to a single
-		// query instead of two, while still upholding the leave-one-out
-		// contract documented on detectTokenOutliers (issue #410) — a scored
-		// row must never also be a member of its own baseline population.
-		const queryWindowMinutes = Math.max(baselineWindowMinutes, intervalMinutes);
-		const since = Date.now() - queryWindowMinutes * 60 * 1000;
+		// scoring interval, then partition client-side below into two
+		// GENUINELY DISJOINT sets: rows strictly before scoringSince feed the
+		// baseline, rows at/after scoringSince are what gets scored. This
+		// keeps the DB hit to a single query instead of two, while still
+		// upholding the leave-one-out contract documented on
+		// detectTokenOutliers (issue #410) — a scored row must never also be
+		// a member of its own baseline population.
+		//
+		// The query window must be ADDITIVE (baselineWindowMinutes +
+		// intervalMinutes), not Math.max(...). Math.max collapses to just
+		// intervalMinutes whenever baselineWindowMinutes <= intervalMinutes
+		// (a valid config — nothing prevents anomalyBaselineWindowMinutes
+		// from being set lower than anomalyIntervalMinutes), which would
+		// fetch ONLY the scoring interval's worth of history. Every fetched
+		// row would then have timestamp >= scoringSince, so baselineRows
+		// would come up empty and every anomaly would silently go
+		// undetected. The additive formula guarantees the fetch always
+		// extends a full baselineWindowMinutes further back than
+		// scoringSince, regardless of how intervalMinutes compares to it.
+		const scoringSince = Date.now() - intervalMinutes * 60 * 1000;
+		const baselineSince = scoringSince - baselineWindowMinutes * 60 * 1000;
 		const allRows = (
 			await this.db.query<AnomalySqlRow>(
 				`
@@ -458,17 +470,13 @@ export class AlertService {
 				WHERE r.timestamp >= ?
 				ORDER BY r.timestamp ASC
 			`,
-				[since],
+				[baselineSince],
 			)
 		).map(toAnomalyRow);
 		if (allRows.length === 0) return;
-		const scoringSince = Date.now() - intervalMinutes * 60 * 1000;
 		// Partition by timestamp so the two sets never share a row: baseline is
-		// strictly OLDER history, scoring is the recent slice. Note this makes
-		// the baseline population `queryWindowMinutes - intervalMinutes` wide
-		// rather than the full baselineWindowMinutes when baselineWindowMinutes
-		// is only slightly larger than intervalMinutes — a data-availability
-		// consideration (fewer baseline rows in that edge case), not a logic bug.
+		// strictly OLDER history (up to a full baselineWindowMinutes wide),
+		// scoring is the recent slice.
 		const baselineRows = allRows.filter((row) => row.timestamp < scoringSince);
 		const scoringRows = allRows.filter((row) => row.timestamp >= scoringSince);
 		if (scoringRows.length === 0) return;

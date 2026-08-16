@@ -104,22 +104,38 @@ export interface AnomalyBaseline {
 	account: string;
 	model: string;
 	requests: number;
-	/** Median of ln(total tokens) across the baseline population. */
-	medianLogTotalTokens: number;
-	/** Scaled (x1.4826) median absolute deviation of ln(total tokens). */
-	madTotalTokens: number;
-	/** Median of ln(output tokens) across the baseline population (rows with output_tokens > 0 only). */
-	medianLogOutputTokens: number;
-	/** Scaled (x1.4826) median absolute deviation of ln(output tokens). */
-	madOutputTokens: number;
+	/**
+	 * Median of ln(total tokens) across the baseline population. `null` when
+	 * the group has too few token-bearing rows to qualify for
+	 * minBaselineRequests on the total-tokens side (independent metric
+	 * qualification — see issue #410 follow-up). In practice this metric is
+	 * very unlikely to be the one that's unavailable (computeBaselines only
+	 * emits a baseline entry at all when at least one of the two metrics
+	 * qualifies), but the field is nullable for symmetry with the
+	 * output-tokens side, since the implementation treats both directions
+	 * the same way.
+	 */
+	medianLogTotalTokens: number | null;
+	/** Scaled (x1.4826) median absolute deviation of ln(total tokens). `null` under the same condition as medianLogTotalTokens. */
+	madTotalTokens: number | null;
+	/**
+	 * Median of ln(output tokens) across the baseline population (rows with
+	 * output_tokens > 0 only). `null` when the group has too few
+	 * output-token-bearing rows to qualify for minBaselineRequests
+	 * (independent metric qualification — see issue #410 follow-up).
+	 */
+	medianLogOutputTokens: number | null;
+	/** Scaled (x1.4826) median absolute deviation of ln(output tokens). `null` under the same condition as medianLogOutputTokens. */
+	madOutputTokens: number | null;
 	/**
 	 * Human-readable raw-scale approximation of central tendency, for display
 	 * only: exp(medianLogTotalTokens). NOT used in any zScore computation —
-	 * geometric mean of the baseline population's total tokens.
+	 * geometric mean of the baseline population's total tokens. `null` under
+	 * the same condition as medianLogTotalTokens.
 	 */
-	approxMedianTotalTokens: number;
-	/** exp(medianLogOutputTokens); display-only, see approxMedianTotalTokens. */
-	approxMedianOutputTokens: number;
+	approxMedianTotalTokens: number | null;
+	/** exp(medianLogOutputTokens); display-only, see approxMedianTotalTokens. `null` under the same condition as medianLogOutputTokens. */
+	approxMedianOutputTokens: number | null;
 }
 
 /**

@@ -298,4 +298,74 @@ describe("evaluateAnomalies leave-one-out contract (issue #410 regression)", () 
 			sqlite.close();
 		}
 	});
+
+	test("a baseline window SHORTER than the scoring interval still produces a non-empty baseline population (issue #410 follow-up review fix)", async () => {
+		// Regression: the query window used to be
+		// Math.max(baselineWindowMinutes, intervalMinutes), which collapses to
+		// just intervalMinutes whenever baselineWindowMinutes <= intervalMinutes
+		// (a valid config combination — nothing prevents
+		// anomalyBaselineWindowMinutes from being set lower than
+		// anomalyIntervalMinutes). That made the query fetch ONLY the scoring
+		// interval's worth of history, so every fetched row had
+		// timestamp >= scoringSince, baselineRows came up empty, and no
+		// outlier could ever be flagged for this config — a silent
+		// false-negative regression.
+		//
+		// Here baseline=30min, interval=120min (baseline < interval). Rows are
+		// seeded both inside the scoring window (last 120 minutes) AND further
+		// back, within the 30-minute baseline-before-scoring range (i.e.
+		// between 120 and 150 minutes ago). Under the fixed additive query
+		// window (baselineWindowMinutes + intervalMinutes = 150 minutes), the
+		// older rows are fetched and land in baselineRows; under the old
+		// Math.max bug they would never even be queried.
+		const sqlite = new Database(":memory:");
+		ensureSchema(sqlite);
+		const adapter = new BunSqlAdapter(sqlite);
+		const config = makeAnomalyConfig({
+			anomalyIntervalMinutes: 120,
+			anomalyBaselineWindowMinutes: 30,
+		});
+		const service = new AlertService(adapter, config);
+
+		try {
+			const now = Date.now();
+			const scoringSince = now - 120 * 60 * 1000;
+			const baselineIds: string[] = [];
+			// 21 baseline rows strictly OLDER than the 120-minute scoring
+			// window, within the 30-minute baseline range before it (i.e.
+			// between 121 and 149 minutes ago), 3-value spread for a
+			// non-degenerate MAD.
+			const spreadValues = [80, 100, 130];
+			for (let i = 0; i < 21; i++) {
+				const id = `baseline-${i}`;
+				baselineIds.push(id);
+				await seedRequest(adapter, {
+					id,
+					timestamp: scoringSince - (1 + i) * 60 * 1000,
+					inputTokens: spreadValues[i % spreadValues.length],
+				});
+			}
+			// One spike inside the scoring window.
+			await seedRequest(adapter, {
+				id: "scoring-spike",
+				timestamp: now - 1000,
+				inputTokens: 100_000,
+			});
+
+			await service.evaluateAnomalies();
+
+			const alerts = await service.listAlerts();
+			const outlierAlerts = alerts.filter(
+				(a) => a.type === "anomaly_token_outlier",
+			);
+			// A non-empty, genuinely older baseline population must have been
+			// available, so the spike is flagged.
+			expect(outlierAlerts).toHaveLength(1);
+			expect(outlierAlerts[0]?.requestId).toBe("scoring-spike");
+			expect(baselineIds).not.toContain(outlierAlerts[0]?.requestId);
+		} finally {
+			service.stop();
+			sqlite.close();
+		}
+	});
 });

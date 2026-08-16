@@ -279,9 +279,15 @@ function baselineKey(account: string | null, model: string | null): string {
  * group with enough rows overall but fewer than minBaselineRequests rows
  * with outputTokens > 0 still gets a valid total-tokens baseline — only the
  * output-tokens side of that entry is marked invalid (medianLogOutputTokens
- * / madOutputTokens / approxMedianOutputTokens set to NaN), which
+ * / madOutputTokens / approxMedianOutputTokens set to `null`), which
  * detectTokenOutliers treats as "no baseline for this metric" and skips.
  * The group is omitted entirely only when NEITHER metric has enough rows.
+ *
+ * `null` (not `NaN`) is the sentinel for "no baseline for this metric" so
+ * the value survives JSON.stringify/parse as a literal `null` instead of
+ * silently becoming `null` anyway via NaN's non-standard JSON serialization
+ * while the declared AnomalyBaseline type claimed a non-nullable `number`
+ * (issue #410 follow-up).
  *
  * Sorted by requests descending, then account/model ascending.
  */
@@ -317,14 +323,12 @@ export function computeBaselines(
 			account: normalizeKey(group[0].account),
 			model: normalizeKey(group[0].model),
 			requests: group.length,
-			medianLogTotalTokens: total ? total.medianLog : Number.NaN,
-			madTotalTokens: total ? total.scaledMad : Number.NaN,
-			medianLogOutputTokens: output ? output.medianLog : Number.NaN,
-			madOutputTokens: output ? output.scaledMad : Number.NaN,
-			approxMedianTotalTokens: total ? Math.exp(total.medianLog) : Number.NaN,
-			approxMedianOutputTokens: output
-				? Math.exp(output.medianLog)
-				: Number.NaN,
+			medianLogTotalTokens: total ? total.medianLog : null,
+			madTotalTokens: total ? total.scaledMad : null,
+			medianLogOutputTokens: output ? output.medianLog : null,
+			madOutputTokens: output ? output.scaledMad : null,
+			approxMedianTotalTokens: total ? Math.exp(total.medianLog) : null,
+			approxMedianOutputTokens: output ? Math.exp(output.medianLog) : null,
 		});
 	}
 	return baselines.sort(
@@ -393,13 +397,14 @@ export function detectTokenOutliers(
 				: baseline.madOutputTokens;
 		// Two independent "no signal" cases, both skipped without emitting an
 		// event (never flagged):
-		//  - NaN: this metric's side of the baseline didn't qualify at all
+		//  - null: this metric's side of the baseline didn't qualify at all
 		//    (computeBaselines saw < minBaselineRequests rows for it).
 		//  - <= MIN_SCALED_MAD: the baseline is genuinely zero-variance (every
 		//    value identical). Mirrors the pre-#410 `if (stdDev <= 0) continue;`
 		//    guard — see MIN_SCALED_MAD doc comment for why this must skip
 		//    rather than floor-and-flag.
-		if (Number.isNaN(scaledMad) || scaledMad <= MIN_SCALED_MAD) continue;
+		if (medianLog === null || scaledMad === null || scaledMad <= MIN_SCALED_MAD)
+			continue;
 		const value =
 			metric === "total_tokens" ? totalTokens(row) : row.outputTokens;
 		const modifiedZ = (Math.log(value) - medianLog) / scaledMad;

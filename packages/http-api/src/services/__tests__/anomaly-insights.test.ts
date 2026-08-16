@@ -265,7 +265,7 @@ describe("computeBaselines", () => {
 		// but only 6 of them have outputTokens > 0 (< minBaselineRequests=10).
 		// The two metrics now qualify INDEPENDENTLY: the group still emits a
 		// baseline entry with a valid total-tokens side, while the
-		// output-tokens side is marked invalid (NaN) rather than the whole
+		// output-tokens side is marked invalid (null) rather than the whole
 		// entry being dropped.
 		const rows = [
 			...Array.from({ length: 6 }, () =>
@@ -276,11 +276,40 @@ describe("computeBaselines", () => {
 		const baselines = computeBaselines(rows, 10);
 		expect(baselines).toHaveLength(1);
 		expect(baselines[0].requests).toBe(10);
-		expect(Number.isNaN(baselines[0].medianLogTotalTokens)).toBe(false);
-		expect(Number.isNaN(baselines[0].madTotalTokens)).toBe(false);
-		expect(Number.isNaN(baselines[0].medianLogOutputTokens)).toBe(true);
-		expect(Number.isNaN(baselines[0].madOutputTokens)).toBe(true);
-		expect(Number.isNaN(baselines[0].approxMedianOutputTokens)).toBe(true);
+		expect(baselines[0].medianLogTotalTokens).not.toBeNull();
+		expect(baselines[0].madTotalTokens).not.toBeNull();
+		expect(baselines[0].medianLogOutputTokens).toBeNull();
+		expect(baselines[0].madOutputTokens).toBeNull();
+		expect(baselines[0].approxMedianOutputTokens).toBeNull();
+	});
+
+	test("the 'no baseline for this metric' sentinel is null, not NaN, and survives a JSON round-trip as literal null (issue #410 follow-up)", () => {
+		// Regression: NaN was previously used as the internal "no baseline for
+		// this metric" sentinel, but JSON.stringify(NaN) produces `null` on
+		// the wire while AnomalyBaseline declared these fields as
+		// non-nullable `number` — a type-contract violation. The sentinel is
+		// now an explicit `null`, which both matches the declared
+		// `number | null` type AND round-trips through JSON unchanged.
+		const rows = [
+			...Array.from({ length: 6 }, () =>
+				req({ inputTokens: 80, outputTokens: 20 }),
+			),
+			...Array.from({ length: 4 }, () => req({ inputTokens: 100 })),
+		];
+		const baselines = computeBaselines(rows, 10);
+		const baseline = baselines[0];
+		expect(baseline.medianLogOutputTokens).toBeNull();
+		expect(baseline.madOutputTokens).toBeNull();
+		expect(baseline.approxMedianOutputTokens).toBeNull();
+
+		const roundTripped = JSON.parse(JSON.stringify(baseline));
+		expect(roundTripped.medianLogOutputTokens).toBeNull();
+		expect(roundTripped.madOutputTokens).toBeNull();
+		expect(roundTripped.approxMedianOutputTokens).toBeNull();
+		// The fields must be PRESENT (not omitted) in the serialized JSON.
+		expect(Object.hasOwn(roundTripped, "medianLogOutputTokens")).toBe(true);
+		expect(Object.hasOwn(roundTripped, "madOutputTokens")).toBe(true);
+		expect(Object.hasOwn(roundTripped, "approxMedianOutputTokens")).toBe(true);
 	});
 
 	test("a group with enough total-tokens rows but too few output-tokens rows still supports total-tokens outlier detection, while output-tokens produces none", () => {
@@ -298,8 +327,8 @@ describe("computeBaselines", () => {
 		const baselines = computeBaselines(rows, 10);
 		expect(baselines).toHaveLength(1);
 		expect(baselines[0].requests).toBe(25);
-		expect(Number.isNaN(baselines[0].madTotalTokens)).toBe(false);
-		expect(Number.isNaN(baselines[0].madOutputTokens)).toBe(true);
+		expect(baselines[0].madTotalTokens).not.toBeNull();
+		expect(baselines[0].madOutputTokens).toBeNull();
 
 		// total_tokens outlier detection still works against this baseline.
 		const spike = [req({ id: "total-spike", inputTokens: 100_000 })];
