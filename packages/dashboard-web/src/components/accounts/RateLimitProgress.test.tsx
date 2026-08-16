@@ -473,6 +473,34 @@ describe("RateLimitProgress", () => {
 		expect(html).toContain("Usage (Weekly)");
 	});
 
+	it("shows only the weekly row for the payload production actually serves", () => {
+		// Copied verbatim from GET /api/accounts on 2026-08-16, after a manual
+		// refresh: the 5-hour window comes back unknown (its reset had already
+		// passed, so the normalizer refuses to claim a percentage) while the weekly
+		// window is the real one, at its cap. This is the shape the card is judged
+		// on day to day, so it gets its own case rather than a hand-made one.
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso="2026-08-20T18:30:13.000Z"
+				usageUtilization={100}
+				usageWindow="seven_day"
+				usageData={{
+					five_hour: { utilization: null, resets_at: null },
+					seven_day: {
+						utilization: 100,
+						resets_at: "2026-08-20T18:30:13.000Z",
+					},
+				}}
+				provider="codex"
+				showWeekly
+			/>,
+		);
+
+		expect(html).not.toContain("Usage (5-hour)");
+		expect(html).toContain("Usage (Weekly)");
+		expect(html).toContain(">100%<");
+	});
+
 	it("still warns about throttling on a window whose row was suppressed", () => {
 		// Removing the 5-hour bar must not remove the notice that requests are
 		// actually being delayed.
