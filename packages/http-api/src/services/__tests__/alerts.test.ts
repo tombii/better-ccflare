@@ -369,3 +369,115 @@ describe("evaluateAnomalies leave-one-out contract (issue #410 regression)", () 
 		}
 	});
 });
+
+describe("anomaly alert cooldown scope (issue #411 regression)", () => {
+	test("anomaly_token_outlier and anomaly_output_blowup are scoped by account:model, not requestId", () => {
+		// Before the fix, buildThresholdAlertId was called with event.requestId
+		// as the scope — unique per request — so the cooldown time-bucket could
+		// never dedupe two distinct outlier requests, no matter how close in
+		// time. Scoping by account:model (matching the anomaly_runaway_loop and
+		// anomaly_model_misrouting pattern) lets same-bucket requests collide.
+		const first = buildThresholdAlertId(
+			"anomaly_token_outlier",
+			"acct:model-a",
+			123_456,
+			60,
+		);
+		const second = buildThresholdAlertId(
+			"anomaly_token_outlier",
+			"acct:model-a",
+			200_000,
+			60,
+		);
+		expect(first).toBe(second);
+
+		const blowupFirst = buildThresholdAlertId(
+			"anomaly_output_blowup",
+			"acct:model-a",
+			123_456,
+			60,
+		);
+		const blowupSecond = buildThresholdAlertId(
+			"anomaly_output_blowup",
+			"acct:model-a",
+			200_000,
+			60,
+		);
+		expect(blowupFirst).toBe(blowupSecond);
+
+		// A different model must still get its own bucket.
+		const differentModel = buildThresholdAlertId(
+			"anomaly_token_outlier",
+			"acct:model-b",
+			123_456,
+			60,
+		);
+		expect(differentModel).not.toBe(first);
+	});
+
+	test("two distinct outlier requests on the same account/model within one cooldown bucket only persist one alert", async () => {
+		const sqlite = new Database(":memory:");
+		ensureSchema(sqlite);
+		const adapter = new BunSqlAdapter(sqlite);
+		const config = Object.assign(new EventEmitter(), {
+			getAlertDailySpendUsd: () => 0,
+			getAlertTokensPerHour: () => 0,
+			getAlertRequestTokens: () => 0,
+			getAlertAnomalyEnabled: () => true,
+			getAlertAnomalyIntervalMinutes: () => 5,
+			getAlertAnomalyBaselineWindowMinutes: () => 60,
+			getAlertAnomalyLoopMinRequests: () => 10_000,
+			getAlertCooldownMinutes: () => 60,
+			getAlertWebhookUrl: () => "",
+		}) as unknown as Config;
+		const service = new AlertService(adapter, config);
+
+		try {
+			const now = Date.now();
+			const scoringSince = now - 5 * 60 * 1000;
+			const spreadValues = [80, 100, 130];
+			for (let i = 0; i < 21; i++) {
+				await adapter.run(
+					`INSERT INTO requests
+						(id, timestamp, method, path, account_used, status_code, success,
+						 response_time_ms, failover_attempts, model, total_tokens, cost_usd,
+						 input_tokens, output_tokens, cache_read_input_tokens,
+						 cache_creation_input_tokens)
+					 VALUES (?, ?, 'POST', '/v1/messages', 'acct', 200, 1, 100, 0, 'model-a', ?, 0, ?, 0, 0, 0)`,
+					[
+						`baseline-${i}`,
+						scoringSince - (10 + i) * 60 * 1000,
+						spreadValues[i % spreadValues.length],
+						spreadValues[i % spreadValues.length],
+					],
+				);
+			}
+			// Two distinct spike requests, same account+model, both inside the
+			// same 60-minute cooldown bucket. Pre-fix, both would have fired
+			// (scope = requestId, unique per row); post-fix, only the first
+			// should persist and the second must be swallowed by the cooldown.
+			for (const id of ["spike-1", "spike-2"]) {
+				await adapter.run(
+					`INSERT INTO requests
+						(id, timestamp, method, path, account_used, status_code, success,
+						 response_time_ms, failover_attempts, model, total_tokens, cost_usd,
+						 input_tokens, output_tokens, cache_read_input_tokens,
+						 cache_creation_input_tokens)
+					 VALUES (?, ?, 'POST', '/v1/messages', 'acct', 200, 1, 100, 0, 'model-a', ?, 0, ?, 0, 0, 0)`,
+					[id, now - 1000, 100_000, 100_000],
+				);
+			}
+
+			await service.evaluateAnomalies();
+
+			const alerts = await service.listAlerts();
+			const outlierAlerts = alerts.filter(
+				(a) => a.type === "anomaly_token_outlier",
+			);
+			expect(outlierAlerts).toHaveLength(1);
+		} finally {
+			service.stop();
+			sqlite.close();
+		}
+	});
+});

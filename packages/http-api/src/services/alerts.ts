@@ -512,7 +512,7 @@ export class AlertService {
 			alerts.push({
 				id: buildThresholdAlertId(
 					"anomaly_token_outlier",
-					event.requestId,
+					`${event.account}:${event.model}`,
 					event.timestamp,
 					config.cooldownMinutes,
 				),
@@ -537,7 +537,7 @@ export class AlertService {
 			alerts.push({
 				id: buildThresholdAlertId(
 					"anomaly_output_blowup",
-					event.requestId,
+					`${event.account}:${event.model}`,
 					event.timestamp,
 					config.cooldownMinutes,
 				),
