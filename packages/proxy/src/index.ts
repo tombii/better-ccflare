@@ -28,7 +28,10 @@ export type {
 	CodexModelEntry,
 	CodexModelListing,
 } from "./codex-model-catalog";
-export { getCodexModels } from "./codex-model-catalog";
+export {
+	getCodexModels,
+	topTierCodexModel,
+} from "./codex-model-catalog";
 export {
 	recordCodexUsageSnapshot,
 	resetCodexUsageHistoryThrottle,

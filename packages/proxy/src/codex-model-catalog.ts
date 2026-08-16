@@ -249,6 +249,22 @@ export function deriveFamilyDefaults(
 }
 
 /**
+ * The frontier model of a listing, or null when there is no listing to read.
+ *
+ * Same rule as the `opus`/`fable` mapping four lines up: the listing arrives in
+ * the provider's own `priority` order, so position IS the tier and nothing of
+ * ours has to be kept current. Anyone who needs "the best model this account
+ * can call" — the usage probe included — asks here instead of hardcoding a name
+ * that goes stale the next time OpenAI promotes something.
+ */
+export function topTierCodexModel(
+	listing: CodexModelListing | null | undefined,
+): string | null {
+	const models = listing?.models ?? [];
+	return models.length > 0 ? models[0].id : null;
+}
+
+/**
  * The model list for one Codex account: live when OpenAI answers, otherwise the
  * last list it gave us. Returns null only when both are unavailable — a brand
  * new account whose first fetch failed.

@@ -38,6 +38,7 @@ import { Logger, setConsoleLogging } from "@better-ccflare/logger";
 import { handleResponsesRequest } from "@better-ccflare/openai-responses-adapter";
 import {
 	CODEX_DEFAULT_ENDPOINT,
+	CODEX_PING_MODEL,
 	extractWeeklyResetTime,
 	fetchCodexUsageOnDemand,
 	getProvider,
@@ -71,6 +72,7 @@ import {
 	startGlobalTokenHealthChecks,
 	startIntegrityScheduler,
 	stopGlobalTokenHealthChecks,
+	topTierCodexModel,
 	unregisterCodexUsageRefresher,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
@@ -1215,9 +1217,31 @@ export default async function startServer(options?: {
 
 		const endpoint = account.custom_endpoint ?? CODEX_DEFAULT_ENDPOINT;
 
+		// Ping with a model this account can actually address. A hardcoded name
+		// goes stale silently and fatally: the subscription endpoint rejects an
+		// unknown model before it accounts for quota, so the 400 carries no
+		// `x-codex-*` headers and the refresh fails with nothing to show. The
+		// account's own listing already answers this question for the family
+		// mapping — reuse it and ping its frontier entry. `CODEX_PING_MODEL` is
+		// only reached when that listing has never been readable.
+		let pingModel = CODEX_PING_MODEL;
+		try {
+			pingModel =
+				topTierCodexModel(await getCodexModels(accountId, proxyContext)) ??
+				CODEX_PING_MODEL;
+		} catch (error) {
+			log.debug(
+				`Codex usage refresh: could not resolve the model list for ${account.name}, pinging ${pingModel}: ${error}`,
+			);
+		}
+
 		let fetchResult: Awaited<ReturnType<typeof fetchCodexUsageOnDemand>>;
 		try {
-			fetchResult = await fetchCodexUsageOnDemand(accessToken, endpoint);
+			fetchResult = await fetchCodexUsageOnDemand(
+				accessToken,
+				endpoint,
+				pingModel,
+			);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			log.error(
@@ -1251,9 +1275,11 @@ export default async function startServer(options?: {
 		}
 
 		if (!fetchResult.data) {
+			// Naming the model matters here: this is the shape a rejected model
+			// takes, and without it the message says nothing actionable.
 			return {
 				success: false,
-				message: `Codex returned no usage headers (status ${fetchResult.response.status}) for '${account.name}'`,
+				message: `Codex returned no usage headers (status ${fetchResult.response.status}) for '${account.name}' when pinging model '${pingModel}'`,
 			};
 		}
 
@@ -1275,7 +1301,7 @@ export default async function startServer(options?: {
 		const sevenDay = fetchResult.data.seven_day?.utilization ?? 0;
 		const isRateLimited = fetchResult.response.status === 429;
 		log.info(
-			`Codex usage refreshed for '${account.name}': 5h=${fiveHour}%, 7d=${sevenDay}%${
+			`Codex usage refreshed for '${account.name}' via ${pingModel}: 5h=${fiveHour}%, 7d=${sevenDay}%${
 				isRateLimited ? " (rate-limited)" : ""
 			}`,
 		);

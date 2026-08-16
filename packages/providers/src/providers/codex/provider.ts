@@ -60,11 +60,11 @@ export const CODEX_VERSION = "0.147.0";
 const OPENAI_PROMPT_CACHE_HOSTS = new Set(["chatgpt.com", "api.openai.com"]);
 export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
 /**
- * Model used by the usage-header probe (`fetchCodexUsageOnDemand`) — never by
- * real traffic, which always carries the client's own model.
+ * Fallback model for the usage-header probe (`fetchCodexUsageOnDemand`) — never
+ * used by real traffic, which always carries the client's own model.
  *
- * It must be a model the account can actually address. `gpt-5-codex` no longer
- * is: the subscription endpoint answers
+ * The probe's model must be one the account can actually address. `gpt-5-codex`
+ * no longer is: the subscription endpoint answers
  * `400 {"detail":"The 'gpt-5-codex' model is not supported when using Codex
  * with a ChatGPT account."}`, and that rejection happens *before* quota
  * accounting, so the response carries no `x-codex-*` headers at all. The probe
@@ -72,8 +72,12 @@ export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100;
  * to show for it. A body-level rejection (e.g. an unsupported reasoning effort)
  * still returns the full header set, which is how the difference was confirmed.
  *
- * `gpt-5.6-sol` is the same model this repo already uses as the Codex default
- * for the `opus`/`fable` families (see provider model defaults).
+ * Which is why a name compiled in here is the *last* resort: the refresher asks
+ * the account for its own model listing and pings the frontier entry
+ * (`topTierCodexModel`), the same list the family mapping is derived from. This
+ * constant only answers when that listing has never been readable — a brand new
+ * account whose first read failed. `gpt-5.6-sol` is what the listing resolved to
+ * on every account measured so far.
  */
 export const CODEX_PING_MODEL = "gpt-5.6-sol";
 const CODEX_SYNTHETIC_COUNT_TOKENS_URL =

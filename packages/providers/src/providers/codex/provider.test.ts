@@ -3147,6 +3147,45 @@ describe("fetchCodexUsageOnDemand", () => {
 		expect(body.reasoning?.effort).not.toBe("minimal");
 	});
 
+	// The refresher asks the account which models it actually has and pings the
+	// frontier one, so the compiled-in name cannot silently outlive the plan.
+	it("pings the model the caller resolved from the account's own listing", async () => {
+		globalThis.fetch = makeMockFetch(
+			new Response("event: ignored\n\n", { status: 200 }),
+		) as unknown as typeof fetch;
+
+		await fetchCodexUsageOnDemand(
+			"test-token",
+			CODEX_DEFAULT_ENDPOINT,
+			"gpt-9-frontier",
+		);
+
+		const body = JSON.parse(recorded?.init.body as string);
+		expect(body.model).toBe("gpt-9-frontier");
+		// Pinned regardless of the model: the cheapest effort every model accepts,
+		// and one a model dislikes still returns the usage headers anyway.
+		expect(body.reasoning?.effort).toBe("low");
+	});
+
+	// A blank model reaches the endpoint as a missing one — the same
+	// 400-without-headers dead end the whole fix is about.
+	it("falls back to the compiled-in model when handed a blank one", async () => {
+		for (const blank of ["", "   "]) {
+			globalThis.fetch = makeMockFetch(
+				new Response("event: ignored\n\n", { status: 200 }),
+			) as unknown as typeof fetch;
+
+			await fetchCodexUsageOnDemand(
+				"test-token",
+				CODEX_DEFAULT_ENDPOINT,
+				blank,
+			);
+
+			const body = JSON.parse(recorded?.init.body as string);
+			expect(body.model).toBe(CODEX_PING_MODEL);
+		}
+	});
+
 	it("omits max_output_tokens for default subscription endpoint variants", async () => {
 		const endpoints = [
 			CODEX_DEFAULT_ENDPOINT,

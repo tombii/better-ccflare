@@ -4,6 +4,7 @@ import type { Account } from "@better-ccflare/types";
 import {
 	clearCodexModelCacheForTests,
 	getCodexModels,
+	topTierCodexModel,
 } from "../codex-model-catalog";
 import type { ProxyContext } from "../handlers/proxy-types";
 
@@ -251,5 +252,38 @@ describe("getCodexModels", () => {
 
 	it("returns nothing for an account that does not exist", async () => {
 		expect(await getCodexModels("ghost", makeCtx(null))).toBeNull();
+	});
+});
+
+describe("topTierCodexModel", () => {
+	it("names the frontier model of a listing", async () => {
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify(LIVE_BODY), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			})) as typeof globalThis.fetch;
+
+		const listing = await getCodexModels("acc-codex", makeCtx(makeAccount()));
+
+		// The provider's own priority order decides, so the hidden Work Mode alias
+		// and the mini model cannot win — and nothing here needs updating when
+		// OpenAI promotes a new frontier model.
+		expect(topTierCodexModel(listing)).toBe("gpt-5.6-sol");
+	});
+
+	// The usage probe reads this to decide what to ping, and answering with a
+	// guess when there is no listing is exactly the failure it is meant to end:
+	// null lets the caller fall back to its own compiled-in name deliberately.
+	it("answers null when there is no listing to read", () => {
+		expect(topTierCodexModel(null)).toBeNull();
+		expect(topTierCodexModel(undefined)).toBeNull();
+		expect(
+			topTierCodexModel({
+				accountId: "acc-codex",
+				models: [],
+				fetchedAt: 0,
+				source: "live",
+			}),
+		).toBeNull();
 	});
 });
