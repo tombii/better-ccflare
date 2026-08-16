@@ -700,7 +700,7 @@ export async function handleProxy(
 	if (filteredComboInfo?.comboName) {
 		if (isComboSessionFallbackDisabled(ctx)) {
 			log.warn(
-				`All combo slots failed for combo "${filteredComboInfo.comboName}", session fallback disabled by CCFLARE_DISABLE_COMBO_SESSION_FALLBACK`,
+				`All combo slots failed for combo "${filteredComboInfo.comboName}", session fallback disabled by the Combo Session Fallback setting (Settings → Advanced)`,
 			);
 			return await returnComboSessionFallbackDisabled(
 				filteredComboInfo.comboName,
