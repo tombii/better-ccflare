@@ -49,6 +49,14 @@ describe("getCleanupBatchSize", () => {
 		process.env[ENV_KEY] = "-100";
 		expect(getCleanupBatchSize()).toBe(200);
 	});
+
+	it("falls back to 200 for a fractional value", () => {
+		// A non-integer would be bound directly into a SQL LIMIT and compared
+		// against an integer deleted-row count to detect the last batch —
+		// both would break silently on a fraction like 200.5.
+		process.env[ENV_KEY] = "200.5";
+		expect(getCleanupBatchSize()).toBe(200);
+	});
 });
 
 describe("PG_CLIENT_QUERY_TIMEOUT_MS", () => {

@@ -67,7 +67,7 @@ const requestedClientTimeout = Number(
 	process.env.BETTER_CCFLARE_DB_CLIENT_TIMEOUT,
 );
 export const PG_CLIENT_QUERY_TIMEOUT_MS =
-	Number.isFinite(requestedClientTimeout) && requestedClientTimeout > 0
+	Number.isInteger(requestedClientTimeout) && requestedClientTimeout > 0
 		? requestedClientTimeout
 		: 8000;
 
@@ -76,10 +76,14 @@ export const PG_CLIENT_QUERY_TIMEOUT_MS =
  * Configurable via BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE — lower this if rows
  * are large (e.g. TOASTed payload JSON) and batches are hitting the
  * statement_timeout before completing. See issue #412.
+ *
+ * Requires an integer: the value is bound directly into a SQL LIMIT and
+ * compared against an integer deleted-row count to detect the last batch, so
+ * a fractional value (e.g. 200.5) would break both.
  */
 export function getCleanupBatchSize(): number {
 	const requested = Number(process.env.BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE);
-	return Number.isFinite(requested) && requested > 0 ? requested : 200;
+	return Number.isInteger(requested) && requested > 0 ? requested : 200;
 }
 
 /**
