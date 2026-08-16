@@ -222,7 +222,9 @@ The schema and any missing columns are created automatically on startup. No manu
 |----------|---------|-------------|
 | `BETTER_CCFLARE_DB_POOL_MAX` | `10` | Maximum pooled connections |
 | `BETTER_CCFLARE_DB_IDLE_TIMEOUT` | `0` (disabled) | Seconds before an idle pooled connection is closed |
-| `BETTER_CCFLARE_DB_STATEMENT_TIMEOUT` | `7000` | Server-side statement timeout in milliseconds (clamped below the 8000ms client-side timeout) |
+| `BETTER_CCFLARE_DB_STATEMENT_TIMEOUT` | `7000` | Server-side statement timeout in milliseconds (clamped below the client-side timeout — see `BETTER_CCFLARE_DB_CLIENT_TIMEOUT`) |
+| `BETTER_CCFLARE_DB_CLIENT_TIMEOUT` | `8000` | Client-side query timeout in milliseconds for PostgreSQL — the `statement_timeout` ceiling is derived from this value minus 1000ms |
+| `BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE` | `200` | Row batch size per DELETE statement during retention cleanup — lower this if rows are large (e.g. big JSON payloads) and cleanup batches are timing out |
 | `BETTER_CCFLARE_DB_PG_PREPARE` | `false` | Set to `true` to re-enable named prepared statement caching |
 
 ```yaml

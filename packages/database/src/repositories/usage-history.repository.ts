@@ -1,5 +1,6 @@
 import { weeklyScopedWindowKey } from "@better-ccflare/core";
 import type { PredictionPoint, UsageSnapshotRow } from "@better-ccflare/types";
+import { getCleanupBatchSize } from "../adapters/bun-sql-adapter";
 import { BaseRepository } from "./base.repository";
 
 /** Duck-typed usage window: an object with a numeric `utilization` and a `resets_at` key. */
@@ -175,7 +176,10 @@ export class UsageHistoryRepository extends BaseRepository<UsageSnapshotRow> {
 		// physical rows deleted per statement, independent of key duplicates.
 		// idx_usage_snapshots_ts (on timestamp alone) makes the inner SELECT
 		// efficient on both dialects.
-		const BATCH_SIZE = 2000;
+		// Batch size is configurable via BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE
+		// (default 200) — lower it if rows are large and batches are timing
+		// out against statement_timeout (#412).
+		const BATCH_SIZE = getCleanupBatchSize();
 		const physicalIdSql = this.adapter.isSQLite
 			? `DELETE FROM usage_snapshots WHERE rowid IN (
 					SELECT rowid FROM usage_snapshots WHERE timestamp < ? LIMIT ?

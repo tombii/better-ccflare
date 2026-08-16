@@ -369,13 +369,17 @@ These environment variables only apply when `DATABASE_URL` points to PostgreSQL:
 |----------|---------|--------------|
 | `BETTER_CCFLARE_DB_POOL_MAX` | `10` | Maximum number of pooled connections |
 | `BETTER_CCFLARE_DB_IDLE_TIMEOUT` | `0` (disabled) | Seconds before an idle pooled connection is closed |
-| `BETTER_CCFLARE_DB_STATEMENT_TIMEOUT` | `7000` | Server-side `statement_timeout` in milliseconds. Clamped to stay below the client-side query timeout (8000ms) so PostgreSQL cancels and frees the connection before the client gives up; invalid or out-of-range values fall back to the default |
+| `BETTER_CCFLARE_DB_STATEMENT_TIMEOUT` | `7000` | Server-side `statement_timeout` in milliseconds. Clamped to stay below the client-side query timeout (see `BETTER_CCFLARE_DB_CLIENT_TIMEOUT`, default 8000ms) so PostgreSQL cancels and frees the connection before the client gives up; invalid or out-of-range values fall back to the default |
+| `BETTER_CCFLARE_DB_CLIENT_TIMEOUT` | `8000` | Client-side query timeout in milliseconds for PostgreSQL — the `statement_timeout` ceiling above is derived from this value minus 1000ms. Raising this also raises that ceiling (#412) |
+| `BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE` | `200` | Row batch size per DELETE statement during retention cleanup — lower this if rows are large (e.g. big JSON payloads) and cleanup batches are timing out (#412) |
 | `BETTER_CCFLARE_DB_PG_PREPARE` | `false` | Set to `true` to enable named prepared statement caching. Left disabled by default to avoid a known class of bugs in Bun's native PostgreSQL driver ([oven-sh/bun#16774](https://github.com/oven-sh/bun/issues/16774)) where concurrent queries sharing a pooled connection can corrupt binary integer decoding under load |
 
 ```bash
 export BETTER_CCFLARE_DB_POOL_MAX=20
 export BETTER_CCFLARE_DB_IDLE_TIMEOUT=30
 export BETTER_CCFLARE_DB_STATEMENT_TIMEOUT=5000
+export BETTER_CCFLARE_DB_CLIENT_TIMEOUT=8000
+export BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE=200
 ```
 
 ### Runtime Configuration
@@ -515,26 +519,26 @@ The server performs automatic cleanup once at startup, then hourly for the lifet
 
 You can change retention windows via environment variables, the config file, or the dashboard (Overview → Data Retention). A manual "Clean up now" action is also available for use between the hourly ticks.
 
-Deletes are batched (2000 rows per statement, looped until exhausted) rather than issued as one unbounded `DELETE`, so cleanup keeps working on tables large enough to exceed PostgreSQL's `statement_timeout` (see `BETTER_CCFLARE_DB_STATEMENT_TIMEOUT` above) instead of failing permanently. Batches on `usage_snapshots` — which has no unique surrogate key — bound each statement by physical row identity (SQLite `rowid` / PostgreSQL `ctid`) rather than by its natural key, so a batch of duplicate-keyed rows can't expand into an unbounded delete.
+Deletes are batched (200 rows per statement by default, looped until exhausted) rather than issued as one unbounded `DELETE`, so cleanup keeps working on tables large enough to exceed PostgreSQL's `statement_timeout` (see `BETTER_CCFLARE_DB_STATEMENT_TIMEOUT` above) instead of failing permanently. The batch size is configurable via `BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE` — lower it further if rows are large (e.g. TOASTed JSON payloads) and batches are still timing out (#412). Batches on `usage_snapshots` — which has no unique surrogate key — bound each statement by physical row identity (SQLite `rowid` / PostgreSQL `ctid`) rather than by its natural key, so a batch of duplicate-keyed rows can't expand into an unbounded delete.
 
 1. **Payload Storage**: Batched cleanup of old payloads, plus orphaned payloads left behind by deleted requests:
 ```sql
 DELETE FROM request_payloads WHERE id IN (
-  SELECT id FROM request_payloads WHERE timestamp IS NOT NULL AND timestamp < ? LIMIT 2000
+  SELECT id FROM request_payloads WHERE timestamp IS NOT NULL AND timestamp < ? LIMIT 200
 );
--- looped until a batch returns fewer than 2000 rows, then:
+-- looped until a batch returns fewer rows than the configured batch size, then:
 DELETE FROM request_payloads WHERE id IN (
   SELECT rp.id FROM request_payloads rp
   LEFT JOIN requests r ON r.id = rp.id
   WHERE r.id IS NULL
-  LIMIT 2000
+  LIMIT 200
 );
 ```
 
 2. **Request Metadata**: Batched cleanup of old request records:
 ```sql
 DELETE FROM requests WHERE id IN (
-  SELECT id FROM requests WHERE timestamp < ? LIMIT 2000
+  SELECT id FROM requests WHERE timestamp < ? LIMIT 200
 );
 ```
 
@@ -542,11 +546,11 @@ DELETE FROM requests WHERE id IN (
 ```sql
 -- SQLite
 DELETE FROM usage_snapshots WHERE rowid IN (
-  SELECT rowid FROM usage_snapshots WHERE timestamp < ? LIMIT 2000
+  SELECT rowid FROM usage_snapshots WHERE timestamp < ? LIMIT 200
 );
 -- PostgreSQL
 DELETE FROM usage_snapshots WHERE ctid IN (
-  SELECT ctid FROM usage_snapshots WHERE timestamp < ? LIMIT 2000
+  SELECT ctid FROM usage_snapshots WHERE timestamp < ? LIMIT 200
 );
 ```
 
