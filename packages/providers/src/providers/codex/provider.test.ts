@@ -3148,7 +3148,8 @@ describe("fetchCodexUsageOnDemand", () => {
 	});
 
 	// The refresher asks the account which models it actually has and pings the
-	// frontier one, so the compiled-in name cannot silently outlive the plan.
+	// cheapest of them, so the compiled-in name cannot silently outlive the plan
+	// and the probe does not spend frontier quota on a request it throws away.
 	it("pings the model the caller resolved from the account's own listing", async () => {
 		globalThis.fetch = makeMockFetch(
 			new Response("event: ignored\n\n", { status: 200 }),
@@ -3157,11 +3158,11 @@ describe("fetchCodexUsageOnDemand", () => {
 		await fetchCodexUsageOnDemand(
 			"test-token",
 			CODEX_DEFAULT_ENDPOINT,
-			"gpt-9-frontier",
+			"gpt-9-nano",
 		);
 
 		const body = JSON.parse(recorded?.init.body as string);
-		expect(body.model).toBe("gpt-9-frontier");
+		expect(body.model).toBe("gpt-9-nano");
 		// Pinned regardless of the model: the cheapest effort every model accepts,
 		// and one a model dislikes still returns the usage headers anyway.
 		expect(body.reasoning?.effort).toBe("low");

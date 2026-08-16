@@ -73,11 +73,14 @@ export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100;
  * still returns the full header set, which is how the difference was confirmed.
  *
  * Which is why a name compiled in here is the *last* resort: the refresher asks
- * the account for its own model listing and pings the frontier entry
- * (`topTierCodexModel`), the same list the family mapping is derived from. This
- * constant only answers when that listing has never been readable — a brand new
- * account whose first read failed. `gpt-5.6-sol` is what the listing resolved to
- * on every account measured so far.
+ * the account for its own model listing and pings the weakest entry in it
+ * (`lowestTierCodexModel`), the same list the family mapping is derived from —
+ * weakest because the probe throws the answer away and the quota headers report
+ * the subscription, so the cheapest accepted name wins. This constant only
+ * answers when that listing has never been readable — a brand new account whose
+ * first read failed. `gpt-5.6-sol` stays the fallback rather than a small model:
+ * a guess has to be a name that certainly exists, and the frontier one is the
+ * only name every measured account resolved to.
  */
 export const CODEX_PING_MODEL = "gpt-5.6-sol";
 const CODEX_SYNTHETIC_COUNT_TOKENS_URL =

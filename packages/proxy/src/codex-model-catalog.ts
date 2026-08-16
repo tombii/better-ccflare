@@ -249,19 +249,27 @@ export function deriveFamilyDefaults(
 }
 
 /**
- * The frontier model of a listing, or null when there is no listing to read.
+ * The weakest model of a listing, or null when there is no listing to read.
  *
- * Same rule as the `opus`/`fable` mapping four lines up: the listing arrives in
- * the provider's own `priority` order, so position IS the tier and nothing of
- * ours has to be kept current. Anyone who needs "the best model this account
- * can call" — the usage probe included — asks here instead of hardcoding a name
- * that goes stale the next time OpenAI promotes something.
+ * Mirror image of the `at(0)` in the family mapping above, and for the same
+ * reason: `normalize` sorts by the provider's own `priority`, so the tail is the
+ * lowest tier the plan can call and nothing of ours has to be kept current.
+ *
+ * The usage probe wants this end of the list, not the frontier one. Its request
+ * is a single "." whose answer is thrown away the moment the headers arrive —
+ * all it needs is a model name the endpoint accepts, and the cheapest accepted
+ * name is the one that spends least doing it. The quota headers describe the
+ * subscription, not the model, so nothing is lost by asking the small one.
+ *
+ * The tail is also the likeliest entry to carry `supersededBy`. That is fine: a
+ * deprecated model is still listed because the plan can still call it, and the
+ * day OpenAI removes it, it leaves the listing and the tail moves on its own.
  */
-export function topTierCodexModel(
+export function lowestTierCodexModel(
 	listing: CodexModelListing | null | undefined,
 ): string | null {
 	const models = listing?.models ?? [];
-	return models.length > 0 ? models[0].id : null;
+	return models.length > 0 ? models[models.length - 1].id : null;
 }
 
 /**

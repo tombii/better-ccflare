@@ -30,7 +30,7 @@ export type {
 } from "./codex-model-catalog";
 export {
 	getCodexModels,
-	topTierCodexModel,
+	lowestTierCodexModel,
 } from "./codex-model-catalog";
 export {
 	recordCodexUsageSnapshot,

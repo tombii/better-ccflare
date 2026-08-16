@@ -70,8 +70,11 @@ export interface CodexUsageRefreshFetchResult {
  * `model` exists because a wrong model name is the one failure this probe cannot
  * survive: the subscription endpoint rejects it *before* quota accounting and
  * answers with no `x-codex-*` headers at all. Callers that can ask the account
- * which models it actually has (`topTierCodexModel`) should pass the frontier
- * one; `CODEX_PING_MODEL` is the answer for callers that cannot.
+ * which models it actually has should pass the weakest listed one
+ * (`lowestTierCodexModel`) — the reply is discarded and the quota headers
+ * describe the subscription rather than the model, so the cheapest name the
+ * endpoint accepts is strictly better here. `CODEX_PING_MODEL` is the answer for
+ * callers that cannot ask.
  */
 export async function fetchCodexUsageOnDemand(
 	accessToken: string,

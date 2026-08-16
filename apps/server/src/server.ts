@@ -63,6 +63,7 @@ import {
 	handleProxy,
 	initModelCatalogRefresh,
 	initProxy,
+	lowestTierCodexModel,
 	type ProxyContext,
 	recordCodexUsageSnapshot,
 	refreshModelCatalog,
@@ -72,7 +73,6 @@ import {
 	startGlobalTokenHealthChecks,
 	startIntegrityScheduler,
 	stopGlobalTokenHealthChecks,
-	topTierCodexModel,
 	unregisterCodexUsageRefresher,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
@@ -1217,17 +1217,20 @@ export default async function startServer(options?: {
 
 		const endpoint = account.custom_endpoint ?? CODEX_DEFAULT_ENDPOINT;
 
-		// Ping with a model this account can actually address. A hardcoded name
-		// goes stale silently and fatally: the subscription endpoint rejects an
-		// unknown model before it accounts for quota, so the 400 carries no
-		// `x-codex-*` headers and the refresh fails with nothing to show. The
-		// account's own listing already answers this question for the family
-		// mapping — reuse it and ping its frontier entry. `CODEX_PING_MODEL` is
-		// only reached when that listing has never been readable.
+		// Ping with a model this account can actually address, and with the
+		// cheapest one of those. A hardcoded name goes stale silently and fatally:
+		// the subscription endpoint rejects an unknown model before it accounts for
+		// quota, so the 400 carries no `x-codex-*` headers and the refresh fails
+		// with nothing to show. The account's own listing already answers the
+		// "which models exist" half for the family mapping — reuse it, and take the
+		// tail rather than the head, because the reply is discarded as soon as the
+		// headers arrive and the headers describe the subscription, not the model.
+		// `CODEX_PING_MODEL` is only reached when that listing has never been
+		// readable.
 		let pingModel = CODEX_PING_MODEL;
 		try {
 			pingModel =
-				topTierCodexModel(await getCodexModels(accountId, proxyContext)) ??
+				lowestTierCodexModel(await getCodexModels(accountId, proxyContext)) ??
 				CODEX_PING_MODEL;
 		} catch (error) {
 			log.debug(
