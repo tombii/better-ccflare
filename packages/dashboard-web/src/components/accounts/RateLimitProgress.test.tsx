@@ -370,4 +370,128 @@ describe("RateLimitProgress", () => {
 		expect(html).toContain("10%");
 		expect(html).toContain("20%");
 	});
+
+	// -------------------------------------------------------------------------
+	// Codex: the 5-hour bar was misleading (its percentage was either absent or
+	// borrowed from elapsed time), so the weekly window is the only bar left —
+	// and it must be permanent, including when there is no data at all.
+	// -------------------------------------------------------------------------
+
+	it("drops the Codex 5-hour row and keeps the weekly one", () => {
+		const fiveHourReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+		const sevenDayReset = new Date(
+			Date.now() + 3 * 24 * 60 * 60 * 1000,
+		).toISOString();
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={fiveHourReset}
+				usageUtilization={63}
+				usageWindow="seven_day"
+				usageData={{
+					five_hour: { utilization: 10, resets_at: fiveHourReset },
+					seven_day: { utilization: 63, resets_at: sevenDayReset },
+				}}
+				provider="codex"
+				showWeekly
+			/>,
+		);
+
+		expect(html).not.toContain("Usage (5-hour)");
+		expect(html).toContain("Usage (Weekly)");
+		expect(html).toContain(">63%<");
+		// Anchored to the percentage span: a bare "10%" also matches the tooltip's
+		// CSS `clamp(10%, ...)`, which has nothing to do with the 5-hour window.
+		expect(html).not.toContain(">10%<");
+	});
+
+	it("keeps the same Anthropic payload's 5-hour row for Anthropic", () => {
+		// Guard against the filter leaking out of the Codex branch: identical data,
+		// different provider, both rows must survive.
+		const fiveHourReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={fiveHourReset}
+				usageUtilization={10}
+				usageWindow="five_hour"
+				usageData={{
+					five_hour: { utilization: 10, resets_at: fiveHourReset },
+					seven_day: { utilization: 63, resets_at: fiveHourReset },
+				}}
+				provider="anthropic"
+				showWeekly
+			/>,
+		);
+		expect(html).toContain("Usage (5-hour)");
+		expect(html).toContain("Usage (Weekly)");
+	});
+
+	it("renders a permanent weekly row for Codex with no data at all", () => {
+		// No resetIso, no usageData: previously the component bailed out and the
+		// card showed nothing, which reads as "no limit". Now the weekly window is
+		// shown as unavailable.
+		const html = renderToStaticMarkup(
+			<RateLimitProgress provider="codex" showWeekly />,
+		);
+
+		expect(html).toContain("Usage (Weekly)");
+		expect(html).toContain("N/A");
+		expect(html).toContain("Data unavailable");
+		expect(html).not.toContain("Usage (5-hour)");
+	});
+
+	it("does not fall back to the elapsed-time bar for Codex when only a reset is known", () => {
+		// The time-based fallback is hardcoded to a 5-hour window, so for Codex it
+		// drew "how much of the window has passed" as if it were consumption.
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={new Date(Date.now() + 5 * 60 * 1000).toISOString()}
+				provider="codex"
+				showWeekly
+			/>,
+		);
+
+		expect(html).toContain("Usage (Weekly)");
+		expect(html).toContain("N/A");
+		expect(html).not.toContain("Rate limit window");
+	});
+
+	it("does not resurrect the Codex 5-hour row through the single-window fallback", () => {
+		// usageUtilization + usageWindow="five_hour" with no full payload used to
+		// take the "most restrictive window" path and print a 5-hour bar.
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={new Date(Date.now() + 60 * 60 * 1000).toISOString()}
+				usageUtilization={44}
+				usageWindow="five_hour"
+				provider="codex"
+				showWeekly
+			/>,
+		);
+
+		expect(html).not.toContain("Usage (5-hour)");
+		expect(html).not.toContain("44%");
+		expect(html).toContain("Usage (Weekly)");
+	});
+
+	it("still warns about throttling on a window whose row was suppressed", () => {
+		// Removing the 5-hour bar must not remove the notice that requests are
+		// actually being delayed.
+		const throttledUntil = Date.now() + 20 * 60 * 1000;
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={new Date(Date.now() + 60 * 60 * 1000).toISOString()}
+				usageUtilization={95}
+				usageWindow="five_hour"
+				usageThrottledUntil={throttledUntil}
+				usageThrottledWindows={["five_hour"]}
+				provider="codex"
+				showWeekly
+			/>,
+		);
+
+		expect(html).toContain(
+			"Usage throttling enabled; requests are being delayed",
+		);
+		expect(html).not.toContain("Usage (5-hour)");
+	});
 });

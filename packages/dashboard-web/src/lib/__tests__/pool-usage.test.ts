@@ -258,6 +258,43 @@ describe("computePoolUsage", () => {
 		]);
 	});
 
+	it("Codex with an unknown five_hour is excluded, not averaged in as 0%", () => {
+		// The accounts handler now reports an unreported window as null instead of
+		// minting a 0%. A false 0 used to count as an idle contributing account and
+		// drag the 5h tile's average down.
+		const accounts: AccountResponse[] = [
+			mkAccount({
+				name: "anthro",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 80, resets_at: null },
+					seven_day: { utilization: 40, resets_at: null },
+				} as never,
+			}),
+			mkAccount({
+				name: "codex",
+				provider: "codex",
+				usageData: {
+					five_hour: { utilization: null, resets_at: null },
+					seven_day: { utilization: 63, resets_at: null },
+				} as never,
+			}),
+		];
+
+		const five = computePoolUsage(accounts, "five_hour", NOW);
+		expect(five.average).toBe(80);
+		expect(five.contributing).toHaveLength(1);
+		expect(five.contributing[0].name).toBe("anthro");
+		expect(five.excluded).toEqual([
+			{ name: "codex", reason: "no_usage_data", resetMs: null },
+		]);
+
+		// The weekly pool still counts it — that window is the one Codex reports.
+		const seven = computePoolUsage(accounts, "seven_day", NOW);
+		expect(seven.contributing).toHaveLength(2);
+		expect(seven.average).toBe(51.5);
+	});
+
 	it("paused account → excluded reason paused", () => {
 		const accounts: AccountResponse[] = [
 			mkAccount({
