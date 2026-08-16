@@ -156,6 +156,39 @@ export class UsageHistoryRepository extends BaseRepository<UsageSnapshotRow> {
 		}));
 	}
 
+	/**
+	 * Most recent snapshot for one window of one account, or null when the
+	 * account has never recorded that window. getSeries is ORDER BY timestamp
+	 * ASC (the chart and the regression both need it that way), so reading "the
+	 * latest value" through it would mean fetching the whole series just to take
+	 * the tail. Used as the durable fallback for providers whose usage only
+	 * arrives piggybacked on real traffic — Codex has no polling endpoint, so
+	 * after a restart this table is the only place its weekly percentage
+	 * survives (see getCachedOrPersistedCodexUsage in the accounts handler).
+	 */
+	async getLatestSnapshot(
+		accountId: string,
+		windowKey: string,
+	): Promise<UsageSnapshotRow | null> {
+		const rows = await this.query<SnapshotDbRow>(
+			`SELECT account_id, timestamp, window_key, utilization, resets_at
+			 FROM usage_snapshots
+			 WHERE account_id = ? AND window_key = ?
+			 ORDER BY timestamp DESC
+			 LIMIT 1`,
+			[accountId, windowKey],
+		);
+		const row = rows[0];
+		if (!row) return null;
+		return {
+			accountId: row.account_id,
+			timestamp: Number(row.timestamp),
+			windowKey: row.window_key,
+			utilization: Number(row.utilization),
+			resetsAt: row.resets_at == null ? null : Number(row.resets_at),
+		};
+	}
+
 	async deleteOlderThan(cutoffTs: number): Promise<number> {
 		// Batched like RequestRepository.deleteOlderThan/deletePayloadsOlderThan —
 		// an unbounded DELETE here can exceed the PG statement_timeout once the

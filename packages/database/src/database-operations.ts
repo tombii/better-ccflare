@@ -953,6 +953,10 @@ OAuth tokens will need to be re-authenticated.
 		return this.usageHistory.getSeries(opts);
 	}
 
+	async getLatestUsageSnapshot(accountId: string, windowKey: string) {
+		return this.usageHistory.getLatestSnapshot(accountId, windowKey);
+	}
+
 	async pruneUsageSnapshots(cutoffTs: number): Promise<number> {
 		return this.usageHistory.deleteOlderThan(cutoffTs);
 	}

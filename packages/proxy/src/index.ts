@@ -30,6 +30,10 @@ export type {
 } from "./codex-model-catalog";
 export { getCodexModels } from "./codex-model-catalog";
 export {
+	recordCodexUsageSnapshot,
+	resetCodexUsageHistoryThrottle,
+} from "./codex-usage-history";
+export {
 	type CodexUsageRefreshOutcome,
 	checkAllAccountsHealth,
 	checkRefreshTokenHealth,

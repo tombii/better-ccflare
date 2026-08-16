@@ -7,6 +7,7 @@ import {
 } from "@better-ccflare/providers";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
 import { circuitKeyFor, recordSuccess } from "../circuit-breaker";
+import { recordCodexUsageSnapshot } from "../codex-usage-history";
 import { drainBody } from "./discard-body-cancel";
 import { isInternalProbe, type ProxyContext } from "./proxy-types";
 import {
@@ -124,6 +125,20 @@ export function updateAccountMetadata(
 			usageCache.set(account.id, codexUsage);
 			log.debug(
 				`Updated Codex usage cache for ${account.name}: 5h=${codexUsage.five_hour?.utilization ?? "?"}%, 7d=${codexUsage.seven_day?.utilization ?? "?"}%`,
+			);
+
+			// The cache above expires in 10 minutes and dies with the process, so
+			// also persist the windows into usage_snapshots — the only place a Codex
+			// weekly percentage survives a restart. Throttled per account inside the
+			// helper (recordSnapshot has no dedup by design).
+			ctx.asyncWriter.enqueue(() =>
+				recordCodexUsageSnapshot(
+					ctx.dbOps,
+					account.id,
+					account.name,
+					codexUsage as unknown as Record<string, unknown>,
+					Date.now(),
+				).then(() => undefined),
 			);
 
 			// Update rate_limit_reset from usage headers so auto-refresh can track windows

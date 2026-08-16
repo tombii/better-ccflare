@@ -63,6 +63,7 @@ import {
 	initModelCatalogRefresh,
 	initProxy,
 	type ProxyContext,
+	recordCodexUsageSnapshot,
 	refreshModelCatalog,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
@@ -1257,6 +1258,18 @@ export default async function startServer(options?: {
 		}
 
 		usageCache.set(accountId, fetchResult.data);
+
+		// Persist alongside the cache: this on-demand read costs quota, so it must
+		// outlive the 10-minute cache. `force` skips the traffic throttle — the
+		// operator asked for this read explicitly.
+		await recordCodexUsageSnapshot(
+			dbOps,
+			accountId,
+			account.name,
+			fetchResult.data as unknown as Record<string, unknown>,
+			Date.now(),
+			true,
+		);
 
 		const fiveHour = fetchResult.data.five_hour?.utilization ?? 0;
 		const sevenDay = fetchResult.data.seven_day?.utilization ?? 0;
