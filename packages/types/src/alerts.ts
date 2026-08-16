@@ -57,6 +57,13 @@ export interface AlertsConfigPayload {
 	anomalyEnabled: boolean;
 	anomalyIntervalMinutes: number;
 	/**
+	 * Minutes of trailing history used to build token baselines (median/MAD),
+	 * decoupled from anomalyIntervalMinutes (which only controls how often new
+	 * rows are scored). Must be a stable window distinct from the rows being
+	 * scored so a request is never scored against a baseline it is a member of.
+	 */
+	anomalyBaselineWindowMinutes: number;
+	/**
 	 * Minimum requests inside one (account, model, agent) window to qualify
 	 * as a runaway loop. Default 25 — well above one agent's normal
 	 * per-window traffic but still catches true repeated-request loops.

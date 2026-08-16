@@ -357,7 +357,8 @@ export function createAnomalyInsightsHandler(context: APIContext) {
 
 			return jsonResponse(
 				buildAnomalyInsightsResponse({
-					rows,
+					baselineRows: rows,
+					scoringRows: rows,
 					rates,
 					options: { ...options, truncated },
 				}),

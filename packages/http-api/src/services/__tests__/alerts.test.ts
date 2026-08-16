@@ -17,6 +17,7 @@ const CONFIG: AlertsConfigPayload = {
 	requestTokens: 50_000,
 	anomalyEnabled: false,
 	anomalyIntervalMinutes: 15,
+	anomalyBaselineWindowMinutes: 1440,
 	loopMinRequests: 10,
 	cooldownMinutes: 60,
 	webhookUrl: "",

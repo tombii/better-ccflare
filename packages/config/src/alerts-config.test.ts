@@ -10,6 +10,7 @@ const ENV_KEYS = [
 	"ALERT_REQUEST_TOKENS",
 	"ALERT_ANOMALY_ENABLED",
 	"ALERT_ANOMALY_INTERVAL_MINUTES",
+	"ALERT_ANOMALY_BASELINE_WINDOW_MINUTES",
 	"ALERT_ANOMALY_LOOP_MIN_REQUESTS",
 	"ALERT_COOLDOWN_MINUTES",
 	"ALERT_WEBHOOK_URL",
@@ -52,6 +53,7 @@ describe("alert config settings", () => {
 			expect(config.getAlertRequestTokens()).toBe(0);
 			expect(config.getAlertAnomalyEnabled()).toBe(false);
 			expect(config.getAlertAnomalyIntervalMinutes()).toBe(15);
+			expect(config.getAlertAnomalyBaselineWindowMinutes()).toBe(1440);
 			expect(config.getAlertAnomalyLoopMinRequests()).toBe(25);
 			expect(config.getAlertCooldownMinutes()).toBe(60);
 			expect(config.getAlertWebhookUrl()).toBe("");
@@ -66,6 +68,7 @@ describe("alert config settings", () => {
 		process.env.ALERT_REQUEST_TOKENS = "200000";
 		process.env.ALERT_ANOMALY_ENABLED = "true";
 		process.env.ALERT_ANOMALY_INTERVAL_MINUTES = "30";
+		process.env.ALERT_ANOMALY_BASELINE_WINDOW_MINUTES = "720";
 		process.env.ALERT_ANOMALY_LOOP_MIN_REQUESTS = "40";
 		process.env.ALERT_COOLDOWN_MINUTES = "120";
 		process.env.ALERT_WEBHOOK_URL = "https://example.com/hook";
@@ -77,6 +80,7 @@ describe("alert config settings", () => {
 			expect(config.getAlertRequestTokens()).toBe(200000);
 			expect(config.getAlertAnomalyEnabled()).toBe(true);
 			expect(config.getAlertAnomalyIntervalMinutes()).toBe(30);
+			expect(config.getAlertAnomalyBaselineWindowMinutes()).toBe(720);
 			expect(config.getAlertAnomalyLoopMinRequests()).toBe(40);
 			expect(config.getAlertCooldownMinutes()).toBe(120);
 			expect(config.getAlertWebhookUrl()).toBe("https://example.com/hook");
@@ -101,6 +105,7 @@ describe("alert config settings", () => {
 		process.env.ALERT_TOKENS_PER_HOUR = "9999999999";
 		process.env.ALERT_REQUEST_TOKENS = "-100";
 		process.env.ALERT_ANOMALY_INTERVAL_MINUTES = "2";
+		process.env.ALERT_ANOMALY_BASELINE_WINDOW_MINUTES = "10";
 		process.env.ALERT_ANOMALY_LOOP_MIN_REQUESTS = "9999";
 		process.env.ALERT_COOLDOWN_MINUTES = "0";
 		const { config, cleanup } = makeConfig();
@@ -110,6 +115,7 @@ describe("alert config settings", () => {
 			expect(config.getAlertTokensPerHour()).toBe(1_000_000_000);
 			expect(config.getAlertRequestTokens()).toBe(0);
 			expect(config.getAlertAnomalyIntervalMinutes()).toBe(5);
+			expect(config.getAlertAnomalyBaselineWindowMinutes()).toBe(60);
 			expect(config.getAlertAnomalyLoopMinRequests()).toBe(1000);
 			expect(config.getAlertCooldownMinutes()).toBe(1);
 		} finally {
@@ -132,6 +138,12 @@ describe("alert config settings", () => {
 
 			config.setAlertAnomalyIntervalMinutes(99999);
 			expect(config.getAlertAnomalyIntervalMinutes()).toBe(1440);
+
+			config.setAlertAnomalyBaselineWindowMinutes(1);
+			expect(config.getAlertAnomalyBaselineWindowMinutes()).toBe(60);
+
+			config.setAlertAnomalyBaselineWindowMinutes(999999);
+			expect(config.getAlertAnomalyBaselineWindowMinutes()).toBe(43200);
 
 			config.setAlertAnomalyLoopMinRequests(1);
 			expect(config.getAlertAnomalyLoopMinRequests()).toBe(5);
@@ -206,6 +218,7 @@ describe("alert config settings", () => {
 			expect(settings.alert_request_tokens).toBe(0);
 			expect(settings.alert_anomaly_enabled).toBe(false);
 			expect(settings.alert_anomaly_interval_minutes).toBe(15);
+			expect(settings.alert_anomaly_baseline_window_minutes).toBe(1440);
 			expect(settings.alert_anomaly_loop_min_requests).toBe(25);
 			expect(settings.alert_cooldown_minutes).toBe(60);
 			expect(settings.alert_webhook_url).toBe("");

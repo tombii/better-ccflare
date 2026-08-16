@@ -71,8 +71,16 @@ export type TokenOutlierMetric = "total_tokens" | "output_tokens";
 /** Effective detector thresholds echoed back with an anomalies response. */
 export interface AnomalyInsightsMeta {
 	range: string;
+	/**
+	 * Modified z-score threshold in log-space (median/MAD based), NOT a
+	 * literal standard-deviation count.
+	 */
 	zScoreThreshold: number;
 	minBaselineRequests: number;
+	/** Minutes of trailing history the baseline was built from (decoupled from the scoring window). */
+	baselineWindowMinutes: number;
+	/** Row count the baseline statistics were computed over (>= scannedRequests when the baseline window exceeds the scoring window). */
+	baselineWindowRequests: number;
 	loopWindowMinutes: number;
 	loopMinRequests: number;
 	/** Max coefficient of variation of request-side tokens for a burst to count as a loop. */
@@ -96,10 +104,22 @@ export interface AnomalyBaseline {
 	account: string;
 	model: string;
 	requests: number;
-	meanTotalTokens: number;
-	stdDevTotalTokens: number;
-	meanOutputTokens: number;
-	stdDevOutputTokens: number;
+	/** Median of ln(total tokens) across the baseline population. */
+	medianLogTotalTokens: number;
+	/** Scaled (x1.4826) median absolute deviation of ln(total tokens). */
+	madTotalTokens: number;
+	/** Median of ln(output tokens) across the baseline population (rows with output_tokens > 0 only). */
+	medianLogOutputTokens: number;
+	/** Scaled (x1.4826) median absolute deviation of ln(output tokens). */
+	madOutputTokens: number;
+	/**
+	 * Human-readable raw-scale approximation of central tendency, for display
+	 * only: exp(medianLogTotalTokens). NOT used in any zScore computation —
+	 * geometric mean of the baseline population's total tokens.
+	 */
+	approxMedianTotalTokens: number;
+	/** exp(medianLogOutputTokens); display-only, see approxMedianTotalTokens. */
+	approxMedianOutputTokens: number;
 }
 
 /**
@@ -115,8 +135,13 @@ export interface TokenOutlierEvent {
 	project: string | null;
 	metric: TokenOutlierMetric;
 	value: number;
-	baselineMean: number;
-	baselineStdDev: number;
+	/** Log-space median of the baseline population (ln of tokens). */
+	baselineMedianLog: number;
+	/** Scaled (x1.4826) median absolute deviation of the baseline population, log-space. */
+	baselineMad: number;
+	/** Human-readable raw-scale approximation: exp(baselineMedianLog). Display only. */
+	approxBaselineMedian: number;
+	/** Modified z-score: (ln(value) - baselineMedianLog) / baselineMad. */
 	zScore: number;
 }
 

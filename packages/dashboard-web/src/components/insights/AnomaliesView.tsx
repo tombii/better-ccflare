@@ -60,13 +60,17 @@ export const AnomaliesView = ({
 	}
 	const meta = data.meta;
 	const scannedLabel = meta.scannedRequests.toLocaleString();
+	const baselineWindowHoursLabel = (meta.baselineWindowMinutes / 60).toFixed(1);
 	// Derive ALL threshold text from response metadata so a non-default
 	// zScoreThreshold / loopMinRequests / misrouting thresholds produce a
 	// non-contradictory UI. Previously the 3-sigma prose and "3σ" panel
 	// descriptions were hard-coded while nearby labels used meta, so a
 	// response with zScoreThreshold=4 rendered contradictory criteria.
-	const zScoreLabel = `${meta.zScoreThreshold.toFixed(1)}σ`;
-	const zScoreSigmaLabel = `${meta.zScoreThreshold.toFixed(1)}-sigma`;
+	// zScoreThreshold is now a modified z-score in log-space (median/MAD
+	// based), not a literal standard-deviation count — so labels use
+	// neutral "anomaly score" framing instead of "σ"/"sigma".
+	const zScoreLabel = `anomaly score ≥ ${meta.zScoreThreshold.toFixed(1)}`;
+	const zScoreSigmaLabel = `${meta.zScoreThreshold.toFixed(1)}-point anomaly-score`;
 	return (
 		<div className="space-y-6">
 			<Card>
@@ -78,12 +82,13 @@ export const AnomaliesView = ({
 						</CardTitle>
 					</div>
 					<CardDescription>
-						Detectors below flag requests whose token usage sits at or above{" "}
-						{meta.zScoreThreshold.toFixed(1)}σ above their (account, model)
-						baseline, plus dense bursts of near-identical calls and expensive
-						models handling trivial traffic. With ~{scannedLabel} requests
-						scanned and a {zScoreSigmaLabel} threshold, expect some events by
-						chance alone — investigate the largest, ignore the rest.
+						Detectors below flag requests whose token usage scores at or above{" "}
+						{meta.zScoreThreshold.toFixed(1)} on the anomaly detector relative
+						to their (account, model) baseline, plus dense bursts of
+						near-identical calls and expensive models handling trivial traffic.
+						With ~{scannedLabel} requests scanned and a {zScoreSigmaLabel}{" "}
+						threshold, expect some events by chance alone — investigate the
+						largest, ignore the rest.
 					</CardDescription>
 					<div className="flex flex-wrap items-center gap-2 pt-2 text-xs text-muted-foreground">
 						<span>
@@ -94,13 +99,18 @@ export const AnomaliesView = ({
 							Capped at <strong>{meta.maxEventsPerDetector}</strong> rows per
 							detector
 						</span>
+						<span>
+							Baseline:{" "}
+							<strong>{meta.baselineWindowRequests.toLocaleString()}</strong>{" "}
+							requests over the last {baselineWindowHoursLabel}h
+						</span>
 					</div>
 				</CardHeader>
 			</Card>
 
 			<TokenOutlierPanel
 				title="Token outliers (total tokens)"
-				description={`Total request tokens more than ${zScoreLabel} above baseline.`}
+				description={`Total request tokens with an ${zScoreLabel} above baseline.`}
 				events={data.tokenOutliers}
 				totalCount={data.tokenOutliersSummary.totalCount}
 				truncated={data.tokenOutliersSummary.truncated}
@@ -109,7 +119,7 @@ export const AnomaliesView = ({
 
 			<TokenOutlierPanel
 				title="Output blowups (output tokens)"
-				description={`Output tokens more than ${zScoreLabel} above baseline.`}
+				description={`Output tokens with an ${zScoreLabel} above baseline.`}
 				events={data.outputBlowups}
 				totalCount={data.outputBlowupsSummary.totalCount}
 				truncated={data.outputBlowupsSummary.truncated}
@@ -195,7 +205,7 @@ function TokenOutlierPanel({
 										Tokens
 									</th>
 									<th scope="col" className="text-right px-3 py-2 tabular-nums">
-										Baseline
+										Baseline (typical)
 									</th>
 								</tr>
 							</thead>
@@ -221,8 +231,7 @@ function TokenOutlierPanel({
 											{formatNumber(event.value)}
 										</td>
 										<td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
-											{formatNumber(Math.round(event.baselineMean))} ±{" "}
-											{formatNumber(Math.round(event.baselineStdDev))}
+											~{formatNumber(Math.round(event.approxBaselineMedian))}
 										</td>
 									</tr>
 								))}
@@ -461,7 +470,7 @@ function DetectorTotals({
 		<div className="flex items-center gap-2 text-xs text-muted-foreground">
 			<span>{label}</span>
 			{truncated && <Badge variant="outline">Truncated</Badge>}
-			{threshold !== undefined && <span>· ≥ {threshold.toFixed(1)}σ</span>}
+			{threshold !== undefined && <span>· score ≥ {threshold.toFixed(1)}</span>}
 		</div>
 	);
 }

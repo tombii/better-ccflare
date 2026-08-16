@@ -70,7 +70,7 @@ describe("createAnomalyInsightsHandler", () => {
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as AnomalyInsightsResponse;
 		expect(body.meta.range).toBe("24h");
-		expect(body.meta.zScoreThreshold).toBe(3);
+		expect(body.meta.zScoreThreshold).toBe(3.5);
 		expect(body.meta.maxEventsPerDetector).toBe(50);
 		expect(body.meta.scannedRequests).toBe(2);
 		expect(body.meta.truncated).toBe(false);
@@ -84,7 +84,7 @@ describe("createAnomalyInsightsHandler", () => {
 			),
 		);
 		const body = (await response.json()) as AnomalyInsightsResponse;
-		expect(body.meta.zScoreThreshold).toBe(3);
+		expect(body.meta.zScoreThreshold).toBe(3.5);
 		expect(body.meta.maxEventsPerDetector).toBe(500);
 		expect(body.meta.loopWindowMinutes).toBe(6);
 		expect(body.meta.minBaselineRequests).toBe(2);

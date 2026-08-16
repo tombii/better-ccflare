@@ -72,6 +72,7 @@ export function getAlertsConfig(config: Config): AlertsConfigPayload {
 		requestTokens: config.getAlertRequestTokens(),
 		anomalyEnabled: config.getAlertAnomalyEnabled(),
 		anomalyIntervalMinutes: config.getAlertAnomalyIntervalMinutes(),
+		anomalyBaselineWindowMinutes: config.getAlertAnomalyBaselineWindowMinutes(),
 		loopMinRequests: config.getAlertAnomalyLoopMinRequests(),
 		cooldownMinutes: config.getAlertCooldownMinutes(),
 		webhookUrl: config.getAlertWebhookUrl(),
@@ -91,6 +92,9 @@ export function setAlertsConfig(
 	config.setAlertRequestTokens(payload.requestTokens);
 	config.setAlertAnomalyEnabled(payload.anomalyEnabled);
 	config.setAlertAnomalyIntervalMinutes(payload.anomalyIntervalMinutes);
+	config.setAlertAnomalyBaselineWindowMinutes(
+		payload.anomalyBaselineWindowMinutes,
+	);
 	config.setAlertAnomalyLoopMinRequests(payload.loopMinRequests);
 	config.setAlertCooldownMinutes(payload.cooldownMinutes);
 }
@@ -422,8 +426,16 @@ export class AlertService {
 	async evaluateAnomalies(): Promise<void> {
 		const config = getAlertsConfig(this.config);
 		if (!config.anomalyEnabled) return;
-		const since = Date.now() - config.anomalyIntervalMinutes * 60 * 1000;
-		const rows = (
+		const baselineWindowMinutes = config.anomalyBaselineWindowMinutes;
+		const intervalMinutes = config.anomalyIntervalMinutes;
+		// Query one wider window spanning both the baseline history and the
+		// scoring interval (baseline is typically the larger of the two), then
+		// partition client-side below. This keeps the DB hit to a single query
+		// instead of two, and guarantees the scoring slice is always a subset
+		// of the fetched rows.
+		const queryWindowMinutes = Math.max(baselineWindowMinutes, intervalMinutes);
+		const since = Date.now() - queryWindowMinutes * 60 * 1000;
+		const baselineRows = (
 			await this.db.query<AnomalySqlRow>(
 				`
 				SELECT
@@ -446,10 +458,15 @@ export class AlertService {
 				[since],
 			)
 		).map(toAnomalyRow);
-		if (rows.length === 0) return;
+		if (baselineRows.length === 0) return;
+		const scoringSince = Date.now() - intervalMinutes * 60 * 1000;
+		const scoringRows = baselineRows.filter(
+			(row) => row.timestamp >= scoringSince,
+		);
+		if (scoringRows.length === 0) return;
 		const modelIds = [
 			...new Set(
-				rows
+				baselineRows
 					.map((row) => row.model)
 					.filter((model): model is string => model != null && model !== ""),
 			),
@@ -461,10 +478,12 @@ export class AlertService {
 			modelIds.map((modelId, index) => [modelId, rateList[index]]),
 		);
 		const response = buildAnomalyInsightsResponse({
-			rows,
+			baselineRows,
+			scoringRows,
 			rates,
 			options: {
-				range: `${config.anomalyIntervalMinutes}m`,
+				range: `${intervalMinutes}m`,
+				baselineWindowMinutes,
 				truncated: false,
 				loopMinRequests: config.loopMinRequests,
 			},
@@ -485,7 +504,7 @@ export class AlertService {
 				type: "anomaly_token_outlier",
 				severity: "warning",
 				title: "Token usage anomaly detected",
-				message: `Request ${event.requestId} used ${event.value.toLocaleString()} tokens (${event.zScore.toFixed(1)}σ above baseline).`,
+				message: `Request ${event.requestId} used ${event.value.toLocaleString()} tokens (${(event.value / event.approxBaselineMedian).toFixed(1)}x the account/model baseline of ~${Math.round(event.approxBaselineMedian).toLocaleString()}; anomaly score ${event.zScore.toFixed(1)}).`,
 				value: event.value,
 				threshold: null,
 				account: event.account,
@@ -510,7 +529,7 @@ export class AlertService {
 				type: "anomaly_output_blowup",
 				severity: "warning",
 				title: "Output token blowup detected",
-				message: `Request ${event.requestId} returned ${event.value.toLocaleString()} output tokens (${event.zScore.toFixed(1)}σ above baseline).`,
+				message: `Request ${event.requestId} returned ${event.value.toLocaleString()} output tokens (${(event.value / event.approxBaselineMedian).toFixed(1)}x the account/model baseline of ~${Math.round(event.approxBaselineMedian).toLocaleString()} output tokens; anomaly score ${event.zScore.toFixed(1)}).`,
 				value: event.value,
 				threshold: null,
 				account: event.account,
