@@ -71,8 +71,16 @@ export type TokenOutlierMetric = "total_tokens" | "output_tokens";
 /** Effective detector thresholds echoed back with an anomalies response. */
 export interface AnomalyInsightsMeta {
 	range: string;
+	/**
+	 * Modified z-score threshold in log-space (median/MAD based), NOT a
+	 * literal standard-deviation count.
+	 */
 	zScoreThreshold: number;
 	minBaselineRequests: number;
+	/** Minutes of trailing history the baseline was built from (decoupled from the scoring window). */
+	baselineWindowMinutes: number;
+	/** Row count the baseline statistics were computed over (>= scannedRequests when the baseline window exceeds the scoring window). */
+	baselineWindowRequests: number;
 	loopWindowMinutes: number;
 	loopMinRequests: number;
 	/** Max coefficient of variation of request-side tokens for a burst to count as a loop. */
@@ -96,10 +104,38 @@ export interface AnomalyBaseline {
 	account: string;
 	model: string;
 	requests: number;
-	meanTotalTokens: number;
-	stdDevTotalTokens: number;
-	meanOutputTokens: number;
-	stdDevOutputTokens: number;
+	/**
+	 * Median of ln(total tokens) across the baseline population. `null` when
+	 * the group has too few token-bearing rows to qualify for
+	 * minBaselineRequests on the total-tokens side (independent metric
+	 * qualification — see issue #410 follow-up). In practice this metric is
+	 * very unlikely to be the one that's unavailable (computeBaselines only
+	 * emits a baseline entry at all when at least one of the two metrics
+	 * qualifies), but the field is nullable for symmetry with the
+	 * output-tokens side, since the implementation treats both directions
+	 * the same way.
+	 */
+	medianLogTotalTokens: number | null;
+	/** Scaled (x1.4826) median absolute deviation of ln(total tokens). `null` under the same condition as medianLogTotalTokens. */
+	madTotalTokens: number | null;
+	/**
+	 * Median of ln(output tokens) across the baseline population (rows with
+	 * output_tokens > 0 only). `null` when the group has too few
+	 * output-token-bearing rows to qualify for minBaselineRequests
+	 * (independent metric qualification — see issue #410 follow-up).
+	 */
+	medianLogOutputTokens: number | null;
+	/** Scaled (x1.4826) median absolute deviation of ln(output tokens). `null` under the same condition as medianLogOutputTokens. */
+	madOutputTokens: number | null;
+	/**
+	 * Human-readable raw-scale approximation of central tendency, for display
+	 * only: exp(medianLogTotalTokens). NOT used in any zScore computation —
+	 * geometric mean of the baseline population's total tokens. `null` under
+	 * the same condition as medianLogTotalTokens.
+	 */
+	approxMedianTotalTokens: number | null;
+	/** exp(medianLogOutputTokens); display-only, see approxMedianTotalTokens. `null` under the same condition as medianLogOutputTokens. */
+	approxMedianOutputTokens: number | null;
 }
 
 /**
@@ -115,8 +151,13 @@ export interface TokenOutlierEvent {
 	project: string | null;
 	metric: TokenOutlierMetric;
 	value: number;
-	baselineMean: number;
-	baselineStdDev: number;
+	/** Log-space median of the baseline population (ln of tokens). */
+	baselineMedianLog: number;
+	/** Scaled (x1.4826) median absolute deviation of the baseline population, log-space. */
+	baselineMad: number;
+	/** Human-readable raw-scale approximation: exp(baselineMedianLog). Display only. */
+	approxBaselineMedian: number;
+	/** Modified z-score: (ln(value) - baselineMedianLog) / baselineMad. */
 	zScore: number;
 }
 

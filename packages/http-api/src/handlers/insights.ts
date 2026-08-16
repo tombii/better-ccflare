@@ -355,11 +355,22 @@ export function createAnomalyInsightsHandler(context: APIContext) {
 				modelIds.map((modelId, index) => [modelId, rateList[index]]),
 			);
 
+			// This endpoint uses the same row set for both baseline and scoring
+			// (baselineRows === scoringRows === rows), so the effective baseline
+			// window IS the user's selected `range`. Without this, meta always
+			// echoed the DEFAULT_BASELINE_WINDOW_MINUTES fallback (24h) inside
+			// buildAnomalyInsightsResponse regardless of which range was picked.
+			const baselineWindowMinutes = Math.max(
+				0,
+				Math.round((Date.now() - startMs) / 60_000),
+			);
+
 			return jsonResponse(
 				buildAnomalyInsightsResponse({
-					rows,
+					baselineRows: rows,
+					scoringRows: rows,
 					rates,
-					options: { ...options, truncated },
+					options: { ...options, baselineWindowMinutes, truncated },
 				}),
 			);
 		} catch (error) {
