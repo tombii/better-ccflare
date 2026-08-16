@@ -6,7 +6,10 @@
  */
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { BunSqlAdapter } from "../adapters/bun-sql-adapter";
+import {
+	BunSqlAdapter,
+	getCleanupBatchSize,
+} from "../adapters/bun-sql-adapter";
 import { ensureSchema, runMigrations } from "../migrations";
 
 // ---------------------------------------------------------------------------
@@ -154,7 +157,7 @@ describe("cleanupOldRequests", () => {
 
 		it("removes ALL orphaned payloads even when there are more than one batch's worth (regression for #384)", async () => {
 			const old = Date.now() - 95 * 24 * 60 * 60 * 1000; // 95 days ago
-			const orphanCount = 2500; // exceeds the 2000-row batch size
+			const orphanCount = getCleanupBatchSize() + 500; // exceeds one batch
 
 			for (let i = 0; i < orphanCount; i++) {
 				insertRequest(db, `orphan-${i}`, old, true);

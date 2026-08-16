@@ -9,7 +9,10 @@
  */
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { BunSqlAdapter } from "../adapters/bun-sql-adapter";
+import {
+	BunSqlAdapter,
+	getCleanupBatchSize,
+} from "../adapters/bun-sql-adapter";
 import { ensureSchema, runMigrations } from "../migrations";
 import { UsageHistoryRepository } from "../repositories/usage-history.repository";
 
@@ -92,7 +95,7 @@ describe("UsageHistoryRepository.deleteOlderThan", () => {
 
 	it("removes ALL old snapshots even when there are more than one batch's worth (regression for #384)", async () => {
 		const old = Date.now() - 95 * 24 * 60 * 60 * 1000; // 95 days ago
-		const oldCount = 2500; // exceeds the 2000-row batch size
+		const oldCount = getCleanupBatchSize() + 500; // exceeds one batch
 
 		// Vary account_id/window_key per row so the composite key
 		// (account_id, timestamp, window_key) stays unique even when several
@@ -114,7 +117,7 @@ describe("UsageHistoryRepository.deleteOlderThan", () => {
 	it("deletes only old rows and preserves recent rows when both coexist across multiple batches", async () => {
 		const old = Date.now() - 95 * 24 * 60 * 60 * 1000;
 		const recent = Date.now() - 1 * 24 * 60 * 60 * 1000;
-		const oldCount = 2200; // exceeds the 2000-row batch size
+		const oldCount = getCleanupBatchSize() + 200; // exceeds one batch
 		const recentCount = 10;
 
 		for (let i = 0; i < oldCount; i++) {

@@ -3,6 +3,7 @@ import type {
 	AgentAttributionSource,
 	ProjectAttributionSource,
 } from "@better-ccflare/types";
+import { getCleanupBatchSize } from "../adapters/bun-sql-adapter";
 import { decryptPayload, encryptPayload } from "../payload-encryption";
 import { BaseRepository } from "./base.repository";
 
@@ -618,9 +619,11 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async deleteOlderThan(cutoffTs: number): Promise<number> {
-		// Increased from 500 to 2000 for more aggressive cleanup of large databases.
 		// The covering index idx_requests_cleanup makes each batch faster.
-		const BATCH_SIZE = 2000;
+		// Batch size is configurable via BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE
+		// (default 200) — lower it if rows are large and batches are timing
+		// out against statement_timeout (#412).
+		const BATCH_SIZE = getCleanupBatchSize();
 		let total = 0;
 		let deleted: number;
 		do {
@@ -640,7 +643,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		// DELETE here can exceed the PG statement_timeout once the table is large.
 		// LEFT JOIN instead of NOT IN (SELECT ...) avoids the slow anti-join plan
 		// NOT IN produces against a large subquery on both SQLite and PostgreSQL.
-		const BATCH_SIZE = 2000;
+		// Batch size is configurable via BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE
+		// (default 200) — lower it if rows are large (#412).
+		const BATCH_SIZE = getCleanupBatchSize();
 		let total = 0;
 		let deleted: number;
 		do {
@@ -659,9 +664,11 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async deletePayloadsOlderThan(cutoffTs: number): Promise<number> {
-		// Increased from 500 to 2000 for more aggressive cleanup of large databases.
 		// The covering index idx_request_payloads_cleanup makes each batch faster.
-		const BATCH_SIZE = 2000;
+		// Batch size is configurable via BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE
+		// (default 200) — lower it if rows are large (e.g. TOASTed payload JSON)
+		// and batches are timing out against statement_timeout (#412).
+		const BATCH_SIZE = getCleanupBatchSize();
 		let total = 0;
 		let deleted: number;
 		do {
