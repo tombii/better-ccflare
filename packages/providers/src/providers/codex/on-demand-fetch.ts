@@ -58,7 +58,7 @@ export interface CodexUsageRefreshFetchResult {
  * Send a minimal Codex `/responses` request whose only purpose is to elicit
  * the `x-codex-*` rate-limit/usage headers that the upstream attaches to
  * every response. The request body is intentionally tiny (a single character
- * input with `reasoning.effort = "minimal"`), and the response is aborted and
+ * input with the lowest reasoning effort the models accept), and the response is aborted and
  * its body cancelled as soon as headers are captured. The subscription API
  * rejects `max_output_tokens`; custom API-compatible endpoints retain the
  * legacy one-token cap.
@@ -91,7 +91,10 @@ export async function fetchCodexUsageOnDemand(
 		],
 		stream: true,
 		store: false,
-		reasoning: { effort: "minimal" },
+		// "minimal" is rejected by the current models ("Unsupported value:
+		// 'minimal' is not supported with the 'gpt-5.6-sol' model"); "low" is
+		// accepted by both the old gpt-5/gpt-5.3-codex family and the new one.
+		reasoning: { effort: "low" },
 		instructions: "ping",
 	};
 	if (!isCodexSubscriptionEndpoint(resolvedEndpoint)) {

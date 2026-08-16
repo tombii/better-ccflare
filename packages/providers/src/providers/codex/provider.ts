@@ -59,7 +59,23 @@ export const CODEX_VERSION = "0.147.0";
 /** Hosts that are OpenAI's own Codex/Responses API, not a custom endpoint. */
 const OPENAI_PROMPT_CACHE_HOSTS = new Set(["chatgpt.com", "api.openai.com"]);
 export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
-export const CODEX_PING_MODEL = "gpt-5-codex";
+/**
+ * Model used by the usage-header probe (`fetchCodexUsageOnDemand`) — never by
+ * real traffic, which always carries the client's own model.
+ *
+ * It must be a model the account can actually address. `gpt-5-codex` no longer
+ * is: the subscription endpoint answers
+ * `400 {"detail":"The 'gpt-5-codex' model is not supported when using Codex
+ * with a ChatGPT account."}`, and that rejection happens *before* quota
+ * accounting, so the response carries no `x-codex-*` headers at all. The probe
+ * then returns `data: null` and the manual refresh reports failure with nothing
+ * to show for it. A body-level rejection (e.g. an unsupported reasoning effort)
+ * still returns the full header set, which is how the difference was confirmed.
+ *
+ * `gpt-5.6-sol` is the same model this repo already uses as the Codex default
+ * for the `opus`/`fable` families (see provider model defaults).
+ */
+export const CODEX_PING_MODEL = "gpt-5.6-sol";
 const CODEX_SYNTHETIC_COUNT_TOKENS_URL =
 	"https://better-ccflare.local/codex/count_tokens";
 // Structured (non-text) tool_result blocks larger than this are replaced with
