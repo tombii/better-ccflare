@@ -24,16 +24,24 @@ import {
  * Formula recap:
  *   L_i = ln(v_i)
  *   medianLog = median(L_1..L_n)
- *   scaledMad = max(1.4826 * median(|L_i - medianLog|), 1e-9)   // floor avoids div-by-zero
+ *   scaledMad = 1.4826 * median(|L_i - medianLog|)   // NOT floored; can be genuinely 0
  *   modifiedZ(x) = (ln(x) - medianLog) / scaledMad
+ *
+ * scaledMad is returned raw/unfloored by medianAndMad. When it is at or
+ * below MIN_SCALED_MAD (an epsilon, not a floor applied to the value
+ * itself), detectTokenOutliers treats the baseline as zero-variance and
+ * SKIPS scoring that metric entirely (no event emitted) rather than
+ * flagging every future micro-deviation — see the MIN_SCALED_MAD doc
+ * comment in anomaly-insights.ts.
  *
  * A key property exploited throughout: with only two distinct values in a
  * group, the value that holds the majority (>50%) becomes both the median
  * AND makes >50% of the absolute deviations exactly 0, so the MAD collapses
- * to 0 (floored to 1e-9). Fixtures below therefore use THREE distinct
- * values wherever a non-degenerate MAD is required for a flagging
- * assertion, and deliberately use identical/two-value fixtures where the
- * intent IS to exercise the zero/degenerate-MAD path.
+ * to exactly 0 (zero-variance, skipped by detectTokenOutliers). Fixtures
+ * below therefore use THREE distinct values wherever a non-degenerate MAD
+ * is required for a flagging assertion, and deliberately use
+ * identical/two-value fixtures where the intent IS to exercise the
+ * zero-variance skip path.
  */
 
 const OPUS_RATES: ModelRates = {
@@ -252,18 +260,76 @@ describe("computeBaselines", () => {
 		expect(unknown?.approxMedianTotalTokens).toBeCloseTo(330, 6);
 	});
 
-	test("output-tokens metric requires >= minBaselineRequests rows with outputTokens > 0", () => {
+	test("output-tokens metric requires >= minBaselineRequests rows with outputTokens > 0, but does not sink the total-tokens side (issue #410 review fix)", () => {
 		// 10 rows with total tokens = 100 (qualifies the total-tokens gate),
-		// but only 6 of them have outputTokens > 0 (< minBaselineRequests=10),
-		// so the whole baseline entry (both metrics) is omitted — a baseline
-		// is one record per (account, model), and detectTokenOutliers needs
-		// both fields populated meaningfully.
+		// but only 6 of them have outputTokens > 0 (< minBaselineRequests=10).
+		// The two metrics now qualify INDEPENDENTLY: the group still emits a
+		// baseline entry with a valid total-tokens side, while the
+		// output-tokens side is marked invalid (NaN) rather than the whole
+		// entry being dropped.
 		const rows = [
 			...Array.from({ length: 6 }, () =>
 				req({ inputTokens: 80, outputTokens: 20 }),
 			),
 			...Array.from({ length: 4 }, () => req({ inputTokens: 100 })),
 		];
+		const baselines = computeBaselines(rows, 10);
+		expect(baselines).toHaveLength(1);
+		expect(baselines[0].requests).toBe(10);
+		expect(Number.isNaN(baselines[0].medianLogTotalTokens)).toBe(false);
+		expect(Number.isNaN(baselines[0].madTotalTokens)).toBe(false);
+		expect(Number.isNaN(baselines[0].medianLogOutputTokens)).toBe(true);
+		expect(Number.isNaN(baselines[0].madOutputTokens)).toBe(true);
+		expect(Number.isNaN(baselines[0].approxMedianOutputTokens)).toBe(true);
+	});
+
+	test("a group with enough total-tokens rows but too few output-tokens rows still supports total-tokens outlier detection, while output-tokens produces none", () => {
+		// 25 rows qualifying the total-tokens gate (minBaselineRequests=10)
+		// with a 3-value spread (80/100/130-ish, scaled) for a non-degenerate
+		// total-tokens MAD, but only 3 of them have outputTokens > 0 — well
+		// below the minBaselineRequests=10 gate for the output-tokens side.
+		const rows = [
+			...Array.from({ length: 8 }, () => req({ inputTokens: 80 })),
+			...Array.from({ length: 9 }, () => req({ inputTokens: 100 })),
+			...Array.from({ length: 8 }, () =>
+				req({ inputTokens: 130, outputTokens: 0 }),
+			),
+		].map((row, i) => (i < 3 ? { ...row, outputTokens: 5 } : row));
+		const baselines = computeBaselines(rows, 10);
+		expect(baselines).toHaveLength(1);
+		expect(baselines[0].requests).toBe(25);
+		expect(Number.isNaN(baselines[0].madTotalTokens)).toBe(false);
+		expect(Number.isNaN(baselines[0].madOutputTokens)).toBe(true);
+
+		// total_tokens outlier detection still works against this baseline.
+		const spike = [req({ id: "total-spike", inputTokens: 100_000 })];
+		const totalOutliers = detectTokenOutliers(
+			spike,
+			baselines,
+			3.5,
+			"total_tokens",
+		);
+		expect(totalOutliers).toHaveLength(1);
+		expect(totalOutliers[0].requestId).toBe("total-spike");
+
+		// output_tokens detection produces no events for this group — there is
+		// no valid baseline for that metric to compare against.
+		const outputSpike = [
+			req({ id: "output-spike", inputTokens: 100, outputTokens: 100_000 }),
+		];
+		const outputOutliers = detectTokenOutliers(
+			outputSpike,
+			baselines,
+			3.5,
+			"output_tokens",
+		);
+		expect(outputOutliers).toHaveLength(0);
+	});
+
+	test("omits the group entirely only when NEITHER metric has enough qualifying rows", () => {
+		const rows = Array.from({ length: 9 }, () =>
+			req({ inputTokens: 100, outputTokens: 10 }),
+		);
 		expect(computeBaselines(rows, 10)).toHaveLength(0);
 	});
 });
@@ -312,9 +378,9 @@ describe("detectTokenOutliers", () => {
 	});
 
 	test("does not flag a value equal to a constant (zero-variance) baseline", () => {
-		// All-identical baseline: MAD floors to the epsilon guard, so any
-		// EXACT match to the median still yields z = 0 (not flagged), while
-		// the floor prevents Infinity/NaN for any other value.
+		// All-identical baseline: scaledMad is genuinely 0 (no longer floored
+		// by medianAndMad), so an EXACT match to the median is skipped (no
+		// signal to score against either way).
 		const baselineRows = Array.from({ length: 10 }, () =>
 			req({ inputTokens: 100, outputTokens: 10 }),
 		);
@@ -322,6 +388,36 @@ describe("detectTokenOutliers", () => {
 		const scoringRows = [req({ inputTokens: 100 })];
 		expect(
 			detectTokenOutliers(scoringRows, baselines, 3.5, "total_tokens"),
+		).toHaveLength(0);
+	});
+
+	test("zero-variance baseline is SKIPPED, not flagged: neither a tiny nor a huge deviation produces an event (issue #410 review fix)", () => {
+		// Regression: before this fix, a zero-variance baseline's scaledMad
+		// was floored to a tiny epsilon (1e-9), which made ANY differing
+		// value produce a z-score in the millions — always past the default
+		// 3.5 threshold. This mirrors the OLD pre-#410 `if (stdDev <= 0)
+		// continue;` behavior: a genuinely zero-variance baseline carries no
+		// signal, so it must be skipped entirely, not turned into an
+		// alert-storm trigger. All 20 baseline requests use exactly 500
+		// tokens (deterministic traffic, e.g. a fixed-size health check).
+		const baselineRows = Array.from({ length: 20 }, () =>
+			req({ inputTokens: 500 }),
+		);
+		const baselines = computeBaselines(baselineRows, 10);
+		expect(baselines).toHaveLength(1);
+
+		// A slightly different value (501 tokens, ~0.2% deviation).
+		const slightlyDifferent = [req({ id: "slight", inputTokens: 501 })];
+		expect(
+			detectTokenOutliers(slightlyDifferent, baselines, 3.5, "total_tokens"),
+		).toHaveLength(0);
+
+		// A wildly different value (50000 tokens, 100x the baseline) — still
+		// intentionally not flagged, since there is no baseline signal at
+		// all to compare against (conservative, matching pre-#410 behavior).
+		const wildlyDifferent = [req({ id: "wild", inputTokens: 50_000 })];
+		expect(
+			detectTokenOutliers(wildlyDifferent, baselines, 3.5, "total_tokens"),
 		).toHaveLength(0);
 	});
 

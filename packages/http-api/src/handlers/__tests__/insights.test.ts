@@ -103,6 +103,35 @@ describe("createAnomalyInsightsHandler", () => {
 		expect(body.meta.scannedRequests).toBe(100_000);
 	});
 
+	test("meta.baselineWindowMinutes reflects the selected range, not the 24h default (issue #410 review fix)", async () => {
+		// Before this fix, baselineWindowMinutes was never set from the
+		// handler's `range` query param, so meta always echoed
+		// DEFAULT_BASELINE_WINDOW_MINUTES (24h = 1440) regardless of which
+		// range the user picked. This endpoint scores the same row set it
+		// baselines from (baselineRows === scoringRows === rows), so the
+		// effective baseline window IS the selected range.
+		const handler = createAnomalyInsightsHandler(contextWithRows([]));
+
+		const response7d = await handler(new URLSearchParams("range=7d"));
+		const body7d = (await response7d.json()) as AnomalyInsightsResponse;
+		expect(body7d.meta.range).toBe("7d");
+		// 7d = 7 * 24 * 60 = 10080 minutes; allow small scheduling slack.
+		expect(body7d.meta.baselineWindowMinutes).toBeGreaterThan(10_079);
+		expect(body7d.meta.baselineWindowMinutes).toBeLessThanOrEqual(10_081);
+
+		const response30d = await handler(new URLSearchParams("range=30d"));
+		const body30d = (await response30d.json()) as AnomalyInsightsResponse;
+		expect(body30d.meta.range).toBe("30d");
+		// 30d = 30 * 24 * 60 = 43200 minutes.
+		expect(body30d.meta.baselineWindowMinutes).toBeGreaterThan(43_199);
+		expect(body30d.meta.baselineWindowMinutes).toBeLessThanOrEqual(43_201);
+
+		// Different ranges must not collapse to the same fixed default.
+		expect(body7d.meta.baselineWindowMinutes).not.toBe(
+			body30d.meta.baselineWindowMinutes,
+		);
+	});
+
 	test("returns 500 when the query fails", async () => {
 		const context = {
 			dbOps: {

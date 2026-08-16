@@ -205,13 +205,20 @@ function requestSideTokens(row: AnomalyRequestRow): number {
 }
 
 /**
- * Minimum floor for scaledMad so a degenerate baseline (all values
- * identical, or a single-element group) can never divide a downstream
- * z-score by zero. A real MAD this small is indistinguishable from zero
- * in double precision anyway, so flooring here is lossless for any
- * baseline that isn't perfectly constant.
+ * Epsilon below which a baseline's scaledMad is treated as genuinely zero
+ * variance (all baseline values identical — plausible for deterministic
+ * health-check calls, fixed-size embedding requests, templated system
+ * prompts). There is deliberately NO flooring of scaledMad in medianAndMad
+ * anymore: a zero-variance baseline carries no signal to score against, so
+ * detectTokenOutliers SKIPS scoring that metric for that baseline entirely
+ * (mirroring the pre-#410 `if (stdDev <= 0) continue;` guard) rather than
+ * flagging every non-identical future value as an extreme anomaly. Flooring
+ * scaledMad to a tiny positive number would make even a 1-token deviation
+ * produce a z-score in the millions (ln(101/100) / 1e-9 ≈ 9.95e6), which
+ * would always exceed the default 3.5 threshold and cause alert storms for
+ * deterministic traffic.
  */
-const MIN_SCALED_MAD = 1e-9;
+const MIN_SCALED_MAD = 1e-6;
 
 /** Standard median: sorts a copy, averages the two middle values if even length. */
 function median(values: number[]): number {
@@ -230,9 +237,10 @@ function median(values: number[]): number {
  * statistic the modified z-score is built from (issue #410).
  *
  * `values` are RAW (non-log, must be > 0); this function takes the log
- * internally. `scaledMad` is floored at MIN_SCALED_MAD so a baseline whose
- * values are all identical (MAD = 0) can never produce an Infinity/NaN
- * z-score downstream — see detectTokenOutliers.
+ * internally. `scaledMad` is returned RAW/unfloored — it can genuinely be
+ * 0 when every value in the group is identical. The "no signal, skip
+ * scoring" decision for a zero-variance baseline belongs to the caller
+ * (detectTokenOutliers), not here — see MIN_SCALED_MAD.
  */
 function medianAndMad(values: number[]): {
 	medianLog: number;
@@ -246,7 +254,7 @@ function medianAndMad(values: number[]): {
 	const mad = median(logs.map((l) => Math.abs(l - medianLog)));
 	// 1.4826: consistency constant that makes scaledMad a consistent
 	// estimator of the standard deviation for normally-distributed data.
-	const scaledMad = Math.max(1.4826 * mad, MIN_SCALED_MAD);
+	const scaledMad = 1.4826 * mad;
 	return { medianLog, scaledMad };
 }
 
@@ -266,8 +274,14 @@ function baselineKey(account: string | null, model: string | null): string {
  * (ln(0) is undefined). The output-tokens metric additionally filters to
  * outputTokens > 0 for the same reason (a request with zero output tokens,
  * e.g. an input-only call, has no signal for the output-blowup detector).
- * Groups with fewer than minBaselineRequests qualifying rows produce no
- * baseline for that metric's group.
+ *
+ * The two metrics (total tokens, output tokens) qualify INDEPENDENTLY: a
+ * group with enough rows overall but fewer than minBaselineRequests rows
+ * with outputTokens > 0 still gets a valid total-tokens baseline — only the
+ * output-tokens side of that entry is marked invalid (medianLogOutputTokens
+ * / madOutputTokens / approxMedianOutputTokens set to NaN), which
+ * detectTokenOutliers treats as "no baseline for this metric" and skips.
+ * The group is omitted entirely only when NEITHER metric has enough rows.
  *
  * Sorted by requests descending, then account/model ascending.
  */
@@ -289,21 +303,28 @@ export function computeBaselines(
 
 	const baselines: AnomalyBaseline[] = [];
 	for (const group of groups.values()) {
-		if (group.length < minBaselineRequests) continue;
 		const outputRows = group.filter((row) => row.outputTokens > 0);
-		if (outputRows.length < minBaselineRequests) continue;
-		const total = medianAndMad(group.map(totalTokens));
-		const output = medianAndMad(outputRows.map((row) => row.outputTokens));
+		const hasTotal = group.length >= minBaselineRequests;
+		const hasOutput = outputRows.length >= minBaselineRequests;
+		// Neither metric has enough data: no baseline entry at all for this
+		// group (nothing downstream could use it).
+		if (!hasTotal && !hasOutput) continue;
+		const total = hasTotal ? medianAndMad(group.map(totalTokens)) : null;
+		const output = hasOutput
+			? medianAndMad(outputRows.map((row) => row.outputTokens))
+			: null;
 		baselines.push({
 			account: normalizeKey(group[0].account),
 			model: normalizeKey(group[0].model),
 			requests: group.length,
-			medianLogTotalTokens: total.medianLog,
-			madTotalTokens: total.scaledMad,
-			medianLogOutputTokens: output.medianLog,
-			madOutputTokens: output.scaledMad,
-			approxMedianTotalTokens: Math.exp(total.medianLog),
-			approxMedianOutputTokens: Math.exp(output.medianLog),
+			medianLogTotalTokens: total ? total.medianLog : Number.NaN,
+			madTotalTokens: total ? total.scaledMad : Number.NaN,
+			medianLogOutputTokens: output ? output.medianLog : Number.NaN,
+			madOutputTokens: output ? output.scaledMad : Number.NaN,
+			approxMedianTotalTokens: total ? Math.exp(total.medianLog) : Number.NaN,
+			approxMedianOutputTokens: output
+				? Math.exp(output.medianLog)
+				: Number.NaN,
 		});
 	}
 	return baselines.sort(
@@ -370,9 +391,15 @@ export function detectTokenOutliers(
 			metric === "total_tokens"
 				? baseline.madTotalTokens
 				: baseline.madOutputTokens;
-		// scaledMad is already floored to MIN_SCALED_MAD by medianAndMad, but
-		// guard again defensively so a zero here can never reach Infinity/NaN.
-		if (scaledMad <= 0) continue;
+		// Two independent "no signal" cases, both skipped without emitting an
+		// event (never flagged):
+		//  - NaN: this metric's side of the baseline didn't qualify at all
+		//    (computeBaselines saw < minBaselineRequests rows for it).
+		//  - <= MIN_SCALED_MAD: the baseline is genuinely zero-variance (every
+		//    value identical). Mirrors the pre-#410 `if (stdDev <= 0) continue;`
+		//    guard — see MIN_SCALED_MAD doc comment for why this must skip
+		//    rather than floor-and-flag.
+		if (Number.isNaN(scaledMad) || scaledMad <= MIN_SCALED_MAD) continue;
 		const value =
 			metric === "total_tokens" ? totalTokens(row) : row.outputTokens;
 		const modifiedZ = (Math.log(value) - medianLog) / scaledMad;
