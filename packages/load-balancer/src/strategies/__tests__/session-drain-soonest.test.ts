@@ -697,4 +697,64 @@ describe("SessionDrainSoonestStrategy", () => {
 			expect(result[0]).toBe(chosenFallback);
 		});
 	});
+
+	describe("codex upstream window reset ends the session", () => {
+		// An active session is never preempted here, so a codex account whose
+		// reported window rolled over would keep winning re-selection for the
+		// rest of its local 5h clock — drain ranking never got a say. The
+		// window boundary comes from the x-codex-* headers, rewritten into
+		// rate_limit_reset on every response.
+		it("releases drain ranking once the reported window has reset", () => {
+			const now = Date.now();
+
+			const rolledOver = makeAccount({
+				id: "codex-rolled",
+				name: "codex-rolled",
+				provider: "codex",
+				session_start: now - 60 * 60 * 1000,
+				session_request_count: 40,
+				rate_limit_reset: now - 2000,
+			});
+			const drainsSooner = makeAccount({
+				id: "codex-drains-sooner",
+				name: "codex-drains-sooner",
+				provider: "codex",
+			});
+			mockStore.setWeeklyReset("codex-drains-sooner", now + 30 * 60 * 1000);
+			mockStore.setWeeklyReset("codex-rolled", now + 5 * 24 * 60 * 60 * 1000);
+
+			const result = strategy.select([rolledOver, drainsSooner], meta);
+
+			expect(result[0]).toBe(drainsSooner);
+			expect(strategy.peek([rolledOver, drainsSooner])).toBe(
+				"codex-drains-sooner",
+			);
+		});
+
+		it("keeps the session while the reported window is still open", () => {
+			const now = Date.now();
+			const sessionStart = now - 60 * 60 * 1000;
+
+			const active = makeAccount({
+				id: "codex-open",
+				name: "codex-open",
+				provider: "codex",
+				session_start: sessionStart,
+				session_request_count: 40,
+				rate_limit_reset: now + 60 * 60 * 1000,
+			});
+			const drainsSooner = makeAccount({
+				id: "codex-drains-sooner",
+				name: "codex-drains-sooner",
+				provider: "codex",
+			});
+			mockStore.setWeeklyReset("codex-drains-sooner", now + 30 * 60 * 1000);
+
+			const result = strategy.select([active, drainsSooner], meta);
+
+			expect(result[0]).toBe(active);
+			expect(mockStore.getResetCall(active.id)).toBeUndefined();
+			expect(active.session_start).toBe(sessionStart);
+		});
+	});
 });

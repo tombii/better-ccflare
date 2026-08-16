@@ -11,6 +11,7 @@ import {
 	requiresSessionDurationTracking,
 } from "@better-ccflare/types";
 import { isPeekAvailable } from "./peek-availability";
+import { codexWindowHasReset } from "./session-window-reset";
 
 export { LeastUsedStrategy } from "./least-used";
 export { SessionAffinityStrategy } from "./session-affinity";
@@ -44,10 +45,13 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// This helps Anthropic accounts better utilize their usage windows
 		// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
 		// No usage windows: Other account types or Anthropic console keys without usage windows
+		// Codex has 5h/7d usage windows too, but reports them through the
+		// x-codex-* response headers — see codexWindowHasReset.
 		const rateLimitWindowReset =
-			account.provider === PROVIDER_NAMES.ANTHROPIC && // Explicit provider check for Anthropic usage windows
-			account.rate_limit_reset &&
-			account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
+			(account.provider === PROVIDER_NAMES.ANTHROPIC && // Explicit provider check for Anthropic usage windows
+				account.rate_limit_reset &&
+				account.rate_limit_reset < now - 1000) || // 1 second buffer for clock skew protection
+			codexWindowHasReset(account, now);
 
 		if (fixedDurationExpired || rateLimitWindowReset) {
 			// Reset session
@@ -95,6 +99,15 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// independent of rate-limit windows), so we'll resume the cached
 		// session naturally on the next request after recovery. See issue #115.
 		if (account.rate_limited_until && account.rate_limited_until > now) {
+			return false;
+		}
+
+		// A Codex session whose upstream window already reset is not a live
+		// session, even with time left on the local 5h clock: continuing it
+		// re-pins traffic to the account that just rolled over instead of
+		// re-selecting with the fresh capacity in view. Anthropic is
+		// unaffected — see codexWindowHasReset for why it is Codex-only.
+		if (codexWindowHasReset(account, now)) {
 			return false;
 		}
 
