@@ -437,9 +437,13 @@ export function AccountsTab() {
 
 	const handleRefreshUsage = async (account: Account) => {
 		try {
-			await api.refreshUsage(account.id);
+			// The endpoint answers 200 even when the refresh failed (`success:
+			// false` plus a reason), so discarding the body makes a failed refresh
+			// indistinguishable from a successful one — the button just appears to
+			// do nothing. Surface the reason instead.
+			const result = await api.refreshUsage(account.id);
 			await loadAccounts();
-			setActionError(null);
+			setActionError(result.success ? null : result.message);
 		} catch (err) {
 			setActionError(formatError(err));
 		}
