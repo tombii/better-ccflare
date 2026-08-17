@@ -414,6 +414,8 @@ export function detectTokenOutliers(
 			timestamp: row.timestamp,
 			account: normalizeKey(row.account),
 			model: normalizeKey(row.model),
+			accountRaw: row.account,
+			modelRaw: row.model,
 			project: row.project,
 			metric,
 			value,

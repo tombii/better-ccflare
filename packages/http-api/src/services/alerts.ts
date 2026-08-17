@@ -114,6 +114,27 @@ export function buildThresholdAlertId(
 	return `${type}:${scope}:${Math.floor(timestamp / bucketMs)}`;
 }
 
+/**
+ * Sentinel for "no value" in a cooldown scope key: a NUL control character,
+ * which account/model names can never contain (account names are
+ * restricted to letters, numbers, spaces, hyphens, underscores, and dots —
+ * see patterns.accountName), so it can never collide with a real value.
+ */
+const SCOPE_NULL_SENTINEL = "\x00";
+
+/**
+ * Encodes a possibly-null raw value for use inside a cooldown scope key,
+ * distinguishing "no value" from a real value that happens to equal the
+ * display fallback ("Unknown"). `event.account`/`event.model` on anomaly
+ * events are already normalized (null -> "Unknown") for display purposes,
+ * so a scope built directly from those two fields cannot tell an account
+ * literally named "Unknown" apart from a request with no account at all —
+ * this must be built from the raw (pre-normalization) field instead.
+ */
+function encodeScopePart(raw: string | null): string {
+	return raw === null ? SCOPE_NULL_SENTINEL : raw;
+}
+
 export function buildRunawayLoopAlertId(
 	loop: RunawayLoopGroup,
 	cooldownMinutes: number,
@@ -513,7 +534,7 @@ export class AlertService {
 			alerts.push({
 				id: buildThresholdAlertId(
 					"anomaly_token_outlier",
-					`${event.account}${GROUP_KEY_SEPARATOR}${event.model}`,
+					`${encodeScopePart(event.accountRaw)}${GROUP_KEY_SEPARATOR}${encodeScopePart(event.modelRaw)}`,
 					event.timestamp,
 					config.cooldownMinutes,
 				),
@@ -538,7 +559,7 @@ export class AlertService {
 			alerts.push({
 				id: buildThresholdAlertId(
 					"anomaly_output_blowup",
-					`${event.account}${GROUP_KEY_SEPARATOR}${event.model}`,
+					`${encodeScopePart(event.accountRaw)}${GROUP_KEY_SEPARATOR}${encodeScopePart(event.modelRaw)}`,
 					event.timestamp,
 					config.cooldownMinutes,
 				),

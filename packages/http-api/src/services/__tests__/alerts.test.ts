@@ -15,7 +15,6 @@ import {
 	buildThresholdAlertId,
 	shouldFireAlert,
 } from "../alerts";
-import { GROUP_KEY_SEPARATOR } from "../anomaly-insights";
 
 const CONFIG: AlertsConfigPayload = {
 	dailySpendUsd: 10,
@@ -416,37 +415,99 @@ describe("anomaly alert cooldown scope (issue #411 regression)", () => {
 		expect(differentModel).not.toBe(first);
 	});
 
-	test("scope join uses GROUP_KEY_SEPARATOR so an account literally named 'Unknown' cannot collide with a missing account (review follow-up)", () => {
-		// The normalizeKey fallback for a missing account is the literal
-		// string "Unknown" (anomaly-insights.ts). A plain `:` join would let
-		// an account genuinely named "Unknown" produce the exact same scope
-		// string as a request with no account at all for the same model —
-		// over-suppressing alerts for the real "Unknown" account. Joining
-		// with the reserved GROUP_KEY_SEPARATOR (used elsewhere in
-		// anomaly-insights.ts for the identical reason) keeps them distinct
-		// as long as the separator itself never appears in account/model
-		// values, which holds here.
-		const missingAccount = buildThresholdAlertId(
-			"anomaly_token_outlier",
-			`Unknown${GROUP_KEY_SEPARATOR}model-a`,
-			123_456,
-			60,
-		);
-		const literalUnknownAccount = buildThresholdAlertId(
-			"anomaly_token_outlier",
-			`Unknown${GROUP_KEY_SEPARATOR}model-a`,
-			123_456,
-			60,
-		);
-		// Same inputs still collide (that's the whole point of the cooldown).
-		expect(missingAccount).toBe(literalUnknownAccount);
+	test("an account literally named 'Unknown' does not share a cooldown bucket with a request that has no account at all (greptile review follow-up)", async () => {
+		// TokenOutlierEvent.account/.model are already normalized for display
+		// (null -> the literal string "Unknown") before alerts.ts ever sees
+		// them, so a scope built from those display fields alone — even with
+		// a safe separator — cannot tell a real account named "Unknown" apart
+		// from a request with no account. This test proves the actual fix:
+		// the cooldown scope is built from event.accountRaw/.modelRaw (the
+		// pre-normalization fields), so the two cases get independent
+		// buckets and neither spike alert is swallowed by the other's
+		// cooldown.
+		const sqlite = new Database(":memory:");
+		ensureSchema(sqlite);
+		const adapter = new BunSqlAdapter(sqlite);
+		const config = Object.assign(new EventEmitter(), {
+			getAlertDailySpendUsd: () => 0,
+			getAlertTokensPerHour: () => 0,
+			getAlertRequestTokens: () => 0,
+			getAlertAnomalyEnabled: () => true,
+			getAlertAnomalyIntervalMinutes: () => 5,
+			getAlertAnomalyBaselineWindowMinutes: () => 60,
+			getAlertAnomalyLoopMinRequests: () => 10_000,
+			getAlertCooldownMinutes: () => 60,
+			getAlertWebhookUrl: () => "",
+		}) as unknown as Config;
+		const service = new AlertService(adapter, config);
 
-		// But a plain `:` join WOULD have collapsed these two distinct pairs
-		// ("Unknown"+"model-a" vs "Unknown:model"+"a") into the same string;
-		// the separator keeps them apart.
-		const pairOne = `Unknown${GROUP_KEY_SEPARATOR}model-a`;
-		const pairTwo = `Unknown${GROUP_KEY_SEPARATOR}model${GROUP_KEY_SEPARATOR}a`;
-		expect(pairOne).not.toBe(pairTwo);
+		async function seedGroup(
+			accountName: string | null,
+			idPrefix: string,
+		): Promise<void> {
+			// requests.account_used is a foreign key into accounts.id, and the
+			// anomaly query joins to accounts.name for display — so a request
+			// attributed to a real account must have a matching accounts row,
+			// or the join always yields NULL regardless of account_used.
+			const accountUsed = accountName === null ? null : `${idPrefix}-account`;
+			if (accountName !== null) {
+				await adapter.run(
+					`INSERT INTO accounts (id, name, created_at) VALUES (?, ?, ?)`,
+					[accountUsed, accountName, Date.now()],
+				);
+			}
+			const now = Date.now();
+			const scoringSince = now - 5 * 60 * 1000;
+			const spreadValues = [80, 100, 130];
+			for (let i = 0; i < 21; i++) {
+				await adapter.run(
+					`INSERT INTO requests
+						(id, timestamp, method, path, account_used, status_code, success,
+						 response_time_ms, failover_attempts, model, total_tokens, cost_usd,
+						 input_tokens, output_tokens, cache_read_input_tokens,
+						 cache_creation_input_tokens)
+					 VALUES (?, ?, 'POST', '/v1/messages', ?, 200, 1, 100, 0, 'model-a', ?, 0, ?, 0, 0, 0)`,
+					[
+						`${idPrefix}-baseline-${i}`,
+						scoringSince - (10 + i) * 60 * 1000,
+						accountUsed,
+						spreadValues[i % spreadValues.length],
+						spreadValues[i % spreadValues.length],
+					],
+				);
+			}
+			await adapter.run(
+				`INSERT INTO requests
+					(id, timestamp, method, path, account_used, status_code, success,
+					 response_time_ms, failover_attempts, model, total_tokens, cost_usd,
+					 input_tokens, output_tokens, cache_read_input_tokens,
+					 cache_creation_input_tokens)
+				 VALUES (?, ?, 'POST', '/v1/messages', ?, 200, 1, 100, 0, 'model-a', ?, 0, ?, 0, 0, 0)`,
+				[`${idPrefix}-spike`, now - 1000, accountUsed, 100_000, 100_000],
+			);
+		}
+
+		try {
+			// Group 1: no account attribution at all (account_used IS NULL).
+			await seedGroup(null, "noacct");
+			// Group 2: a real account whose name is literally "Unknown".
+			await seedGroup("Unknown", "literal");
+
+			await service.evaluateAnomalies();
+
+			const alerts = await service.listAlerts();
+			const outlierAlerts = alerts.filter(
+				(a) => a.type === "anomaly_token_outlier",
+			);
+			// Both spikes must be flagged independently — if the cooldown scope
+			// collapsed null and the literal "Unknown" into one bucket, only
+			// one of these two would have persisted.
+			const flaggedIds = outlierAlerts.map((a) => a.requestId).sort();
+			expect(flaggedIds).toEqual(["literal-spike", "noacct-spike"]);
+		} finally {
+			service.stop();
+			sqlite.close();
+		}
 	});
 
 	test("two distinct outlier requests on the same account/model within one cooldown bucket only persist one alert", async () => {
