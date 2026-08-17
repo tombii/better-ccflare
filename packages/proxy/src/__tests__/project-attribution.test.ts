@@ -19,7 +19,7 @@
  *  - usage-collector base64 fallback path (extractProjectAttributionFromParts)
  *    returns the same source labels as the parsed-body path
  */
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	extractProjectAttributionFromParts,
 	extractProjectAttributionFromRequest,
@@ -28,7 +28,23 @@ import {
 	isLowRiskProjectSlug,
 } from "../project-attribution";
 
+const HEADING_ENV_VAR = "CCFLARE_ENABLE_HEADING_PROJECT_ATTRIBUTION";
+
+/** Opt in to the H1-heading fallback for the scope of a single test (#413: off by default). */
+function withHeadingAttributionEnabled() {
+	const previous = process.env[HEADING_ENV_VAR];
+	process.env[HEADING_ENV_VAR] = "true";
+	return () => {
+		if (previous === undefined) delete process.env[HEADING_ENV_VAR];
+		else process.env[HEADING_ENV_VAR] = previous;
+	};
+}
+
 describe("extractProjectAttributionFromRequest", () => {
+	beforeEach(() => {
+		delete process.env[HEADING_ENV_VAR];
+	});
+
 	it("prefers x-better-ccflare-project over x-project when both are present", () => {
 		const headers = new Headers({
 			"x-better-ccflare-project": "ns-project",
@@ -157,15 +173,36 @@ describe("extractProjectAttributionFromRequest", () => {
 			expect(result.projectAttributionSource).toBe("none");
 		});
 
-		it("falls through to an eligible H1 heading when the workspace path segment is rejected", () => {
+		describe("CCFLARE_ENABLE_HEADING_PROJECT_ATTRIBUTION=true (opt-in, #413)", () => {
+			let restore: () => void;
+			beforeEach(() => {
+				restore = withHeadingAttributionEnabled();
+			});
+			afterEach(() => {
+				restore();
+			});
+
+			it("falls through to an eligible H1 heading when the workspace path segment is rejected", () => {
+				const headers = new Headers();
+				const body = {
+					system:
+						"/home/will/projects/leaked system prompt fragment with many words/more\n# Harness\nWelcome.",
+				};
+				const result = extractProjectAttributionFromRequest(headers, body);
+				expect(result.project).toBe("Harness");
+				expect(result.projectAttributionSource).toBe("heading_project");
+			});
+		});
+
+		it("returns none (not a heading fallback) when the workspace path segment is rejected and heading attribution is disabled (default, #413)", () => {
 			const headers = new Headers();
 			const body = {
 				system:
 					"/home/will/projects/leaked system prompt fragment with many words/more\n# Harness\nWelcome.",
 			};
 			const result = extractProjectAttributionFromRequest(headers, body);
-			expect(result.project).toBe("Harness");
-			expect(result.projectAttributionSource).toBe("heading_project");
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
 		});
 
 		it("rejects a path segment carrying a secret past the 64-char truncation boundary", () => {
@@ -233,33 +270,54 @@ describe("extractProjectAttributionFromRequest", () => {
 		}
 	});
 
-	it("uses the first eligible non-Claude H1 heading as the project when no header/path match", () => {
+	it("returns none for an H1 heading when heading attribution is disabled (default, #413)", () => {
+		// #413: the H1-heading fallback is off by default because headings are
+		// usually the client's own prompt boilerplate ("# Harness",
+		// "# Scratchpad Directory"), not a real project identifier.
 		const headers = new Headers();
 		const body = { system: "# Harness\nWelcome to the project." };
-		const result = extractProjectAttributionFromRequest(headers, body);
-		expect(result.project).toBe("Harness");
-		expect(result.projectAttributionSource).toBe("heading_project");
-	});
-
-	it("rejects an H1 heading that starts with 'claude' (case-insensitive)", () => {
-		const headers = new Headers();
-		const body = { system: "# Claude Code Instructions\nSome content." };
 		const result = extractProjectAttributionFromRequest(headers, body);
 		expect(result.project).toBeNull();
 		expect(result.projectAttributionSource).toBe("none");
 	});
 
-	it("falls through a leading Claude heading to the next eligible H1 heading", () => {
-		// Regression: extraction used to stop at the FIRST H1 heading rather
-		// than the first ELIGIBLE one, losing valid attribution whenever a
-		// Claude-prefixed heading appeared before the real project heading.
-		const headers = new Headers();
-		const body = {
-			system: "# Claude Code Instructions\nSome content.\n# Harness\nMore.",
-		};
-		const result = extractProjectAttributionFromRequest(headers, body);
-		expect(result.project).toBe("Harness");
-		expect(result.projectAttributionSource).toBe("heading_project");
+	describe("CCFLARE_ENABLE_HEADING_PROJECT_ATTRIBUTION=true (opt-in, #413)", () => {
+		let restore: () => void;
+		beforeEach(() => {
+			restore = withHeadingAttributionEnabled();
+		});
+		afterEach(() => {
+			restore();
+		});
+
+		it("uses the first eligible non-Claude H1 heading as the project when no header/path match", () => {
+			const headers = new Headers();
+			const body = { system: "# Harness\nWelcome to the project." };
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBe("Harness");
+			expect(result.projectAttributionSource).toBe("heading_project");
+		});
+
+		it("rejects an H1 heading that starts with 'claude' (case-insensitive)", () => {
+			const headers = new Headers();
+			const body = { system: "# Claude Code Instructions\nSome content." };
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
+
+		it("falls through a leading Claude heading to the next eligible H1 heading", () => {
+			// Regression: extraction used to stop at the FIRST H1 heading rather
+			// than the first ELIGIBLE one, losing valid attribution whenever a
+			// Claude-prefixed heading appeared before the real project heading.
+			const headers = new Headers();
+			const body = {
+				system: "# Claude Code Instructions\nSome content.\n# Harness\nMore.",
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBe("Harness");
+			expect(result.projectAttributionSource).toBe("heading_project");
+		});
 	});
 
 	it("returns none when there is no header, path, or heading", () => {
@@ -278,6 +336,15 @@ describe("extractProjectAttributionFromRequest", () => {
 	});
 
 	describe("secret-like headings are rejected (isLowRiskProjectSlug -> false)", () => {
+		// Enabled here so these assert the validator itself still rejects (not
+		// just that the #413 gate is off) — see `withHeadingAttributionEnabled`.
+		beforeEach(() => {
+			process.env[HEADING_ENV_VAR] = "true";
+		});
+		afterEach(() => {
+			delete process.env[HEADING_ENV_VAR];
+		});
+
 		const cases: Array<[string, string]> = [
 			["bearer-ish token", "# Authorization: Bearer sk_live_abc123456789"],
 			["URL", "# https://example.com/secret-path"],
@@ -324,6 +391,15 @@ describe("extractProjectAttributionFromRequest", () => {
 	});
 
 	describe("round-2 P1 hardening: still-leaking heading shapes are rejected end-to-end (H1)", () => {
+		// Enabled here so these assert the validator itself still rejects (not
+		// just that the #413 gate is off) — see `withHeadingAttributionEnabled`.
+		beforeEach(() => {
+			process.env[HEADING_ENV_VAR] = "true";
+		});
+		afterEach(() => {
+			delete process.env[HEADING_ENV_VAR];
+		});
+
 		const cases: Array<[string, string]> = [
 			[
 				"multi-segment credential label with a letters-only opaque tail",
@@ -368,19 +444,30 @@ describe("extractProjectAttributionFromRequest", () => {
 		}
 	});
 
-	it("rejects an H1 heading whose secret sits past the 64-char truncation boundary end-to-end", () => {
-		// Full end-to-end path (not just isLowRiskProjectSlug directly): a
-		// heading that is unambiguously rejected (UUID + >6 words) must still
-		// come back as no attribution, proving the full un-truncated heading
-		// is what gets validated.
-		const headers = new Headers();
-		const body = {
-			system:
-				"# <a heading carrying a UUID like 550e8400-e29b-41d4-a716-446655440000>",
-		};
-		const result = extractProjectAttributionFromRequest(headers, body);
-		expect(result.project).toBeNull();
-		expect(result.projectAttributionSource).toBe("none");
+	describe("H1 boundary hardening validated with heading attribution enabled (#413)", () => {
+		let restore: () => void;
+		beforeEach(() => {
+			restore = withHeadingAttributionEnabled();
+		});
+		afterEach(() => {
+			restore();
+		});
+
+		it("rejects an H1 heading whose secret sits past the 64-char truncation boundary end-to-end", () => {
+			// Full end-to-end path (not just isLowRiskProjectSlug directly): a
+			// heading that is unambiguously rejected (UUID + >6 words) must still
+			// come back as no attribution, proving the full un-truncated heading
+			// is what gets validated. Enabled here so this asserts the validator
+			// itself still rejects (not just that the #413 gate is off).
+			const headers = new Headers();
+			const body = {
+				system:
+					"# <a heading carrying a UUID like 550e8400-e29b-41d4-a716-446655440000>",
+			};
+			const result = extractProjectAttributionFromRequest(headers, body);
+			expect(result.project).toBeNull();
+			expect(result.projectAttributionSource).toBe("none");
+		});
 	});
 });
 
@@ -643,14 +730,24 @@ describe("extractProjectAttributionFromParts (usage-collector base64 fallback)",
 		expect(result.projectAttributionSource).toBe("path_project");
 	});
 
-	it("returns heading_project from a base64-encoded body, matching the parsed-body path", () => {
-		const body = { system: "# eval-suite\nDetails here." };
-		const requestBodyBase64 = Buffer.from(JSON.stringify(body)).toString(
-			"base64",
-		);
-		const result = extractProjectAttributionFromParts({}, requestBodyBase64);
-		expect(result.project).toBe("eval-suite");
-		expect(result.projectAttributionSource).toBe("heading_project");
+	describe("CCFLARE_ENABLE_HEADING_PROJECT_ATTRIBUTION=true (opt-in, #413)", () => {
+		let restore: () => void;
+		beforeEach(() => {
+			restore = withHeadingAttributionEnabled();
+		});
+		afterEach(() => {
+			restore();
+		});
+
+		it("returns heading_project from a base64-encoded body, matching the parsed-body path", () => {
+			const body = { system: "# eval-suite\nDetails here." };
+			const requestBodyBase64 = Buffer.from(JSON.stringify(body)).toString(
+				"base64",
+			);
+			const result = extractProjectAttributionFromParts({}, requestBodyBase64);
+			expect(result.project).toBe("eval-suite");
+			expect(result.projectAttributionSource).toBe("heading_project");
+		});
 	});
 
 	it("returns none when headers are null/undefined and body is null", () => {

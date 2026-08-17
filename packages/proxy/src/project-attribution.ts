@@ -313,6 +313,22 @@ const WORKSPACE_PATH_RE =
 const HEADING_RE = /^#\s+([^\n\r]{1,100})/gm;
 
 /**
+ * The H1-heading fallback (step 4 below) reads arbitrary system-prompt
+ * section headings (e.g. a coding assistant's own "# Harness" / "# Scratchpad
+ * Directory" boilerplate) as project names. Unlike the header and
+ * workspace-path sources, these headings describe the *client's* prompt
+ * structure, not the caller's project — in practice they are the client's
+ * own boilerplate far more often than a real project name (#413). Off by
+ * default; opt in only if you know your client's system prompt reliably
+ * opens with a real project-identifying H1.
+ */
+function isHeadingProjectAttributionEnabled(): boolean {
+	return /^(1|true|yes|on)$/i.test(
+		process.env.CCFLARE_ENABLE_HEADING_PROJECT_ATTRIBUTION ?? "",
+	);
+}
+
+/**
  * Core project attribution extraction. Accepts a header accessor so it works
  * uniformly for both the proxy's `Headers` object and the usage collector's
  * `Record<string, string>` header map.
@@ -320,7 +336,10 @@ const HEADING_RE = /^#\s+([^\n\r]{1,100})/gm;
  * Precedence:
  *  1. `x-better-ccflare-project` header, then legacy `x-project` header.
  *  2. Workspace path embedded in the system prompt.
- *  3. First eligible non-Claude, low-risk-slug H1 heading in the system prompt.
+ *  3. First eligible non-Claude, low-risk-slug H1 heading in the system
+ *     prompt — only when `CCFLARE_ENABLE_HEADING_PROJECT_ATTRIBUTION` is set
+ *     (off by default, #413: this source is prompt boilerplate far more
+ *     often than a real project name).
  *  4. No project.
  */
 export function extractProjectAttribution(
@@ -379,20 +398,24 @@ export function extractProjectAttribution(
 		// is both non-Claude and passes the low-risk slug validator. A doc that
 		// opens with "# Claude Code Instructions" before a real "# Harness"
 		// heading must not lose attribution just because the first heading was
-		// ineligible.
-		for (const headingMatch of systemPrompt.matchAll(HEADING_RE)) {
-			// Validate the FULL captured heading, then length-cap only after it
-			// passes — truncating first could shorten a boundary-straddling secret
-			// below a detector threshold and let a partial secret through.
-			const rawHeading = headingMatch[1];
-			if (rawHeading.trim().toLowerCase().startsWith("claude")) continue;
-			if (!isLowRiskProjectSlug(rawHeading)) continue;
-			const heading = sanitizeProjectName(rawHeading);
-			if (heading) {
-				return {
-					project: heading,
-					projectAttributionSource: "heading_project",
-				};
+		// ineligible. Gated behind an opt-in env var (#413) — off by default
+		// because headings are usually the client's own prompt boilerplate.
+		if (isHeadingProjectAttributionEnabled()) {
+			for (const headingMatch of systemPrompt.matchAll(HEADING_RE)) {
+				// Validate the FULL captured heading, then length-cap only after it
+				// passes — truncating first could shorten a boundary-straddling
+				// secret below a detector threshold and let a partial secret
+				// through.
+				const rawHeading = headingMatch[1];
+				if (rawHeading.trim().toLowerCase().startsWith("claude")) continue;
+				if (!isLowRiskProjectSlug(rawHeading)) continue;
+				const heading = sanitizeProjectName(rawHeading);
+				if (heading) {
+					return {
+						project: heading,
+						projectAttributionSource: "heading_project",
+					};
+				}
 			}
 		}
 	}
