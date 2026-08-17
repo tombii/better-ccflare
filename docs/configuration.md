@@ -186,6 +186,8 @@ better-ccflare can emit threshold and anomaly alerts and deliver them via webhoo
 
 In addition to threshold alerts, an `auth_failure` alert (severity `critical`) fires automatically when an OAuth account's refresh token fails definitively (e.g. `invalid_grant`) and the account is marked `requires_reauth`. It is deduplicated by the same cooldown bucket as the threshold alerts.
 
+"Scope" for the anomaly detectors (`anomaly_token_outlier`, `anomaly_output_blowup`, `anomaly_runaway_loop`) is the account/model pairing the anomaly was detected on, not the individual request — two outlier spikes on the same account and model within one cooldown bucket collapse into a single delivered alert, while a spike on a different account or model always gets its own bucket, even within the same window.
+
 Alerts are listed on the dashboard and via the API; unacknowledged counts surface in `/health`. Persistence uses dialect-appropriate conflict handling (`INSERT OR IGNORE` on SQLite, `ON CONFLICT (id) DO NOTHING` on PostgreSQL), so alerts work identically on both backends.
 
 ## Database Configuration
