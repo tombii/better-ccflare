@@ -114,10 +114,9 @@ describe("multi-instance-guard (SQLite)", () => {
 		// And the stale row was purged so the table doesn't grow forever.
 		const remaining = adapter
 			.getSQLiteDb()
-			.query<
-				{ instance_id: string },
-				[]
-			>("SELECT instance_id FROM instance_heartbeats")
+			.query<{ instance_id: string }, []>(
+				"SELECT instance_id FROM instance_heartbeats",
+			)
 			.all();
 		// Only our row (auto-written by runStartupGuard) remains.
 		expect(remaining.length).toBe(1);
@@ -138,10 +137,9 @@ describe("multi-instance-guard (SQLite)", () => {
 		// Our row was written.
 		const rows = adapter
 			.getSQLiteDb()
-			.query<
-				{ instance_id: string; hostname: string },
-				[]
-			>("SELECT instance_id, hostname FROM instance_heartbeats")
+			.query<{ instance_id: string; hostname: string }, []>(
+				"SELECT instance_id, hostname FROM instance_heartbeats",
+			)
 			.all();
 		expect(rows.length).toBe(1);
 	});
@@ -200,10 +198,9 @@ describe("multi-instance-guard (SQLite)", () => {
 		// up to HEARTBEAT_EXPIRY_MS.
 		const remaining = adapter
 			.getSQLiteDb()
-			.query<
-				{ instance_id: string },
-				[]
-			>("SELECT instance_id FROM instance_heartbeats ORDER BY instance_id")
+			.query<{ instance_id: string }, []>(
+				"SELECT instance_id FROM instance_heartbeats ORDER BY instance_id",
+			)
 			.all();
 
 		expect(remaining.length).toBe(1);
@@ -257,10 +254,7 @@ describe("multi-instance-guard (SQLite)", () => {
 				}
 			}
 			return (
-				originalRun as unknown as (
-					sql: unknown,
-					params?: unknown,
-				) => unknown
+				originalRun as unknown as (sql: unknown, params?: unknown) => unknown
 			)(sql, params);
 		}) as typeof realDb.run;
 
@@ -281,10 +275,7 @@ describe("multi-instance-guard (SQLite)", () => {
 			// fast restart would false-positive as a self-detected peer.
 			const remaining = adapter
 				.getSQLiteDb()
-				.query<
-					{ instance_id: string },
-					[]
-				>(
+				.query<{ instance_id: string }, []>(
 					"SELECT instance_id FROM instance_heartbeats ORDER BY instance_id",
 				)
 				.all();
@@ -304,9 +295,7 @@ describe("multi-instance-guard (SQLite)", () => {
 		await clearHeartbeatWithRetry(adapter);
 		const rows = adapter
 			.getSQLiteDb()
-			.query<{ c: number }, []>(
-				"SELECT COUNT(*) as c FROM instance_heartbeats",
-			)
+			.query<{ c: number }, []>("SELECT COUNT(*) as c FROM instance_heartbeats")
 			.all();
 		expect(rows[0].c).toBe(0);
 	});
@@ -336,10 +325,7 @@ describe("multi-instance-guard (SQLite)", () => {
 				}
 			}
 			return (
-				originalRun as unknown as (
-					sql: unknown,
-					params?: unknown,
-				) => unknown
+				originalRun as unknown as (sql: unknown, params?: unknown) => unknown
 			)(sql, params);
 		}) as typeof realDb.run;
 
@@ -380,10 +366,7 @@ describe("multi-instance-guard (SQLite)", () => {
 				throw new Error(`persistent failure #${attempts}`);
 			}
 			return (
-				originalRun as unknown as (
-					sql: unknown,
-					params?: unknown,
-				) => unknown
+				originalRun as unknown as (sql: unknown, params?: unknown) => unknown
 			)(sql, params);
 		}) as typeof realDb.run;
 
@@ -467,9 +450,7 @@ describe("multi-instance-guard (SQLite)", () => {
 		await writeHeartbeat(adapter, now + 200);
 		const rows = adapter
 			.getSQLiteDb()
-			.query<{ c: number }, []>(
-				"SELECT COUNT(*) as c FROM instance_heartbeats",
-			)
+			.query<{ c: number }, []>("SELECT COUNT(*) as c FROM instance_heartbeats")
 			.all();
 		// Only our row (one — the process instance_id) plus the rows written
 		// here. Since each call writes with the same THIS_INSTANCE_ID, total
@@ -481,17 +462,13 @@ describe("multi-instance-guard (SQLite)", () => {
 		await writeHeartbeat(adapter);
 		let rows = adapter
 			.getSQLiteDb()
-			.query<{ c: number }, []>(
-				"SELECT COUNT(*) as c FROM instance_heartbeats",
-			)
+			.query<{ c: number }, []>("SELECT COUNT(*) as c FROM instance_heartbeats")
 			.all();
 		expect(rows[0].c).toBe(1);
 		await clearHeartbeat(adapter);
 		rows = adapter
 			.getSQLiteDb()
-			.query<{ c: number }, []>(
-				"SELECT COUNT(*) as c FROM instance_heartbeats",
-			)
+			.query<{ c: number }, []>("SELECT COUNT(*) as c FROM instance_heartbeats")
 			.all();
 		expect(rows[0].c).toBe(0);
 	});
@@ -500,14 +477,28 @@ describe("multi-instance-guard (SQLite)", () => {
 		const now = Date.now();
 		const fresh = now - 1_000;
 		const stale = now - HEARTBEAT_EXPIRY_MS - 1_000;
-		adapter.getSQLiteDb().run(
-			`INSERT INTO instance_heartbeats VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			["fresh-row", "h", 1, now, fresh, "v", "sqlite"],
-		);
-		adapter.getSQLiteDb().run(
-			`INSERT INTO instance_heartbeats VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			["stale-row", "h", 1, stale - 60_000, stale, "v", "sqlite"],
-		);
+		adapter
+			.getSQLiteDb()
+			.run(`INSERT INTO instance_heartbeats VALUES (?, ?, ?, ?, ?, ?, ?)`, [
+				"fresh-row",
+				"h",
+				1,
+				now,
+				fresh,
+				"v",
+				"sqlite",
+			]);
+		adapter
+			.getSQLiteDb()
+			.run(`INSERT INTO instance_heartbeats VALUES (?, ?, ?, ?, ?, ?, ?)`, [
+				"stale-row",
+				"h",
+				1,
+				stale - 60_000,
+				stale,
+				"v",
+				"sqlite",
+			]);
 
 		const purged = await purgeStaleHeartbeats(adapter, now);
 		expect(purged).toBe(1);
@@ -605,9 +596,7 @@ describe("multi-instance-guard — schema shape", () => {
 // Live PostgreSQL test — same three negative controls, gated on DATABASE_URL.
 // Matches the pattern in migrations-pg.test.ts: skipIf(!databaseUrl).
 const databaseUrl = process.env.DATABASE_URL;
-const livePgAvailable = Boolean(
-	databaseUrl && databaseUrl.startsWith("postgres"),
-);
+const livePgAvailable = Boolean(databaseUrl?.startsWith("postgres"));
 
 describe.skipIf(!livePgAvailable)(
 	"multi-instance-guard (PostgreSQL, live, requires DATABASE_URL)",
@@ -655,15 +644,7 @@ describe.skipIf(!livePgAvailable)(
 					(instance_id, hostname, pid, started_at, last_heartbeat,
 					 node_version, db_dialect)
 				 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				[
-					"pg-crashed",
-					"old",
-					1234,
-					stale - 60_000,
-					stale,
-					"v18",
-					"postgres",
-				],
+				["pg-crashed", "old", 1234, stale - 60_000, stale, "v18", "postgres"],
 			);
 			const warnings: string[] = [];
 			const result = await runStartupGuard(adapter, {

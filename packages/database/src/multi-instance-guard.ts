@@ -35,8 +35,9 @@
  * Schema: the `instance_heartbeats` table is added in both
  * `migrations.ts` (SQLite) and `migrations-pg.ts` (PostgreSQL).
  */
-import { hostname as osHostname } from "node:os";
+
 import { randomUUID } from "node:crypto";
+import { hostname as osHostname } from "node:os";
 import { Logger } from "@better-ccflare/logger";
 import type { BunSqlAdapter } from "./adapters/bun-sql-adapter";
 
@@ -209,10 +210,7 @@ export async function scanHeartbeats(
 	const rows = adapter.isSQLite
 		? (adapter
 				.getSQLiteDb()
-				.query<
-					HeartbeatRecord,
-					[string]
-				>(
+				.query<HeartbeatRecord, [string]>(
 					"SELECT instance_id, hostname, pid, started_at, last_heartbeat, node_version, db_dialect FROM instance_heartbeats WHERE instance_id != ? ORDER BY last_heartbeat DESC",
 				)
 				.all(THIS_INSTANCE_ID) as HeartbeatRecord[])
@@ -236,9 +234,11 @@ export async function scanHeartbeats(
  */
 export async function clearHeartbeat(adapter: BunSqlAdapter): Promise<void> {
 	if (adapter.isSQLite) {
-		adapter.getSQLiteDb().run("DELETE FROM instance_heartbeats WHERE instance_id = ?", [
-			THIS_INSTANCE_ID,
-		]);
+		adapter
+			.getSQLiteDb()
+			.run("DELETE FROM instance_heartbeats WHERE instance_id = ?", [
+				THIS_INSTANCE_ID,
+			]);
 	} else {
 		await adapter.run("DELETE FROM instance_heartbeats WHERE instance_id = ?", [
 			THIS_INSTANCE_ID,
