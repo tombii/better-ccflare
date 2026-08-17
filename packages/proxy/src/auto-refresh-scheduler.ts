@@ -9,6 +9,10 @@ import type { BunSqlAdapter } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { fetchUsageData, getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
+import {
+	AUTO_REFRESH_PROMPTS,
+	claimAutoRefreshPrompt,
+} from "./auto-refresh-prompt-pool";
 import { TOKEN_SAFETY_WINDOW_MS } from "./constants";
 import {
 	extractAuthFailureReason,
@@ -55,6 +59,10 @@ export class AutoRefreshScheduler {
 	// self-recover automatically instead of getting stuck in API ERROR (#262).
 	private lastFailureProbeAt: Map<string, number> = new Map();
 	private readonly FAILURE_PROBE_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+	// The release time already reported for an exhausted prompt pool. While the
+	// pool stays dry that time does not move, so comparing against it turns the
+	// per-minute retry into one log line per episode.
+	private promptPoolExhaustedReportedFor: number | null = null;
 
 	constructor(db: BunSqlAdapter, proxyContext: ProxyContext) {
 		this.db = db;
@@ -95,6 +103,28 @@ export class AutoRefreshScheduler {
 		this.lastRefreshResetTime.clear();
 		this.consecutiveFailures.clear();
 		this.lastFailureProbeAt.clear();
+		this.promptPoolExhaustedReportedFor = null;
+	}
+
+	/**
+	 * Report a dry prompt pool once per episode rather than once per minute.
+	 *
+	 * Reaching this means 500 probes went out inside 24 hours, which no healthy
+	 * install does — so it is written as the alarm it is, and it names the moment
+	 * the first prompt is free again so the wait is a fact rather than a guess.
+	 */
+	private notePromptPoolExhausted(retryAt: number, accountName: string): void {
+		const at = new Date(retryAt).toISOString();
+		if (this.promptPoolExhaustedReportedFor === retryAt) {
+			log.debug(
+				`Auto-refresh still holding off on ${accountName} until ${at} — every probe prompt is on cooldown`,
+			);
+			return;
+		}
+		this.promptPoolExhaustedReportedFor = retryAt;
+		log.warn(
+			`Auto-refresh is sending nothing for ${accountName}: all ${AUTO_REFRESH_PROMPTS.length} probe prompts are inside their 24h cooldown, which takes ${AUTO_REFRESH_PROMPTS.length} refreshes in a day and should not happen. The first prompt frees up at ${at}.`,
+		);
 	}
 
 	/**
@@ -272,7 +302,19 @@ export class AutoRefreshScheduler {
 		pause_reason: string | null;
 	}): Promise<boolean> {
 		try {
-			log.info(`Sending auto-refresh message to account: ${accountRow.name}`);
+			// Claim a prompt before anything else happens. Each prompt is locked for
+			// 24 hours once it is sent, so this is the one step that can call the
+			// whole refresh off — and it has to do that before the method announces
+			// a request, emits an analytics event or spends a token.
+			const claim = claimAutoRefreshPrompt();
+			if (!claim.ok) {
+				this.notePromptPoolExhausted(claim.retryAt, accountRow.name);
+				return false;
+			}
+
+			log.info(
+				`Sending auto-refresh message to account: ${accountRow.name} (prompt #${claim.index})`,
+			);
 
 			// Record the probe timestamp for failure_threshold accounts so the
 			// cooldown in shouldRefreshAccount suppresses re-probes for the next
@@ -352,18 +394,6 @@ export class AutoRefreshScheduler {
 				agentUsed: null,
 			});
 
-			// Prepare dummy message request
-			const dummyMessages = [
-				"Write a hello world program in Python",
-				"What is 2+2?",
-				"Tell me a programmer joke",
-				"What is the capital of France?",
-				"Explain recursion in one sentence",
-			];
-
-			const randomMessage =
-				dummyMessages[Math.floor(Math.random() * dummyMessages.length)];
-
 			// Send request through proxy with special header to force specific account usage
 			// This ensures proper request handling and analytics while using the correct account
 			const proxyPort = this.proxyContext.runtime.port;
@@ -434,7 +464,7 @@ export class AutoRefreshScheduler {
 						messages: [
 							{
 								role: "user",
-								content: randomMessage,
+								content: claim.prompt,
 							},
 						],
 					};
