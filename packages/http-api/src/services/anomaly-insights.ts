@@ -180,7 +180,7 @@ export function sanitizeProjectForDisplay(
 }
 
 const UNKNOWN_KEY = "Unknown";
-const GROUP_KEY_SEPARATOR = "\u001f"; // unit separator: never appears in names, keys cannot collide
+export const GROUP_KEY_SEPARATOR = "\u001f"; // unit separator: never appears in names, keys cannot collide
 const MAX_EXAMPLE_REQUEST_IDS = 5;
 
 function normalizeKey(key: string | null | undefined): string {
@@ -414,6 +414,8 @@ export function detectTokenOutliers(
 			timestamp: row.timestamp,
 			account: normalizeKey(row.account),
 			model: normalizeKey(row.model),
+			accountRaw: row.account,
+			modelRaw: row.model,
 			project: row.project,
 			metric,
 			value,

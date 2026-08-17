@@ -148,6 +148,17 @@ export interface TokenOutlierEvent {
 	timestamp: number;
 	account: string;
 	model: string;
+	/**
+	 * Pre-normalization account, as stored on the request row: `null` when
+	 * the request has no account attribution. Unlike `account` (which
+	 * collapses a missing account to the literal display string
+	 * "Unknown"), this preserves the null/non-null distinction so a
+	 * consumer building a dedup or grouping key can tell "no account" apart
+	 * from a real account that happens to be named "Unknown".
+	 */
+	accountRaw: string | null;
+	/** Pre-normalization model — see `accountRaw`. */
+	modelRaw: string | null;
 	project: string | null;
 	metric: TokenOutlierMetric;
 	value: number;

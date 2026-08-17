@@ -20,6 +20,7 @@ import type {
 import {
 	type AnomalyRequestRow,
 	buildAnomalyInsightsResponse,
+	GROUP_KEY_SEPARATOR,
 	sanitizeProjectForDisplay,
 } from "./anomaly-insights";
 
@@ -111,6 +112,29 @@ export function buildThresholdAlertId(
 ): string {
 	const bucketMs = Math.max(1, cooldownMinutes) * 60 * 1000;
 	return `${type}:${scope}:${Math.floor(timestamp / bucketMs)}`;
+}
+
+/**
+ * Encodes a possibly-null raw value for use inside a cooldown scope key,
+ * distinguishing "no value" from a real value that happens to equal the
+ * display fallback ("Unknown"). `event.account`/`event.model` on anomaly
+ * events are already normalized (null -> "Unknown") for display purposes,
+ * so a scope built directly from those two fields cannot tell an account
+ * literally named "Unknown" apart from a request with no account at all —
+ * this must be built from the raw (pre-normalization) field instead.
+ *
+ * `model` is attacker-controlled (taken verbatim from the inbound request's
+ * JSON `model` field, with no charset restriction — unlike account names,
+ * which are validated against patterns.accountName), so no fixed sentinel
+ * string is safe: a client could always send a model value equal to
+ * whatever sentinel was chosen. Instead, length-prefix the value
+ * (`${length}:${value}`) and use a length of 0 for null. Two distinct
+ * inputs can never produce the same encoding this way, regardless of what
+ * characters either one contains — the length prefix is unambiguous.
+ */
+function encodeScopePart(raw: string | null): string {
+	if (raw === null) return "0:";
+	return `${raw.length}:${raw}`;
 }
 
 export function buildRunawayLoopAlertId(
@@ -512,7 +536,7 @@ export class AlertService {
 			alerts.push({
 				id: buildThresholdAlertId(
 					"anomaly_token_outlier",
-					event.requestId,
+					`${encodeScopePart(event.accountRaw)}${GROUP_KEY_SEPARATOR}${encodeScopePart(event.modelRaw)}`,
 					event.timestamp,
 					config.cooldownMinutes,
 				),
@@ -537,7 +561,7 @@ export class AlertService {
 			alerts.push({
 				id: buildThresholdAlertId(
 					"anomaly_output_blowup",
-					event.requestId,
+					`${encodeScopePart(event.accountRaw)}${GROUP_KEY_SEPARATOR}${encodeScopePart(event.modelRaw)}`,
 					event.timestamp,
 					config.cooldownMinutes,
 				),
