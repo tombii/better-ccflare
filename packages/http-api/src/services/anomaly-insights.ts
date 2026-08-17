@@ -180,7 +180,7 @@ export function sanitizeProjectForDisplay(
 }
 
 const UNKNOWN_KEY = "Unknown";
-const GROUP_KEY_SEPARATOR = "\u001f"; // unit separator: never appears in names, keys cannot collide
+export const GROUP_KEY_SEPARATOR = "\u001f"; // unit separator: never appears in names, keys cannot collide
 const MAX_EXAMPLE_REQUEST_IDS = 5;
 
 function normalizeKey(key: string | null | undefined): string {

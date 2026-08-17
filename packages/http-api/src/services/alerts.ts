@@ -20,6 +20,7 @@ import type {
 import {
 	type AnomalyRequestRow,
 	buildAnomalyInsightsResponse,
+	GROUP_KEY_SEPARATOR,
 	sanitizeProjectForDisplay,
 } from "./anomaly-insights";
 
@@ -512,7 +513,7 @@ export class AlertService {
 			alerts.push({
 				id: buildThresholdAlertId(
 					"anomaly_token_outlier",
-					`${event.account}:${event.model}`,
+					`${event.account}${GROUP_KEY_SEPARATOR}${event.model}`,
 					event.timestamp,
 					config.cooldownMinutes,
 				),
@@ -537,7 +538,7 @@ export class AlertService {
 			alerts.push({
 				id: buildThresholdAlertId(
 					"anomaly_output_blowup",
-					`${event.account}:${event.model}`,
+					`${event.account}${GROUP_KEY_SEPARATOR}${event.model}`,
 					event.timestamp,
 					config.cooldownMinutes,
 				),

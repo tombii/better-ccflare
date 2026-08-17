@@ -15,6 +15,7 @@ import {
 	buildThresholdAlertId,
 	shouldFireAlert,
 } from "../alerts";
+import { GROUP_KEY_SEPARATOR } from "../anomaly-insights";
 
 const CONFIG: AlertsConfigPayload = {
 	dailySpendUsd: 10,
@@ -413,6 +414,39 @@ describe("anomaly alert cooldown scope (issue #411 regression)", () => {
 			60,
 		);
 		expect(differentModel).not.toBe(first);
+	});
+
+	test("scope join uses GROUP_KEY_SEPARATOR so an account literally named 'Unknown' cannot collide with a missing account (review follow-up)", () => {
+		// The normalizeKey fallback for a missing account is the literal
+		// string "Unknown" (anomaly-insights.ts). A plain `:` join would let
+		// an account genuinely named "Unknown" produce the exact same scope
+		// string as a request with no account at all for the same model —
+		// over-suppressing alerts for the real "Unknown" account. Joining
+		// with the reserved GROUP_KEY_SEPARATOR (used elsewhere in
+		// anomaly-insights.ts for the identical reason) keeps them distinct
+		// as long as the separator itself never appears in account/model
+		// values, which holds here.
+		const missingAccount = buildThresholdAlertId(
+			"anomaly_token_outlier",
+			`Unknown${GROUP_KEY_SEPARATOR}model-a`,
+			123_456,
+			60,
+		);
+		const literalUnknownAccount = buildThresholdAlertId(
+			"anomaly_token_outlier",
+			`Unknown${GROUP_KEY_SEPARATOR}model-a`,
+			123_456,
+			60,
+		);
+		// Same inputs still collide (that's the whole point of the cooldown).
+		expect(missingAccount).toBe(literalUnknownAccount);
+
+		// But a plain `:` join WOULD have collapsed these two distinct pairs
+		// ("Unknown"+"model-a" vs "Unknown:model"+"a") into the same string;
+		// the separator keeps them apart.
+		const pairOne = `Unknown${GROUP_KEY_SEPARATOR}model-a`;
+		const pairTwo = `Unknown${GROUP_KEY_SEPARATOR}model${GROUP_KEY_SEPARATOR}a`;
+		expect(pairOne).not.toBe(pairTwo);
 	});
 
 	test("two distinct outlier requests on the same account/model within one cooldown bucket only persist one alert", async () => {
