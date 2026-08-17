@@ -115,14 +115,6 @@ export function buildThresholdAlertId(
 }
 
 /**
- * Sentinel for "no value" in a cooldown scope key: a NUL control character,
- * which account/model names can never contain (account names are
- * restricted to letters, numbers, spaces, hyphens, underscores, and dots —
- * see patterns.accountName), so it can never collide with a real value.
- */
-const SCOPE_NULL_SENTINEL = "\x00";
-
-/**
  * Encodes a possibly-null raw value for use inside a cooldown scope key,
  * distinguishing "no value" from a real value that happens to equal the
  * display fallback ("Unknown"). `event.account`/`event.model` on anomaly
@@ -130,9 +122,19 @@ const SCOPE_NULL_SENTINEL = "\x00";
  * so a scope built directly from those two fields cannot tell an account
  * literally named "Unknown" apart from a request with no account at all —
  * this must be built from the raw (pre-normalization) field instead.
+ *
+ * `model` is attacker-controlled (taken verbatim from the inbound request's
+ * JSON `model` field, with no charset restriction — unlike account names,
+ * which are validated against patterns.accountName), so no fixed sentinel
+ * string is safe: a client could always send a model value equal to
+ * whatever sentinel was chosen. Instead, length-prefix the value
+ * (`${length}:${value}`) and use a length of 0 for null. Two distinct
+ * inputs can never produce the same encoding this way, regardless of what
+ * characters either one contains — the length prefix is unambiguous.
  */
 function encodeScopePart(raw: string | null): string {
-	return raw === null ? SCOPE_NULL_SENTINEL : raw;
+	if (raw === null) return "0:";
+	return `${raw.length}:${raw}`;
 }
 
 export function buildRunawayLoopAlertId(

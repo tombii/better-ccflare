@@ -510,6 +510,91 @@ describe("anomaly alert cooldown scope (issue #411 regression)", () => {
 		}
 	});
 
+	test("a request with no model does not share a cooldown bucket with a request whose model is a NUL character (greptile review follow-up)", async () => {
+		// `model` is attacker-controlled — taken verbatim from the inbound
+		// request's JSON `model` field with no charset restriction, unlike
+		// account names. A fixed sentinel string for "no model" (e.g. a NUL
+		// character) would alias a request with no model at all with a
+		// request whose model happens to equal that exact sentinel. This
+		// test proves encodeScopePart's length-prefix encoding keeps the two
+		// cases in independent cooldown buckets regardless of what
+		// characters a real model value contains.
+		const sqlite = new Database(":memory:");
+		ensureSchema(sqlite);
+		const adapter = new BunSqlAdapter(sqlite);
+		const config = Object.assign(new EventEmitter(), {
+			getAlertDailySpendUsd: () => 0,
+			getAlertTokensPerHour: () => 0,
+			getAlertRequestTokens: () => 0,
+			getAlertAnomalyEnabled: () => true,
+			getAlertAnomalyIntervalMinutes: () => 5,
+			getAlertAnomalyBaselineWindowMinutes: () => 60,
+			getAlertAnomalyLoopMinRequests: () => 10_000,
+			getAlertCooldownMinutes: () => 60,
+			getAlertWebhookUrl: () => "",
+		}) as unknown as Config;
+		const service = new AlertService(adapter, config);
+
+		async function seedGroup(
+			model: string | null,
+			idPrefix: string,
+		): Promise<void> {
+			const now = Date.now();
+			const scoringSince = now - 5 * 60 * 1000;
+			const spreadValues = [80, 100, 130];
+			for (let i = 0; i < 21; i++) {
+				await adapter.run(
+					`INSERT INTO requests
+						(id, timestamp, method, path, account_used, status_code, success,
+						 response_time_ms, failover_attempts, model, total_tokens, cost_usd,
+						 input_tokens, output_tokens, cache_read_input_tokens,
+						 cache_creation_input_tokens)
+					 VALUES (?, ?, 'POST', '/v1/messages', 'acct', 200, 1, 100, 0, ?, ?, 0, ?, 0, 0, 0)`,
+					[
+						`${idPrefix}-baseline-${i}`,
+						scoringSince - (10 + i) * 60 * 1000,
+						model,
+						spreadValues[i % spreadValues.length],
+						spreadValues[i % spreadValues.length],
+					],
+				);
+			}
+			await adapter.run(
+				`INSERT INTO requests
+					(id, timestamp, method, path, account_used, status_code, success,
+					 response_time_ms, failover_attempts, model, total_tokens, cost_usd,
+					 input_tokens, output_tokens, cache_read_input_tokens,
+					 cache_creation_input_tokens)
+				 VALUES (?, ?, 'POST', '/v1/messages', 'acct', 200, 1, 100, 0, ?, ?, 0, ?, 0, 0, 0)`,
+				[`${idPrefix}-spike`, now - 1000, model, 100_000, 100_000],
+			);
+		}
+
+		try {
+			await adapter.run(
+				`INSERT INTO accounts (id, name, created_at) VALUES (?, ?, ?)`,
+				["acct", "acct", Date.now()],
+			);
+			// Group 1: no model attribution at all (model IS NULL).
+			await seedGroup(null, "nomodel");
+			// Group 2: a request whose model is literally a NUL character —
+			// the exact value the old fixed-sentinel encoding aliased with null.
+			await seedGroup("\x00", "nulmodel");
+
+			await service.evaluateAnomalies();
+
+			const alerts = await service.listAlerts();
+			const outlierAlerts = alerts.filter(
+				(a) => a.type === "anomaly_token_outlier",
+			);
+			const flaggedIds = outlierAlerts.map((a) => a.requestId).sort();
+			expect(flaggedIds).toEqual(["nomodel-spike", "nulmodel-spike"]);
+		} finally {
+			service.stop();
+			sqlite.close();
+		}
+	});
+
 	test("two distinct outlier requests on the same account/model within one cooldown bucket only persist one alert", async () => {
 		const sqlite = new Database(":memory:");
 		ensureSchema(sqlite);
