@@ -63,9 +63,16 @@ describe("CodexProvider stream liveness", () => {
 		const provider = new CodexProvider({
 			streamHeartbeatIntervalMs: 20,
 			streamRawSilenceTimeoutMs: 200,
+			streamDrainDeadlineMs: 300,
 		});
 		let upstreamController: ReadableStreamDefaultController<Uint8Array>;
-		let upstreamCancelReason: unknown;
+		// After response.completed, cancelUpstreamOnce no longer calls
+		// reader.cancel() — it drains the reader via reader.read() instead
+		// (issue #382: Bun's reader.cancel() is a documented RSS-leaking
+		// no-op). A read() that never resolves is the equivalent
+		// never-blocks-finalization hazard under the new drain design: prove
+		// it is bounded by streamDrainDeadlineMs and the stream still
+		// finalizes.
 		const upstream = new ReadableStream<Uint8Array>({
 			start(controller) {
 				upstreamController = controller;
@@ -80,16 +87,16 @@ describe("CodexProvider stream liveness", () => {
 					),
 				);
 			},
-			cancel(reason) {
-				upstreamCancelReason = reason;
-			},
 		});
+		const drainAbort = new AbortController();
 		const transformed = await provider.processResponse(
 			new Response(upstream, {
 				status: 200,
 				headers: { "content-type": "text/event-stream" },
 			}),
 			null,
+			undefined,
+			drainAbort,
 		);
 		const reader = transformed.body?.getReader();
 		if (!reader) throw new Error("transformed response has no body");
@@ -123,6 +130,8 @@ describe("CodexProvider stream liveness", () => {
 				),
 			),
 		);
+		// Never resolve the upstream stream after this point: the drain loop's
+		// reader.read() calls will hang until streamDrainDeadlineMs fires.
 
 		let terminalBody = "";
 		while (true) {
@@ -132,49 +141,55 @@ describe("CodexProvider stream liveness", () => {
 		}
 		expect(terminalBody).toContain("event: message_stop");
 		expect(terminalBody).not.toContain("event: ping");
-		expect(upstreamCancelReason).toBeDefined();
+		expect(drainAbort.signal.aborted).toBeTrue();
 	});
 
 	it("terminates raw upstream silence after synthetic heartbeats", async () => {
 		const provider = new CodexProvider({
 			streamHeartbeatIntervalMs: 15,
 			streamRawSilenceTimeoutMs: 70,
+			streamDrainDeadlineMs: 150,
 		});
-		let upstreamCancelReason: unknown;
+		// No data is ever enqueued, and read() never resolves — the drain loop
+		// started by the raw_silence_timeout's cancelUpstreamOnce() call must
+		// still be bounded by streamDrainDeadlineMs rather than hanging forever.
 		const upstream = new ReadableStream<Uint8Array>({
-			cancel(reason) {
-				upstreamCancelReason = reason;
+			pull() {
 				return new Promise<void>(() => {});
 			},
 		});
+		const drainAbort = new AbortController();
 		const transformed = await provider.processResponse(
 			new Response(upstream, {
 				status: 200,
 				headers: { "content-type": "text/event-stream" },
 			}),
 			null,
+			undefined,
+			drainAbort,
 		);
 
 		const body = await Promise.race([
 			transformed.text(),
-			Bun.sleep(300).then(() => {
+			Bun.sleep(500).then(() => {
 				throw new Error("timed-out Codex stream did not terminate");
 			}),
 		]);
-		expect(upstreamCancelReason).toBeInstanceOf(Error);
 		expect(body).toContain("event: error");
 		expect(body).toContain(
 			"Codex upstream timed out while waiting for response data.",
 		);
 		expect(body).not.toContain("rawSilenceTimeoutMs");
+		expect(drainAbort.signal.aborted).toBeTrue();
 	});
 
-	it("does not await a hanging upstream cancellation after a terminal event", async () => {
+	it("does not await a hanging upstream drain after a terminal event", async () => {
 		const provider = new CodexProvider({
 			streamHeartbeatIntervalMs: 100,
 			streamRawSilenceTimeoutMs: 500,
+			streamDrainDeadlineMs: 150,
 		});
-		let cancelCalls = 0;
+		let readCalls = 0;
 		const upstream = new ReadableStream<Uint8Array>({
 			start(controller) {
 				controller.enqueue(
@@ -192,26 +207,35 @@ describe("CodexProvider stream liveness", () => {
 					),
 				);
 			},
-			cancel() {
-				cancelCalls++;
+			// Once the terminal event is processed, cancelUpstreamOnce's
+			// drainUpstream() takes over the reader and calls read() in a loop
+			// looking for `done`. Simulate a stuck-but-open upstream: the first
+			// read() (which delivers the terminal SSE bytes) resolves normally,
+			// but any subsequent read() the drain loop issues never resolves.
+			pull(_controller) {
+				readCalls++;
+				if (readCalls === 1) return;
 				return new Promise<void>(() => {});
 			},
 		});
+		const drainAbort = new AbortController();
 		const transformed = await provider.processResponse(
 			new Response(upstream, {
 				status: 200,
 				headers: { "content-type": "text/event-stream" },
 			}),
 			null,
+			undefined,
+			drainAbort,
 		);
 		const body = await Promise.race([
 			transformed.text(),
-			Bun.sleep(300).then(() => {
+			Bun.sleep(500).then(() => {
 				throw new Error("terminal Codex stream did not reach EOF");
 			}),
 		]);
 		expect(body).toContain("event: message_stop");
-		expect(cancelCalls).toBe(1);
+		expect(drainAbort.signal.aborted).toBeTrue();
 	});
 });
 
