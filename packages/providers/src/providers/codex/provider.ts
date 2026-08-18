@@ -1873,9 +1873,15 @@ export class CodexProvider extends BaseProvider {
 				streamLiveness.stop();
 				if (!upstreamCancelStarted) {
 					await streamLiveness.settlePendingReadForCleanup();
-				} else if (upstreamDrainPromise) {
-					await upstreamDrainPromise;
 				}
+				// Do NOT await upstreamDrainPromise here: draining exists to free the
+				// native off-heap buffer behind the upstream response (issue #382),
+				// not to gate client-visible stream completion. cancelUpstreamOnce
+				// already attaches a .catch(() => undefined) at assignment, so the
+				// drain runs detached in the background — bounded by
+				// streamDrainDeadlineMs / drainAbort — while writer.close() proceeds
+				// immediately, matching the fire-and-forget pattern used by
+				// cancelAfterForcedClose in anthropic-terminal-recovery.ts.
 				await writer.close();
 			}
 		};

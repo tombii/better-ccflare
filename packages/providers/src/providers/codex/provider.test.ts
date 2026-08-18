@@ -58,6 +58,24 @@ const eventLine = (name: string, data: unknown) => [
 	"",
 ];
 
+// The upstream drain (cancelUpstreamOnce -> drainUpstream) now runs detached
+// from writer.close() (fire-and-forget, matching the Anthropic
+// terminal-recovery pattern): the client-visible stream can reach EOF before
+// the background drain has hit its deadline and aborted drainAbort. Poll
+// instead of asserting immediately after stream completion.
+async function waitForAbort(
+	signal: AbortSignal,
+	timeoutMs: number,
+): Promise<void> {
+	const start = Date.now();
+	while (!signal.aborted) {
+		if (Date.now() - start > timeoutMs) {
+			throw new Error("drainAbort did not abort within expected time");
+		}
+		await Bun.sleep(5);
+	}
+}
+
 describe("CodexProvider stream liveness", () => {
 	it("keeps a silent SSE stream alive until response.completed arrives", async () => {
 		const provider = new CodexProvider({
@@ -141,7 +159,9 @@ describe("CodexProvider stream liveness", () => {
 		}
 		expect(terminalBody).toContain("event: message_stop");
 		expect(terminalBody).not.toContain("event: ping");
-		expect(drainAbort.signal.aborted).toBeTrue();
+		// The drain runs detached from writer.close() now, so it may not have
+		// hit its deadline yet at stream EOF; wait for it to abort.
+		await waitForAbort(drainAbort.signal, 1000);
 	});
 
 	it("terminates raw upstream silence after synthetic heartbeats", async () => {
@@ -180,7 +200,9 @@ describe("CodexProvider stream liveness", () => {
 			"Codex upstream timed out while waiting for response data.",
 		);
 		expect(body).not.toContain("rawSilenceTimeoutMs");
-		expect(drainAbort.signal.aborted).toBeTrue();
+		// The drain runs detached from writer.close() now, so it may not have
+		// hit its deadline yet at stream EOF; wait for it to abort.
+		await waitForAbort(drainAbort.signal, 1000);
 	});
 
 	it("does not await a hanging upstream drain after a terminal event", async () => {
@@ -235,7 +257,9 @@ describe("CodexProvider stream liveness", () => {
 			}),
 		]);
 		expect(body).toContain("event: message_stop");
-		expect(drainAbort.signal.aborted).toBeTrue();
+		// The drain runs detached from writer.close() now, so it may not have
+		// hit its deadline yet at stream EOF; wait for it to abort.
+		await waitForAbort(drainAbort.signal, 1000);
 	});
 });
 
