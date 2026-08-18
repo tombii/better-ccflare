@@ -14,6 +14,7 @@ import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import { resolveProviderModelDefault } from "../../provider-model-defaults";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
+import { drainReaderWithDeadline } from "../../utils/stream-drain";
 import {
 	CodexStreamLiveness,
 	type CodexStreamLivenessOptions,
@@ -1698,47 +1699,23 @@ export class CodexProvider extends BaseProvider {
 			// every call site — streamLiveness never issues another read, so once
 			// reconciled this helper owns the reader for the rest of its life.
 			//
-			// Bounded by CODEX_STREAM_DRAIN_DEADLINE_MS: a stuck-but-open upstream
-			// (exactly the scenario raw_silence_timeout's 8-minute ceiling exists
-			// for) would otherwise hang this drain forever, reintroducing the hang
-			// the ceiling was meant to prevent. On deadline, `drainAbort` (when
-			// supplied) is aborted so the fetch's underlying connection is
-			// actually torn down — releaseLock() alone only frees the reader
-			// object, it does not touch the connection.
+			// Bounded by CODEX_STREAM_DRAIN_DEADLINE_MS, shared with Anthropic's
+			// equivalent drain in `anthropic-terminal-recovery.ts` via
+			// `drainReaderWithDeadline()` in
+			// `packages/providers/src/utils/stream-drain.ts` — see that helper
+			// for the deadline-race-then-drain-loop implementation, including
+			// the `beforeDrain` reconciliation step used below. Errors are
+			// swallowed (`swallowErrors: true`) since this drain is purely
+			// best-effort cleanup running detached from `cancelUpstreamOnce`'s
+			// fire-and-forget caller.
 			const drainUpstream = async (): Promise<void> => {
 				if (!reader) return;
-				let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-				const deadline = new Promise<"deadline">((resolve) => {
-					deadlineTimer = setTimeout(
-						() => resolve("deadline"),
-						this.streamDrainDeadlineMs,
-					);
+				await drainReaderWithDeadline(reader, {
+					deadlineMs: this.streamDrainDeadlineMs,
+					drainAbort,
+					beforeDrain: () => streamLiveness.settlePendingReadForCleanup(),
+					swallowErrors: true,
 				});
-				try {
-					const reconciled = await Promise.race([
-						streamLiveness
-							.settlePendingReadForCleanup()
-							.then(() => "settled" as const),
-						deadline,
-					]);
-					if (reconciled === "deadline") {
-						drainAbort?.abort(new Error("Codex drain deadline exceeded"));
-						return;
-					}
-					while (true) {
-						const outcome = await Promise.race([reader.read(), deadline]);
-						if (outcome === "deadline") {
-							drainAbort?.abort(new Error("Codex drain deadline exceeded"));
-							return;
-						}
-						if (outcome.done) return;
-					}
-				} catch {
-					// Swallow — draining is best-effort cleanup.
-				} finally {
-					if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
-					reader.releaseLock();
-				}
 			};
 			const cancelUpstreamOnce = (_reason: unknown): void => {
 				if (upstreamCancelStarted || !reader) return;

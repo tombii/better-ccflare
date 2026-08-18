@@ -33,6 +33,8 @@ export {
 export * from "./types";
 // Export usage fetcher
 export * from "./usage-fetcher";
+// Export shared stream-drain helpers
+export * from "./utils/stream-drain";
 // Export xAI usage fetcher
 export * from "./xai-usage-fetcher";
 // Export Zai usage fetcher
