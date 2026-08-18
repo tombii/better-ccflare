@@ -66,6 +66,7 @@ export interface Provider {
 		response: Response,
 		account: Account | null,
 		requestHeaders?: Headers,
+		drainAbort?: AbortController,
 	): Promise<Response>;
 
 	/**

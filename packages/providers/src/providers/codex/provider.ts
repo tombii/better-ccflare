@@ -393,11 +393,28 @@ function isCodexSubscriptionEndpoint(account?: Account): boolean {
 export interface CodexProviderOptionsForTests {
 	streamHeartbeatIntervalMs?: number;
 	streamRawSilenceTimeoutMs?: number;
+	streamDrainDeadlineMs?: number;
 }
+
+/**
+ * Upper bound on how long processEvents' post-cancel upstream drain will
+ * wait for reader.read() to settle before giving up. `reader.cancel()` is a
+ * documented no-op on every released Bun version (oven-sh/bun#35093): it
+ * never releases the native off-heap buffer backing the upstream fetch
+ * Response body, leaking RSS while JS heap stays flat (issue #382). Draining
+ * the reader to `done` instead actually releases the buffer.
+ *
+ * A dedicated constant (not a shared import from packages/proxy's
+ * ANTHROPIC_DRAIN_DEADLINE_MS) because packages/providers cannot depend on
+ * packages/proxy — proxy's package.json depends on
+ * @better-ccflare/providers, so the reverse import would be circular.
+ */
+export const CODEX_STREAM_DRAIN_DEADLINE_MS = 30_000;
 
 export class CodexProvider extends BaseProvider {
 	name = "codex";
 	private readonly streamLivenessOptions: CodexStreamLivenessOptions;
+	private readonly streamDrainDeadlineMs: number;
 
 	constructor(options: CodexProviderOptionsForTests = {}) {
 		super();
@@ -405,6 +422,8 @@ export class CodexProvider extends BaseProvider {
 			heartbeatIntervalMs: options.streamHeartbeatIntervalMs,
 			rawSilenceTimeoutMs: options.streamRawSilenceTimeoutMs,
 		};
+		this.streamDrainDeadlineMs =
+			options.streamDrainDeadlineMs ?? CODEX_STREAM_DRAIN_DEADLINE_MS;
 	}
 	// Fallback map: proxy-operations.ts injects x-better-ccflare-request-id and
 	// x-better-ccflare-request-stream into the upstream response before calling
@@ -629,6 +648,8 @@ export class CodexProvider extends BaseProvider {
 	async processResponse(
 		response: Response,
 		_account: Account | null,
+		_requestHeaders?: Headers,
+		drainAbort?: AbortController,
 	): Promise<Response> {
 		const contentType = response.headers.get("content-type");
 		const requestId = response.headers.get("x-better-ccflare-request-id");
@@ -649,7 +670,7 @@ export class CodexProvider extends BaseProvider {
 		const isEventStream = contentType?.includes("text/event-stream") ?? false;
 		if (isEventStream) {
 			if (requestedStream) {
-				return this.transformStreamingResponse(response);
+				return this.transformStreamingResponse(response, drainAbort);
 			}
 			return this.transformSseResponseToJson(response);
 		}
@@ -671,7 +692,7 @@ export class CodexProvider extends BaseProvider {
 					headers,
 				});
 				if (requestedStream) {
-					return this.transformStreamingResponse(sseResponse);
+					return this.transformStreamingResponse(sseResponse, drainAbort);
 				}
 				return this.transformSseResponseToJson(sseResponse);
 			}
@@ -1543,7 +1564,10 @@ export class CodexProvider extends BaseProvider {
 		});
 	}
 
-	private transformStreamingResponse(response: Response): Response {
+	private transformStreamingResponse(
+		response: Response,
+		drainAbort?: AbortController,
+	): Response {
 		const requestId =
 			response.headers.get("x-better-ccflare-request-id") ?? "unknown";
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
@@ -1656,14 +1680,71 @@ export class CodexProvider extends BaseProvider {
 		const processEvents = async () => {
 			const reader = response.body?.getReader();
 			let upstreamCancelStarted = false;
-			const cancelUpstreamOnce = (reason: unknown): void => {
+			let upstreamDrainPromise: Promise<void> | null = null;
+
+			// `reader.cancel()` is a documented no-op on every released Bun
+			// version (oven-sh/bun#35093): it never releases the native off-heap
+			// buffer backing the upstream fetch Response body, leaking RSS while
+			// JS heap stays flat (issue #382). Draining the reader to `done`
+			// instead actually releases the buffer.
+			//
+			// CodexStreamLiveness never issues concurrent reads (ensurePendingRead
+			// allows at most one outstanding reader.read() at a time), so before
+			// this helper can take exclusive ownership of the reader it must first
+			// reconcile with any read `streamLiveness` still has outstanding —
+			// racing settlePendingReadForCleanup() itself (rather than peeking at
+			// the private pendingRead) against the same deadline. Once `stop()`
+			// has been called — guaranteed by the time cancelUpstreamOnce fires on
+			// every call site — streamLiveness never issues another read, so once
+			// reconciled this helper owns the reader for the rest of its life.
+			//
+			// Bounded by CODEX_STREAM_DRAIN_DEADLINE_MS: a stuck-but-open upstream
+			// (exactly the scenario raw_silence_timeout's 8-minute ceiling exists
+			// for) would otherwise hang this drain forever, reintroducing the hang
+			// the ceiling was meant to prevent. On deadline, `drainAbort` (when
+			// supplied) is aborted so the fetch's underlying connection is
+			// actually torn down — releaseLock() alone only frees the reader
+			// object, it does not touch the connection.
+			const drainUpstream = async (): Promise<void> => {
+				if (!reader) return;
+				let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+				const deadline = new Promise<"deadline">((resolve) => {
+					deadlineTimer = setTimeout(
+						() => resolve("deadline"),
+						this.streamDrainDeadlineMs,
+					);
+				});
+				try {
+					const reconciled = await Promise.race([
+						streamLiveness
+							.settlePendingReadForCleanup()
+							.then(() => "settled" as const),
+						deadline,
+					]);
+					if (reconciled === "deadline") {
+						drainAbort?.abort(new Error("Codex drain deadline exceeded"));
+						return;
+					}
+					while (true) {
+						const outcome = await Promise.race([reader.read(), deadline]);
+						if (outcome === "deadline") {
+							drainAbort?.abort(new Error("Codex drain deadline exceeded"));
+							return;
+						}
+						if (outcome.done) return;
+					}
+				} catch {
+					// Swallow — draining is best-effort cleanup.
+				} finally {
+					if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+					reader.releaseLock();
+				}
+			};
+			const cancelUpstreamOnce = (_reason: unknown): void => {
 				if (upstreamCancelStarted || !reader) return;
 				upstreamCancelStarted = true;
-				try {
-					void reader.cancel(reason).catch(() => undefined);
-				} catch {
-					// Cancellation is best effort; downstream termination must still finish.
-				}
+				upstreamDrainPromise = drainUpstream();
+				upstreamDrainPromise.catch(() => undefined);
 			};
 			try {
 				if (!reader) throw new Error("Response body is not readable");
@@ -1790,7 +1871,17 @@ export class CodexProvider extends BaseProvider {
 				cancelUpstreamOnce(error);
 			} finally {
 				streamLiveness.stop();
-				await streamLiveness.settlePendingReadForCleanup();
+				if (!upstreamCancelStarted) {
+					await streamLiveness.settlePendingReadForCleanup();
+				}
+				// Do NOT await upstreamDrainPromise here: draining exists to free the
+				// native off-heap buffer behind the upstream response (issue #382),
+				// not to gate client-visible stream completion. cancelUpstreamOnce
+				// already attaches a .catch(() => undefined) at assignment, so the
+				// drain runs detached in the background — bounded by
+				// streamDrainDeadlineMs / drainAbort — while writer.close() proceeds
+				// immediately, matching the fire-and-forget pattern used by
+				// cancelAfterForcedClose in anthropic-terminal-recovery.ts.
 				await writer.close();
 			}
 		};

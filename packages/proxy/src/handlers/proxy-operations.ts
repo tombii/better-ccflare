@@ -1359,6 +1359,7 @@ export async function proxyWithAccount(
 			taggedRawResponse,
 			account,
 			req.headers,
+			drainAbortController,
 		);
 
 		// Failover to next account on upstream 401 — credentials are invalid/expired
@@ -1417,6 +1418,7 @@ export async function proxyWithAccount(
 							retryTaggedRaw,
 							account,
 							req.headers,
+							drainAbortController,
 						);
 
 						cancelDiscardedResponseBody(response);
