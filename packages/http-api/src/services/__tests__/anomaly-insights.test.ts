@@ -361,6 +361,56 @@ describe("computeBaselines", () => {
 		);
 		expect(computeBaselines(rows, 10)).toHaveLength(0);
 	});
+
+	test("excludes rows with NEGATIVE total tokens (not just zero), preventing NaN from Math.log (issue #410 follow-up)", () => {
+		// Regression: the original #410 fix only excluded totalTokens === 0.
+		// A row with a large negative inputTokens (e.g. a corrupted/negative
+		// usage record) produces a negative totalTokens, and Math.log() of a
+		// negative number is NaN. That NaN must never enter the log-space
+		// median/MAD computation — the guard must be `<= 0`, not `=== 0`.
+		const rows = [
+			...Array.from({ length: 10 }, () =>
+				req({ inputTokens: 100, outputTokens: 10 }),
+			),
+			// Negative totalTokens: -50 + 10 = -40.
+			req({ id: "negative-total", inputTokens: -50, outputTokens: 10 }),
+		];
+		const baselines = computeBaselines(rows, 10);
+		expect(baselines).toHaveLength(1);
+		// Only the 10 well-formed rows contribute; the negative-total row is
+		// excluded entirely.
+		expect(baselines[0].requests).toBe(10);
+		expect(Number.isNaN(baselines[0].medianLogTotalTokens)).toBe(false);
+		expect(Number.isNaN(baselines[0].madTotalTokens as number)).toBe(false);
+		expect(baselines[0].approxMedianTotalTokens).toBeCloseTo(110, 6);
+	});
+
+	test("excludes rows with NEGATIVE outputTokens from the output-tokens baseline (issue #410 follow-up)", () => {
+		// Symmetry check for the output-tokens metric, which already guarded
+		// with `row.outputTokens <= 0` prior to this fix — confirm negative
+		// values (not just zero) are excluded and never produce NaN.
+		const rows = [
+			...Array.from({ length: 10 }, () =>
+				req({ inputTokens: 100, outputTokens: 10 }),
+			),
+			// Positive totalTokens overall (110) but negative outputTokens
+			// itself: inputTokens 150, outputTokens -40 => total = 110.
+			req({ id: "negative-output", inputTokens: 150, outputTokens: -40 }),
+		];
+		const baselines = computeBaselines(rows, 10);
+		expect(baselines).toHaveLength(1);
+		// The negative-output row still has positive totalTokens (110), so it
+		// contributes to the total-tokens side, but must be excluded from the
+		// output-tokens side by the `outputTokens > 0` filter.
+		expect(baselines[0].requests).toBe(11);
+		expect(Number.isNaN(baselines[0].medianLogOutputTokens as number)).toBe(
+			false,
+		);
+		expect(Number.isNaN(baselines[0].madOutputTokens as number)).toBe(false);
+		// All 10 output-qualifying rows have outputTokens = 10, so the
+		// output-tokens median is exactly 10.
+		expect(baselines[0].approxMedianOutputTokens).toBeCloseTo(10, 6);
+	});
 });
 
 describe("detectTokenOutliers", () => {
@@ -464,6 +514,64 @@ describe("detectTokenOutliers", () => {
 		expect(
 			detectTokenOutliers(scoringRows, baselines, 3.5, "output_tokens"),
 		).toHaveLength(0);
+	});
+
+	test("skips scoring rows with NEGATIVE totalTokens instead of leaking a NaN zScore into outliers (issue #410 follow-up)", () => {
+		// Regression: reported by zenprocess. A scoring row with negative
+		// totalTokens produces Math.log(negative) = NaN. Because the skip
+		// condition was `if (modifiedZ < zScoreThreshold) continue;`, and
+		// `NaN < threshold` is `false` in JS, the row was NOT skipped and a
+		// `zScore: NaN` event leaked into the API response. The guard must
+		// exclude totalTokens <= 0 (not just === 0) so the row never reaches
+		// the modifiedZ computation at all.
+		const baselineRows = baseline19_80_100_130({ outputTokens: 10 });
+		const baselines = computeBaselines(baselineRows, 10);
+		expect(baselines).toHaveLength(1);
+
+		const scoringRows = [
+			// Negative totalTokens: -200 + 10 = -190.
+			req({ id: "negative-total", inputTokens: -200, outputTokens: 10 }),
+			// A genuine, well-formed outlier alongside it, to prove the guard
+			// only removes the malformed row and doesn't over-suppress.
+			req({ id: "spike", inputTokens: 1000 }),
+		];
+		const outliers = detectTokenOutliers(
+			scoringRows,
+			baselines,
+			3.5,
+			"total_tokens",
+		);
+		// The negative row must be absent entirely — not present with a NaN
+		// zScore.
+		expect(outliers.map((o) => o.requestId)).not.toContain("negative-total");
+		expect(outliers.some((o) => Number.isNaN(o.zScore))).toBe(false);
+		// The well-formed spike is still flagged normally.
+		expect(outliers.map((o) => o.requestId)).toEqual(["spike"]);
+	});
+
+	test("skips scoring rows with NEGATIVE outputTokens for the output_tokens metric (issue #410 follow-up)", () => {
+		// Symmetry check: a row with negative outputTokens (but positive
+		// totalTokens overall) must never produce a NaN zScore on the
+		// output_tokens metric either.
+		const baselineRows = baseline19Output_8_10_13();
+		const baselines = computeBaselines(baselineRows, 10);
+		expect(baselines).toHaveLength(1);
+
+		const scoringRows = [
+			// totalTokens = 1000 + (-40) = 960 (positive), but outputTokens
+			// itself is negative.
+			req({ id: "negative-output", inputTokens: 1000, outputTokens: -40 }),
+			req({ id: "blowup", inputTokens: 100, outputTokens: 100 }),
+		];
+		const outliers = detectTokenOutliers(
+			scoringRows,
+			baselines,
+			3.5,
+			"output_tokens",
+		);
+		expect(outliers.map((o) => o.requestId)).not.toContain("negative-output");
+		expect(outliers.some((o) => Number.isNaN(o.zScore))).toBe(false);
+		expect(outliers.map((o) => o.requestId)).toEqual(["blowup"]);
 	});
 
 	test("output_tokens metric detects output blowups independently", () => {

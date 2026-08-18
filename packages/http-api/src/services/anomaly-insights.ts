@@ -297,7 +297,7 @@ export function computeBaselines(
 ): AnomalyBaseline[] {
 	const groups = new Map<string, AnomalyRequestRow[]>();
 	for (const row of baselineRows) {
-		if (totalTokens(row) === 0) continue;
+		if (totalTokens(row) <= 0) continue;
 		const key = baselineKey(row.account, row.model);
 		const group = groups.get(key);
 		if (group) {
@@ -383,7 +383,7 @@ export function detectTokenOutliers(
 
 	const outliers: TokenOutlierEvent[] = [];
 	for (const row of scoringRows) {
-		if (totalTokens(row) === 0) continue;
+		if (totalTokens(row) <= 0) continue;
 		if (metric === "output_tokens" && row.outputTokens <= 0) continue;
 		const baseline = baselineByKey.get(baselineKey(row.account, row.model));
 		if (!baseline) continue;
