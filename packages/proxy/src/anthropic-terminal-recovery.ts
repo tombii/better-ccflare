@@ -1,3 +1,5 @@
+import { drainReaderWithDeadline } from "@better-ccflare/providers";
+
 export const ANTHROPIC_MESSAGE_STOP_FRAME =
 	'event: message_stop\ndata: {"type":"message_stop"}\n\n';
 
@@ -171,32 +173,20 @@ export function createAnthropicTerminalRecoveryStream(
 	// `ReadableStreamDefaultReader` (the stream is locked to it), not a raw
 	// stream `drainBody` could call `.getReader()` on again.
 	//
-	// Bounded by `drainDeadlineMs`: a stuck-but-open upstream (the case
-	// `recover()`'s timeout path exists for) would otherwise leave this loop
-	// pending forever, holding the socket open where the no-op `cancel()` it
-	// replaced would have resolved instantly. On deadline, `drainAbort` (when
-	// supplied) is aborted so the fetch's underlying connection is actually
-	// torn down — `reader.releaseLock()` alone only frees the reader object,
-	// it does not touch the connection, so without an abort signal the socket
-	// would be left to whatever timeout Bun applies on its own.
-	const drainUpstreamReader = async (): Promise<void> => {
-		let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-		try {
-			const deadline = new Promise<{ done: true }>((resolve) => {
-				deadlineTimer = setTimeout(() => {
-					drainAbort?.abort(new Error("Drain deadline exceeded"));
-					resolve({ done: true });
-				}, drainDeadlineMs);
-			});
-			while (true) {
-				const { done } = await Promise.race([reader.read(), deadline]);
-				if (done) return;
-			}
-		} finally {
-			if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
-			reader.releaseLock();
-		}
-	};
+	// Bounded by `drainDeadlineMs`, shared with Codex's equivalent drain in
+	// `codex/provider.ts` via `drainReaderWithDeadline()` in
+	// `packages/providers/src/utils/stream-drain.ts` — see that helper for
+	// the deadline-race-then-drain-loop implementation. Errors are not
+	// swallowed here (`swallowErrors` omitted): the caller (`cancelUpstream`)
+	// either `.catch()`s this promise itself (`cancelAfterForcedClose`) or
+	// returns it unchanged from the stream's native `cancel()` handler, so
+	// error handling stays the caller's responsibility, matching prior
+	// behavior.
+	const drainUpstreamReader = (): Promise<void> =>
+		drainReaderWithDeadline(reader, {
+			deadlineMs: drainDeadlineMs,
+			drainAbort,
+		});
 
 	const cancelUpstream = (_reason: unknown): Promise<void> => {
 		if (upstreamCancelPromise) return upstreamCancelPromise;
