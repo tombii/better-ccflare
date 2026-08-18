@@ -15,6 +15,7 @@ import {
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
+import { drainReader } from "../../utils/stream-drain";
 
 const log = new Logger("OpenAICompatibleProvider");
 
@@ -143,11 +144,16 @@ export class OpenAICompatibleProvider extends BaseProvider {
 				// original is discarded here. `clone()` teed the body — leaving
 				// the original branch unread keeps the tee buffering for a body
 				// nobody will ever consume, on every JSON response this provider
-				// converts. Cancelling disturbs it immediately; the promise is
-				// not awaited because nothing downstream depends on it. Only the
-				// success path may do this: the catch below falls through and
-				// returns the original, which must stay intact. See issue #356.
-				response.body?.cancel().catch(() => {});
+				// converts. `reader.cancel()` is a no-op on every released Bun
+				// (oven-sh/bun#35093) and does not release the native buffer;
+				// drain to `done` instead — see drainReader() (#382). The promise
+				// is not awaited because nothing downstream depends on it. Only
+				// the success path may do this: the catch below falls through
+				// and returns the original, which must stay intact. See #356.
+				const discardedBody = response.body;
+				if (discardedBody && !discardedBody.locked) {
+					void drainReader(discardedBody.getReader());
+				}
 
 				return new Response(JSON.stringify(anthropicData), {
 					status: response.status,
