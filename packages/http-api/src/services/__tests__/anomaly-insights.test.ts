@@ -411,6 +411,53 @@ describe("computeBaselines", () => {
 		// output-tokens median is exactly 10.
 		expect(baselines[0].approxMedianOutputTokens).toBeCloseTo(10, 6);
 	});
+
+	test("excludes rows with non-finite total tokens (NaN or Infinity), not just negatives (issue #410 follow-up)", () => {
+		// The `<= 0` guard excludes negatives and zero but NOT NaN or Infinity,
+		// since both `NaN <= 0` and `Infinity <= 0` are false. A non-finite
+		// totalTokens (e.g. from a corrupted field or inputTokens overflowing
+		// to Infinity) must be excluded before it reaches Math.log/medianAndMad.
+		const rows = [
+			...Array.from({ length: 10 }, () =>
+				req({ inputTokens: 100, outputTokens: 10 }),
+			),
+			req({ id: "nan-total", inputTokens: Number.NaN, outputTokens: 10 }),
+			req({ id: "infinity-total", inputTokens: Number.POSITIVE_INFINITY }),
+		];
+		const baselines = computeBaselines(rows, 10);
+		expect(baselines).toHaveLength(1);
+		expect(baselines[0].requests).toBe(10);
+		expect(Number.isNaN(baselines[0].medianLogTotalTokens)).toBe(false);
+		expect(Number.isFinite(baselines[0].medianLogTotalTokens)).toBe(true);
+		expect(Number.isNaN(baselines[0].madTotalTokens as number)).toBe(false);
+	});
+
+	test("excludes rows with non-finite outputTokens from the output-tokens baseline (issue #410 follow-up)", () => {
+		const rows = [
+			...Array.from({ length: 10 }, () =>
+				req({ inputTokens: 100, outputTokens: 10 }),
+			),
+			req({
+				id: "nan-output",
+				inputTokens: 100,
+				outputTokens: Number.NaN,
+			}),
+			req({
+				id: "infinity-output",
+				inputTokens: 100,
+				outputTokens: Number.POSITIVE_INFINITY,
+			}),
+		];
+		const baselines = computeBaselines(rows, 10);
+		expect(baselines).toHaveLength(1);
+		expect(Number.isNaN(baselines[0].medianLogOutputTokens as number)).toBe(
+			false,
+		);
+		expect(Number.isFinite(baselines[0].medianLogOutputTokens as number)).toBe(
+			true,
+		);
+		expect(baselines[0].approxMedianOutputTokens).toBeCloseTo(10, 6);
+	});
 });
 
 describe("detectTokenOutliers", () => {
@@ -571,6 +618,62 @@ describe("detectTokenOutliers", () => {
 		);
 		expect(outliers.map((o) => o.requestId)).not.toContain("negative-output");
 		expect(outliers.some((o) => Number.isNaN(o.zScore))).toBe(false);
+		expect(outliers.map((o) => o.requestId)).toEqual(["blowup"]);
+	});
+
+	test("skips scoring rows with non-finite totalTokens (NaN or Infinity) instead of leaking a non-finite zScore (issue #410 follow-up)", () => {
+		// The `<= 0` guard added for negative totals does not catch NaN or
+		// Infinity, since neither satisfies `<= 0`. Both must still be skipped
+		// before reaching Math.log, or a NaN/Infinity zScore leaks into the
+		// API response the same way the original negative-total bug did.
+		const baselineRows = baseline19_80_100_130();
+		const baselines = computeBaselines(baselineRows, 10);
+		expect(baselines).toHaveLength(1);
+
+		const scoringRows = [
+			req({ id: "nan-total", inputTokens: Number.NaN, outputTokens: 10 }),
+			req({ id: "infinity-total", inputTokens: Number.POSITIVE_INFINITY }),
+			req({ id: "spike", inputTokens: 100000 }),
+		];
+		const outliers = detectTokenOutliers(
+			scoringRows,
+			baselines,
+			3.5,
+			"total_tokens",
+		);
+		expect(outliers.map((o) => o.requestId)).not.toContain("nan-total");
+		expect(outliers.map((o) => o.requestId)).not.toContain("infinity-total");
+		expect(outliers.some((o) => !Number.isFinite(o.zScore))).toBe(false);
+		expect(outliers.map((o) => o.requestId)).toEqual(["spike"]);
+	});
+
+	test("skips scoring rows with non-finite outputTokens for the output_tokens metric (issue #410 follow-up)", () => {
+		const baselineRows = baseline19Output_8_10_13();
+		const baselines = computeBaselines(baselineRows, 10);
+		expect(baselines).toHaveLength(1);
+
+		const scoringRows = [
+			req({
+				id: "nan-output",
+				inputTokens: 1000,
+				outputTokens: Number.NaN,
+			}),
+			req({
+				id: "infinity-output",
+				inputTokens: 1000,
+				outputTokens: Number.POSITIVE_INFINITY,
+			}),
+			req({ id: "blowup", inputTokens: 100, outputTokens: 100 }),
+		];
+		const outliers = detectTokenOutliers(
+			scoringRows,
+			baselines,
+			3.5,
+			"output_tokens",
+		);
+		expect(outliers.map((o) => o.requestId)).not.toContain("nan-output");
+		expect(outliers.map((o) => o.requestId)).not.toContain("infinity-output");
+		expect(outliers.some((o) => !Number.isFinite(o.zScore))).toBe(false);
 		expect(outliers.map((o) => o.requestId)).toEqual(["blowup"]);
 	});
 

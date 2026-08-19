@@ -297,7 +297,8 @@ export function computeBaselines(
 ): AnomalyBaseline[] {
 	const groups = new Map<string, AnomalyRequestRow[]>();
 	for (const row of baselineRows) {
-		if (totalTokens(row) <= 0) continue;
+		const total = totalTokens(row);
+		if (!Number.isFinite(total) || total <= 0) continue;
 		const key = baselineKey(row.account, row.model);
 		const group = groups.get(key);
 		if (group) {
@@ -309,7 +310,9 @@ export function computeBaselines(
 
 	const baselines: AnomalyBaseline[] = [];
 	for (const group of groups.values()) {
-		const outputRows = group.filter((row) => row.outputTokens > 0);
+		const outputRows = group.filter(
+			(row) => Number.isFinite(row.outputTokens) && row.outputTokens > 0,
+		);
 		const hasTotal = group.length >= minBaselineRequests;
 		const hasOutput = outputRows.length >= minBaselineRequests;
 		// Neither metric has enough data: no baseline entry at all for this
@@ -383,8 +386,13 @@ export function detectTokenOutliers(
 
 	const outliers: TokenOutlierEvent[] = [];
 	for (const row of scoringRows) {
-		if (totalTokens(row) <= 0) continue;
-		if (metric === "output_tokens" && row.outputTokens <= 0) continue;
+		const rowTotal = totalTokens(row);
+		if (!Number.isFinite(rowTotal) || rowTotal <= 0) continue;
+		if (
+			metric === "output_tokens" &&
+			(!Number.isFinite(row.outputTokens) || row.outputTokens <= 0)
+		)
+			continue;
 		const baseline = baselineByKey.get(baselineKey(row.account, row.model));
 		if (!baseline) continue;
 		const medianLog =
@@ -405,8 +413,7 @@ export function detectTokenOutliers(
 		//    rather than floor-and-flag.
 		if (medianLog === null || scaledMad === null || scaledMad <= MIN_SCALED_MAD)
 			continue;
-		const value =
-			metric === "total_tokens" ? totalTokens(row) : row.outputTokens;
+		const value = metric === "total_tokens" ? rowTotal : row.outputTokens;
 		const modifiedZ = (Math.log(value) - medianLog) / scaledMad;
 		if (modifiedZ < zScoreThreshold) continue;
 		outliers.push({
