@@ -1,4 +1,8 @@
-import { getEndpointUrl, validateEndpointUrl } from "@better-ccflare/core";
+import {
+	getEndpointUrl,
+	resolveXaiContextWindow,
+	validateEndpointUrl,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { OpenAIRequest } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
@@ -8,6 +12,7 @@ import {
 } from "../../provider-model-defaults";
 import type { TokenRefreshResult } from "../../types";
 import { OpenAICompatibleProvider } from "../openai/provider";
+import { isOfficialXaiEndpoint } from "./cache-native";
 
 const log = new Logger("XaiProvider");
 
@@ -35,6 +40,14 @@ function resolvedXaiModelMappings(): Record<string, string> {
 
 export class XaiProvider extends OpenAICompatibleProvider {
 	override name = "xai";
+
+	protected override resolveStreamContextWindow(
+		model: string,
+		account: Account | null,
+	): number | undefined {
+		if (!isOfficialXaiEndpoint(account)) return undefined;
+		return resolveXaiContextWindow(model)?.contextWindow;
+	}
 
 	override async refreshToken(
 		account: Account,

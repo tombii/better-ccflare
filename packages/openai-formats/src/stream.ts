@@ -4,6 +4,10 @@ import { repairTruncatedToolJson } from "./utils";
 
 const log = new Logger("openai-formats");
 
+export interface TransformStreamingResponseOptions {
+	contextWindowForModel?: (model: string) => number | undefined;
+}
+
 /**
  * Sanitize headers by removing provider-specific headers
  */
@@ -78,6 +82,7 @@ function emitToolCallJson(
 function emitStreamEnd(
 	controller: TransformStreamDefaultController,
 	encoder: TextEncoder,
+	contextWindowSize: number | undefined,
 	stopReason: "tool_use" | "end_turn",
 	promptTokens: number,
 	completionTokens: number,
@@ -122,6 +127,14 @@ function emitStreamEnd(
 	}
 
 	// Send message_delta with appropriate stop_reason
+	const advertisedContextWindow =
+		Number.isFinite(promptTokens) &&
+		promptTokens >= 0 &&
+		typeof contextWindowSize === "number" &&
+		Number.isFinite(contextWindowSize) &&
+		contextWindowSize > 0
+			? contextWindowSize
+			: undefined;
 	const messageDelta = {
 		type: "message_delta",
 		delta: {
@@ -134,6 +147,18 @@ function emitStreamEnd(
 			cache_read_input_tokens: cacheReadInputTokens,
 			cache_creation_input_tokens: cacheCreationInputTokens,
 		},
+		...(advertisedContextWindow
+			? {
+					context_window: {
+						current_usage: {
+							input_tokens: promptTokens,
+							cache_read_input_tokens: cacheReadInputTokens,
+							cache_creation_input_tokens: cacheCreationInputTokens,
+						},
+						context_window_size: advertisedContextWindow,
+					},
+				}
+			: {}),
 	};
 	controller.enqueue(encoder.encode(`event: message_delta\n`));
 	controller.enqueue(
@@ -157,7 +182,10 @@ function emitStreamEnd(
  * ALL argument chunks are buffered (appended), no deltas are emitted during streaming.
  * The complete accumulated JSON is emitted as a single input_json_delta at [DONE] or flush.
  */
-export function transformStreamingResponse(response: Response): Response {
+export function transformStreamingResponse(
+	response: Response,
+	options: TransformStreamingResponseOptions = {},
+): Response {
 	if (!response.body) {
 		return response;
 	}
@@ -178,6 +206,7 @@ export function transformStreamingResponse(response: Response): Response {
 					buffer: "",
 					hasStarted: false,
 					extractedModel: "unknown",
+					contextWindowSize: undefined,
 					hasSentStart: false,
 					hasSentContentBlockStart: false,
 					hasSentThinkingBlockStart: false,
@@ -242,6 +271,7 @@ export function transformStreamingResponse(response: Response): Response {
 								emitStreamEnd(
 									controller,
 									encoder,
+									context.contextWindowSize,
 									"tool_use",
 									context.promptTokens,
 									context.completionTokens,
@@ -258,6 +288,7 @@ export function transformStreamingResponse(response: Response): Response {
 								emitStreamEnd(
 									controller,
 									encoder,
+									context.contextWindowSize,
 									"end_turn",
 									context.promptTokens,
 									context.completionTokens,
@@ -271,6 +302,7 @@ export function transformStreamingResponse(response: Response): Response {
 								emitStreamEnd(
 									controller,
 									encoder,
+									context.contextWindowSize,
 									"end_turn",
 									context.promptTokens,
 									context.completionTokens,
@@ -293,6 +325,9 @@ export function transformStreamingResponse(response: Response): Response {
 							// Extract model from first chunk
 							if (!context.hasStarted && data.model) {
 								context.extractedModel = data.model;
+								context.contextWindowSize = options.contextWindowForModel?.(
+									data.model,
+								);
 								context.hasStarted = true;
 							}
 
@@ -612,6 +647,7 @@ export function transformStreamingResponse(response: Response): Response {
 					emitStreamEnd(
 						controller,
 						encoder,
+						context.contextWindowSize,
 						"tool_use",
 						context.promptTokens,
 						context.completionTokens,
@@ -632,6 +668,7 @@ export function transformStreamingResponse(response: Response): Response {
 					emitStreamEnd(
 						controller,
 						encoder,
+						context.contextWindowSize,
 						"end_turn",
 						context.promptTokens,
 						context.completionTokens,
@@ -648,6 +685,7 @@ export function transformStreamingResponse(response: Response): Response {
 					emitStreamEnd(
 						controller,
 						encoder,
+						context.contextWindowSize,
 						"end_turn",
 						context.promptTokens,
 						context.completionTokens,
