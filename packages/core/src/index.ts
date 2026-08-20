@@ -116,3 +116,7 @@ export {
 	getVersionSync,
 	trackClientVersion,
 } from "./version";
+export {
+	resolveXaiContextWindow,
+	type XaiContextWindowResolution,
+} from "./xai";

@@ -152,6 +152,7 @@ export interface TransformStreamContext {
 	buffer: string;
 	hasStarted: boolean;
 	extractedModel: string;
+	contextWindowSize?: number;
 	hasSentStart: boolean;
 	hasSentContentBlockStart: boolean;
 	hasSentThinkingBlockStart: boolean;
