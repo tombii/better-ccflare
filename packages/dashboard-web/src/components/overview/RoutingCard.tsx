@@ -129,15 +129,18 @@ export function RoutingCardView({
 						<div className="text-sm text-muted-foreground">
 							<span className="font-medium">Session</span> keeps each client on
 							one account for the session duration.{" "}
-							<span className="font-medium">Session — drain soonest</span>{" "}
-							shares the same session semantics but, at every fresh selection,
-							prefers the account whose weekly window resets soonest so capacity
-							is used before it expires; priority becomes a tiebreaker. The{" "}
-							<span className="font-medium">strict</span> variant applies that
-							drain ranking to every selection — an active 5h session only
-							breaks ties instead of pinning the current account — so traffic
-							follows the earliest-resetting account instead of the most
-							recently started session.
+							<span className="font-medium">Session — drain soonest</span> is
+							sticky: the most recently started 5h session holds all traffic and
+							is never preempted; the weekly-reset ranking only orders
+							re-selection and failover, so with several concurrently active
+							sessions traffic does not follow the earliest-resetting account.{" "}
+							<span className="font-medium">
+								Session — drain soonest (strict)
+							</span>{" "}
+							ranks every selection by earliest weekly reset (skipping accounts
+							whose capacity for the request&apos;s model family is exhausted);
+							an active 5h session only breaks ties, so capacity is drained
+							before it expires.
 						</div>
 						<Select
 							disabled={strategyDisabled || strategyEnvLocked}
