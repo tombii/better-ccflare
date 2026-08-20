@@ -25,6 +25,7 @@ import {
 	createBedrockAccountAddHandler,
 	createKiloAccountAddHandler,
 	createMinimaxAccountAddHandler,
+	createMuseSparkAccountAddHandler,
 	createNanoGPTAccountAddHandler,
 	createOllamaAccountAddHandler,
 	createOllamaCloudAccountAddHandler,
@@ -302,6 +303,10 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/accounts/openai-compatible", (req) =>
 			openaiAccountAddHandler(req),
+		);
+		const museSparkAccountAddHandler = createMuseSparkAccountAddHandler(dbOps);
+		this.handlers.set("POST:/api/accounts/muse-spark", (req) =>
+			museSparkAccountAddHandler(req),
 		);
 
 		// Token health handlers
