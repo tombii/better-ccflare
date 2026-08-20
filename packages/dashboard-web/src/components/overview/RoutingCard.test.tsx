@@ -136,11 +136,18 @@ describe("getStrategySelectItems", () => {
 	const listed: readonly StrategySelectItem[] = [
 		{ label: "Session", value: "session" },
 		{ label: "Session — drain soonest", value: "session-drain-soonest" },
+		{
+			label: "Session — drain soonest (strict)",
+			value: "session-drain-soonest-strict",
+		},
 	];
 
-	it("returns only the two listed options when the current strategy is one of them", () => {
+	it("returns only the three listed options when the current strategy is one of them", () => {
 		expect(getStrategySelectItems("session")).toEqual(listed);
 		expect(getStrategySelectItems("session-drain-soonest")).toEqual(listed);
+		expect(getStrategySelectItems("session-drain-soonest-strict")).toEqual(
+			listed,
+		);
 	});
 
 	it("appends the current strategy as a disabled item when it is not listed", () => {

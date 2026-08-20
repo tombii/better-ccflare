@@ -20,6 +20,7 @@ import { codexWindowHasReset } from "./session-window-reset";
 
 export { LeastUsedStrategy } from "./least-used";
 export { SessionAffinityStrategy } from "./session-affinity";
+export type { SessionDrainSoonestMode } from "./session-drain-soonest";
 export { SessionDrainSoonestStrategy } from "./session-drain-soonest";
 
 export class SessionStrategy implements LoadBalancingStrategy {

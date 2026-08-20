@@ -101,6 +101,8 @@ function buildStrategy(
 			return new SessionAffinityStrategy(sessionDurationMs);
 		case StrategyName.SessionDrainSoonest:
 			return new SessionDrainSoonestStrategy(sessionDurationMs);
+		case StrategyName.SessionDrainSoonestStrict:
+			return new SessionDrainSoonestStrategy(sessionDurationMs, "strict");
 		default:
 			return new SessionStrategy(sessionDurationMs);
 	}
