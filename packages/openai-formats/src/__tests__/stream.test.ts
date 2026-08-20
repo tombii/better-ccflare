@@ -307,7 +307,7 @@ describe("transformStreamingResponse — text responses", () => {
 
 		expect(parsed.context_window).toEqual({
 			current_usage: {
-				input_tokens: 20,
+				input_tokens: 8,
 				cache_read_input_tokens: 12,
 				cache_creation_input_tokens: 0,
 			},
@@ -332,6 +332,38 @@ describe("transformStreamingResponse — text responses", () => {
 		expect(msgDelta).toBeDefined();
 		if (!msgDelta) throw new Error("expected message_delta event");
 		expect(JSON.parse(msgDelta.data)).not.toHaveProperty("context_window");
+	});
+
+	it("does not double-count a fully cached prompt in context_window.current_usage", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "grok-4.6",
+				choices: [{ index: 0, delta: { content: "Hi" }, finish_reason: null }],
+				usage: {
+					prompt_tokens: 20,
+					completion_tokens: 5,
+					prompt_tokens_details: { cached_tokens: 20 },
+				},
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream, {
+			contextWindowForModel: (model) =>
+				model === "grok-4.6" ? 500_000 : undefined,
+		});
+		const raw = await readStream(transformed.body);
+		const events = parseSSEEvents(raw);
+		const msgDelta = events.find((e) => e.event === "message_delta");
+		expect(msgDelta).toBeDefined();
+		if (!msgDelta) throw new Error("expected message_delta event");
+		const parsed = JSON.parse(msgDelta.data);
+
+		expect(parsed.context_window.current_usage).toEqual({
+			input_tokens: 0,
+			cache_read_input_tokens: 20,
+			cache_creation_input_tokens: 0,
+		});
 	});
 });
 

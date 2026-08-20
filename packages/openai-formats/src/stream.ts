@@ -150,9 +150,19 @@ function emitStreamEnd(
 		...(advertisedContextWindow
 			? {
 					context_window: {
+						// promptTokens is the upstream cache-inclusive total (OpenAI/xAI
+						// semantics); Anthropic's context_window.current_usage.input_tokens
+						// is additive and must exclude the cached subset, matching the
+						// normalization CodexProvider applies via normalizeCodexInputUsage.
 						current_usage: {
-							input_tokens: promptTokens,
-							cache_read_input_tokens: cacheReadInputTokens,
+							input_tokens: Math.max(
+								0,
+								promptTokens - Math.min(cacheReadInputTokens, promptTokens),
+							),
+							cache_read_input_tokens: Math.min(
+								cacheReadInputTokens,
+								promptTokens,
+							),
 							cache_creation_input_tokens: cacheCreationInputTokens,
 						},
 						context_window_size: advertisedContextWindow,
