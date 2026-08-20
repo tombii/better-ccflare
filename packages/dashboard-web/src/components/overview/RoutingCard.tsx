@@ -28,12 +28,16 @@ import { Switch } from "../ui/switch";
 // anti-abuse systems and get accounts banned, so they are deliberately not
 // listed here even though StrategyName defines them. Values come from the
 // shared StrategyName enum (not hardcoded strings) so this list can never
-// drift from the authoritative 4 values in @better-ccflare/core.
+// drift from the authoritative values in @better-ccflare/core.
 const STRATEGY_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
 	{ label: "Session", value: StrategyName.Session },
 	{
 		label: "Session — drain soonest",
 		value: StrategyName.SessionDrainSoonest,
+	},
+	{
+		label: "Session — drain soonest (strict)",
+		value: StrategyName.SessionDrainSoonestStrict,
 	},
 ];
 
@@ -44,16 +48,16 @@ export interface StrategySelectItem {
 }
 
 /**
- * Build the strategy Select's item list. The dashboard only offers the two
+ * Build the strategy Select's item list. The dashboard only offers the
  * session-class strategies above, but the server's effective strategy
- * (getStrategy()) can be any of the four StrategyName values — settable via
+ * (getStrategy()) can be any StrategyName value — settable via
  * LB_STRATEGY, an older config file, or a hand-edited one. An out-of-list
  * value used to leave the Select's trigger blank with no indication it was
- * active, and selecting either listed option would silently overwrite it
+ * active, and selecting a listed option would silently overwrite it
  * with no recovery path (routing-settings-ui-2026-07-20 review, rank 1).
- * When the current strategy isn't one of the two listed options, it is
+ * When the current strategy isn't one of the listed options, it is
  * appended as a disabled item labelled "<value> (current)" so its state is
- * visible without being re-selectable; the two deliberate options stay
+ * visible without being re-selectable; the deliberate options stay
  * selectable.
  */
 export function getStrategySelectItems(
@@ -128,7 +132,12 @@ export function RoutingCardView({
 							<span className="font-medium">Session — drain soonest</span>{" "}
 							shares the same session semantics but, at every fresh selection,
 							prefers the account whose weekly window resets soonest so capacity
-							is used before it expires; priority becomes a tiebreaker.
+							is used before it expires; priority becomes a tiebreaker. The{" "}
+							<span className="font-medium">strict</span> variant applies that
+							drain ranking to every selection — an active 5h session only
+							breaks ties instead of pinning the current account — so traffic
+							follows the earliest-resetting account instead of the most
+							recently started session.
 						</div>
 						<Select
 							disabled={strategyDisabled || strategyEnvLocked}
