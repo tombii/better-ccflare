@@ -589,6 +589,14 @@ export class Config extends EventEmitter {
 	 * temporary, which is exactly why this is a flag rather than a new hardcoded
 	 * assumption. Setting it to true restores the previous behavior of treating
 	 * the 5-hour window as the one a session rides.
+	 *
+	 * Scope: this flag selects the window the rollover detector in
+	 * response-processor watches. It does not reach the load-balancer's
+	 * session expiry, which reads the single `rate_limit_reset` column and
+	 * cannot tell which window wrote it — so with the flag on and no 5-hour
+	 * window reported, a session still ends at the weekly boundary. Closing
+	 * that gap needs the per-window data persisted, which is deliberately out
+	 * of scope here.
 	 */
 	getCodexFiveHourWindowEnabled(): boolean {
 		const fromEnv = parseEnabledEnvFlag(
