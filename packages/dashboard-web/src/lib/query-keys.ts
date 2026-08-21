@@ -41,9 +41,6 @@ export const queryKeys = {
 	// invalidates the per-provider lists.
 	// The account is part of the key: two accounts of the same provider can be
 	// on different plans and get different lists.
-	// Server feature flags. One entry for the whole dashboard: they come from
-	// environment variables and only change when the process restarts.
-	features: () => [...queryKeys.all, "features"] as const,
 	providerModels: (provider?: string | null, accountId?: string | null) =>
 		[
 			...queryKeys.all,

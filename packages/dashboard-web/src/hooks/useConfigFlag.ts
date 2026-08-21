@@ -29,8 +29,6 @@ export const useSaveConfigFlag = (path: string) => {
 		mutationFn: (enabled: boolean) => saveConfigFlag(path, enabled),
 		onSuccess: (flag: ConfigFlag) => {
 			queryClient.setQueryData(queryKeys.configFlag(path), flag);
-			// The combos switch also decides whether the sidebar shows the tab.
-			queryClient.invalidateQueries({ queryKey: queryKeys.features() });
 		},
 	});
 };

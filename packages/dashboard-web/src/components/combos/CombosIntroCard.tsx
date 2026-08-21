@@ -12,14 +12,8 @@ import { Switch } from "../ui/switch";
 export const COMBOS_ENABLED_PATH = "/api/config/combos-enabled";
 
 /**
- * Explains what a combo is and carries the switch that decides whether combos
- * take part in routing at all.
- *
- * The switch exists because the previous gate was misleading: the
- * BETTER_CCFLARE_SHOW_COMBOS env var hid this tab and nothing more, so a combo
- * nobody could see kept steering traffic. When that env var is set it still
- * wins over this switch — the control is disabled and says so, rather than
- * accepting a click that would be silently ignored.
+ * Explains what a combo is and carries the routing switch. The tab remains
+ * visible while this is off so the operator can always turn combos back on.
  */
 export function CombosIntroCard() {
 	const flagQuery = useConfigFlag(COMBOS_ENABLED_PATH);

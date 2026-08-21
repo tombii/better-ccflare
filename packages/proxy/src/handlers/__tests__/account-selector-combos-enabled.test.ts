@@ -10,10 +10,8 @@ import {
 } from "../account-selector";
 import type { ProxyContext } from "../proxy-types";
 
-// The combos switch decides whether combo routing runs at all. Before it
-// existed, BETTER_CCFLARE_SHOW_COMBOS hid the dashboard tab and nothing else,
-// so a hidden combo kept steering traffic — these tests pin the switch to
-// routing, not to visibility.
+// The combos switch decides whether combo routing runs at all. These tests
+// pin the switch to routing; dashboard visibility is deliberately independent.
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {

@@ -697,8 +697,8 @@ export class Config extends EventEmitter {
 	}
 
 	/**
-	 * One-time adoption of the environment variables that used to control combo
-	 * routing, so upgrading never changes what an install was already doing.
+	 * One-time adoption of legacy combo routing behavior and the remaining
+	 * disable-fallback variable, so upgrades preserve existing behavior.
 	 *
 	 * Runs at boot, only for fields absent from the config file, and writes
 	 * what it decides — so it happens once and a later deliberate change is
@@ -711,21 +711,11 @@ export class Config extends EventEmitter {
 	adoptLegacyRoutingSettings(hasCombos: boolean): string[] {
 		const notes: string[] = [];
 
-		if (this.getCombosEnabledSource() === "default") {
-			const fromEnv = parseEnabledEnvFlag(
-				process.env.BETTER_CCFLARE_SHOW_COMBOS,
+		if (this.getCombosEnabledSource() === "default" && hasCombos) {
+			this.setCombosEnabled(true);
+			notes.push(
+				"combos enabled: this install already has combos, so the routing it was already doing is kept. Turn it off in the dashboard Combos tab",
 			);
-			if (fromEnv !== undefined) {
-				this.setCombosEnabled(fromEnv);
-				notes.push(
-					`combos ${fromEnv ? "enabled" : "disabled"}: adopted from BETTER_CCFLARE_SHOW_COMBOS, which no longer takes effect on its own — the switch now lives in the dashboard's Combos tab`,
-				);
-			} else if (hasCombos) {
-				this.setCombosEnabled(true);
-				notes.push(
-					"combos enabled: this install already has combos, so the routing it was already doing is kept. Turn it off in the dashboard's Combos tab",
-				);
-			}
 		}
 
 		if (this.getComboSessionFallbackSource() === "default") {
@@ -809,13 +799,8 @@ export class Config extends EventEmitter {
 	/**
 	 * Whether combos take part in routing at all.
 	 *
-	 * `BETTER_CCFLARE_SHOW_COMBOS` used to gate only the dashboard's combos tab
-	 * (via /api/features): nothing in the proxy ever read it, so a combo hidden
-	 * from the UI kept steering traffic with no way to see or edit it. This
-	 * setting is the switch that flag looked like — the account selector reads
-	 * it — and it is owned by the dashboard, not by the environment. The old
-	 * variable is adopted once at boot (adoptLegacyRoutingSettings) and then
-	 * stops mattering.
+	 * The account selector reads this setting, while the dashboard keeps the
+	 * Combos tab permanently visible so the operator can always change it.
 	 *
 	 * Defaults to false: combos are opt-in. An install that already has combos
 	 * adopts true on boot, because upgrading must not silently change anyone's

@@ -65,9 +65,7 @@ const LoadingSkeleton = () => (
 
 export function App() {
 	const location = useLocation();
-	const [showCombos, setShowCombos] = useState(false);
-
-	// Build routes array dynamically based on feature flags
+	// Build the dashboard routes once; released features remain reachable.
 	const routes = useMemo(() => {
 		const baseRoutes = [
 			{
@@ -144,18 +142,15 @@ export function App() {
 			},
 		];
 
-		// Add combos route if feature is enabled (after Accounts, matching the nav)
-		if (showCombos) {
-			baseRoutes.splice(5, 0, {
-				path: "/combos",
-				element: <CombosTab />,
-				title: "Combos Management",
-				subtitle: "Define fallback chains for model families",
-			});
-		}
+		baseRoutes.splice(5, 0, {
+			path: "/combos",
+			element: <CombosTab />,
+			title: "Combos Management",
+			subtitle: "Define fallback chains for model families",
+		});
 
 		return baseRoutes;
-	}, [showCombos]);
+	}, []);
 
 	const currentRoute =
 		routes.find((route) => route.path === location.pathname) || routes[0];
@@ -258,25 +253,6 @@ export function App() {
 		checkAuth();
 	}, []);
 
-	// Fetch feature flags
-	useEffect(() => {
-		const fetchFeatures = async () => {
-			try {
-				const features = await api.getFeatures();
-				setShowCombos(features.showCombos);
-			} catch (error) {
-				// If features endpoint fails, default to hiding combos
-				console.error("Failed to fetch features:", error);
-				setShowCombos(false);
-			}
-		};
-
-		// Only fetch features after auth check completes
-		if (!isCheckingAuth && isAuthenticated) {
-			fetchFeatures();
-		}
-	}, [isCheckingAuth, isAuthenticated]);
-
 	// Listen for 401 errors from API client
 	useEffect(() => {
 		const handleAuthRequired = () => {
@@ -343,10 +319,7 @@ export function App() {
 		<QueryClientProvider client={queryClient}>
 			<ThemeProvider>
 				<div className="min-h-screen bg-background">
-					<Navigation
-						onLogout={authRequired ? handleLogout : undefined}
-						showCombos={showCombos}
-					/>
+					<Navigation onLogout={authRequired ? handleLogout : undefined} />
 
 					{/* Main Content */}
 					<main className="lg:pl-64">

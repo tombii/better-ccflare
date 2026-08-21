@@ -2,14 +2,10 @@
 
 ## Overview
 
-Combos are opt-in. The switch lives in the dashboard, on the Combos tab, and it
-decides two things at once: whether the tab is shown, and whether combos take
-part in routing.
-
-That pairing is the point. The switch used to be `BETTER_CCFLARE_SHOW_COMBOS`
-and it only hid the tab — the proxy went on routing through whatever combos the
-database held. A combo could therefore steer every request for a model family
-while being invisible and uneditable in the UI.
+Combo routing is opt-in. The Combos tab is always visible, and the switch in
+its header decides whether saved combos take part in routing. Keeping the
+interface permanent means an operator who turns routing off can always return
+to the same control to turn it back on.
 
 ## Usage
 
@@ -30,26 +26,16 @@ curl -X POST http://localhost:8080/api/config/combos-enabled \
 # { "success": true, "enabled": true, "source": "file", "effective": true }
 ```
 
-`source` reports where the value in force comes from — `env`, `file` or
-`default`. `effective` is the value after the write, which differs from the
-requested one exactly when an environment variable overrides it.
-
-### From the environment
-
-`BETTER_CCFLARE_SHOW_COMBOS` is legacy. It is read once, at boot, when the
-config field is absent — so an install that was using it keeps behaving the
-same — and is never consulted again.
-
-It does not override the switch, deliberately. A control the environment can
-veto has to be drawn disabled with an explanation, or it accepts a click and
-silently does nothing; the switch owns the setting instead.
+`source` reports whether the value comes from the config `file` or the built-in
+`default`. `effective` is the value confirmed by the server after the write.
 
 ## Upgrading
 
 An install that already has combos configured adopts enabled on first boot,
-with a line in the startup log — as does one that had `BETTER_CCFLARE_SHOW_COMBOS`
-set. Upgrading therefore keeps serving exactly the routing it was serving
-before; the opt-in default only applies to installs with neither.
+with a line in the startup log. It also adopts the historically permissive
+fallthrough into the normal account pool unless the config field or the legacy
+disable-fallback variable already records a choice. New installs keep both the
+opt-in routing default and the safer blocked-fallback default.
 
 ## Implementation Details
 
@@ -57,9 +43,8 @@ before; the opt-in default only applies to installs with neither.
   (`Config#getCombosEnabled`)
 - **Routing**: read by the account selector — this is what makes the switch
   real rather than cosmetic
-- **Backend**: `GET`/`POST /api/config/combos-enabled`; `/api/features` reports
-  `showCombos` from the same setting, so the tab and routing can no longer
-  disagree
+- **Backend**: `GET`/`POST /api/config/combos-enabled` controls routing only
+- **Dashboard**: the Combos route and navigation item are permanent
 - **Adoption**: `Config#adoptLegacyRoutingSettings` at server start; writes the
   field once, so a later deliberate off is never undone
 - The combos API endpoints (`/api/combos`, `/api/families`, …) remain reachable

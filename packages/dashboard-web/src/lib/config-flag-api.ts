@@ -3,7 +3,7 @@ import { api } from "../api";
 /**
  * Adapter for the on/off config settings that share one contract:
  *
- *   GET  <path>                  -> { enabled: boolean, source: "env"|"file"|"default" }
+ *   GET  <path>                  -> { enabled: boolean, source: "file"|"default" }
  *   POST <path>  { enabled }     -> { success, enabled, source, effective }
  *
  * `source` says whether anyone has set the value yet ("file") or it is still
@@ -43,8 +43,7 @@ export async function fetchConfigFlag(path: string): Promise<ConfigFlag> {
 }
 
 /**
- * Writes a flag and returns what is in force afterwards, so the caller can
- * tell the difference between "saved" and "saved but an env var still wins".
+ * Writes a flag and returns the value confirmed by the server afterwards.
  */
 export async function saveConfigFlag(
 	path: string,
