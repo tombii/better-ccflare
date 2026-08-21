@@ -239,6 +239,36 @@ describe("force_account_model refusal — ordering against capacity answers", ()
 		expect(error.code).toBe("force_account_model_no_account");
 	});
 
+	it("is not outranked by the cooldown sweep behind the pool_exhausted answer", async () => {
+		// `pool_exhausted` is built from a *raw* account sweep — it re-reads every
+		// account of the provider straight from the DB, with no compatibility
+		// filter, and always emits a `Retry-After`. So an account that can never
+		// serve this model, merely because it happens to be on cooldown, is
+		// enough to produce a concrete retry time. That answer must stay behind
+		// the refusal: the wait it advertises would expire and change nothing.
+		const account = makeAccount({
+			id: "codex-1",
+			name: "codex-account",
+			provider: "codex",
+			rate_limited_until: Date.now() + 30 * 60 * 1000,
+		});
+		const ctx = makeContext([account]);
+
+		const response = await handleProxy(
+			makeRequest(),
+			new URL("https://proxy.local/v1/messages"),
+			ctx,
+		);
+
+		expect(response.status).toBe(503);
+		expect(response.headers.get("Retry-After")).toBeNull();
+
+		const body = (await response.json()) as Record<string, unknown>;
+		const error = body.error as Record<string, unknown>;
+		expect(error.code).toBe("force_account_model_no_account");
+		expect(error.type).not.toBe("pool_exhausted");
+	});
+
 	it("beats the generic pool_exhausted 503 when throttling is off", async () => {
 		const account = makeAccount({ paused: true });
 		const ctx = makeContext([account]);

@@ -26,7 +26,7 @@ import {
 	isAccountExhaustedForModel,
 	type ModelFamilyExhaustionInfo,
 } from "./model-capacity";
-import type { ProxyContext } from "./proxy-types";
+import { isInternalProbe, type ProxyContext } from "./proxy-types";
 
 const log = new Logger("AccountSelector");
 
@@ -526,14 +526,24 @@ export async function selectAccountsForRequest(
 					// account that can never serve this model no matter how long
 					// the caller waits.
 					//
-					// Internal auto-refresh probes are not exempted. They pick a
-					// model from the account's own listing, so the check passes
-					// for them anyway, and an exemption keyed on a header any
-					// client can set would be a hole in the rule rather than a
-					// carve-out for us.
+					// Internal probes ARE exempted, and have to be. The
+					// auto-refresh scheduler sends a compiled-in list of Claude
+					// model ids to whatever account it is probing, so a Codex
+					// account's own probe fails this check by construction —
+					// and a probe answered with a refusal counts as a refresh
+					// failure, which is how a perfectly healthy account would
+					// end up paused with pause_reason='failure_threshold'.
+					//
+					// The exemption is keyed on `isInternalProbe`, which
+					// verifies the internal probe secret, and not on the
+					// bypass-session header a client can set. The probe is also
+					// not a client asking for a model: it exists to touch the
+					// endpoint and observe what comes back, so judging it by
+					// what the caller "asked for" is a category error.
 					if (
 						model &&
 						isForceAccountModelEnabled(ctx) &&
+						!isInternalProbe(meta.headers, ctx) &&
 						!accountServesModel(forcedAccount, model)
 					) {
 						log.warn(

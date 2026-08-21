@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
+import { CLAUDE_MODEL_IDS } from "@better-ccflare/core";
 import type {
 	Account,
 	ComboWithSlots,
@@ -9,7 +10,10 @@ import {
 	getComboSlotInfo,
 	selectAccountsForRequest,
 } from "../account-selector";
-import type { ProxyContext } from "../proxy-types";
+import {
+	INTERNAL_PROBE_SECRET_HEADER,
+	type ProxyContext,
+} from "../proxy-types";
 
 // "Force account model" is a promise about the model, not about the account:
 // the request may move between accounts freely, and may never be served by an
@@ -61,6 +65,7 @@ function makeCtx(opts: {
 	accounts: Account[];
 	forceAccountModel: boolean;
 	combo?: ComboWithSlots | null;
+	internalProbeSecret?: string;
 }) {
 	const getActiveComboForFamily = mock(async () => opts.combo ?? null);
 	const ctx = {
@@ -77,6 +82,7 @@ function makeCtx(opts: {
 			getForceAccountModel: () => opts.forceAccountModel,
 			getCombosEnabled: () => true,
 		},
+		internalProbeSecret: opts.internalProbeSecret,
 	} as unknown as ProxyContext;
 	return { ctx, getActiveComboForFamily };
 }
@@ -270,5 +276,86 @@ describe("selectAccountsForRequest — force account model, forced-account heade
 		);
 
 		expect(result.map((a) => a.id)).toEqual(["codex-1"]);
+	});
+});
+
+/**
+ * The auto-refresh scheduler is not a client asking for a model. It sends a
+ * compiled-in list of Claude model ids to whatever account it is probing —
+ * including Codex accounts — because its job is to touch the endpoint and read
+ * what comes back, not to deliver a caller's choice. Judging it by model
+ * compatibility is therefore a category error, and an expensive one: a refused
+ * probe counts as a refresh failure, and enough of those pause a perfectly
+ * healthy account with pause_reason='failure_threshold'.
+ *
+ * The exemption is keyed on `isInternalProbe`, which checks the process-local
+ * probe secret. A client that copies the marker header out of a log gets
+ * nothing, so this is a carve-out for us rather than a hole in the rule.
+ */
+describe("selectAccountsForRequest — force account model, internal probes", () => {
+	const SECRET = "probe-secret";
+
+	function probeMeta(accountId: string, secret: string | null): RequestMeta {
+		const headers = new Headers({
+			"x-better-ccflare-account-id": accountId,
+			"x-better-ccflare-auto-refresh": "true",
+		});
+		if (secret !== null) {
+			headers.set(INTERNAL_PROBE_SECRET_HEADER, secret);
+		}
+		return { ...makeRequestMeta(), headers };
+	}
+
+	it("lets a secret-verified probe reach an account the model does not match", async () => {
+		clearCodexModelCacheForTests();
+		const { ctx } = makeCtx({
+			accounts: [claudeAccount, codexAccount],
+			forceAccountModel: true,
+			internalProbeSecret: SECRET,
+		});
+
+		const result = await selectAccountsForRequest(
+			probeMeta("codex-1", SECRET),
+			ctx,
+			CLAUDE_MODEL_IDS.HAIKU_4_5,
+		);
+
+		// The probe reaches the Codex account it was aimed at. Refusing here is
+		// what would pause it.
+		expect(result.map((a) => a.id)).toEqual(["codex-1"]);
+	});
+
+	it("refuses a forged marker that cannot produce the secret", async () => {
+		clearCodexModelCacheForTests();
+		const { ctx } = makeCtx({
+			accounts: [claudeAccount, codexAccount],
+			forceAccountModel: true,
+			internalProbeSecret: SECRET,
+		});
+
+		const result = await selectAccountsForRequest(
+			probeMeta("codex-1", "not-the-secret"),
+			ctx,
+			CLAUDE_MODEL_IDS.HAIKU_4_5,
+		);
+
+		expect(result).toEqual([]);
+	});
+
+	it("refuses a marker sent with no secret at all", async () => {
+		clearCodexModelCacheForTests();
+		const { ctx } = makeCtx({
+			accounts: [claudeAccount, codexAccount],
+			forceAccountModel: true,
+			internalProbeSecret: SECRET,
+		});
+
+		const result = await selectAccountsForRequest(
+			probeMeta("codex-1", null),
+			ctx,
+			CLAUDE_MODEL_IDS.HAIKU_4_5,
+		);
+
+		expect(result).toEqual([]);
 	});
 });
