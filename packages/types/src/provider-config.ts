@@ -19,6 +19,7 @@ export const PROVIDER_NAMES = {
 	XAI: "xai",
 	OLLAMA: "ollama",
 	OLLAMA_CLOUD: "ollama-cloud",
+	MUSE_SPARK: "muse-spark",
 } as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
@@ -150,6 +151,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: false,
 		supportsOAuth: false,
 		defaultEndpoint: "https://ollama.com",
+	},
+	[PROVIDER_NAMES.MUSE_SPARK]: {
+		requiresSessionTracking: false, // Muse Spark (Meta Model API) is pay-as-you-go
+		supportsUsageTracking: false, // No usage-tracking polling API
+		supportsOAuth: false, // Muse Spark uses API key (bearer token) authentication
+		defaultEndpoint: "https://api.meta.ai",
 	},
 } as const satisfies Record<ProviderName, ProviderConfig>;
 

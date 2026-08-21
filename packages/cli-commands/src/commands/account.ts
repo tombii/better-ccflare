@@ -52,7 +52,8 @@ export interface AddAccountOptionsWithAdapter {
 		| "qwen"
 		| "xai"
 		| "ollama"
-		| "ollama-cloud";
+		| "ollama-cloud"
+		| "muse-spark";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string | string[] };
@@ -85,7 +86,8 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "qwen"
 		| "xai"
 		| "ollama"
-		| "ollama-cloud";
+		| "ollama-cloud"
+		| "muse-spark";
 }
 
 /**
@@ -1199,6 +1201,10 @@ export async function addAccount(
 				label: "Ollama Cloud (ollama.com, API key required)",
 				value: "ollama-cloud",
 			},
+			{
+				label: "Meta Model API / Muse Spark (API key)",
+				value: "muse-spark",
+			},
 		]));
 
 	if (mode === "bedrock") {
@@ -1706,6 +1712,49 @@ export async function addAccount(
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: Ollama Cloud");
 		console.log(`Endpoint: https://ollama.com/api/chat`);
+	} else if (mode === "muse-spark") {
+		const apiKey = await adapter.input(
+			"\nEnter your Meta Model API (Muse Spark) API key: ",
+		);
+
+		if (!apiKey) {
+			throw new Error("API key is required for Muse Spark");
+		}
+
+		// Get custom endpoint (optional — defaults to the official Meta API)
+		const endpoint =
+			customEndpoint ||
+			(await adapter.input(
+				"\nEnter API endpoint URL (press Enter for default https://api.meta.ai): ",
+			)) ||
+			undefined;
+
+		const priority =
+			providedPriority ??
+			(await adapter.input(
+				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+			));
+
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+		);
+
+		await createAnthropicCompatibleAccount(
+			dbOps,
+			name,
+			apiKey,
+			typeof priority === "string"
+				? parseInt(priority, 10) || 0
+				: priority || 0,
+			endpoint,
+			finalModelMappings,
+			undefined,
+			"muse-spark",
+		);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: Muse Spark (Meta Model API)");
+		console.log(`Endpoint: ${endpoint || "https://api.meta.ai"}`);
 	} else {
 		// Handle OAuth accounts (Anthropic)
 		const flowResult = await oauthFlow.begin({
@@ -1814,7 +1863,8 @@ export async function getAccountsList(
 					account.provider === "bedrock" ||
 					account.provider === "openrouter" ||
 					account.provider === "codex" ||
-					account.provider === "xai"
+					account.provider === "xai" ||
+					account.provider === "muse-spark"
 				) {
 					return account.provider;
 				}

@@ -352,6 +352,24 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleAddMuseSparkAccount = async (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
+	}) => {
+		try {
+			await api.addMuseSparkAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
 	const handleRemoveAccount = (account: Account) => {
 		setConfirmDelete({
 			show: true,
@@ -624,6 +642,7 @@ export function AccountsTab() {
 							onAddOpenAIAccount={handleAddOpenAIAccount}
 							onAddOllamaAccount={handleAddOllamaAccount}
 							onAddOllamaCloudAccount={handleAddOllamaCloudAccount}
+							onAddMuseSparkAccount={handleAddMuseSparkAccount}
 							onCancel={() => {
 								setAdding(false);
 								setActionError(null);

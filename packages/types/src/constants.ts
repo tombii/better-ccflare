@@ -36,6 +36,7 @@ export const ACCOUNT_MODES = {
 	NANOGPT: "nanogpt", // NanoGPT provider (API key)
 	XAI: "xai", // xAI/Grok account (Grok CLI OAuth)
 	OLLAMA: "ollama", // Ollama local provider (v0.14.0+, no API key required)
+	MUSE_SPARK: "muse-spark", // Muse Spark / Meta Model API provider (API key)
 } as const;
 
 export type AccountMode = (typeof ACCOUNT_MODES)[keyof typeof ACCOUNT_MODES];
@@ -73,6 +74,8 @@ export function getProviderFromMode(mode: AccountMode): ProviderName {
 			return PROVIDER_NAMES.XAI;
 		case ACCOUNT_MODES.OLLAMA:
 			return PROVIDER_NAMES.OLLAMA;
+		case ACCOUNT_MODES.MUSE_SPARK:
+			return PROVIDER_NAMES.MUSE_SPARK;
 		default:
 			return PROVIDER_NAMES.ANTHROPIC;
 	}

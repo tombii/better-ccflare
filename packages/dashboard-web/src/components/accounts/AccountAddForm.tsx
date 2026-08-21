@@ -114,6 +114,13 @@ interface AccountAddFormProps {
 		priority: number;
 		modelMappings?: { [key: string]: string };
 	}) => Promise<void>;
+	onAddMuseSparkAccount: (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
+	}) => Promise<void>;
 	onCancel: () => void;
 	onSuccess: () => void;
 	onError: (error: string) => void;
@@ -134,6 +141,7 @@ export function AccountAddForm({
 	onAddOpenRouterAccount,
 	onAddOllamaAccount,
 	onAddOllamaCloudAccount,
+	onAddMuseSparkAccount,
 	onCancel,
 	onSuccess,
 	onError,
@@ -159,7 +167,8 @@ export function AccountAddForm({
 			| "codex"
 			| "qwen"
 			| "ollama"
-			| "ollama-cloud",
+			| "ollama-cloud"
+			| "muse-spark",
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
@@ -901,6 +910,44 @@ export function AccountAddForm({
 			return;
 		}
 
+		if (newAccount.mode === "muse-spark") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for Muse Spark");
+				return;
+			}
+			const modelMappings: { [key: string]: string } = {};
+			if (newAccount.opusModel) modelMappings.opus = newAccount.opusModel;
+			if (newAccount.sonnetModel) modelMappings.sonnet = newAccount.sonnetModel;
+			if (newAccount.haikuModel) modelMappings.haiku = newAccount.haikuModel;
+
+			await onAddMuseSparkAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				priority: newAccount.priority,
+				customEndpoint: newAccount.customEndpoint || undefined,
+				modelMappings:
+					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
+			});
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
+				crossRegionMode: "geographic",
+				customBedrockModel: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
 		// Step 1: Initialize OAuth flow for Max/Console accounts
 		const { authUrl, sessionId } = await onAddAccount(accountParams);
 		setSessionId(sessionId);
@@ -1021,7 +1068,8 @@ export function AccountAddForm({
 									| "codex"
 									| "qwen"
 									| "ollama"
-									| "ollama-cloud",
+									| "ollama-cloud"
+									| "muse-spark",
 							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
@@ -1055,6 +1103,9 @@ export function AccountAddForm({
 								<SelectItem value="ollama">Ollama (v0.14.0+, local)</SelectItem>
 								<SelectItem value="ollama-cloud">
 									Ollama Cloud (ollama.com)
+								</SelectItem>
+								<SelectItem value="muse-spark">
+									Muse Spark / Meta Model API (API Key)
 								</SelectItem>
 							</SelectContent>
 						</Select>
@@ -1919,6 +1970,102 @@ export function AccountAddForm({
 												})
 											}
 											placeholder="claude-3-haiku-20240307 (default)"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
+						</>
+					)}
+					{newAccount.mode === "muse-spark" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="apiKey">Muse Spark API Key</Label>
+								<Input
+									id="apiKey"
+									type="password"
+									value={newAccount.apiKey}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											apiKey: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter your Meta Model API (Muse Spark) key"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="customEndpoint">
+									Custom Endpoint URL (Optional)
+								</Label>
+								<Input
+									id="customEndpoint"
+									type="url"
+									value={newAccount.customEndpoint}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											customEndpoint: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="https://api.meta.ai"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label>Model Mappings (Optional)</Label>
+								<p className="text-xs text-muted-foreground mb-2">
+									Map Anthropic model names to Muse Spark models. Leave empty to
+									use defaults.
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="opusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="opusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="muse-spark-1.2 (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="sonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="sonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="muse-spark-1.2 (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="haikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="haikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="muse-spark-1.2 (default)"
 											className="mt-1"
 										/>
 									</div>

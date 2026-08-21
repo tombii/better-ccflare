@@ -25,6 +25,15 @@ export {
 } from "./codex/index";
 export { KiloProvider } from "./kilo/index";
 export { MinimaxProvider } from "./minimax/index";
+export {
+	isMuseSparkMessagesPath,
+	isMuseSparkModel,
+	MUSE_SPARK_DEFAULT_ENDPOINT,
+	MUSE_SPARK_DEFAULT_MODEL,
+	MUSE_SPARK_MODEL_IDS,
+	MUSE_SPARK_MODEL_MAPPINGS,
+	MuseSparkProvider,
+} from "./muse-spark/index";
 export { NanoGPTProvider } from "./nanogpt/index";
 export { OllamaCloudProvider, OllamaProvider } from "./ollama/index";
 export { OpenAICompatibleProvider } from "./openai/index";

@@ -361,7 +361,8 @@ export interface AccountListItem {
 		| "qwen"
 		| "xai"
 		| "ollama"
-		| "ollama-cloud";
+		| "ollama-cloud"
+		| "muse-spark";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
