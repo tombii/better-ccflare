@@ -2412,29 +2412,6 @@ class API extends HttpClient {
 		}
 	}
 
-	async getFeatures(): Promise<{ showCombos: boolean }> {
-		const startTime = Date.now();
-		const url = "/api/features";
-
-		this.logger.debug(`→ GET ${url}`);
-
-		try {
-			const response = await this.get<{
-				success: boolean;
-				data: { showCombos: boolean };
-			}>(url);
-			const duration = Date.now() - startTime;
-			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
-			return response.data;
-		} catch (error) {
-			const duration = Date.now() - startTime;
-			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
-				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined,
-			});
-			throw error;
-		}
-	}
 	async getAlerts(limit = 100): Promise<{
 		alerts: import("@better-ccflare/types").AlertEvent[];
 		unacknowledgedCount: number;

@@ -6,6 +6,7 @@ export {
 	getComboSlotInfo,
 	getModelFamilyExhaustionInfo,
 	getXaiConvId,
+	isComboSessionFallbackDisabled,
 	type ModelFamilyExhaustionInfo,
 	recordXaiAffinitySuccess,
 	resolveEffectiveModel,

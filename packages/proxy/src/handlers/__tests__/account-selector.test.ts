@@ -400,7 +400,8 @@ describe("selectAccountsForRequest — combo routing", () => {
 	});
 
 	it("does not fall back to SessionStrategy when all combo slots are unavailable and combo fallback is disabled", async () => {
-		process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = "true";
+		// Set through the config, not the environment: the variable is adopted
+		// into the config once at boot and no longer decides at request time.
 		const rateLimitedAcc = makeAccount({
 			id: "acc-1",
 			rate_limited_until: Date.now() + 3_600_000,
@@ -427,6 +428,7 @@ describe("selectAccountsForRequest — combo routing", () => {
 			},
 			refreshInFlight: new Map(),
 			asyncWriter: { enqueue: mock(() => {}) },
+			config: { getComboSessionFallback: () => false },
 		} as unknown as ProxyContext;
 
 		const meta = makeRequestMeta();

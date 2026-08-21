@@ -404,5 +404,58 @@ export function createConfigHandlers(
 				effective: config.getModelScopedCapacityRouting(),
 			});
 		},
+
+		getCombosEnabled: (): Response => {
+			return jsonResponse({
+				enabled: config.getCombosEnabled(),
+				source: config.getCombosEnabledSource(),
+			});
+		},
+
+		setCombosEnabled: async (req: Request): Promise<Response> => {
+			const body = await req.json();
+			if (typeof body.enabled !== "boolean") {
+				return errorResponse(
+					BadRequest(
+						"Invalid combos payload: expected 'enabled' to be a boolean",
+					),
+				);
+			}
+			config.setCombosEnabled(body.enabled);
+			// Same shape as setModelCapacityRouting: report the post-set EFFECTIVE
+			// value, so the dashboard shows what the server confirmed rather than
+			// what it asked for.
+			return jsonResponse({
+				success: true,
+				enabled: body.enabled,
+				source: config.getCombosEnabledSource(),
+				effective: config.getCombosEnabled(),
+			});
+		},
+
+		getComboSessionFallback: (): Response => {
+			return jsonResponse({
+				enabled: config.getComboSessionFallback(),
+				source: config.getComboSessionFallbackSource(),
+			});
+		},
+
+		setComboSessionFallback: async (req: Request): Promise<Response> => {
+			const body = await req.json();
+			if (typeof body.enabled !== "boolean") {
+				return errorResponse(
+					BadRequest(
+						"Invalid combo session fallback payload: expected 'enabled' to be a boolean",
+					),
+				);
+			}
+			config.setComboSessionFallback(body.enabled);
+			return jsonResponse({
+				success: true,
+				enabled: body.enabled,
+				source: config.getComboSessionFallbackSource(),
+				effective: config.getComboSessionFallback(),
+			});
+		},
 	};
 }

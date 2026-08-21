@@ -24,6 +24,7 @@ import {
 	getModelFamilyExhaustionInfo,
 	getUsageThrottleUntil,
 	interceptAndModifyRequest,
+	isComboSessionFallbackDisabled,
 	isInternalProbe,
 	isRefreshTokenLikelyExpired,
 	type ProxyContext,
@@ -58,11 +59,6 @@ import {
 export type { ProxyContext } from "./handlers";
 
 const log = new Logger("Proxy");
-
-function isComboSessionFallbackDisabled(): boolean {
-	const value = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
-	return /^(1|true|yes|on)$/i.test(value ?? "");
-}
 
 function createComboSessionFallbackDisabledResponse(
 	comboName: string,
@@ -420,7 +416,7 @@ export async function handleProxy(
 
 	// 7. Handle no accounts case
 	if (accounts.length === 0) {
-		if (requestMeta.comboName && isComboSessionFallbackDisabled()) {
+		if (requestMeta.comboName && isComboSessionFallbackDisabled(ctx)) {
 			return await returnComboSessionFallbackDisabled(requestMeta.comboName, 0);
 		}
 
@@ -702,9 +698,9 @@ export async function handleProxy(
 	//     fall back to normal SessionStrategy routing (REQ-14)
 	let fallbackAccounts: Account[] | null = null;
 	if (filteredComboInfo?.comboName) {
-		if (isComboSessionFallbackDisabled()) {
+		if (isComboSessionFallbackDisabled(ctx)) {
 			log.warn(
-				`All combo slots failed for combo "${filteredComboInfo.comboName}", session fallback disabled by CCFLARE_DISABLE_COMBO_SESSION_FALLBACK`,
+				`All combo slots failed for combo "${filteredComboInfo.comboName}", session fallback disabled by the Combo Session Fallback setting (Settings → Advanced)`,
 			);
 			return await returnComboSessionFallbackDisabled(
 				filteredComboInfo.comboName,

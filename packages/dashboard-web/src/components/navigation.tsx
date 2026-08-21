@@ -47,7 +47,7 @@ const _navItems: NavItem[] = [
 	{ label: "Insights", icon: Lightbulb, path: "/insights" },
 	{ label: "Requests", icon: Activity, path: "/requests" },
 	{ label: "Accounts", icon: Users, path: "/accounts" },
-	// { label: "Combos", icon: Zap, path: "/combos" },
+	{ label: "Combos", icon: Zap, path: "/combos" },
 	{ label: "Agents", icon: Bot, path: "/agents" },
 	{ label: "API Keys", icon: Key, path: "/api-keys" },
 	{ label: "Logs", icon: FileText, path: "/logs" },
@@ -56,13 +56,9 @@ const _navItems: NavItem[] = [
 
 interface NavigationProps {
 	onLogout?: () => void;
-	showCombos?: boolean;
 }
 
-export function Navigation({
-	onLogout,
-	showCombos = false,
-}: NavigationProps = {}) {
+export function Navigation({ onLogout }: NavigationProps = {}) {
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 	const [updateStatus, setUpdateStatus] = useState<
 		"idle" | "checking" | "available" | "current" | "error"
@@ -74,7 +70,7 @@ export function Navigation({
 	const location = useLocation();
 	const isMountedRef = useRef(true);
 
-	// Build nav items dynamically based on feature flags
+	// Build nav items with the current alert badge
 	const navItems: NavItem[] = useMemo(() => {
 		const baseItems: NavItem[] = [
 			{ label: "Overview", icon: LayoutDashboard, path: "/" },
@@ -91,10 +87,7 @@ export function Navigation({
 			{ label: "Usage History", icon: History, path: "/usage-history" },
 		];
 
-		// Add combos item if feature is enabled
-		if (showCombos) {
-			baseItems.push({ label: "Combos", icon: Zap, path: "/combos" });
-		}
+		baseItems.push({ label: "Combos", icon: Zap, path: "/combos" });
 
 		// Add remaining items
 		baseItems.push(
@@ -105,7 +98,7 @@ export function Navigation({
 		);
 
 		return baseItems;
-	}, [showCombos, unacknowledgedCount]);
+	}, [unacknowledgedCount]);
 
 	// Cleanup on unmount to prevent memory leaks
 	useEffect(() => {

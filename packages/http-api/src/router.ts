@@ -79,7 +79,6 @@ import {
 	createHeapStatsHandler,
 	createRssHandler,
 } from "./handlers/debug";
-import { createFeaturesHandler } from "./handlers/features";
 import { createHealthHandler } from "./handlers/health";
 import {
 	createAnomalyInsightsHandler,
@@ -243,7 +242,6 @@ export class APIRouter {
 		const cleanupHandler = createCleanupHandler(dbOps, config);
 		const systemInfoHandler = createSystemInfoHandler();
 		const versionCheckHandler = createVersionCheckHandler();
-		const featuresHandler = createFeaturesHandler();
 
 		// Debug/profiling handlers
 		const heapStatsHandler = createHeapStatsHandler();
@@ -416,10 +414,21 @@ export class APIRouter {
 		this.handlers.set("POST:/api/config/model-capacity-routing", (req) =>
 			configHandlers.setModelCapacityRouting(req),
 		);
+		this.handlers.set("GET:/api/config/combos-enabled", () =>
+			configHandlers.getCombosEnabled(),
+		);
+		this.handlers.set("POST:/api/config/combos-enabled", (req) =>
+			configHandlers.setCombosEnabled(req),
+		);
+		this.handlers.set("GET:/api/config/combo-session-fallback", () =>
+			configHandlers.getComboSessionFallback(),
+		);
+		this.handlers.set("POST:/api/config/combo-session-fallback", (req) =>
+			configHandlers.setComboSessionFallback(req),
+		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
 		this.handlers.set("GET:/api/version/check", () => versionCheckHandler());
-		this.handlers.set("GET:/api/features", () => featuresHandler());
 		this.handlers.set("GET:/api/logs/stream", (req) => logsStreamHandler(req));
 		this.handlers.set("GET:/api/logs/history", () => logsHistoryHandler());
 		this.handlers.set("GET:/api/analytics", (_req, url) => {

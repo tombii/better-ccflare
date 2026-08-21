@@ -339,6 +339,38 @@ const usagePollingRetryTimeouts = new Map<string, NodeJS.Timeout>();
 // SSL/TLS configuration
 let tlsEnabled = false;
 
+/**
+ * Adopt, once, what the combo environment variables used to decide.
+ *
+ * The switches for combo routing and its session fallback now live in the
+ * dashboard and are read from the config file only — an environment variable
+ * that could override them would force the UI to draw a control that accepts a
+ * click and does nothing. So the old variables are read here, at boot, written
+ * into the file, and never consulted again.
+ *
+ * The same pass covers an install that has combos but never set the variable:
+ * it was routing through them, and an upgrade must not stop that in silence.
+ *
+ * Failure is not fatal: the settings stay at their defaults and the operator
+ * can set them in the dashboard, which is the whole point of moving them there.
+ */
+async function adoptLegacyRoutingSettings(
+	config: Config,
+	dbOps: DatabaseOperations,
+) {
+	const log = new Logger("Startup");
+	try {
+		const combos = await dbOps.listCombos();
+		for (const note of config.adoptLegacyRoutingSettings(combos.length > 0)) {
+			log.info(note);
+		}
+	} catch (err) {
+		log.warn(
+			`Could not adopt the legacy combo settings: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+}
+
 // Startup maintenance (one-shot): cleanup only (compaction available via API endpoint)
 async function runStartupMaintenance(dbOps: DatabaseOperations) {
 	const log = new Logger("StartupMaintenance");
@@ -774,6 +806,10 @@ export default async function startServer(options?: {
 
 	DatabaseFactory.initialize(undefined, runtime);
 	const dbOps = await DatabaseFactory.getInstanceAsync();
+
+	// Before anything can route: adopt the combo behaviour this install was
+	// already running, so upgrading is never a silent routing change.
+	await adoptLegacyRoutingSettings(config, dbOps);
 
 	// One-time migration: promote pre-existing DBs from auto_vacuum=NONE to
 	// INCREMENTAL. Fresh DBs created since ensureSchema() started issuing

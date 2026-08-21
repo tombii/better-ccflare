@@ -121,6 +121,8 @@ export interface ConfigData {
 	usage_throttling_five_hour_enabled?: boolean;
 	usage_throttling_weekly_enabled?: boolean;
 	model_scoped_capacity_routing?: ModelScopedCapacityRoutingMode;
+	combos_enabled?: boolean;
+	combo_session_fallback?: boolean;
 	provider_model_default_overrides?: ProviderModelDefaultOverrides;
 	agent_frontmatter_model_fallback?: boolean;
 	model_catalog_oauth_refresh_enabled?: boolean;
@@ -654,6 +656,72 @@ export class Config extends EventEmitter {
 	}
 
 	/**
+	 * Resolves the routing switches the dashboard owns: file > default, with
+	 * no environment layer at all.
+	 *
+	 * A switch on screen that an
+	 * environment variable can override has to be drawn disabled, with an
+	 * explanation, or it accepts a click and silently does nothing — and a
+	 * control that lies is worse than no control. The legacy variables are
+	 * still honoured, but once, as a migration into this file (see
+	 * adoptLegacyRoutingSettings) rather than as a permanent veto.
+	 */
+	private resolveFlag(
+		fileValue: boolean | undefined,
+		defaultValue: boolean,
+	): { value: boolean; source: "file" | "default" } {
+		if (typeof fileValue === "boolean") {
+			return { value: fileValue, source: "file" };
+		}
+		return { value: defaultValue, source: "default" };
+	}
+
+	/**
+	 * One-time adoption of legacy combo routing behavior and the remaining
+	 * disable-fallback variable, so upgrades preserve existing behavior.
+	 *
+	 * Runs at boot, only for fields absent from the config file, and writes
+	 * what it decides — so it happens once and a later deliberate change is
+	 * never undone. Returns one line per adoption for the caller to log:
+	 * silently rewriting someone's routing config, even faithfully, is the
+	 * kind of help nobody asked for.
+	 *
+	 * @param hasCombos whether any combo exists in the database
+	 */
+	adoptLegacyRoutingSettings(hasCombos: boolean): string[] {
+		const notes: string[] = [];
+
+		if (this.getCombosEnabledSource() === "default" && hasCombos) {
+			this.setCombosEnabled(true);
+			notes.push(
+				"combos enabled: this install already has combos, so the routing it was already doing is kept. Turn it off in the dashboard Combos tab",
+			);
+		}
+
+		if (this.getComboSessionFallbackSource() === "default") {
+			const raw = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
+			if (raw !== undefined && raw !== "") {
+				// The old variable is a DISABLE flag, so it inverts into the
+				// positively-stored setting. Its permissive spelling is kept:
+				// narrowing it here would misread a `yes` that someone is
+				// relying on at the exact moment it is read for the last time.
+				const allowed = !/^(1|true|yes|on)$/i.test(raw);
+				this.setComboSessionFallback(allowed);
+				notes.push(
+					`combo session fallback ${allowed ? "allowed" : "blocked"}: adopted from CCFLARE_DISABLE_COMBO_SESSION_FALLBACK, which no longer takes effect on its own — the switch now lives in Settings → Advanced`,
+				);
+			} else if (hasCombos) {
+				this.setComboSessionFallback(true);
+				notes.push(
+					"combo session fallback allowed: this install already has combos, so its historical fallthrough to the normal account pool is kept. Block it in Settings → Advanced if the combo must be exclusive",
+				);
+			}
+		}
+
+		return notes;
+	}
+
+	/**
 	 * Resolve the effective load-balancing strategy plus its source, using the
 	 * same env > file > default precedence getStrategy() has always used.
 	 * Backs both getStrategy() and getStrategySource() so they cannot drift.
@@ -706,6 +774,57 @@ export class Config extends EventEmitter {
 			);
 		}
 		this.set("model_scoped_capacity_routing", mode);
+	}
+
+	/**
+	 * Whether combos take part in routing at all.
+	 *
+	 * The account selector reads this setting, while the dashboard keeps the
+	 * Combos tab permanently visible so the operator can always change it.
+	 *
+	 * Defaults to false: combos are opt-in. An install that already has combos
+	 * adopts true on boot, because upgrading must not silently change anyone's
+	 * routing.
+	 */
+	getCombosEnabled(): boolean {
+		return this.resolveFlag(this.data.combos_enabled, false).value;
+	}
+
+	/** "file" once anyone has set it, "default" while nobody has. */
+	getCombosEnabledSource(): "file" | "default" {
+		return this.resolveFlag(this.data.combos_enabled, false).source;
+	}
+
+	setCombosEnabled(value: boolean): void {
+		this.set("combos_enabled", value);
+	}
+
+	/**
+	 * Whether a combo-routed request may fall through to normal SessionStrategy
+	 * routing once every slot in its combo has failed.
+	 *
+	 * Defaults to false — the fallthrough is blocked. Someone who built a combo
+	 * named the accounts that may serve a family; spilling out of that list when
+	 * they are all busy answers a question nobody asked, and it is how a request
+	 * for one provider ends up served by another. Allowing it stays one click
+	 * away for whoever wants the older, looser behaviour.
+	 *
+	 * Stored positively — the switch says whether the fallthrough is allowed —
+	 * because a control labelled by what it permits beats a double negative on
+	 * screen. The old CCFLARE_DISABLE_COMBO_SESSION_FALLBACK inverts into it,
+	 * once, at boot (adoptLegacyRoutingSettings).
+	 */
+	getComboSessionFallback(): boolean {
+		return this.resolveFlag(this.data.combo_session_fallback, false).value;
+	}
+
+	/** "file" once anyone has set it, "default" while nobody has. */
+	getComboSessionFallbackSource(): "file" | "default" {
+		return this.resolveFlag(this.data.combo_session_fallback, false).source;
+	}
+
+	setComboSessionFallback(value: boolean): void {
+		this.set("combo_session_fallback", value);
 	}
 
 	getProviderModelDefaultOverrides(): ProviderModelDefaultOverrides {
@@ -943,6 +1062,8 @@ export class Config extends EventEmitter {
 				this.getUsageThrottlingFiveHourEnabled(),
 			usage_throttling_weekly_enabled: this.getUsageThrottlingWeeklyEnabled(),
 			model_scoped_capacity_routing: this.getModelScopedCapacityRouting(),
+			combos_enabled: this.getCombosEnabled(),
+			combo_session_fallback: this.getComboSessionFallback(),
 			agent_frontmatter_model_fallback: this.getAgentFrontmatterModelFallback(),
 			model_catalog_oauth_refresh_enabled:
 				this.getModelCatalogOAuthRefreshEnabled(),

@@ -7,6 +7,7 @@ import {
 	CardTitle,
 } from "../ui/card";
 import { Separator } from "../ui/separator";
+import { ConfigFlagDialog } from "./ConfigFlagDialog";
 import { ProviderModelDefaultsDialog } from "./ProviderModelDefaultsDialog";
 
 /**
@@ -33,6 +34,32 @@ const ADVANCED_SETTINGS_ITEMS: AdvancedSettingItem[] = [
 		description:
 			"Built-in fallback model per provider and Claude family, used only as a last resort.",
 		dialog: <ProviderModelDefaultsDialog />,
+	},
+	{
+		id: "combo-session-fallback",
+		title: "Combo Session Fallback",
+		description:
+			"Whether a combo whose slots have all failed may fall through to normal routing.",
+		dialog: (
+			<ConfigFlagDialog
+				title="Combo Session Fallback"
+				description="What happens when every slot in a combo has failed."
+				path="/api/config/combo-session-fallback"
+				switchLabel="Fall through to normal routing when a combo is exhausted"
+			>
+				<p>
+					Off by default: a combo names the accounts that may serve a family, so
+					when they have all failed the request stops there. It ends in a 503,
+					recorded as <code>combo_session_fallback_disabled</code>, instead of
+					being served by an account you did not choose — which is how a request
+					meant for one provider ends up on another.
+				</p>
+				<p>
+					Turn it on for the looser behaviour: once every slot has failed, the
+					request is retried against the whole account pool.
+				</p>
+			</ConfigFlagDialog>
+		),
 	},
 ];
 

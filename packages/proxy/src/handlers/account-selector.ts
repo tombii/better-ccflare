@@ -260,9 +260,33 @@ function isCapacityRoutingEnabled(ctx: ProxyContext): boolean {
 	return ctx.config?.getModelScopedCapacityRouting?.() === "exhausted";
 }
 
-function isComboSessionFallbackDisabled(): boolean {
-	const value = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
-	return /^(1|true|yes|on)$/i.test(value ?? "");
+/**
+ * Whether combos participate in routing. Reads `ctx.config` defensively, and
+ * treats an absent config as enabled — not as the feature's "off" default.
+ * The distinction matters: a missing config means there is no operator to ask
+ * (a caller or test that built a ProxyContext without one), and before this
+ * setting existed routing always consulted the database. Defaulting to "off"
+ * there would silently disable combo routing for such callers, which is the
+ * exact failure this switch is meant to prevent.
+ */
+function areCombosEnabled(ctx: ProxyContext): boolean {
+	return ctx.config?.getCombosEnabled?.() ?? true;
+}
+
+/**
+ * Whether a combo whose slots are all unavailable must stop instead of falling
+ * through to normal routing.
+ *
+ * Reads the config, and only the config: CCFLARE_DISABLE_COMBO_SESSION_FALLBACK
+ * is adopted into that config once at boot and never consulted again, so that
+ * the dashboard switch is the answer rather than one opinion among two.
+ *
+ * A context without a config means there is no operator to ask — a caller or
+ * test that never had one — and gets the historical looseness rather than the
+ * new default, since nobody chose the new default for them.
+ */
+export function isComboSessionFallbackDisabled(ctx: ProxyContext): boolean {
+	return !(ctx.config?.getComboSessionFallback?.() ?? true);
 }
 
 /**
@@ -544,8 +568,9 @@ export async function selectAccountsForRequest(
 	};
 
 	// Try combo-aware routing if a model is provided (skipped entirely when
-	// skipCombo is set — see the `options` doc above).
-	if (model && !options?.skipCombo) {
+	// skipCombo is set — see the `options` doc above, or when combos are
+	// switched off).
+	if (model && !options?.skipCombo && areCombosEnabled(ctx)) {
 		const family = getModelFamily(model);
 		if (family) {
 			const validFamilies: readonly string[] = [
@@ -655,11 +680,11 @@ export async function selectAccountsForRequest(
 					// All slots unavailable — fall back to normal routing. Combo state
 					// is deliberately left unset (never was set above) so this fallthrough
 					// is treated as ordinary, non-combo selection downstream.
-					if (isComboSessionFallbackDisabled()) {
+					if (isComboSessionFallbackDisabled(ctx)) {
 						setComboSlotInfo(meta, { comboName: combo.name, slots: [] });
 						meta.comboName = combo.name;
 						log.warn(
-							`All ${combo.slots.length} combo slots unavailable for ${combo.name}, session fallback disabled by CCFLARE_DISABLE_COMBO_SESSION_FALLBACK`,
+							`All ${combo.slots.length} combo slots unavailable for ${combo.name}, session fallback disabled by the Combo Session Fallback setting (Settings → Advanced)`,
 						);
 						return [];
 					}
