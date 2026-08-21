@@ -655,31 +655,10 @@ export class Config extends EventEmitter {
 	}
 
 	/**
-	 * Boolean sibling of resolveEnvFileSetting, for flags parsed by
-	 * parseEnabledEnvFlag. Kept separate because that helper is generic over
-	 * string unions, and a boolean is not one — sharing it would mean storing
-	 * flags as "true"/"false" strings just to satisfy the type.
-	 */
-	private resolveEnvFileFlag(
-		envValue: string | undefined,
-		fileValue: boolean | undefined,
-		defaultValue: boolean,
-	): { value: boolean; source: "env" | "file" | "default" } {
-		const fromEnv = parseEnabledEnvFlag(envValue);
-		if (fromEnv !== undefined) {
-			return { value: fromEnv, source: "env" };
-		}
-		if (typeof fileValue === "boolean") {
-			return { value: fileValue, source: "file" };
-		}
-		return { value: defaultValue, source: "default" };
-	}
-
-	/**
-	 * Same, for the routing switches the dashboard owns: file > default, with
+	 * Resolves the routing switches the dashboard owns: file > default, with
 	 * no environment layer at all.
 	 *
-	 * Deliberately not resolveEnvFileFlag. A switch on screen that an
+	 * A switch on screen that an
 	 * environment variable can override has to be drawn disabled, with an
 	 * explanation, or it accepts a click and silently does nothing — and a
 	 * control that lies is worse than no control. The legacy variables are

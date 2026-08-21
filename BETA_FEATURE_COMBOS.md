@@ -1,4 +1,4 @@
-# Beta Feature: Combos
+# Feature: Combos
 
 ## Overview
 
