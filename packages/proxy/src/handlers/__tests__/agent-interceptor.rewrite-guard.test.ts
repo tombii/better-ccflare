@@ -271,4 +271,107 @@ describe("interceptAndModifyRequest - rewrite guard integration", () => {
 		expect(result.appliedModel).toBe("claude-opus-model");
 		expect(result.modifiedBody).not.toBe(buffer);
 	});
+
+	// `force_account_model` is a second, independent veto on the same rewrite.
+	// The catalog guard asks "can this target be served?"; this one asks "is
+	// renaming allowed at all?" — and when the operator has said no, an agent
+	// preference is just one more way of sending a model other than the one
+	// that was asked for, exactly like a combo slot.
+	test("force account model on => no rewrite, agentUsed still set (header path)", async () => {
+		await dbOps.setAgentPreference("force-header-agent", "claude-opus-model");
+		const buffer = toArrayBuffer(createMockRequestBody());
+		const result = await interceptAndModifyRequest(
+			buffer,
+			dbOps,
+			new Headers({ "x-anthropic-agent-id": "force-header-agent" }),
+			{
+				// A catalog that *would* allow the rewrite, so the only thing
+				// stopping it is the setting under test.
+				getModelCatalog: async () =>
+					liveCatalog(["claude-3-5-sonnet-20241022", "claude-opus-model"]),
+				forceAccountModel: true,
+			},
+		);
+		expect(result.agentUsed).toBe("force-header-agent");
+		expect(result.appliedModel).toBe("claude-3-5-sonnet-20241022");
+		expect(result.originalModel).toBe("claude-3-5-sonnet-20241022");
+		expect(result.modifiedBody).toBe(buffer);
+	});
+
+	test("same preference and catalog with the setting off => rewrite proceeds", async () => {
+		await dbOps.setAgentPreference("force-header-agent", "claude-opus-model");
+		const buffer = toArrayBuffer(createMockRequestBody());
+		const result = await interceptAndModifyRequest(
+			buffer,
+			dbOps,
+			new Headers({ "x-anthropic-agent-id": "force-header-agent" }),
+			{
+				getModelCatalog: async () =>
+					liveCatalog(["claude-3-5-sonnet-20241022", "claude-opus-model"]),
+				forceAccountModel: false,
+			},
+		);
+		expect(result.appliedModel).toBe("claude-opus-model");
+		expect(result.modifiedBody).not.toBe(buffer);
+	});
+
+	test("force account model on => no rewrite (system-prompt path)", async () => {
+		writeAgent(
+			"force-agent.md",
+			"name: Force Agent\ndescription: test agent\nmodel: inherit",
+			"You are the force agent, a singular and unmistakable helper voice.",
+		);
+		await agentRegistry.registerWorkspace(tmpDir);
+		const agents = await agentRegistry.getAgents();
+		const agent = agents.find((a) => a.id.endsWith(":force-agent"));
+		expect(agent).toBeDefined();
+
+		await dbOps.setAgentPreference(
+			agent?.id ?? "force-agent",
+			"claude-opus-model",
+		);
+
+		const buffer = toArrayBuffer(
+			createMockRequestBody({
+				system:
+					"You are the force agent, a singular and unmistakable helper voice.",
+			}),
+		);
+		const result = await interceptAndModifyRequest(buffer, dbOps, undefined, {
+			getModelCatalog: async () =>
+				liveCatalog(["claude-3-5-sonnet-20241022", "claude-opus-model"]),
+			forceAccountModel: true,
+		});
+		expect(result.agentUsed).toBe(agent?.id);
+		expect(result.appliedModel).toBe("claude-3-5-sonnet-20241022");
+		expect(result.modifiedBody).toBe(buffer);
+	});
+
+	test("force account model on => the frontmatter fallback is vetoed too", async () => {
+		writeAgent(
+			"force-frontmatter-agent.md",
+			"name: Force Frontmatter Agent\ndescription: test agent\nmodel: claude-opus-model",
+			"You are the frontmatter force agent, an unrepeated and separate persona.",
+		);
+		await agentRegistry.registerWorkspace(tmpDir);
+		const agents = await agentRegistry.getAgents();
+		const agent = agents.find((a) => a.id.endsWith(":force-frontmatter-agent"));
+		expect(agent).toBeDefined();
+
+		const buffer = toArrayBuffer(
+			createMockRequestBody({
+				system:
+					"You are the frontmatter force agent, an unrepeated and separate persona.",
+			}),
+		);
+		const result = await interceptAndModifyRequest(buffer, dbOps, undefined, {
+			getModelCatalog: async () =>
+				liveCatalog(["claude-3-5-sonnet-20241022", "claude-opus-model"]),
+			frontmatterModelFallback: true,
+			forceAccountModel: true,
+		});
+		expect(result.agentUsed).toBe(agent?.id);
+		expect(result.appliedModel).toBe("claude-3-5-sonnet-20241022");
+		expect(result.modifiedBody).toBe(buffer);
+	});
 });

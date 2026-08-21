@@ -35,6 +35,7 @@ export type ModelMappingData = {
 export type ModelFallback = { [modelFamily: string]: string };
 export * from "./alert-events";
 export * from "./auth-failure-events";
+export * from "./force-account-model";
 export {
 	type IntervalConfig,
 	intervalManager,
@@ -55,6 +56,7 @@ export {
 	parseCustomEndpointData,
 	parseModelFallbacks,
 	parseModelMappings,
+	providerAcceptsClientModel,
 	validateAndSanitizeModelFallbacks,
 	validateAndSanitizeModelMappings,
 	weeklyScopedWindowKey,

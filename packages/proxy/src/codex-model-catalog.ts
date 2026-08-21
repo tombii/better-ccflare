@@ -79,6 +79,26 @@ const lastGood = new Map<string, CodexModelListing>();
  */
 let providerWide: CodexModelListing | null = null;
 
+/**
+ * What this account itself already told us it can serve, or null.
+ *
+ * Never fetches and never borrows another account's list: it answers "do we
+ * know, for this account, first-hand?" — which is the only form of knowledge
+ * strong enough to exclude an account from routing. Account selection runs per
+ * request, so a network call here is out of the question, and a borrowed list
+ * excluding an account would be a guess wearing a fact's clothes.
+ *
+ * Expect null often: nothing is persisted, so every restart starts blank, and
+ * accounts that answer 401 on the listing endpoint never populate it at all.
+ * Callers must have an answer for "we do not know" that is not "refuse".
+ */
+export function getKnownCodexModels(
+	accountId: string,
+): CodexModelListing | null {
+	const own = lastGood.get(accountId);
+	return own ? { ...own, source: "cached" } : null;
+}
+
 /** Test seam: both registries are process-wide and leak between cases. */
 export function clearCodexModelCacheForTests(): void {
 	lastGood.clear();

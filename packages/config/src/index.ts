@@ -124,6 +124,7 @@ export interface ConfigData {
 	model_scoped_capacity_routing?: ModelScopedCapacityRoutingMode;
 	combos_enabled?: boolean;
 	combo_session_fallback?: boolean;
+	force_account_model?: boolean;
 	provider_model_default_overrides?: ProviderModelDefaultOverrides;
 	agent_frontmatter_model_fallback?: boolean;
 	model_catalog_oauth_refresh_enabled?: boolean;
@@ -863,6 +864,33 @@ export class Config extends EventEmitter {
 		this.set("combo_session_fallback", value);
 	}
 
+	/**
+	 * Whether the model a client asked for must be the model that is sent.
+	 *
+	 * On, nothing renames the request on its way out: combos are skipped, so no
+	 * slot model is applied, and every mapping — the account's own, the global
+	 * override and the provider's built-in default — is inert. Account
+	 * selection instead keeps only accounts that can serve the requested model,
+	 * and a request with no such account gets an error rather than a different
+	 * model.
+	 *
+	 * Off by default: this changes what a Claude family name means for anyone
+	 * who relies on mapping (asking for a Claude model no longer reaches an
+	 * OpenAI account), so it must be chosen deliberately.
+	 */
+	getForceAccountModel(): boolean {
+		return this.resolveFlag(this.data.force_account_model, false).value;
+	}
+
+	/** "file" once anyone has set it, "default" while nobody has. */
+	getForceAccountModelSource(): "file" | "default" {
+		return this.resolveFlag(this.data.force_account_model, false).source;
+	}
+
+	setForceAccountModel(value: boolean): void {
+		this.set("force_account_model", value);
+	}
+
 	getProviderModelDefaultOverrides(): ProviderModelDefaultOverrides {
 		const raw = this.data.provider_model_default_overrides;
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -1101,6 +1129,7 @@ export class Config extends EventEmitter {
 			model_scoped_capacity_routing: this.getModelScopedCapacityRouting(),
 			combos_enabled: this.getCombosEnabled(),
 			combo_session_fallback: this.getComboSessionFallback(),
+			force_account_model: this.getForceAccountModel(),
 			agent_frontmatter_model_fallback: this.getAgentFrontmatterModelFallback(),
 			model_catalog_oauth_refresh_enabled:
 				this.getModelCatalogOAuthRefreshEnabled(),

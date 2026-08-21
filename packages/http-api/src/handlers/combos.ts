@@ -1,3 +1,4 @@
+import { providerAcceptsClientModel } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { BadRequest, NotFound } from "@better-ccflare/errors";
 import type {
@@ -8,21 +9,20 @@ import type {
 import { errorResponse } from "../utils/http-error";
 
 /**
- * Providers whose upstream natively accepts Claude model ids. Only for these
- * does a slot without a model (passthrough) make sense: the model the client
- * asked for arrives intact and is understood on the other side.
+ * A slot without a model (passthrough) only makes sense on a provider whose
+ * upstream natively accepts Claude model ids: the model the client asked for
+ * arrives intact and is understood on the other side.
  *
  * On any other provider, passthrough would hand a Claude name to an upstream
  * that does not know it, and translation would fall to the embedded default
  * map — the path that produced `400 gpt-5.3-codex ... ChatGPT account`.
+ *
+ * The list moved to core so that "force account model", which needs the same
+ * answer when deciding whether an account can serve a Claude id untranslated,
+ * cannot drift from it.
  */
-const PROVIDERS_ACCEPTING_CLIENT_MODEL = new Set([
-	"anthropic",
-	"claude-console-api",
-]);
-
 function allowsClientModel(provider: string | null | undefined): boolean {
-	return PROVIDERS_ACCEPTING_CLIENT_MODEL.has(provider ?? "anthropic");
+	return providerAcceptsClientModel(provider);
 }
 
 /**

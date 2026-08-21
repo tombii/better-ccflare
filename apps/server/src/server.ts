@@ -16,6 +16,7 @@ import {
 	NETWORK,
 	registerCleanup,
 	registerDisposable,
+	setForceAccountModel,
 	setPricingLogger,
 	shutdown,
 	TIME_CONSTANTS,
@@ -780,6 +781,10 @@ export default async function startServer(options?: {
 			config.getProviderModelDefaultOverrides(),
 		),
 	);
+	// The code that renames models lives in core and providers, neither of
+	// which may depend on config; mirror the setting there before anything can
+	// route. The config POST handler mirrors it again after a write.
+	setForceAccountModel(config.getForceAccountModel());
 	installOutboundProxy(() => config.getOutboundProxy());
 	const outboundProxyUrl = config.getOutboundProxy();
 	if (outboundProxyUrl) {

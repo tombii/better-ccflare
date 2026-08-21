@@ -9,6 +9,7 @@ import {
 	NETWORK,
 	STRATEGIES,
 	type StrategyName,
+	setForceAccountModel as setForceAccountModelFlag,
 	TIME_CONSTANTS,
 	validateNumber,
 	validateString,
@@ -437,6 +438,36 @@ export function createConfigHandlers(
 			return jsonResponse({
 				enabled: config.getComboSessionFallback(),
 				source: config.getComboSessionFallbackSource(),
+			});
+		},
+
+		getForceAccountModel: (): Response => {
+			return jsonResponse({
+				enabled: config.getForceAccountModel(),
+				source: config.getForceAccountModelSource(),
+			});
+		},
+
+		setForceAccountModel: async (req: Request): Promise<Response> => {
+			const body = await req.json();
+			if (typeof body.enabled !== "boolean") {
+				return errorResponse(
+					BadRequest(
+						"Invalid force account model payload: expected 'enabled' to be a boolean",
+					),
+				);
+			}
+			config.setForceAccountModel(body.enabled);
+			// Push the effective value into the core mirror the model-rewriting
+			// code reads (core and providers cannot depend on config), so the
+			// switch takes effect without a restart. The effective value, not the
+			// requested one: the mirror must never claim more than the config does.
+			setForceAccountModelFlag(config.getForceAccountModel());
+			return jsonResponse({
+				success: true,
+				enabled: body.enabled,
+				source: config.getForceAccountModelSource(),
+				effective: config.getForceAccountModel(),
 			});
 		},
 

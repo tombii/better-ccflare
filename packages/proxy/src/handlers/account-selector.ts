@@ -3,6 +3,7 @@ import {
 	getModelFamily,
 	isAccountAvailable,
 	isUsageExhausted,
+	providerAcceptsClientModel,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
@@ -17,6 +18,7 @@ import type {
 	ComboSlotInfo,
 	RequestMeta,
 } from "@better-ccflare/types";
+import { getKnownCodexModels } from "../codex-model-catalog";
 import {
 	type FamilyExhaustionOrigin,
 	getFamilyExhaustionOrigin,
@@ -24,7 +26,7 @@ import {
 	isAccountExhaustedForModel,
 	type ModelFamilyExhaustionInfo,
 } from "./model-capacity";
-import type { ProxyContext } from "./proxy-types";
+import { isInternalProbe, type ProxyContext } from "./proxy-types";
 
 const log = new Logger("AccountSelector");
 
@@ -274,6 +276,50 @@ function areCombosEnabled(ctx: ProxyContext): boolean {
 }
 
 /**
+ * Whether the model a client asked for must be the model that is sent.
+ * Defaults to off for a context without a config, like every other setting
+ * read here.
+ */
+export function isForceAccountModelEnabled(ctx: ProxyContext): boolean {
+	return ctx.config?.getForceAccountModel?.() ?? false;
+}
+
+/**
+ * Whether `account` can serve `model` exactly as the client wrote it.
+ *
+ * Two rules, in order:
+ *
+ * 1. First-hand knowledge. If the account itself has listed the models it
+ *    serves, that list is the answer — and a borrowed list from a sibling
+ *    account deliberately does not count, since excluding an account on
+ *    someone else's evidence is a guess wearing a fact's clothes.
+ * 2. Otherwise, the namespace. A Claude model id can only travel untranslated
+ *    to a provider that speaks Claude ids, and a non-Claude id only to one
+ *    that does not.
+ *
+ * Rule 2 carries the weight in practice: listings are per-process and start
+ * empty after every restart, and some accounts answer 401 on the listing
+ * endpoint while serving traffic perfectly. It is coarse — with several
+ * non-Claude providers configured, a request can still reach the wrong one —
+ * but the failure is then an explicit upstream error, never a silent
+ * substitution, which is the promise this setting actually makes.
+ */
+function accountServesModel(account: Account, model: string): boolean {
+	const known =
+		account.provider === "codex" ? getKnownCodexModels(account.id) : null;
+	if (known) {
+		return known.models.some((entry) => entry.id === model);
+	}
+	return (
+		providerAcceptsClientModel(account.provider) === isClaudeModelId(model)
+	);
+}
+
+function isClaudeModelId(model: string): boolean {
+	return getModelFamily(model) !== null;
+}
+
+/**
  * Whether a combo whose slots are all unavailable must stop instead of falling
  * through to normal routing.
  *
@@ -466,6 +512,46 @@ export async function selectAccountsForRequest(
 					(acc) => acc.id === forcedAccountId,
 				);
 				if (forcedAccount) {
+					// With "force account model" on, a header naming an account
+					// does not get to skip the one rule the setting exists for.
+					//
+					// Refusing here — an empty selection, which proxy.ts answers
+					// as force_account_model_no_account — is deliberately not the
+					// same as falling through to normal selection below: that
+					// would send the request to a *different* account than the
+					// header named, substituting the account to protect a rule
+					// about models. Nor is it left to the provider's 400: an
+					// unfiltered forced account also reaches the capacity
+					// branches, which would advertise a `Retry-After` for an
+					// account that can never serve this model no matter how long
+					// the caller waits.
+					//
+					// Internal probes ARE exempted, and have to be. The
+					// auto-refresh scheduler sends a compiled-in list of Claude
+					// model ids to whatever account it is probing, so a Codex
+					// account's own probe fails this check by construction —
+					// and a probe answered with a refusal counts as a refresh
+					// failure, which is how a perfectly healthy account would
+					// end up paused with pause_reason='failure_threshold'.
+					//
+					// The exemption is keyed on `isInternalProbe`, which
+					// verifies the internal probe secret, and not on the
+					// bypass-session header a client can set. The probe is also
+					// not a client asking for a model: it exists to touch the
+					// endpoint and observe what comes back, so judging it by
+					// what the caller "asked for" is a category error.
+					if (
+						model &&
+						isForceAccountModelEnabled(ctx) &&
+						!isInternalProbe(meta.headers, ctx) &&
+						!accountServesModel(forcedAccount, model)
+					) {
+						log.warn(
+							`Force account model: forced account ${forcedAccount.name} cannot serve "${model}" as requested — refusing rather than substituting the account or the model`,
+						);
+						return [];
+					}
+
 					// The auto-refresh scheduler sends dummy messages with x-better-ccflare-bypass-session
 					// to intentionally refresh accounts that are paused due to auto_pause_on_overage,
 					// or to probe accounts that are rate-limited (to detect when the window has reset).
@@ -567,10 +653,17 @@ export async function selectAccountsForRequest(
 		return filtered;
 	};
 
-	// Try combo-aware routing if a model is provided (skipped entirely when
-	// skipCombo is set — see the `options` doc above, or when combos are
-	// switched off).
-	if (model && !options?.skipCombo && areCombosEnabled(ctx)) {
+	// Try combo-aware routing if a model is provided. Skipped entirely when
+	// skipCombo is set (see the `options` doc above), when combos are switched
+	// off, and when the model is forced: a combo slot exists to send a
+	// different model than the one asked for, which is the one thing that
+	// setting forbids.
+	if (
+		model &&
+		!options?.skipCombo &&
+		areCombosEnabled(ctx) &&
+		!isForceAccountModelEnabled(ctx)
+	) {
 		const family = getModelFamily(model);
 		if (family) {
 			const validFamilies: readonly string[] = [
@@ -699,7 +792,24 @@ export async function selectAccountsForRequest(
 
 	const { ordered: rawOrderedAccounts, all: allAccounts } =
 		await getOrderedAccounts(meta, ctx);
-	const orderedAccounts = applyExclusions(rawOrderedAccounts);
+	let orderedAccounts = applyExclusions(rawOrderedAccounts);
+
+	// "Force account model": keep only accounts that can serve the requested
+	// model as written. Nothing downstream will rename it, so an account that
+	// would need a translation is not a candidate — and if that empties the
+	// list, the request fails rather than being served a model nobody asked
+	// for. Switching accounts is still fine; switching models is not.
+	if (model && isForceAccountModelEnabled(ctx)) {
+		const before = orderedAccounts.length;
+		orderedAccounts = orderedAccounts.filter((account) =>
+			accountServesModel(account, model),
+		);
+		if (orderedAccounts.length !== before) {
+			log.info(
+				`Force account model: ${orderedAccounts.length}/${before} account(s) can serve "${model}" as requested`,
+			);
+		}
+	}
 
 	// Model-scoped capacity filter for the non-combo (or combo-inactive/
 	// combo-exhausted-fallthrough) path: drop accounts whose weekly per-model
