@@ -215,6 +215,12 @@ function makeCodexCtx() {
 			parseUsage: undefined,
 			extractUsageInfo: undefined,
 		},
+		// Read by updateAccountMetadata's Codex block once #428 lands, which
+		// picks the usage window a session is riding from the config. Harmless
+		// without it, and it keeps this test off the failure list either way.
+		config: {
+			getCodexFiveHourWindowEnabled: () => false,
+		},
 		dbOps: {
 			updateAccountUsage: () => {},
 			updateAccountRateLimitMeta: () => {},
