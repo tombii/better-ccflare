@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import type { Account } from "@better-ccflare/types";
 import {
 	isForceAccountModelEnabled,
+	isForceAccountModelExempt,
+	runForceAccountModelExempt,
 	setForceAccountModel,
 } from "./force-account-model";
 import { mapModelName, providerAcceptsClientModel } from "./model-mappings";
@@ -80,5 +82,81 @@ describe("providerAcceptsClientModel", () => {
 	it("treats a missing provider as anthropic, matching the rest of the codebase", () => {
 		expect(providerAcceptsClientModel(null)).toBe(true);
 		expect(providerAcceptsClientModel(undefined)).toBe(true);
+	});
+});
+
+/**
+ * The exempt scope exists for better-ccflare's own probes. A probe names a
+ * compiled-in Claude model for whatever account it is aimed at, so mapping is
+ * what makes it land — suppressing mapping there breaks the probe instead of
+ * honouring a promise about client requests.
+ */
+describe("force account model — internal-probe exemption scope", () => {
+	it("reads as off inside the scope and on again outside it", () => {
+		setForceAccountModel(true);
+
+		expect(isForceAccountModelEnabled()).toBe(true);
+		runForceAccountModelExempt(() => {
+			expect(isForceAccountModelEnabled()).toBe(false);
+			expect(isForceAccountModelExempt()).toBe(true);
+		});
+		expect(isForceAccountModelEnabled()).toBe(true);
+		expect(isForceAccountModelExempt()).toBe(false);
+	});
+
+	it("lets mapping happen again inside the scope", () => {
+		setForceAccountModel(true);
+		const account = makeAccount();
+
+		expect(mapModelName("claude-opus-4-1", account)).toBe("claude-opus-4-1");
+		runForceAccountModelExempt(() => {
+			// This is the whole point: without it the probe's Claude id reaches a
+			// Codex account untranslated and comes back as a refresh failure.
+			expect(mapModelName("claude-opus-4-1", account)).toBe("gpt-5.6-sol");
+		});
+	});
+
+	it("survives awaits, so a mapping deep in the request still sees it", async () => {
+		setForceAccountModel(true);
+
+		await runForceAccountModelExempt(async () => {
+			await Promise.resolve();
+			await new Promise((resolve) => setTimeout(resolve, 1));
+			expect(isForceAccountModelEnabled()).toBe(false);
+			expect(mapModelName("claude-opus-4-1", makeAccount())).toBe(
+				"gpt-5.6-sol",
+			);
+		});
+
+		expect(isForceAccountModelEnabled()).toBe(true);
+	});
+
+	it("does not leak into a concurrent request that is not a probe", async () => {
+		setForceAccountModel(true);
+		const account = makeAccount();
+		const seen: string[] = [];
+
+		// Interleaved on purpose: a scope that leaked across async boundaries
+		// would let one probe disable the operator's setting for real traffic
+		// that happens to be in flight beside it.
+		const probe = runForceAccountModelExempt(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 2));
+			seen.push(`probe:${mapModelName("claude-opus-4-1", account)}`);
+		});
+		const client = (async () => {
+			await new Promise((resolve) => setTimeout(resolve, 1));
+			seen.push(`client:${mapModelName("claude-opus-4-1", account)}`);
+		})();
+
+		await Promise.all([probe, client]);
+
+		expect(seen.sort()).toEqual([
+			"client:claude-opus-4-1",
+			"probe:gpt-5.6-sol",
+		]);
+	});
+
+	it("is off by default, so nothing is exempt until a scope opens", () => {
+		expect(isForceAccountModelExempt()).toBe(false);
 	});
 });

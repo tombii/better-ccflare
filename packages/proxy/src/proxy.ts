@@ -1,6 +1,7 @@
 import {
 	type AccountUsageSnapshot,
 	requestEvents,
+	runForceAccountModelExempt,
 	ServiceUnavailableError,
 	trackClientVersion,
 } from "@better-ccflare/core";
@@ -153,7 +154,39 @@ export function getUsageCollectorHealth(): UsageCollectorHealth {
  * @throws {ServiceUnavailableError} If all accounts fail to proxy the request
  * @throws {ProviderError} If unauthenticated proxy fails
  */
-export async function handleProxy(
+/**
+ * A verified internal probe runs with `force_account_model` treated as off for
+ * its whole lifetime.
+ *
+ * The switch promises to serve the model the *client* named or nothing, and a
+ * probe is not a client: the schedulers send a compiled-in list of Claude ids
+ * to whatever account they are probing, because the point is to touch the
+ * endpoint and read the answer. Mapping is what makes that land on a non-Claude
+ * account, so leaving the switch on here would not honour the promise — it
+ * would send `claude-haiku-4-5` to Codex, take the rejection as a refresh
+ * failure, and pause a healthy account after five of them.
+ *
+ * `isInternalProbe` verifies the process-local probe secret, so a client that
+ * copies the marker header out of a log gets nothing. Sibling of the exemptions
+ * probes already have in usage throttling and in the forced-account model
+ * check.
+ */
+export function handleProxy(
+	req: Request,
+	url: URL,
+	ctx: ProxyContext,
+	apiKeyId?: string | null,
+	apiKeyName?: string | null,
+): Promise<Response> {
+	if (isInternalProbe(req.headers, ctx)) {
+		return runForceAccountModelExempt(() =>
+			handleProxyRequest(req, url, ctx, apiKeyId, apiKeyName),
+		);
+	}
+	return handleProxyRequest(req, url, ctx, apiKeyId, apiKeyName);
+}
+
+async function handleProxyRequest(
 	req: Request,
 	url: URL,
 	ctx: ProxyContext,
