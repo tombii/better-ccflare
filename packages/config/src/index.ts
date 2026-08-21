@@ -740,6 +740,11 @@ export class Config extends EventEmitter {
 				notes.push(
 					`combo session fallback ${allowed ? "allowed" : "blocked"}: adopted from CCFLARE_DISABLE_COMBO_SESSION_FALLBACK, which no longer takes effect on its own — the switch now lives in Settings → Advanced`,
 				);
+			} else if (hasCombos) {
+				this.setComboSessionFallback(true);
+				notes.push(
+					"combo session fallback allowed: this install already has combos, so its historical fallthrough to the normal account pool is kept. Block it in Settings → Advanced if the combo must be exclusive",
+				);
 			}
 		}
 

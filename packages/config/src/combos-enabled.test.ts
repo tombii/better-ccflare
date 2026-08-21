@@ -131,12 +131,27 @@ describe("combos and combo session fallback settings", () => {
 			}
 		});
 
-		it("turns combos on for an install that already has them", () => {
+		it("preserves both historical routing behaviours for an install with combos", () => {
 			const { config, cleanup } = makeConfig();
 			try {
 				const notes = config.adoptLegacyRoutingSettings(true);
 				expect(config.getCombosEnabled()).toBe(true);
-				expect(notes.length).toBe(1);
+				expect(config.getComboSessionFallback()).toBe(true);
+				expect(config.getComboSessionFallbackSource()).toBe("file");
+				expect(notes.length).toBe(2);
+			} finally {
+				cleanup();
+			}
+		});
+
+		it("never overwrites a deliberate blocked fallback", () => {
+			const { config, cleanup } = makeConfig();
+			try {
+				config.setComboSessionFallback(false);
+				expect(config.adoptLegacyRoutingSettings(true)).toEqual([
+					"combos enabled: this install already has combos, so the routing it was already doing is kept. Turn it off in the dashboard's Combos tab",
+				]);
+				expect(config.getComboSessionFallback()).toBe(false);
 			} finally {
 				cleanup();
 			}
