@@ -20,6 +20,17 @@ jobs:
         run: |
           echo "🔍 Checking for failed workflow runs in the last 6 hours..."
 
+          # Workflows that build/sign/publish release artifacts must never be
+          # auto-rerun: a rerun could re-trigger a duplicate publish/release
+          # or re-run untrusted signing steps without human review.
+          EXCLUDED_WORKFLOWS=(
+            "Build and Publish Docker Images"
+            "Manual Release"
+            "Release Multi-Architecture Binaries"
+            "SignPath Test Signing"
+            "Sign and Upload Windows Release Binary"
+          )
+
           # Get failed runs from the last 6 hours (to avoid rerunning old failures)
           SIX_HOURS_AGO=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
 
@@ -65,6 +76,20 @@ jobs:
             # Skip this auto-rerun workflow to prevent infinite loops
             if [[ "$WORKFLOW" == "Auto-Rerun Failed Workflows" ]]; then
               echo "⏭️  Skipping - auto-rerun workflow"
+              SKIP_COUNT=$((SKIP_COUNT + 1))
+              continue
+            fi
+
+            # Skip build/sign/publish workflows - these must only be rerun manually
+            IS_EXCLUDED=false
+            for excluded in "${EXCLUDED_WORKFLOWS[@]}"; do
+              if [[ "$WORKFLOW" == "$excluded" ]]; then
+                IS_EXCLUDED=true
+                break
+              fi
+            done
+            if [[ "$IS_EXCLUDED" == "true" ]]; then
+              echo "⏭️  Skipping - build/publish workflow excluded from auto-rerun"
               SKIP_COUNT=$((SKIP_COUNT + 1))
               continue
             fi
