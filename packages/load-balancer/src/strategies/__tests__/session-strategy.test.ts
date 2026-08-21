@@ -735,6 +735,142 @@ describe("SessionStrategy", () => {
 		});
 	});
 
+	describe("codex upstream window reset ends the session", () => {
+		// A codex session_start is anchored to the first request through this
+		// proxy, while the account's real 5h window starts at its first request
+		// anywhere. When the reported window resets mid-session, the local 5h
+		// clock still has time left — and used to keep the rolled-over account
+		// pinned. rate_limit_reset is rewritten from the x-codex-* headers on
+		// every response, so a past value means the window closed.
+		const FIVE_HOUR = 5 * 60 * 60 * 1000;
+
+		it("stops treating the session as active and re-selects by utilization", () => {
+			const now = Date.now();
+
+			// Rolled over 2s ago, but only 1h into the local 5h session.
+			const rolledOver = makeAccount({
+				id: "codex-rolled",
+				name: "codex-rolled",
+				provider: "codex",
+				session_start: now - 60 * 60 * 1000,
+				session_request_count: 40,
+				rate_limit_reset: now - 2000,
+			});
+			const fresh = makeAccount({
+				id: "codex-fresh",
+				name: "codex-fresh",
+				provider: "codex",
+			});
+			mockStore.setUtilization("codex-rolled", 90);
+			mockStore.setUtilization("codex-fresh", 10);
+
+			const result = strategy.select([rolledOver, fresh], meta);
+
+			expect(result[0]).toBe(fresh);
+			expect(mockStore.getResetCall("codex-fresh")).toBeDefined();
+		});
+
+		it("resets the session when the rolled-over account is the only one", () => {
+			const now = Date.now();
+			const sessionStart = now - 60 * 60 * 1000;
+			const account = makeAccount({
+				id: "codex-only",
+				name: "codex-only",
+				provider: "codex",
+				session_start: sessionStart,
+				session_request_count: 40,
+				rate_limit_reset: now - 2000,
+			});
+
+			const result = strategy.select([account], meta);
+
+			expect(result[0]).toBe(account);
+			expect(mockStore.getResetCall(account.id)).toBeDefined();
+			expect(account.session_start).toBeGreaterThan(sessionStart);
+			expect(account.session_request_count).toBe(0);
+		});
+
+		it("keeps the session while the reported window is still open", () => {
+			const now = Date.now();
+			const sessionStart = now - 60 * 60 * 1000;
+			const account = makeAccount({
+				id: "codex-open",
+				name: "codex-open",
+				provider: "codex",
+				session_start: sessionStart,
+				session_request_count: 40,
+				rate_limit_reset: now + 60 * 60 * 1000,
+			});
+
+			const result = strategy.select([account], meta);
+
+			expect(result[0]).toBe(account);
+			expect(mockStore.getResetCall(account.id)).toBeUndefined();
+			expect(account.session_start).toBe(sessionStart);
+			expect(account.session_request_count).toBe(40);
+		});
+
+		it("ignores a reset older than session_start (stale telemetry, not a rollover)", () => {
+			const now = Date.now();
+			const sessionStart = now - 60 * 60 * 1000;
+			const account = makeAccount({
+				id: "codex-stale",
+				name: "codex-stale",
+				provider: "codex",
+				session_start: sessionStart,
+				session_request_count: 40,
+				// Boundary from a window that had already closed when the
+				// session began — carries no information about the current one.
+				rate_limit_reset: now - 3 * 60 * 60 * 1000,
+			});
+
+			const result = strategy.select([account], meta);
+
+			expect(result[0]).toBe(account);
+			expect(mockStore.getResetCall(account.id)).toBeUndefined();
+			expect(account.session_start).toBe(sessionStart);
+			expect(account.session_request_count).toBe(40);
+		});
+
+		it("still expires the codex session on the fixed duration", () => {
+			const now = Date.now();
+			const sessionStart = now - FIVE_HOUR - 1000;
+			const account = makeAccount({
+				id: "codex-expired",
+				name: "codex-expired",
+				provider: "codex",
+				session_start: sessionStart,
+				session_request_count: 40,
+				rate_limit_reset: now + 60 * 60 * 1000,
+			});
+
+			strategy.select([account], meta);
+
+			expect(mockStore.getResetCall(account.id)).toBeDefined();
+			expect(account.session_start).toBeGreaterThan(sessionStart);
+		});
+
+		it("does not apply to zai, whose rate_limit_reset only appears on a 429", () => {
+			const now = Date.now();
+			const sessionStart = now - 60 * 60 * 1000;
+			const account = makeAccount({
+				id: "zai-session",
+				name: "zai-session",
+				provider: "zai",
+				session_start: sessionStart,
+				session_request_count: 40,
+				rate_limit_reset: now - 2000,
+			});
+
+			const result = strategy.select([account], meta);
+
+			expect(result[0]).toBe(account);
+			expect(mockStore.getResetCall(account.id)).toBeUndefined();
+			expect(account.session_start).toBe(sessionStart);
+			expect(account.session_request_count).toBe(40);
+		});
+	});
+
 	describe("peek auto-unpause parity with select", () => {
 		// These mirror the auto-unpause path inside select(): a paused
 		// auto-fallback account with safe pause_reason and an elapsed

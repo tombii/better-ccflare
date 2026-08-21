@@ -111,10 +111,24 @@ export function updateAccountMetadata(
 		});
 		if (codexUsage) {
 			const prevUsage = usageCache.get(account.id);
+			// Which window this session is riding. Both sides of the comparison
+			// below must read the same slot: a 5-hour boundary held against a
+			// weekly one would fabricate a rollover. With
+			// CODEX_FIVE_HOUR_WINDOW_ENABLED the slot stays pinned to the 5-hour
+			// window, as it was before OpenAI withdrew that window; otherwise it
+			// follows the shortest window this payload actually reports.
+			const windowSlot: "five_hour" | "seven_day" =
+				ctx.config.getCodexFiveHourWindowEnabled() ||
+				codexUsage.five_hour?.resets_at != null
+					? "five_hour"
+					: "seven_day";
 			const prevResetAt = (
-				prevUsage as { five_hour?: { resets_at: string | null } } | null
-			)?.five_hour?.resets_at;
-			const newResetAt = codexUsage.five_hour?.resets_at;
+				prevUsage as {
+					five_hour?: { resets_at: string | null };
+					seven_day?: { resets_at: string | null };
+				} | null
+			)?.[windowSlot]?.resets_at;
+			const newResetAt = codexUsage[windowSlot]?.resets_at;
 			const windowRolledOver =
 				prevResetAt != null &&
 				newResetAt != null &&
@@ -147,7 +161,7 @@ export function updateAccountMetadata(
 
 			if (windowRolledOver) {
 				log.info(
-					`Codex window rolled over for ${account.name}: ${prevResetAt} → ${newResetAt}, resetting session`,
+					`Codex ${windowSlot} window rolled over for ${account.name}: ${prevResetAt} → ${newResetAt}, resetting session`,
 				);
 				ctx.dbOps
 					.resetAccountSession(account.id, Date.now())

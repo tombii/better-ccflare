@@ -11,6 +11,7 @@ import {
 	requiresSessionDurationTracking,
 } from "@better-ccflare/types";
 import { isPeekAvailable } from "./peek-availability";
+import { codexWindowHasReset } from "./session-window-reset";
 
 /**
  * SessionDrainSoonestStrategy — identical session-affinity semantics to
@@ -101,10 +102,14 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 			(!account.session_start ||
 				now - account.session_start >= this.sessionDurationMs);
 
+		// Codex reports its own 5h/7d windows through the x-codex-* response
+		// headers rather than Anthropic's proactive rate limit headers — see
+		// codexWindowHasReset.
 		const rateLimitWindowReset =
-			account.provider === PROVIDER_NAMES.ANTHROPIC &&
-			account.rate_limit_reset &&
-			account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
+			(account.provider === PROVIDER_NAMES.ANTHROPIC &&
+				account.rate_limit_reset &&
+				account.rate_limit_reset < now - 1000) || // 1 second buffer for clock skew protection
+			codexWindowHasReset(account, now);
 
 		if (fixedDurationExpired || rateLimitWindowReset) {
 			if (this.store) {
@@ -136,6 +141,14 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 		}
 
 		if (account.rate_limited_until && account.rate_limited_until > now) {
+			return false;
+		}
+
+		// A Codex session whose upstream window already reset is not a live
+		// session — same reasoning as SessionStrategy.hasActiveSession. Here it
+		// also unblocks drain ranking: an active session is never preempted, so
+		// without this the rolled-over account keeps winning re-selection.
+		if (codexWindowHasReset(account, now)) {
 			return false;
 		}
 

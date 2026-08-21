@@ -120,6 +120,7 @@ export interface ConfigData {
 	system_prompt_cache_ttl_1h?: boolean;
 	usage_throttling_five_hour_enabled?: boolean;
 	usage_throttling_weekly_enabled?: boolean;
+	codex_five_hour_window_enabled?: boolean;
 	model_scoped_capacity_routing?: ModelScopedCapacityRoutingMode;
 	combos_enabled?: boolean;
 	combo_session_fallback?: boolean;
@@ -582,6 +583,37 @@ export class Config extends EventEmitter {
 	}
 
 	/**
+	 * Whether Codex accounts reachable by this install still report a 5-hour
+	 * usage window. Defaults to false because OpenAI removed that window for
+	 * Plus, Business, and Pro on 2026-07-12, announced only on X
+	 * (https://x.com/thsottiaux/status/2076365965915467978) and never in the
+	 * changelog, so the headers carry the weekly window alone; see
+	 * https://github.com/openai/codex/issues/32791. The removal was framed as
+	 * temporary, which is exactly why this is a flag rather than a new hardcoded
+	 * assumption. Setting it to true restores the previous behavior of treating
+	 * the 5-hour window as the one a session rides.
+	 *
+	 * Scope: this flag selects the window the rollover detector in
+	 * response-processor watches. It does not reach the load-balancer's
+	 * session expiry, which reads the single `rate_limit_reset` column and
+	 * cannot tell which window wrote it — so with the flag on and no 5-hour
+	 * window reported, a session still ends at the weekly boundary. Closing
+	 * that gap needs the per-window data persisted, which is deliberately out
+	 * of scope here.
+	 */
+	getCodexFiveHourWindowEnabled(): boolean {
+		const fromEnv = parseEnabledEnvFlag(
+			process.env.CODEX_FIVE_HOUR_WINDOW_ENABLED,
+		);
+		if (fromEnv !== undefined) {
+			return fromEnv;
+		}
+		const fromFile = this.data.codex_five_hour_window_enabled;
+		if (typeof fromFile === "boolean") return fromFile;
+		return false;
+	}
+
+	/**
 	 * Whether an agent's frontmatter `model` field should be used as a
 	 * substitution fallback when no explicit DB preference is configured for
 	 * that agent. Defaults to false: Claude Code already resolves frontmatter
@@ -630,6 +662,10 @@ export class Config extends EventEmitter {
 
 	setUsageThrottlingWeeklyEnabled(value: boolean): void {
 		this.set("usage_throttling_weekly_enabled", value);
+	}
+
+	setCodexFiveHourWindowEnabled(value: boolean): void {
+		this.set("codex_five_hour_window_enabled", value);
 	}
 
 	/**
@@ -1061,6 +1097,7 @@ export class Config extends EventEmitter {
 			usage_throttling_five_hour_enabled:
 				this.getUsageThrottlingFiveHourEnabled(),
 			usage_throttling_weekly_enabled: this.getUsageThrottlingWeeklyEnabled(),
+			codex_five_hour_window_enabled: this.getCodexFiveHourWindowEnabled(),
 			model_scoped_capacity_routing: this.getModelScopedCapacityRouting(),
 			combos_enabled: this.getCombosEnabled(),
 			combo_session_fallback: this.getComboSessionFallback(),
