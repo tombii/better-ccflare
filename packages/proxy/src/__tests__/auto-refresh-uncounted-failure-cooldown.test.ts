@@ -23,6 +23,8 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
 	AUTO_REFRESH_PROMPTS,
 	autoRefreshPromptPoolStatus,
+	claimAutoRefreshPrompt,
+	PROMPT_COOLDOWN_MS,
 	resetAutoRefreshPromptPoolForTests,
 } from "../auto-refresh-prompt-pool";
 import type { AutoRefreshScheduler } from "../auto-refresh-scheduler";
@@ -228,6 +230,39 @@ describe("AutoRefreshScheduler — what the cooldown is protecting", () => {
 		// a little over eight hours.
 		expect(autoRefreshPromptPoolStatus().free).toBe(
 			AUTO_REFRESH_PROMPTS.length - 1,
+		);
+	});
+});
+
+describe("AutoRefreshScheduler — the cooldown rate against the pool's lock window", () => {
+	it("keeps a permanently failing account inside the pool, because claims expire", async () => {
+		const scheduler = await makeScheduler(makeDb());
+		const cooldown = scheduler.FAILURE_PROBE_COOLDOWN_MS;
+		const start = 1_700_000_000_000;
+		const week = 7 * 24 * 60 * 60 * 1000;
+
+		// A prompt is locked for PROMPT_COOLDOWN_MS and then reclaimable, so what
+		// bounds the pool is not the number of probes ever sent but the number
+		// alive inside one lock window: rate x window. Probe as fast as the
+		// cooldown allows, for a week, and the pool must never run out.
+		let claims = 0;
+		for (let t = start; t < start + week; t += cooldown) {
+			const claim = claimAutoRefreshPrompt(t);
+			expect(claim.ok).toBe(true);
+			claims++;
+		}
+
+		// Far more claims than the pool holds, and it still has room: the rate
+		// limit is what turns into a total limit.
+		expect(claims).toBeGreaterThan(AUTO_REFRESH_PROMPTS.length);
+		expect(autoRefreshPromptPoolStatus(start + week).free).toBeGreaterThan(0);
+
+		// The invariant, stated so that shortening the cooldown or shrinking the
+		// pool fails here instead of in production: one account probing flat out
+		// must fit inside the pool with room for the others. At 10 minutes and
+		// 500 prompts that is 144 of 500 in steady state.
+		expect(PROMPT_COOLDOWN_MS / cooldown).toBeLessThan(
+			AUTO_REFRESH_PROMPTS.length,
 		);
 	});
 });

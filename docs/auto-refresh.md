@@ -115,6 +115,15 @@ The pool has six rules, and each one is load-bearing:
   off for `FAILURE_PROBE_COOLDOWN_MS` (10 minutes), which the first successful
   probe clears. The failures that *are* counted keep going through the
   five-strike pause threshold untouched.
+
+  Rationing the rate is what bounds the total, because a claim is released
+  after `PROMPT_COOLDOWN_MS` rather than kept forever: what has to fit in the
+  pool is not every probe ever sent but the ones alive inside one 24-hour lock
+  window, which is rate x window. One account probing flat out holds 144 of the
+  500 prompts in steady state and never dries the pool; the break-even is a
+  probe every 2.9 minutes. The honest residual: it takes four accounts stuck
+  like that at the same time, for over a day, to reach the dry pool — and that
+  is the state the dry-pool alarm below exists to announce.
 - **A dry pool sends nothing.** If every prompt is inside its cooldown, the
   claim fails and `sendDummyMessage` returns `false` without sending, without
   touching the account row, and **without counting a failure** — holding off is
