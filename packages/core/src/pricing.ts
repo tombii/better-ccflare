@@ -229,7 +229,7 @@ BUNDLED_PRICING.minimax = {
 };
 
 // Pricing for Meta's Muse Spark (Meta Model API) models (dollars per 1M tokens)
-BUNDLED_PRICING.meta = {
+BUNDLED_PRICING["muse-spark"] = {
 	models: {
 		"muse-spark-1.1": {
 			id: "muse-spark-1.1",
