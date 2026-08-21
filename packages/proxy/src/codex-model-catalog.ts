@@ -249,6 +249,30 @@ export function deriveFamilyDefaults(
 }
 
 /**
+ * The weakest model of a listing, or null when there is no listing to read.
+ *
+ * Mirror image of the `at(0)` in the family mapping above, and for the same
+ * reason: `normalize` sorts by the provider's own `priority`, so the tail is the
+ * lowest tier the plan can call and nothing of ours has to be kept current.
+ *
+ * The usage probe wants this end of the list, not the frontier one. Its request
+ * is a single "." whose answer is thrown away the moment the headers arrive —
+ * all it needs is a model name the endpoint accepts, and the cheapest accepted
+ * name is the one that spends least doing it. The quota headers describe the
+ * subscription, not the model, so nothing is lost by asking the small one.
+ *
+ * The tail is also the likeliest entry to carry `supersededBy`. That is fine: a
+ * deprecated model is still listed because the plan can still call it, and the
+ * day OpenAI removes it, it leaves the listing and the tail moves on its own.
+ */
+export function lowestTierCodexModel(
+	listing: CodexModelListing | null | undefined,
+): string | null {
+	const models = listing?.models ?? [];
+	return models.length > 0 ? models[models.length - 1].id : null;
+}
+
+/**
  * The model list for one Codex account: live when OpenAI answers, otherwise the
  * last list it gave us. Returns null only when both are unavailable — a brand
  * new account whose first fetch failed.

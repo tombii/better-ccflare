@@ -1,4 +1,8 @@
-import { isAccountAvailable, TIME_CONSTANTS } from "@better-ccflare/core";
+import {
+	compareAccountPreference,
+	isAccountAvailable,
+	TIME_CONSTANTS,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type {
 	Account,
@@ -88,7 +92,8 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 			if (resetB === null) return -1;
 			return resetA - resetB;
 		}
-		if (a.priority !== b.priority) return a.priority - b.priority;
+		const preference = compareAccountPreference(a, b);
+		if (preference !== 0) return preference;
 		const utilA = this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
 		const utilB = this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
 		return utilA - utilB;
@@ -371,6 +376,6 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 
 		if (resetAccounts.length === 0) return [];
 
-		return resetAccounts.sort((a, b) => a.priority - b.priority);
+		return resetAccounts.sort((a, b) => compareAccountPreference(a, b));
 	}
 }

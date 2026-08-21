@@ -4,6 +4,7 @@ import type { Account } from "@better-ccflare/types";
 import {
 	clearCodexModelCacheForTests,
 	getCodexModels,
+	lowestTierCodexModel,
 } from "../codex-model-catalog";
 import type { ProxyContext } from "../handlers/proxy-types";
 
@@ -251,5 +252,62 @@ describe("getCodexModels", () => {
 
 	it("returns nothing for an account that does not exist", async () => {
 		expect(await getCodexModels("ghost", makeCtx(null))).toBeNull();
+	});
+});
+
+describe("lowestTierCodexModel", () => {
+	it("names the weakest model of a listing, not the frontier one", async () => {
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify(LIVE_BODY), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			})) as typeof globalThis.fetch;
+
+		const listing = await getCodexModels("acc-codex", makeCtx(makeAccount()));
+
+		// The provider's own priority order decides, so the hidden entries cannot
+		// win it either — `codex-auto-review` sorts last of all but is `hide`, and
+		// picking it would ping a model no plan is meant to call. Nothing here
+		// needs updating when OpenAI reshuffles the list.
+		expect(lowestTierCodexModel(listing)).toBe("gpt-5.4-mini");
+		expect(lowestTierCodexModel(listing)).not.toBe("gpt-5.6-sol");
+	});
+
+	// A single-entry plan must still get an answer: the frontier model is also the
+	// weakest one when it is the only one, and returning null here would send the
+	// probe to its compiled-in fallback for no reason.
+	it("returns the only model when the plan lists just one", () => {
+		expect(
+			lowestTierCodexModel({
+				accountId: "acc-codex",
+				models: [
+					{
+						id: "gpt-5.6-sol",
+						displayName: "GPT-5.6-Sol",
+						description: null,
+						contextWindow: null,
+						supersededBy: null,
+					},
+				],
+				fetchedAt: 0,
+				source: "live",
+			}),
+		).toBe("gpt-5.6-sol");
+	});
+
+	// The usage probe reads this to decide what to ping, and answering with a
+	// guess when there is no listing is exactly the failure it is meant to end:
+	// null lets the caller fall back to its own compiled-in name deliberately.
+	it("answers null when there is no listing to read", () => {
+		expect(lowestTierCodexModel(null)).toBeNull();
+		expect(lowestTierCodexModel(undefined)).toBeNull();
+		expect(
+			lowestTierCodexModel({
+				accountId: "acc-codex",
+				models: [],
+				fetchedAt: 0,
+				source: "live",
+			}),
+		).toBeNull();
 	});
 });

@@ -202,6 +202,72 @@ describe("UsageHistoryRepository", () => {
 		db.close();
 	});
 
+	it("getLatestSnapshot returns the newest row for the window", async () => {
+		const db = makeDb();
+		const repo = makeRepo(db);
+		await repo.recordSnapshot(
+			"acc1",
+			{ seven_day: { utilization: 11, resets_at: null } },
+			1000,
+		);
+		await repo.recordSnapshot(
+			"acc1",
+			{ seven_day: { utilization: 22, resets_at: "2026-07-12T00:00:00Z" } },
+			3000,
+		);
+		await repo.recordSnapshot(
+			"acc1",
+			{ seven_day: { utilization: 15, resets_at: null } },
+			2000,
+		);
+		const latest = await repo.getLatestSnapshot("acc1", "seven_day");
+		expect(latest?.timestamp).toBe(3000);
+		expect(latest?.utilization).toBe(22);
+		expect(latest?.resetsAt).toBe(new Date("2026-07-12T00:00:00Z").getTime());
+		db.close();
+	});
+
+	it("getLatestSnapshot isolates windows and accounts", async () => {
+		const db = makeDb();
+		const repo = makeRepo(db);
+		await repo.recordSnapshot(
+			"acc1",
+			{
+				five_hour: { utilization: 90, resets_at: null },
+				seven_day: { utilization: 40, resets_at: null },
+			},
+			1000,
+		);
+		await repo.recordSnapshot(
+			"acc2",
+			{ seven_day: { utilization: 77, resets_at: null } },
+			5000,
+		);
+		expect(
+			(await repo.getLatestSnapshot("acc1", "seven_day"))?.utilization,
+		).toBe(40);
+		expect(
+			(await repo.getLatestSnapshot("acc1", "five_hour"))?.utilization,
+		).toBe(90);
+		expect(
+			(await repo.getLatestSnapshot("acc2", "seven_day"))?.utilization,
+		).toBe(77);
+		db.close();
+	});
+
+	it("getLatestSnapshot returns null when the window was never recorded", async () => {
+		const db = makeDb();
+		const repo = makeRepo(db);
+		await repo.recordSnapshot(
+			"acc1",
+			{ five_hour: { utilization: 5, resets_at: null } },
+			1000,
+		);
+		expect(await repo.getLatestSnapshot("acc1", "seven_day")).toBeNull();
+		expect(await repo.getLatestSnapshot("missing", "five_hour")).toBeNull();
+		db.close();
+	});
+
 	it("deleteOlderThan prunes by timestamp", async () => {
 		const db = makeDb();
 		const repo = makeRepo(db);
@@ -275,6 +341,31 @@ describe("DatabaseOperations usage-history facade", () => {
 			});
 			expect(rows.map((r) => r.timestamp)).toEqual([2000]);
 			expect(rows[0].windowKey).toBe("five_hour");
+		} finally {
+			await dbOps.dispose();
+		}
+	});
+
+	it("getLatestUsageSnapshot returns the newest weekly row, or null", async () => {
+		const dbOps = new DatabaseOperations(":memory:", { walMode: false });
+		try {
+			expect(
+				await dbOps.getLatestUsageSnapshot("acc1", "seven_day"),
+			).toBeNull();
+			await dbOps.recordUsageSnapshot(
+				"acc1",
+				{ seven_day: { utilization: 12, resets_at: null } },
+				1000,
+			);
+			await dbOps.recordUsageSnapshot(
+				"acc1",
+				{ seven_day: { utilization: 34, resets_at: null } },
+				2000,
+			);
+			const latest = await dbOps.getLatestUsageSnapshot("acc1", "seven_day");
+			expect(latest?.utilization).toBe(34);
+			expect(latest?.timestamp).toBe(2000);
+			expect(latest?.windowKey).toBe("seven_day");
 		} finally {
 			await dbOps.dispose();
 		}

@@ -60,7 +60,30 @@ export const CODEX_VERSION = "0.149.0";
 /** Hosts that are OpenAI's own Codex/Responses API, not a custom endpoint. */
 const OPENAI_PROMPT_CACHE_HOSTS = new Set(["chatgpt.com", "api.openai.com"]);
 export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
-export const CODEX_PING_MODEL = "gpt-5-codex";
+/**
+ * Fallback model for the usage-header probe (`fetchCodexUsageOnDemand`) — never
+ * used by real traffic, which always carries the client's own model.
+ *
+ * The probe's model must be one the account can actually address. `gpt-5-codex`
+ * no longer is: the subscription endpoint answers
+ * `400 {"detail":"The 'gpt-5-codex' model is not supported when using Codex
+ * with a ChatGPT account."}`, and that rejection happens *before* quota
+ * accounting, so the response carries no `x-codex-*` headers at all. The probe
+ * then returns `data: null` and the manual refresh reports failure with nothing
+ * to show for it. A body-level rejection (e.g. an unsupported reasoning effort)
+ * still returns the full header set, which is how the difference was confirmed.
+ *
+ * Which is why a name compiled in here is the *last* resort: the refresher asks
+ * the account for its own model listing and pings the weakest entry in it
+ * (`lowestTierCodexModel`), the same list the family mapping is derived from —
+ * weakest because the probe throws the answer away and the quota headers report
+ * the subscription, so the cheapest accepted name wins. This constant only
+ * answers when that listing has never been readable — a brand new account whose
+ * first read failed. `gpt-5.6-sol` stays the fallback rather than a small model:
+ * a guess has to be a name that certainly exists, and the frontier one is the
+ * only name every measured account resolved to.
+ */
+export const CODEX_PING_MODEL = "gpt-5.6-sol";
 const CODEX_SYNTHETIC_COUNT_TOKENS_URL =
 	"https://better-ccflare.local/codex/count_tokens";
 // Structured (non-text) tool_result blocks larger than this are replaced with

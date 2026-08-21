@@ -40,6 +40,7 @@ import {
 } from "@better-ccflare/proxy";
 import type {
 	Account,
+	AnthropicUsageData,
 	FullUsageData,
 	LoadBalancingStrategy,
 	RateLimitReason,
@@ -79,42 +80,96 @@ function toRateLimitReason(v: string | null): RateLimitReason | null {
 		: null;
 }
 
-function normalizeCodexUsageData(usage: UsageData): UsageData | null {
-	// Codex payloads carry the flat windows; default to empty windows if a
+/** A window we know nothing about: unknown percentage, unknown reset. */
+const UNKNOWN_WINDOW = { utilization: null, resets_at: null } as const;
+
+function hasWindowInfo(window: {
+	utilization: number | null;
+	resets_at: string | null;
+}): boolean {
+	return window.utilization !== null || window.resets_at !== null;
+}
+
+/**
+ * Input shape accepted by the normalizer. Looser than the provider's `UsageData`
+ * on purpose: the snapshot fallback feeds it windows whose utilization is
+ * already unknown, and `UsageWindow.utilization` in the providers package is a
+ * plain `number`.
+ */
+type CodexUsageInput = {
+	five_hour?: { utilization: number | null; resets_at: string | null } | null;
+	seven_day?: { utilization: number | null; resets_at: string | null } | null;
+};
+
+/**
+ * Returns the display shape (`AnthropicUsageData`, whose windows are nullable),
+ * not the provider shape — an unknown window is `utilization: null` here.
+ */
+function normalizeCodexUsageData(
+	usage: CodexUsageInput,
+): AnthropicUsageData | null {
+	// Codex payloads carry the flat windows; default to unknown windows if a
 	// limits-only shape ever reaches here (five_hour/seven_day are now optional).
+	//
+	// An absent window is UNKNOWN, not zero. Reporting 0% made the dashboard draw
+	// a confident "nothing used" bar and made the Overview pool average count the
+	// account as an idle contributor. null renders as "N/A / Data unavailable"
+	// and lands the account in the honest excluded/no_usage_data bucket
+	// (pool-usage.ts extractFiveHour -> pct null).
 	let five_hour = usage.five_hour
 		? { ...usage.five_hour }
-		: { utilization: 0, resets_at: null };
+		: { ...UNKNOWN_WINDOW };
 	let seven_day = usage.seven_day
 		? { ...usage.seven_day }
-		: { utilization: 0, resets_at: null };
+		: { ...UNKNOWN_WINDOW };
+	// A reset already in the past means the window rolled over; how much has been
+	// used since is unknown, so drop the stale percentage rather than claim zero.
 	if (
 		five_hour.resets_at &&
 		new Date(five_hour.resets_at).getTime() <= Date.now()
 	) {
-		five_hour = { utilization: 0, resets_at: null };
+		five_hour = { ...UNKNOWN_WINDOW };
 	}
 	if (
 		seven_day.resets_at &&
 		new Date(seven_day.resets_at).getTime() <= Date.now()
 	) {
-		seven_day = { utilization: 0, resets_at: null };
+		seven_day = { ...UNKNOWN_WINDOW };
 	}
-	return five_hour.resets_at !== null || seven_day.resets_at !== null
+	// Usable when either window still carries something: a reset OR a percentage.
+	// The percentage alone must be enough — a weekly value recovered from
+	// usage_snapshots may have no reset stored (accounts.rate_limit_reset keeps
+	// only the soonest one), and requiring a reset here is what used to discard it.
+	return hasWindowInfo(five_hour) || hasWindowInfo(seven_day)
 		? { five_hour, seven_day }
 		: null;
 }
 
+/**
+ * Best available Codex usage, in descending order of freshness:
+ *   1. the in-memory cache (10-minute TTL, empty after a restart)
+ *   2. headers reparsed from recently stored request payloads (pruned after
+ *      DATA_RETENTION_DAYS, default 1 day, and unreadable when payload
+ *      encryption is on)
+ *   3. the last usage_snapshots row for the weekly window (90-day retention)
+ *
+ * Step 3 exists because Codex has no usage-polling endpoint: without it the
+ * weekly percentage — the window that actually limits the account — is gone
+ * after a restart or a quiet day, and the card shows an empty bar.
+ */
 async function getCachedOrPersistedCodexUsage(
-	db: ReturnType<DatabaseOperations["getAdapter"]>,
+	dbOps: DatabaseOperations,
 	accountId: string,
 	accountName: string,
 	cacheData: FullUsageData | null,
 ): Promise<FullUsageData | null> {
+	const db = dbOps.getAdapter();
 	if (cacheData) {
-		const normalizedCache = normalizeCodexUsageData(cacheData as UsageData);
+		const normalizedCache = normalizeCodexUsageData(
+			cacheData as CodexUsageInput,
+		);
 		if (normalizedCache) {
-			return normalizedCache as FullUsageData;
+			return normalizedCache;
 		}
 	}
 	const rows = await db.query<{ json: string; timestamp: number | null }>(
@@ -150,15 +205,50 @@ async function getCachedOrPersistedCodexUsage(
 			const normalizedUsage = normalizeCodexUsageData(usage);
 			if (!normalizedUsage) continue;
 
-			usageCache.set(accountId, normalizedUsage);
+			// The cache's window type still declares `utilization: number`, while a
+			// normalized window may legitimately be unknown (null). Storing it is
+			// intended: every reader re-normalizes, and null renders as N/A.
+			usageCache.set(accountId, normalizedUsage as AnyUsageData);
 			log.debug(`Recovered Codex usage from stored payload for ${accountName}`);
-			return normalizedUsage as FullUsageData;
+			return normalizedUsage;
 		} catch (error) {
 			log.warn(
 				`Failed to recover Codex usage from stored payload for ${accountName}:`,
 				error instanceof Error ? error.message : String(error),
 			);
 		}
+	}
+
+	// Last resort: the durable weekly snapshot. Deliberately NOT written back to
+	// usageCache — the cache stands for "fresh enough to serve as current", and a
+	// snapshot can be days old. The card shows the percentage without an age
+	// label (product decision), so it must at least not shadow fresher data on the
+	// next request.
+	try {
+		const snapshot = await dbOps.getLatestUsageSnapshot(accountId, "seven_day");
+		if (snapshot) {
+			const normalizedSnapshot = normalizeCodexUsageData({
+				five_hour: { ...UNKNOWN_WINDOW },
+				seven_day: {
+					utilization: snapshot.utilization,
+					resets_at:
+						snapshot.resetsAt == null
+							? null
+							: new Date(snapshot.resetsAt).toISOString(),
+				},
+			});
+			if (normalizedSnapshot) {
+				log.debug(
+					`Recovered Codex weekly usage from history for ${accountName}`,
+				);
+				return normalizedSnapshot;
+			}
+		}
+	} catch (error) {
+		log.warn(
+			`Failed to read Codex usage history for ${accountName}:`,
+			error instanceof Error ? error.message : String(error),
+		);
 	}
 
 	return null;
@@ -323,7 +413,7 @@ export function createAccountsListHandler(
 					cachedUsageData as FullUsageData | null;
 				if (account.provider === "codex") {
 					usageData = await getCachedOrPersistedCodexUsage(
-						db,
+						dbOps,
 						account.id,
 						account.name,
 						usageData,

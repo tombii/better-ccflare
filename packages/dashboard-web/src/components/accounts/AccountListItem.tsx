@@ -479,6 +479,11 @@ export function AccountListItem({
 			{(account.rateLimitReset ||
 				account.usageData ||
 				account.usageRateLimitedUntil ||
+				// Codex quota data only arrives piggybacked on real traffic (no usage
+				// polling endpoint), so gaps are routine. Mount the bar anyway: it
+				// renders the weekly window as "Data unavailable" instead of
+				// disappearing, and a missing quota bar reads as "no limit".
+				account.provider === "codex" ||
 				providerShowsCreditsBalance(account.provider)) && (
 				<RateLimitProgress
 					resetIso={account.rateLimitReset}

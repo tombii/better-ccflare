@@ -1,4 +1,9 @@
-import { isAccountAvailable, TIME_CONSTANTS } from "@better-ccflare/core";
+import {
+	compareAccountPreference,
+	isAccountAvailable,
+	preemptsOnPreference,
+	TIME_CONSTANTS,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type {
 	Account,
@@ -141,7 +146,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		if (fallbackTriggered) {
 			const sorted = accounts
 				.filter((a) => isAvailable(a))
-				.sort((a, b) => a.priority - b.priority);
+				.sort((a, b) => compareAccountPreference(a, b));
 			return sorted[0]?.id ?? null;
 		}
 
@@ -164,9 +169,9 @@ export class SessionStrategy implements LoadBalancingStrategy {
 					(a) =>
 						a.id !== activeAccount.id &&
 						isAvailable(a) &&
-						a.priority < activeAccount.priority,
+						preemptsOnPreference(a, activeAccount),
 				)
-				.sort((a, b) => a.priority - b.priority)[0];
+				.sort((a, b) => compareAccountPreference(a, b))[0];
 
 			if (!higherPriorityAccount) {
 				return activeAccount.id;
@@ -176,7 +181,8 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		const available = accounts
 			.filter((a) => isAvailable(a))
 			.sort((a, b) => {
-				if (a.priority !== b.priority) return a.priority - b.priority;
+				const preference = compareAccountPreference(a, b);
+				if (preference !== 0) return preference;
 				const utilA =
 					this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
 				const utilB =
@@ -267,7 +273,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			// priority inversion when other accounts rank higher.
 			return accounts
 				.filter((a) => getCachedAvailability(a))
-				.sort((a, b) => a.priority - b.priority);
+				.sort((a, b) => compareAccountPreference(a, b));
 		}
 
 		// Find account with active session (most recent session_start within window)
@@ -306,9 +312,9 @@ export class SessionStrategy implements LoadBalancingStrategy {
 					(a) =>
 						a.id !== activeAccount.id &&
 						getCachedAvailability(a) &&
-						a.priority < activeAccount.priority,
+						preemptsOnPreference(a, activeAccount),
 				)
-				.sort((a, b) => a.priority - b.priority)[0];
+				.sort((a, b) => compareAccountPreference(a, b))[0];
 
 			if (higherPriorityAccount) {
 				this.log.info(
@@ -326,7 +332,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 				// Return active account first, then others as fallback (sorted by priority)
 				const others = accounts
 					.filter((a) => a.id !== activeAccount.id && getCachedAvailability(a))
-					.sort((a, b) => a.priority - b.priority);
+					.sort((a, b) => compareAccountPreference(a, b));
 				return [activeAccount, ...others];
 			}
 		}
@@ -338,7 +344,8 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		const available = accounts
 			.filter((a) => getCachedAvailability(a))
 			.sort((a, b) => {
-				if (a.priority !== b.priority) return a.priority - b.priority;
+				const preference = compareAccountPreference(a, b);
+				if (preference !== 0) return preference;
 				// Treat null as 0: an account with no usage data is assumed fresh
 				// (maximum remaining capacity). This prevents newly-added accounts
 				// from being permanently sidelined until all others expire.
@@ -399,6 +406,6 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		if (resetAccounts.length === 0) return [];
 
 		// Sort by priority (lower number = higher priority)
-		return resetAccounts.sort((a, b) => a.priority - b.priority);
+		return resetAccounts.sort((a, b) => compareAccountPreference(a, b));
 	}
 }

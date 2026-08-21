@@ -8,6 +8,7 @@ import { fetchCodexUsageOnDemand } from "./on-demand-fetch";
 import {
 	CODEX_CACHE_KEY_MODE_ENV,
 	CODEX_DEFAULT_ENDPOINT,
+	CODEX_PING_MODEL,
 	CODEX_PROMPT_CACHE_KEY_ENV,
 	CODEX_VERSION,
 	CodexProvider,
@@ -3147,7 +3148,7 @@ describe("fetchCodexUsageOnDemand", () => {
 		expect(body.stream).toBe(true);
 		expect(body.store).toBe(false);
 		expect(body.max_output_tokens).toBe(1);
-		expect(body.reasoning?.effort).toBe("minimal");
+		expect(body.reasoning?.effort).toBe("low");
 		expect(body.input).toHaveLength(1);
 		expect(body.input[0].role).toBe("user");
 
@@ -3172,6 +3173,66 @@ describe("fetchCodexUsageOnDemand", () => {
 		expect(result.response.headers.get("x-codex-primary-reset-at")).toBe(
 			"1775000000",
 		);
+	});
+
+	it("pings with a model and effort the subscription endpoint still accepts", async () => {
+		// A stale ping model is fatal in a way a stale effort is not: the
+		// subscription endpoint rejects an unknown model *before* quota
+		// accounting, so its 400 carries no `x-codex-*` headers at all and the
+		// manual refresh fails with nothing to show. An unsupported reasoning
+		// effort is rejected after accounting, so the headers still arrive.
+		globalThis.fetch = makeMockFetch(
+			new Response("event: ignored\n\n", { status: 200 }),
+		) as unknown as typeof fetch;
+
+		await fetchCodexUsageOnDemand("test-token", CODEX_DEFAULT_ENDPOINT);
+
+		const body = JSON.parse(recorded?.init.body as string);
+		expect(body.model).toBe(CODEX_PING_MODEL);
+		// Rejected by the subscription endpoint for ChatGPT accounts.
+		expect(CODEX_PING_MODEL).not.toBe("gpt-5-codex");
+		// Rejected by the current model family.
+		expect(body.reasoning?.effort).not.toBe("minimal");
+	});
+
+	// The refresher asks the account which models it actually has and pings the
+	// cheapest of them, so the compiled-in name cannot silently outlive the plan
+	// and the probe does not spend frontier quota on a request it throws away.
+	it("pings the model the caller resolved from the account's own listing", async () => {
+		globalThis.fetch = makeMockFetch(
+			new Response("event: ignored\n\n", { status: 200 }),
+		) as unknown as typeof fetch;
+
+		await fetchCodexUsageOnDemand(
+			"test-token",
+			CODEX_DEFAULT_ENDPOINT,
+			"gpt-9-nano",
+		);
+
+		const body = JSON.parse(recorded?.init.body as string);
+		expect(body.model).toBe("gpt-9-nano");
+		// Pinned regardless of the model: the cheapest effort every model accepts,
+		// and one a model dislikes still returns the usage headers anyway.
+		expect(body.reasoning?.effort).toBe("low");
+	});
+
+	// A blank model reaches the endpoint as a missing one — the same
+	// 400-without-headers dead end the whole fix is about.
+	it("falls back to the compiled-in model when handed a blank one", async () => {
+		for (const blank of ["", "   "]) {
+			globalThis.fetch = makeMockFetch(
+				new Response("event: ignored\n\n", { status: 200 }),
+			) as unknown as typeof fetch;
+
+			await fetchCodexUsageOnDemand(
+				"test-token",
+				CODEX_DEFAULT_ENDPOINT,
+				blank,
+			);
+
+			const body = JSON.parse(recorded?.init.body as string);
+			expect(body.model).toBe(CODEX_PING_MODEL);
+		}
 	});
 
 	it("omits max_output_tokens for default subscription endpoint variants", async () => {

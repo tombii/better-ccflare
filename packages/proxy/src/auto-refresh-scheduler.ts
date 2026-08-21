@@ -1,14 +1,22 @@
 import {
 	authFailureEvents,
 	CLAUDE_MODEL_IDS,
+	clearProbeBackoff,
 	getClientVersion,
+	PROBE_BACKOFF_PENALTY_THRESHOLD_MS,
 	registerHeartbeat,
 	requestEvents,
+	setProbeBackoff,
 } from "@better-ccflare/core";
 import type { BunSqlAdapter } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { fetchUsageData, getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
+import {
+	AUTO_REFRESH_PROMPTS,
+	claimAutoRefreshPrompt,
+	releaseAutoRefreshPrompt,
+} from "./auto-refresh-prompt-pool";
 import { TOKEN_SAFETY_WINDOW_MS } from "./constants";
 import {
 	extractAuthFailureReason,
@@ -55,6 +63,42 @@ export class AutoRefreshScheduler {
 	// self-recover automatically instead of getting stuck in API ERROR (#262).
 	private lastFailureProbeAt: Map<string, number> = new Map();
 	private readonly FAILURE_PROBE_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+	// Escalating backoff for a probe that failed in a way this scheduler
+	// deliberately does not count toward FAILURE_THRESHOLD: a 529 overload, or a
+	// network error that never produced a response. Those outcomes never pause
+	// the account, so on their own they leave it eligible again on the very next
+	// 60s tick, for as long as the condition lasts. That matters beyond the
+	// wasted request: every probe spends a prompt from the pool shared by all
+	// accounts, and a prompt that has been sent cannot be handed back — so an
+	// account stuck in a 529 loop would drain the whole pool in a little over
+	// eight hours and stop every other account from refreshing.
+	//
+	// A ladder rather than one flat wait, because the two ends want opposite
+	// things. A single blip should cost a minute, not ten — the account is
+	// probably fine and the next window rollover should be caught quickly. An
+	// account that has been failing all day should be asked twice a day, not six
+	// times an hour. Consecutive failures climb one rung and then stay on the
+	// last one; the first successful probe drops back to the bottom.
+	private readonly UNCOUNTED_FAILURE_BACKOFF_MS: readonly number[] = [
+		60 * 1000, // 1 minute
+		5 * 60 * 1000, // 5 minutes
+		10 * 60 * 1000, // 10 minutes
+		30 * 60 * 1000, // 30 minutes
+		60 * 60 * 1000, // 1 hour
+		6 * 60 * 60 * 1000, // 6 hours
+		12 * 60 * 60 * 1000, // 12 hours
+	];
+	// When the last uncounted failure happened, and how many in a row. Separate
+	// from lastFailureProbeAt on purpose: that map answers "when did we last poke
+	// this dead-paused account", this one answers "how long has this account been
+	// failing in a way nothing else reacts to", which applies to healthy,
+	// unpaused accounts too.
+	private uncountedProbeFailures: Map<string, { at: number; streak: number }> =
+		new Map();
+	// The release time already reported for an exhausted prompt pool. While the
+	// pool stays dry that time does not move, so comparing against it turns the
+	// per-minute retry into one log line per episode.
+	private promptPoolExhaustedReportedFor: number | null = null;
 
 	constructor(db: BunSqlAdapter, proxyContext: ProxyContext) {
 		this.db = db;
@@ -95,6 +139,32 @@ export class AutoRefreshScheduler {
 		this.lastRefreshResetTime.clear();
 		this.consecutiveFailures.clear();
 		this.lastFailureProbeAt.clear();
+		for (const accountId of this.uncountedProbeFailures.keys()) {
+			clearProbeBackoff(accountId);
+		}
+		this.uncountedProbeFailures.clear();
+		this.promptPoolExhaustedReportedFor = null;
+	}
+
+	/**
+	 * Report a dry prompt pool once per episode rather than once per minute.
+	 *
+	 * Reaching this means 500 probes went out inside 24 hours, which no healthy
+	 * install does — so it is written as the alarm it is, and it names the moment
+	 * the first prompt is free again so the wait is a fact rather than a guess.
+	 */
+	private notePromptPoolExhausted(retryAt: number, accountName: string): void {
+		const at = new Date(retryAt).toISOString();
+		if (this.promptPoolExhaustedReportedFor === retryAt) {
+			log.debug(
+				`Auto-refresh still holding off on ${accountName} until ${at} — every probe prompt is on cooldown`,
+			);
+			return;
+		}
+		this.promptPoolExhaustedReportedFor = retryAt;
+		log.warn(
+			`Auto-refresh is sending nothing for ${accountName}: all ${AUTO_REFRESH_PROMPTS.length} probe prompts are inside their 24h cooldown, which takes ${AUTO_REFRESH_PROMPTS.length} refreshes in a day and should not happen. The first prompt frees up at ${at}.`,
+		);
 	}
 
 	/**
@@ -271,8 +341,26 @@ export class AutoRefreshScheduler {
 		auto_pause_on_overage_enabled: number;
 		pause_reason: string | null;
 	}): Promise<boolean> {
+		// Hoisted out of the try so the catch below can hand the prompt back when
+		// the throw happened before the request was ever issued.
+		let claimIndex: number | null = null;
+		let probeSent = false;
+
 		try {
-			log.info(`Sending auto-refresh message to account: ${accountRow.name}`);
+			// Claim a prompt before anything else happens. Each prompt is locked for
+			// 24 hours once it is sent, so this is the one step that can call the
+			// whole refresh off — and it has to do that before the method announces
+			// a request, emits an analytics event or spends a token.
+			const claim = claimAutoRefreshPrompt();
+			if (!claim.ok) {
+				this.notePromptPoolExhausted(claim.retryAt, accountRow.name);
+				return false;
+			}
+
+			log.info(
+				`Sending auto-refresh message to account: ${accountRow.name} (prompt #${claim.index})`,
+			);
+			claimIndex = claim.index;
 
 			// Record the probe timestamp for failure_threshold accounts so the
 			// cooldown in shouldRefreshAccount suppresses re-probes for the next
@@ -286,6 +374,9 @@ export class AutoRefreshScheduler {
 				log.error(
 					`No provider found for ${accountRow.provider} (account: ${accountRow.name})`,
 				);
+				// Nothing was sent, so the prompt was never spoken. Give it back
+				// instead of locking it out of the pool for a day.
+				releaseAutoRefreshPrompt(claim.index);
 				return false;
 			}
 
@@ -351,18 +442,6 @@ export class AutoRefreshScheduler {
 				statusCode: 0, // Will be updated later
 				agentUsed: null,
 			});
-
-			// Prepare dummy message request
-			const dummyMessages = [
-				"Write a hello world program in Python",
-				"What is 2+2?",
-				"Tell me a programmer joke",
-				"What is the capital of France?",
-				"Explain recursion in one sentence",
-			];
-
-			const randomMessage =
-				dummyMessages[Math.floor(Math.random() * dummyMessages.length)];
 
 			// Send request through proxy with special header to force specific account usage
 			// This ensures proper request handling and analytics while using the correct account
@@ -434,7 +513,7 @@ export class AutoRefreshScheduler {
 						messages: [
 							{
 								role: "user",
-								content: randomMessage,
+								content: claim.prompt,
 							},
 						],
 					};
@@ -446,6 +525,9 @@ export class AutoRefreshScheduler {
 						`Auto-refresh headers: ${JSON.stringify(Object.fromEntries(headers.entries()), null, 2)}`,
 					);
 
+					// Past this line the text may already be on the wire, so the
+					// prompt stays claimed however the request ends.
+					probeSent = true;
 					response = await fetch(endpoint, {
 						method: "POST",
 						headers,
@@ -483,6 +565,10 @@ export class AutoRefreshScheduler {
 				log.error(
 					`Failed to send auto-refresh message to ${accountRow.name} with any model: ${errorMsg}`,
 				);
+				// Nothing here counts toward FAILURE_THRESHOLD, so nothing here
+				// pauses the account. Hold it off for a cooldown anyway: a request
+				// went out for every model tried, and each one spent a prompt.
+				this.recordUncountedProbeFailure(accountRow.id, accountRow.name);
 				return false;
 			}
 
@@ -525,6 +611,14 @@ export class AutoRefreshScheduler {
 				log.info(
 					`Auto-refresh message sent successfully for account: ${accountRow.name}`,
 				);
+
+				// Whatever held this account off, it answers now: the next window
+				// rollover should be picked up on the tick it happens, and a later
+				// blip should cost a minute again rather than resuming the climb
+				// from wherever the last bad spell ended. The queue penalty goes
+				// with it: one good probe is enough to stop deprioritising it.
+				this.uncountedProbeFailures.delete(accountRow.id);
+				clearProbeBackoff(accountRow.id);
 
 				// Log the response for debugging
 				let responseText = "";
@@ -682,6 +776,11 @@ export class AutoRefreshScheduler {
 				log.warn(
 					`Auto-refresh probe for ${accountRow.name} received 529 (overloaded/throttled) — not counting toward the ${this.FAILURE_THRESHOLD}-failure pause threshold`,
 				);
+				// Not counted means never paused, which means eligible again on the
+				// next 60s tick. Record the failure so shouldRefreshAccount waits a
+				// cooldown instead: the prompt this probe just spent is locked for
+				// 24 hours whether the account was overloaded or not.
+				this.recordUncountedProbeFailure(accountRow.id, accountRow.name);
 				return false;
 			}
 
@@ -711,6 +810,12 @@ export class AutoRefreshScheduler {
 				log.error(
 					`Error sending auto-refresh message to account ${accountRow.name}: Unknown error (possibly undefined or null)`,
 				);
+			}
+
+			// A throw before the request was issued means the prompt was never
+			// spoken — hand it back instead of locking it out for a day.
+			if (!probeSent && claimIndex !== null) {
+				releaseAutoRefreshPrompt(claimIndex);
 			}
 
 			// Track consecutive failures for this account (for exceptions too)
@@ -1262,6 +1367,17 @@ export class AutoRefreshScheduler {
 					);
 				}
 			}
+
+			// And the uncounted-failure backoff, for the same reason
+			for (const accountId of this.uncountedProbeFailures.keys()) {
+				if (!activeAccountIdSet.has(accountId)) {
+					this.uncountedProbeFailures.delete(accountId);
+					clearProbeBackoff(accountId);
+					log.debug(
+						`Removed uncounted-failure cooldown tracking for account ${accountId} (no longer exists or auto-refresh disabled)`,
+					);
+				}
+			}
 		} catch (error) {
 			if (error instanceof Error) {
 				const errorMessage = `Error cleaning up tracking map: ${error.name}: ${error.message}`;
@@ -1332,6 +1448,42 @@ export class AutoRefreshScheduler {
 	 * @param now - The current timestamp
 	 * @returns true if the account should be refreshed, false otherwise
 	 */
+	/**
+	 * How long an account waits after its nth consecutive uncounted failure.
+	 * Climbs one rung per failure and stays on the last one, so a chronic
+	 * failure settles at twice a day instead of compounding forever.
+	 */
+	private uncountedFailureCooldownMs(streak: number): number {
+		const ladder = this.UNCOUNTED_FAILURE_BACKOFF_MS;
+		const rung = Math.min(Math.max(streak, 1), ladder.length) - 1;
+		return ladder[rung];
+	}
+
+	/** Advance an account one rung up the uncounted-failure ladder. */
+	private recordUncountedProbeFailure(
+		accountId: string,
+		accountName: string,
+	): void {
+		const streak =
+			(this.uncountedProbeFailures.get(accountId)?.streak ?? 0) + 1;
+		const at = Date.now();
+		this.uncountedProbeFailures.set(accountId, { at, streak });
+
+		// From the 1-hour rung up, the provider has been refusing this account for
+		// a sustained stretch, which is evidence about live traffic too — so the
+		// load balancer starts sorting it behind accounts with no such history.
+		// The short rungs are noise and must not move anything in the queue.
+		const cooldown = this.uncountedFailureCooldownMs(streak);
+		const penalised = cooldown >= PROBE_BACKOFF_PENALTY_THRESHOLD_MS;
+		if (penalised) {
+			setProbeBackoff(accountId, at + cooldown);
+		}
+
+		log.debug(
+			`Uncounted probe failure #${streak} for account ${accountName} — next probe held off for ${cooldown / 60000}m${penalised ? ", and deprioritised in the queue until then" : ""}`,
+		);
+	}
+
 	private shouldRefreshAccount(
 		account: {
 			id: string;
@@ -1347,6 +1499,22 @@ export class AutoRefreshScheduler {
 		},
 		now: number,
 	): boolean {
+		// A probe whose failure was deliberately not counted (529, or no response
+		// at all) leaves the account unpaused and therefore eligible again on the
+		// next tick. Hold it off for as long as its streak has earned, so a
+		// provider-side overload cannot turn into one probe per minute — each of
+		// which spends a prompt from the shared pool for good.
+		const uncounted = this.uncountedProbeFailures.get(account.id);
+		if (uncounted) {
+			const cooldown = this.uncountedFailureCooldownMs(uncounted.streak);
+			if (now - uncounted.at < cooldown) {
+				log.debug(
+					`Skipping probe for account ${account.name} — ${uncounted.streak} uncounted failure(s) in a row, last one ${Math.round((now - uncounted.at) / 1000)}s ago, backoff ${cooldown / 1000}s`,
+				);
+				return false;
+			}
+		}
+
 		// Throttle re-probes of failure_threshold-paused accounts to once per
 		// cooldown — avoids burning quota on a dead endpoint every 60s (#199)
 		// while still letting it recover automatically (#262).
