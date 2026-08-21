@@ -38,7 +38,32 @@ let forceAccountModel = false;
  * already verified — and every guard that reads the flag then answers
  * correctly, including ones added later.
  */
-const exemptScope = new AsyncLocalStorage<true>();
+let exemptScope: AsyncLocalStorage<true> | null = null;
+
+/**
+ * Build the scope on first use rather than at import time.
+ *
+ * This module reaches the browser: `core/src/index.ts` re-exports it, the
+ * dashboard imports that barrel, and a browser bundle has no
+ * `node:async_hooks` — Bun's browser target replaces the import with an empty
+ * stub, leaving `AsyncLocalStorage` undefined. Constructing at module scope
+ * therefore threw "AsyncLocalStorage is not a constructor" while the chunk was
+ * still initialising, and since that chunk carries the dashboard's React
+ * bootstrap, the whole UI failed to mount.
+ *
+ * Nothing in the browser calls the functions below — only the proxy and the
+ * providers do — so deferring the construction keeps the module importable
+ * there while server behaviour stays exactly the same: the first caller builds
+ * the one scope, every later caller reuses it. The null branch is reachable in
+ * the browser bundle only, where "no scope" is the correct answer: an
+ * exemption is something the proxy opens around a verified probe, and there
+ * are no probes in a browser.
+ */
+function getExemptScope(): AsyncLocalStorage<true> | null {
+	if (typeof AsyncLocalStorage !== "function") return null;
+	exemptScope ??= new AsyncLocalStorage<true>();
+	return exemptScope;
+}
 
 /** Mirror the config value here. Called at boot and after a successful write. */
 export function setForceAccountModel(value: boolean): void {
@@ -53,7 +78,7 @@ export function setForceAccountModel(value: boolean): void {
  * on the operator's behalf while this is on.
  */
 export function isForceAccountModelEnabled(): boolean {
-	return forceAccountModel && exemptScope.getStore() !== true;
+	return forceAccountModel && getExemptScope()?.getStore() !== true;
 }
 
 /**
@@ -64,7 +89,8 @@ export function isForceAccountModelEnabled(): boolean {
  * opting itself out of the operator's setting.
  */
 export function runForceAccountModelExempt<T>(fn: () => T): T {
-	return exemptScope.run(true, fn);
+	const scope = getExemptScope();
+	return scope ? scope.run(true, fn) : fn();
 }
 
 /**
@@ -73,5 +99,5 @@ export function runForceAccountModelExempt<T>(fn: () => T): T {
  * reading `isForceAccountModelEnabled`, which already accounts for it.
  */
 export function isForceAccountModelExempt(): boolean {
-	return exemptScope.getStore() === true;
+	return getExemptScope()?.getStore() === true;
 }
