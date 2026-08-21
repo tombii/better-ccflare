@@ -26,7 +26,7 @@ Combos let you define named, ordered fallback chains of (account, model) pairs. 
 
 When no combo is assigned to a model family (or the family toggle is disabled), normal session-based routing applies unchanged. Combos are completely optional — they don't affect default load balancing behavior.
 
-The same is true when combos are switched off entirely, on the Combos tab: the combos you configured stay saved but take no part in routing. That switch is off by default; see [BETA_FEATURE_COMBOS.md](../BETA_FEATURE_COMBOS.md).
+The same is true when combos are switched off entirely, on the Combos tab: the combos you configured stay saved but take no part in routing. That switch is off by default; see [FEATURE_COMBOS.md](../FEATURE_COMBOS.md).
 
 ## Core Concepts
 
