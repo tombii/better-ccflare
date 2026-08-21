@@ -635,6 +635,27 @@ export function claimAutoRefreshPrompt(
 }
 
 /**
+ * Put a prompt back into circulation.
+ *
+ * The lock exists to stop the same text being *sent* twice inside a day, so a
+ * claim that never became a request is not a lock — it is a leak. The claim has
+ * to happen before the caller knows whether it can send at all (a provider that
+ * is not registered, a token that will not refresh), and this is how it gives
+ * the prompt back on those paths.
+ *
+ * Deliberately not for the other kind of failure. Once a request has been
+ * issued the text was sent, whatever the provider answered — including a 529
+ * overload — and remembering that is the pool's entire job. Handing the prompt
+ * back there would let the same text go out twice in a minute, which is the one
+ * thing the cooldown exists to prevent.
+ *
+ * Idempotent: releasing an index that is already free does nothing.
+ */
+export function releaseAutoRefreshPrompt(index: number): void {
+	claimedAt.delete(index);
+}
+
+/**
  * What the pool looks like right now, without claiming anything. For log lines
  * and for anyone who wants to see how close to dry it is.
  */

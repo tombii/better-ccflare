@@ -83,7 +83,7 @@ Every refresh draws one prompt from a shared pool of 500 short questions
 the only real cost. The five prompts this feature originally rotated through
 ("What is 2+2?", "Tell me a programmer joke", …) are still in the pool, verbatim.
 
-The pool has four rules, and each one is load-bearing:
+The pool has six rules, and each one is load-bearing:
 
 - **500 distinct prompts, deliberately uneven in shape.** Arithmetic, geography,
   shell and git one-liners, conversions, acronyms, one-word-back questions. 500
@@ -95,6 +95,26 @@ The pool has four rules, and each one is load-bearing:
   refreshing in the same tick therefore cannot be handed the same text: the
   first one wins it and the second is given the next free prompt. "First one
   wins" is structural here, not luck.
+- **A claim that was never sent is given back.** The claim happens before the
+  scheduler knows whether it can send at all, so the paths that prove nothing
+  left the process — no provider registered for the account, a throw before the
+  request was issued — call `releaseAutoRefreshPrompt()` and the prompt returns
+  to circulation immediately. The lock is there to stop the same text being
+  *sent* twice in a day; a claim that never became a request is not a lock, it
+  is a leak. The mirror of that rule: once a request has gone out the prompt
+  stays locked whatever came back, including an error, because the text was
+  sent.
+- **A failure that is not counted still costs a cooldown.** Two outcomes never
+  reach the consecutive-failure counter on purpose: a 529 (overloaded or
+  throttled — see the exemption below) and a request that produced no response
+  at all. Neither pauses the account, so on their own they leave it eligible
+  again on the very next 60s tick. Each of those re-probes spends a prompt that
+  cannot be handed back, so an account stuck in that state would drain all 500
+  in a little over eight hours and stop every other account from refreshing.
+  The scheduler therefore records the uncounted failure and holds that account
+  off for `FAILURE_PROBE_COOLDOWN_MS` (10 minutes), which the first successful
+  probe clears. The failures that *are* counted keep going through the
+  five-strike pause threshold untouched.
 - **A dry pool sends nothing.** If every prompt is inside its cooldown, the
   claim fails and `sendDummyMessage` returns `false` without sending, without
   touching the account row, and **without counting a failure** — holding off is
@@ -104,8 +124,10 @@ The pool has four rules, and each one is load-bearing:
 
 Draining the pool takes 500 refreshes inside 24 hours, and a healthy install
 does a couple of dozen. So the dry-pool branch is an alarm, not a routine state:
-it doubles as a circuit breaker if a stale `rate_limit_reset` ever puts the
-scheduler into a per-minute refresh loop.
+it is the last line of defence if something ever puts the scheduler into a
+per-minute refresh loop. The uncounted-failure cooldown above is the first one —
+it caps a single misbehaving account at six probes an hour instead of sixty, so
+reaching a dry pool means something is looping that neither guard anticipated.
 
 `autoRefreshPromptPoolStatus()` reports `{ free, total, retryAt }` for
 inspection.

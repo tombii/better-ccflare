@@ -16,6 +16,7 @@ import {
 	autoRefreshPromptPoolStatus,
 	claimAutoRefreshPrompt,
 	PROMPT_COOLDOWN_MS,
+	releaseAutoRefreshPrompt,
 	resetAutoRefreshPromptPoolForTests,
 } from "../auto-refresh-prompt-pool";
 import type { AutoRefreshScheduler } from "../auto-refresh-scheduler";
@@ -280,5 +281,128 @@ describe("AutoRefreshScheduler.sendDummyMessage — drawing from the pool", () =
 		// consecutive-failure pause, and it must not touch the account's row.
 		expect(scheduler.consecutiveFailures.get(accountRow.id)).toBeUndefined();
 		expect(db.runCalls).toHaveLength(0);
+	});
+});
+
+// ── giving a prompt back ──────────────────────────────────────────────────────
+
+describe("auto-refresh prompt pool — releasing an unspent claim", () => {
+	it("puts the prompt straight back, without waiting out the day", () => {
+		const now = 1_700_000_000_000;
+		const claim = claimAutoRefreshPrompt(now);
+		expect(claim.ok).toBe(true);
+		if (!claim.ok) return;
+		expect(autoRefreshPromptPoolStatus(now).free).toBe(499);
+
+		releaseAutoRefreshPrompt(claim.index);
+
+		// The lock exists to stop the same text being *sent* twice in a day. A
+		// claim that never became a request is not a lock, it is a leak.
+		expect(autoRefreshPromptPoolStatus(now)).toEqual({
+			free: 500,
+			total: 500,
+			retryAt: null,
+		});
+	});
+
+	it("hands the released prompt out again in the same instant", () => {
+		const now = 1_700_000_000_000;
+		// Drain everything but one, then release that one: the next claim can only
+		// be the prompt that came back.
+		for (let i = 0; i < AUTO_REFRESH_PROMPTS.length; i++) {
+			claimAutoRefreshPrompt(now);
+		}
+		expect(claimAutoRefreshPrompt(now).ok).toBe(false);
+
+		releaseAutoRefreshPrompt(7);
+		const again = claimAutoRefreshPrompt(now);
+
+		expect(again.ok).toBe(true);
+		if (!again.ok) return;
+		expect(again.index).toBe(7);
+	});
+
+	it("frees only the prompt it names", () => {
+		const now = 1_700_000_000_000;
+		const first = claimAutoRefreshPrompt(now);
+		const second = claimAutoRefreshPrompt(now);
+		expect(first.ok && second.ok).toBe(true);
+		if (!first.ok || !second.ok) return;
+
+		releaseAutoRefreshPrompt(first.index);
+
+		expect(autoRefreshPromptPoolStatus(now).free).toBe(499);
+		expect(autoRefreshPromptPoolStatus(now).retryAt).toBe(
+			now + PROMPT_COOLDOWN_MS,
+		);
+	});
+
+	it("does nothing when the prompt is already free", () => {
+		const now = 1_700_000_000_000;
+		releaseAutoRefreshPrompt(0);
+		releaseAutoRefreshPrompt(0);
+
+		expect(autoRefreshPromptPoolStatus(now)).toEqual({
+			free: 500,
+			total: 500,
+			retryAt: null,
+		});
+	});
+});
+
+describe("AutoRefreshScheduler.sendDummyMessage — returning what it did not spend", () => {
+	it("gives the prompt back when there is no provider to send through", async () => {
+		const sent = captureSentPrompts();
+		const scheduler = await makeScheduler(makeDb());
+
+		expect(
+			await scheduler.sendDummyMessage(
+				makeAccountRow({ provider: "not-a-real-provider" }),
+			),
+		).toBe(false);
+
+		expect(sent).toHaveLength(0);
+		expect(autoRefreshPromptPoolStatus().free).toBe(
+			AUTO_REFRESH_PROMPTS.length,
+		);
+	});
+
+	it("gives the prompt back when the throw came before the request", async () => {
+		const sent = captureSentPrompts();
+		const { AutoRefreshScheduler } = await import("../auto-refresh-scheduler");
+		// No runtime on the context: building the endpoint URL throws, which lands
+		// in the catch without a single byte having left the process.
+		const scheduler = new AutoRefreshScheduler(
+			makeDb() as never,
+			{
+				refreshInFlight: new Map(),
+			} as never,
+		) as unknown as {
+			sendDummyMessage(
+				row: ReturnType<typeof makeAccountRow>,
+			): Promise<boolean>;
+		};
+
+		expect(await scheduler.sendDummyMessage(makeAccountRow())).toBe(false);
+
+		expect(sent).toHaveLength(0);
+		expect(autoRefreshPromptPoolStatus().free).toBe(
+			AUTO_REFRESH_PROMPTS.length,
+		);
+	});
+
+	it("keeps the prompt when the provider answered, even with an error", async () => {
+		globalThis.fetch = mock(async () => {
+			return new Response("overloaded", { status: 529 });
+		}) as unknown as typeof fetch;
+		const scheduler = await makeScheduler(makeDb());
+
+		expect(await scheduler.sendDummyMessage(makeAccountRow())).toBe(false);
+
+		// The text was sent. Handing it back would let the same prompt go out
+		// twice inside a minute, which is the one thing the cooldown is for.
+		expect(autoRefreshPromptPoolStatus().free).toBe(
+			AUTO_REFRESH_PROMPTS.length - 1,
+		);
 	});
 });
