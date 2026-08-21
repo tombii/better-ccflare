@@ -81,10 +81,14 @@ const ADVANCED_SETTINGS_ITEMS: AdvancedSettingItem[] = [
 					model. Switching account to serve the same model is still fine.
 				</p>
 				<p className="font-medium text-foreground">
-					It turns off three things you may be relying on:
+					It turns off four things you may be relying on:
 				</p>
 				<ul className="ml-4 list-disc space-y-0.5">
 					<li>combos — no slot model is applied</li>
+					<li>
+						agent model preferences — an agent is still attributed, but its
+						preferred model is not applied
+					</li>
 					<li>
 						account model mappings, the global provider defaults, and the
 						built-in map

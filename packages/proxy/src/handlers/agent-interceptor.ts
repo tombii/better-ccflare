@@ -49,6 +49,10 @@ export function isRewriteTargetServable(
  *   to the real `getModelCatalog`), consulted before applying a preference
  *   rewrite via `isRewriteTargetServable`. Tests inject a stub to avoid the
  *   real disk-cache/network-backed implementation.
+ * @param options.forceAccountModel - When true, no preference rewrite is
+ *   applied: an agent preference is another way of sending a model other than
+ *   the one asked for, exactly like a combo slot, and this setting declines
+ *   all of them. Agent attribution is unaffected — only the rewrite is.
  * @returns Modified request body and agent detection information
  */
 export async function interceptAndModifyRequest(
@@ -58,9 +62,11 @@ export async function interceptAndModifyRequest(
 	options?: {
 		frontmatterModelFallback?: boolean;
 		getModelCatalog?: () => Promise<ModelCatalog>;
+		forceAccountModel?: boolean;
 	},
 ): Promise<AgentInterceptResult> {
 	const loadModelCatalog = options?.getModelCatalog ?? getModelCatalog;
+	const skipModelRewrite = options?.forceAccountModel === true;
 	const bodyContext =
 		requestBody instanceof RequestBodyContext
 			? requestBody
@@ -130,7 +136,12 @@ export async function interceptAndModifyRequest(
 			// an agent's frontmatter `model` is never consulted here, since a
 			// declared agent id has no associated frontmatter to fall back to.
 			const preference = await dbOps.getAgentPreference(explicitAgentId);
-			const preferredModel = preference?.model;
+			if (skipModelRewrite && preference?.model) {
+				log.info(
+					`Force account model is on — agent ${explicitAgentId}'s preference for ${preference.model} does not apply; passing through ${originalModel}`,
+				);
+			}
+			const preferredModel = skipModelRewrite ? undefined : preference?.model;
 			if (preferredModel && preferredModel !== originalModel) {
 				const catalog = await loadModelCatalog();
 				if (isRewriteTargetServable(catalog, preferredModel)) {
@@ -284,9 +295,15 @@ export async function interceptAndModifyRequest(
 		// broken subagent spawns against dead alias targets in the past. A null
 		// agent.model means "inherit" (no preference) either way.
 		const preference = await dbOps.getAgentPreference(detectedAgent.id);
-		const preferredModel =
+		const declaredPreference =
 			preference?.model ??
 			(options?.frontmatterModelFallback ? detectedAgent.model : null);
+		if (skipModelRewrite && declaredPreference) {
+			log.info(
+				`Force account model is on — agent ${detectedAgent.id}'s preference for ${declaredPreference} does not apply; passing through ${originalModel}`,
+			);
+		}
+		const preferredModel = skipModelRewrite ? null : declaredPreference;
 
 		// If there's no preference at all, or it matches the original, no
 		// modification is needed. agentUsed is still reported for attribution.

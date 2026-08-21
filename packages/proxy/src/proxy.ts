@@ -241,6 +241,7 @@ export async function handleProxy(
 		req.headers,
 		{
 			frontmatterModelFallback: ctx.config.getAgentFrontmatterModelFallback(),
+			forceAccountModel: isForceAccountModelEnabled(ctx),
 		},
 	);
 
@@ -468,19 +469,6 @@ export async function handleProxy(
 			return await returnComboSessionFallbackDisabled(requestMeta.comboName, 0);
 		}
 
-		// Nothing can serve the model that was asked for, and substituting one
-		// is exactly what this setting forbids. Answering here — rather than
-		// letting the generic pool_exhausted 503 answer — is what tells the
-		// caller which model went unserved.
-		if (effectiveModel && isForceAccountModelEnabled(ctx)) {
-			return await returnRefusal(
-				createForceAccountModelResponse(effectiveModel),
-				"force_account_model_no_account",
-				0,
-				null,
-			);
-		}
-
 		// Model-scoped capacity filter (account-selector.ts) emptied the
 		// candidate pool because every account is exhausted for this request's
 		// model family — a structured, actionable response instead of the
@@ -493,6 +481,28 @@ export async function handleProxy(
 
 		if (throttledAccounts.length > 0) {
 			return createUsageThrottledResponse(throttledAccounts);
+		}
+
+		// Nothing can serve the model that was asked for, and substituting one
+		// is exactly what this setting forbids. Answering here — rather than
+		// letting the generic pool_exhausted 503 answer — is what tells the
+		// caller which model went unserved.
+		//
+		// This comes *after* the exhaustion and throttling branches on purpose.
+		// An account that speaks the requested model but is out of quota right
+		// now is a temporary, actionable state, and those branches carry the
+		// `resetAt`/`Retry-After` that says when to come back. Answering
+		// "nothing can serve this model" over them would replace a fact with a
+		// falsehood and drop the retry time on the floor. What is left here is
+		// the case this setting is actually about: the pool emptied because the
+		// compatibility filter removed every candidate.
+		if (effectiveModel && isForceAccountModelEnabled(ctx)) {
+			return await returnRefusal(
+				createForceAccountModelResponse(effectiveModel),
+				"force_account_model_no_account",
+				0,
+				null,
+			);
 		}
 
 		// Check feature flag for backwards compatibility
