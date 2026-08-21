@@ -50,16 +50,42 @@ import { codexWindowHasReset } from "./session-window-reset";
  *
  * peek() mirrors select()'s decision exactly (same requirement as every
  * other strategy here) since the dashboard's "Primary" badge is driven by it.
+ *
+ * ── "strict" mode ────────────────────────────────────────────────────────
+ *
+ * The default ("sticky") holder choice above means the drain comparator only
+ * ever orders the tail: with several concurrently active sessions — the
+ * production-normal state, since served requests, keepalive probes, and the
+ * usage-poller rollover callback all open sessions — whichever account most
+ * recently received a session_start write holds ALL traffic, regardless of
+ * its weekly-reset rank.
+ *
+ * In "strict" mode one canonical comparator ranks every available account:
+ * earliest future weekly reset first, then active-session accounts before
+ * inactive ones, then priority, utilization, and finally the account id as a
+ * determinism anchor. session_start no longer gates position 0 — the
+ * active-session STATUS breaks weekly-reset ties, while session-start
+ * recency is never compared. Consequences: the drain-earliest account keeps winning even
+ * after its own 5h window ages out (no lock-out), and in the cold-cache case
+ * (all weekly resets unknown, e.g. right after a restart) the incumbent
+ * active account keeps the traffic instead of utilization-ranked spraying.
+ * The auto-fallback exception and the bypass header behave identically in
+ * both modes.
  */
+export type SessionDrainSoonestMode = "sticky" | "strict";
+
 export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;
+	private mode: SessionDrainSoonestMode;
 	private store: StrategyStore | null = null;
 	private log = new Logger("SessionDrainSoonestStrategy");
 
 	constructor(
 		sessionDurationMs: number = TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_DEFAULT,
+		mode: SessionDrainSoonestMode = "sticky",
 	) {
 		this.sessionDurationMs = sessionDurationMs;
+		this.mode = mode;
 	}
 
 	initialize(store: StrategyStore): void {
@@ -97,6 +123,34 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 		const utilA = this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
 		const utilB = this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
 		return utilA - utilB;
+	}
+
+	/**
+	 * The single canonical comparator of "strict" mode: earliest future
+	 * weekly reset first (unknown/past last), then ACTIVE sessions before
+	 * inactive ones (this tie-break — not a pre-filter — is what prevents
+	 * both the sticky lock-in and cold-cache spraying), then priority ASC,
+	 * utilization ASC, and the account id as a total-order determinism
+	 * anchor so equal candidates never depend on input order.
+	 */
+	private compareAccountsStrict(a: Account, b: Account, now: number): number {
+		const resetA = this.getWeeklyReset(a, now);
+		const resetB = this.getWeeklyReset(b, now);
+		if (resetA !== resetB) {
+			if (resetA === null) return 1;
+			if (resetB === null) return -1;
+			return resetA - resetB;
+		}
+		const activeA = this.hasActiveSession(a, now) ? 1 : 0;
+		const activeB = this.hasActiveSession(b, now) ? 1 : 0;
+		if (activeA !== activeB) return activeB - activeA;
+		if (a.priority !== b.priority) return a.priority - b.priority;
+		const utilA = this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
+		const utilB = this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
+		if (utilA !== utilB) return utilA - utilB;
+		if (a.id < b.id) return -1;
+		if (a.id > b.id) return 1;
+		return 0;
 	}
 
 	private resetSessionIfExpired(account: Account): void {
@@ -178,6 +232,13 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 		const chosenFallback = fallbackCandidates.find((c) => isAvailable(c));
 		if (chosenFallback) {
 			return chosenFallback.id;
+		}
+
+		if (this.mode === "strict") {
+			const availableStrict = accounts
+				.filter((a) => isAvailable(a))
+				.sort((a, b) => this.compareAccountsStrict(a, b, now));
+			return availableStrict[0]?.id ?? null;
 		}
 
 		let activeAccount: Account | null = null;
@@ -276,12 +337,37 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
 			);
 			// chosenFallback is forced to position 0 — auto-fallback is a
-			// priority rule that overrides drain-soonest ranking. The rest of
-			// the available pool is drain-sorted behind it.
+			// priority rule that overrides the ranking in BOTH modes. The
+			// rest of the available pool follows the mode's comparator, so
+			// the failover loop always walks one consistent order.
 			const others = accounts
 				.filter((a) => a.id !== chosenFallback.id && getCachedAvailability(a))
-				.sort((a, b) => this.compareAccounts(a, b, now));
+				.sort((a, b) =>
+					this.mode === "strict"
+						? this.compareAccountsStrict(a, b, now)
+						: this.compareAccounts(a, b, now),
+				);
 			return [chosenFallback, ...others];
+		}
+
+		if (this.mode === "strict") {
+			// One canonical comparator over every AVAILABLE account — active
+			// sessions do not gate position 0, they only break reset ties.
+			// The returned list is fully strict-sorted, so the failover loop
+			// walks exactly the drain order.
+			const availableStrict = accounts
+				.filter((a) => getCachedAvailability(a))
+				.sort((a, b) => this.compareAccountsStrict(a, b, now));
+			if (availableStrict.length === 0) return [];
+
+			const chosenAccount = availableStrict[0];
+			if (!bypassSession) {
+				this.resetSessionIfExpired(chosenAccount);
+			}
+			this.log.debug(
+				`Strict drain selection: ${chosenAccount.name} (${availableStrict.length} available)`,
+			);
+			return availableStrict;
 		}
 
 		let activeAccount: Account | null = null;

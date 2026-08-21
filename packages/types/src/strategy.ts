@@ -5,6 +5,10 @@ export enum StrategyName {
 	LeastUsed = "least-used",
 	SessionAffinity = "session-affinity",
 	SessionDrainSoonest = "session-drain-soonest",
+	// Same strategy class in "strict" mode: one canonical comparator ranks
+	// every available account (earliest weekly reset first; an active 5h
+	// session only breaks ties instead of gating position 0).
+	SessionDrainSoonestStrict = "session-drain-soonest-strict",
 }
 
 /**

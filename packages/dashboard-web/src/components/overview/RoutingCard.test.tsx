@@ -39,9 +39,13 @@ describe("RoutingCardView", () => {
 		expect(html).toContain("Model-scoped capacity routing");
 	});
 
-	it("explains the drain-soonest tiebreaker in the strategy description", () => {
+	it("describes both drain-soonest modes honestly in the strategy description", () => {
 		const html = render();
-		expect(html).toContain("priority becomes a tiebreaker");
+		// The sticky mode's actual behaviour (never preempted, ranking only
+		// orders re-selection/failover) — not the drain promise it used to make.
+		expect(html).toContain("never preempted");
+		// The strict mode's rule: an active session only breaks ties.
+		expect(html).toContain("only breaks ties");
 		// The safety note about not offering per-request spreading strategies.
 		expect(html).toContain("Only session-class strategies are shown");
 	});
@@ -136,11 +140,18 @@ describe("getStrategySelectItems", () => {
 	const listed: readonly StrategySelectItem[] = [
 		{ label: "Session", value: "session" },
 		{ label: "Session — drain soonest", value: "session-drain-soonest" },
+		{
+			label: "Session — drain soonest (strict)",
+			value: "session-drain-soonest-strict",
+		},
 	];
 
-	it("returns only the two listed options when the current strategy is one of them", () => {
+	it("returns only the three listed options when the current strategy is one of them", () => {
 		expect(getStrategySelectItems("session")).toEqual(listed);
 		expect(getStrategySelectItems("session-drain-soonest")).toEqual(listed);
+		expect(getStrategySelectItems("session-drain-soonest-strict")).toEqual(
+			listed,
+		);
 	});
 
 	it("appends the current strategy as a disabled item when it is not listed", () => {

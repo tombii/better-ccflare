@@ -1,3 +1,4 @@
+export type { SessionDrainSoonestMode } from "./strategies";
 export {
 	LeastUsedStrategy,
 	SessionAffinityStrategy,

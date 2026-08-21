@@ -81,6 +81,17 @@ describe("getStrategy / getStrategySource", () => {
 		}
 	});
 
+	it("accepts session-drain-soonest-strict as a valid env override", () => {
+		process.env.LB_STRATEGY = StrategyName.SessionDrainSoonestStrict;
+		const { config, cleanup } = makeConfig();
+		try {
+			expect(config.getStrategy()).toBe(StrategyName.SessionDrainSoonestStrict);
+			expect(config.getStrategySource()).toBe("env");
+		} finally {
+			cleanup();
+		}
+	});
+
 	it("falls back to the default for an invalid env value when the file predates lb_strategy", () => {
 		process.env.LB_STRATEGY = "not-a-real-strategy";
 		const { config, cleanup } = makeConfigFromRawFile({});
