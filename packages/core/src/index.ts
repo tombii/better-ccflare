@@ -90,6 +90,7 @@ export {
 	setPricingLogger,
 	type TokenBreakdown,
 } from "./pricing";
+export * from "./probe-backoff";
 export * from "./request-events";
 export * from "./strategy";
 export {

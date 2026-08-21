@@ -1,4 +1,8 @@
-import { isAccountAvailable, TIME_CONSTANTS } from "@better-ccflare/core";
+import {
+	compareAccountPreference,
+	isAccountAvailable,
+	TIME_CONSTANTS,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type {
 	Account,
@@ -116,9 +120,8 @@ export class SessionAffinityStrategy implements LoadBalancingStrategy {
 
 		return scored
 			.sort((a, b) => {
-				if (a.account.priority !== b.account.priority) {
-					return a.account.priority - b.account.priority;
-				}
+				const preference = compareAccountPreference(a.account, b.account);
+				if (preference !== 0) return preference;
 				return a.score - b.score;
 			})
 			.map((s) => s.account);

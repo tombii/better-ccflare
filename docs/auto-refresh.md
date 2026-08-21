@@ -104,26 +104,56 @@ The pool has six rules, and each one is load-bearing:
   is a leak. The mirror of that rule: once a request has gone out the prompt
   stays locked whatever came back, including an error, because the text was
   sent.
-- **A failure that is not counted still costs a cooldown.** Two outcomes never
-  reach the consecutive-failure counter on purpose: a 529 (overloaded or
-  throttled — see the exemption below) and a request that produced no response
-  at all. Neither pauses the account, so on their own they leave it eligible
-  again on the very next 60s tick. Each of those re-probes spends a prompt that
-  cannot be handed back, so an account stuck in that state would drain all 500
-  in a little over eight hours and stop every other account from refreshing.
-  The scheduler therefore records the uncounted failure and holds that account
-  off for `FAILURE_PROBE_COOLDOWN_MS` (10 minutes), which the first successful
-  probe clears. The failures that *are* counted keep going through the
-  five-strike pause threshold untouched.
+- **A failure that is not counted still costs a wait, and the wait escalates.**
+  Two outcomes never reach the consecutive-failure counter on purpose: a 529
+  (overloaded or throttled — see the exemption below) and a request that
+  produced no response at all. Neither pauses the account, so on their own they
+  leave it eligible again on the very next 60s tick. Each of those re-probes
+  spends a prompt that cannot be handed back, so an account stuck in that state
+  would drain all 500 in a little over eight hours and stop every other account
+  from refreshing.
+
+  So consecutive uncounted failures climb a ladder —
+  `UNCOUNTED_FAILURE_BACKOFF_MS`, which is **1m, 5m, 10m, 30m, 1h, 6h, 12h** —
+  and stay on the last rung. A ladder rather than one flat wait because the two
+  ends want opposite things: a single blip should cost a minute, since the
+  account is probably fine and the next window rollover should be caught
+  quickly, while an account that has been failing all day should be asked twice
+  a day. The first successful probe drops it straight back to the bottom rung,
+  so a later blip costs a minute again instead of resuming the climb. The
+  failures that *are* counted keep going through the five-strike pause
+  threshold untouched, and the separate `FAILURE_PROBE_COOLDOWN_MS` that
+  throttles re-probes of already-paused accounts is untouched too.
+
+  **From the 1-hour rung up, the account also loses its place in the queue.**
+  The short rungs say nothing worth acting on, but an account the provider has
+  been refusing for an hour or more is telling us something about live traffic
+  as well, not just about probes. So the scheduler registers it in
+  `PROBE_BACKOFF_PENALTY_THRESHOLD_MS` terms (`packages/core/src/probe-backoff.ts`)
+  and every load-balancer strategy sorts it behind accounts with no such
+  history — `compareAccountPreference` replaces the bare priority comparison,
+  and `preemptsOnPreference` stops a penalised account from stealing an active
+  session from a healthy one. Within each group the configured priority still
+  decides.
+
+  It stays a penalty and never becomes a ban: a penalised account is still
+  selected when it is the best remaining option, because the alternative is an
+  install where everything is having a bad hour and there is nothing left to
+  route to. The penalty expires with the rung that earned it, and the first
+  successful probe clears it outright — an account is not made to serve out
+  hours of a penalty it has already disproved. The registry is in memory only,
+  like the prompt pool: what it holds is "how have the last few hours gone",
+  which a restart is entitled to forget.
 
   Rationing the rate is what bounds the total, because a claim is released
   after `PROMPT_COOLDOWN_MS` rather than kept forever: what has to fit in the
   pool is not every probe ever sent but the ones alive inside one 24-hour lock
-  window, which is rate x window. One account probing flat out holds 144 of the
-  500 prompts in steady state and never dries the pool; the break-even is a
-  probe every 2.9 minutes. The honest residual: it takes four accounts stuck
-  like that at the same time, for over a day, to reach the dry pool — and that
-  is the state the dry-pool alarm below exists to announce.
+  window, which is rate x window. A chronically failing account settles at two
+  probes a day, so it holds two prompts — and even its worst stretch, the climb
+  from the bottom rung, is seven probes across the first twenty hours. The
+  honest residual is therefore an order of magnitude away: it would take
+  something like sixty accounts all entering that state at once to reach a dry
+  pool, which is the condition the dry-pool alarm below exists to announce.
 - **A dry pool sends nothing.** If every prompt is inside its cooldown, the
   claim fails and `sendDummyMessage` returns `false` without sending, without
   touching the account row, and **without counting a failure** — holding off is
@@ -134,9 +164,10 @@ The pool has six rules, and each one is load-bearing:
 Draining the pool takes 500 refreshes inside 24 hours, and a healthy install
 does a couple of dozen. So the dry-pool branch is an alarm, not a routine state:
 it is the last line of defence if something ever puts the scheduler into a
-per-minute refresh loop. The uncounted-failure cooldown above is the first one —
-it caps a single misbehaving account at six probes an hour instead of sixty, so
-reaching a dry pool means something is looping that neither guard anticipated.
+per-minute refresh loop. The uncounted-failure ladder above is the first one —
+it takes a single misbehaving account from sixty probes an hour down to two a
+day, so reaching a dry pool means something is looping that neither guard
+anticipated.
 
 `autoRefreshPromptPoolStatus()` reports `{ free, total, retryAt }` for
 inspection.

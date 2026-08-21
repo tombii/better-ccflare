@@ -1,4 +1,7 @@
-import { isAccountAvailable } from "@better-ccflare/core";
+import {
+	compareAccountPreference,
+	isAccountAvailable,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type {
 	Account,
@@ -78,9 +81,8 @@ export class LeastUsedStrategy implements LoadBalancingStrategy {
 		});
 
 		scored.sort((a, b) => {
-			if (a.account.priority !== b.account.priority) {
-				return a.account.priority - b.account.priority;
-			}
+			const preference = compareAccountPreference(a.account, b.account);
+			if (preference !== 0) return preference;
 			return a.score - b.score;
 		});
 
@@ -113,9 +115,8 @@ export class LeastUsedStrategy implements LoadBalancingStrategy {
 
 		const sorted = scored
 			.sort((a, b) => {
-				if (a.account.priority !== b.account.priority) {
-					return a.account.priority - b.account.priority;
-				}
+				const preference = compareAccountPreference(a.account, b.account);
+				if (preference !== 0) return preference;
 				return a.score - b.score;
 			})
 			.map((s) => s.account);
