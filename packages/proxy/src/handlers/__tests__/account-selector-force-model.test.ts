@@ -203,3 +203,72 @@ describe("selectAccountsForRequest — force account model", () => {
 		expect(result.map((a) => a.id)).toEqual(["claude-1", "codex-1"]);
 	});
 });
+
+/**
+ * `x-better-ccflare-account-id` names an account outright, and that path
+ * returns before every other filter. Under this setting it still has to answer
+ * the one question the setting is about, because the two ways of not answering
+ * it are both worse: falling through to normal selection would send the request
+ * to a *different* account than the header named, and letting it through would
+ * put an account that can never serve this model in front of the capacity
+ * branches, which would then advertise a retry time for a wait that can never
+ * help.
+ */
+describe("selectAccountsForRequest — force account model, forced-account header", () => {
+	function metaForcing(accountId: string): RequestMeta {
+		return {
+			...makeRequestMeta(),
+			headers: new Headers({ "x-better-ccflare-account-id": accountId }),
+		};
+	}
+
+	it("refuses when the named account cannot serve the model as written", async () => {
+		clearCodexModelCacheForTests();
+		const { ctx } = makeCtx({
+			accounts: [claudeAccount, codexAccount],
+			forceAccountModel: true,
+		});
+
+		const result = await selectAccountsForRequest(
+			metaForcing("codex-1"),
+			ctx,
+			"claude-opus-4-1",
+		);
+
+		// Empty, which proxy.ts answers as force_account_model_no_account —
+		// and specifically not [claude-1], which would be the account swap.
+		expect(result).toEqual([]);
+	});
+
+	it("still honours the header when the named account can serve the model", async () => {
+		clearCodexModelCacheForTests();
+		const { ctx } = makeCtx({
+			accounts: [claudeAccount, codexAccount],
+			forceAccountModel: true,
+		});
+
+		const result = await selectAccountsForRequest(
+			metaForcing("codex-1"),
+			ctx,
+			"gpt-5.6-sol",
+		);
+
+		expect(result.map((a) => a.id)).toEqual(["codex-1"]);
+	});
+
+	it("leaves the header alone while off", async () => {
+		clearCodexModelCacheForTests();
+		const { ctx } = makeCtx({
+			accounts: [claudeAccount, codexAccount],
+			forceAccountModel: false,
+		});
+
+		const result = await selectAccountsForRequest(
+			metaForcing("codex-1"),
+			ctx,
+			"claude-opus-4-1",
+		);
+
+		expect(result.map((a) => a.id)).toEqual(["codex-1"]);
+	});
+});

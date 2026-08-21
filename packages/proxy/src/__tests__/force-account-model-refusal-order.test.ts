@@ -111,10 +111,10 @@ function makeContext(
 	};
 }
 
-function makeRequest(): Request {
+function makeRequest(headers: Record<string, string> = {}): Request {
 	return new Request("https://proxy.local/v1/messages", {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", ...headers },
 		body: JSON.stringify({
 			model: "claude-sonnet-4-5",
 			messages: [{ role: "user", content: "hello" }],
@@ -202,6 +202,41 @@ describe("force_account_model refusal — ordering against capacity answers", ()
 		// Naming the model is the whole point of answering here rather than
 		// letting the generic pool_exhausted 503 through.
 		expect(JSON.stringify(error)).toContain("claude-sonnet-4-5");
+	});
+
+	it("is not outranked by a retry time an incompatible forced account cannot honour", async () => {
+		// The forced-account header returns before every other filter, so
+		// without the compatibility check in that path this account reaches the
+		// throttling branch and the caller is told to come back in two hours —
+		// for a wait that can never help, because this account will never speak
+		// this model.
+		const account = makeAccount({
+			id: "codex-1",
+			name: "codex-account",
+			provider: "codex",
+		});
+		usageCache.set(account.id, throttledUsage() as never);
+		const ctx = makeContext([account], { throttlingEnabled: true });
+
+		const realDateNow = Date.now;
+		Date.now = () => FROZEN_NOW;
+		let response: Response;
+		try {
+			response = await handleProxy(
+				makeRequest({ "x-better-ccflare-account-id": "codex-1" }),
+				new URL("https://proxy.local/v1/messages"),
+				ctx,
+			);
+		} finally {
+			Date.now = realDateNow;
+		}
+
+		expect(response.status).toBe(503);
+		expect(response.headers.get("Retry-After")).toBeNull();
+
+		const body = (await response.json()) as Record<string, unknown>;
+		const error = body.error as Record<string, unknown>;
+		expect(error.code).toBe("force_account_model_no_account");
 	});
 
 	it("beats the generic pool_exhausted 503 when throttling is off", async () => {

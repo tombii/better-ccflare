@@ -512,6 +512,36 @@ export async function selectAccountsForRequest(
 					(acc) => acc.id === forcedAccountId,
 				);
 				if (forcedAccount) {
+					// With "force account model" on, a header naming an account
+					// does not get to skip the one rule the setting exists for.
+					//
+					// Refusing here — an empty selection, which proxy.ts answers
+					// as force_account_model_no_account — is deliberately not the
+					// same as falling through to normal selection below: that
+					// would send the request to a *different* account than the
+					// header named, substituting the account to protect a rule
+					// about models. Nor is it left to the provider's 400: an
+					// unfiltered forced account also reaches the capacity
+					// branches, which would advertise a `Retry-After` for an
+					// account that can never serve this model no matter how long
+					// the caller waits.
+					//
+					// Internal auto-refresh probes are not exempted. They pick a
+					// model from the account's own listing, so the check passes
+					// for them anyway, and an exemption keyed on a header any
+					// client can set would be a hole in the rule rather than a
+					// carve-out for us.
+					if (
+						model &&
+						isForceAccountModelEnabled(ctx) &&
+						!accountServesModel(forcedAccount, model)
+					) {
+						log.warn(
+							`Force account model: forced account ${forcedAccount.name} cannot serve "${model}" as requested — refusing rather than substituting the account or the model`,
+						);
+						return [];
+					}
+
 					// The auto-refresh scheduler sends dummy messages with x-better-ccflare-bypass-session
 					// to intentionally refresh accounts that are paused due to auto_pause_on_overage,
 					// or to probe accounts that are rate-limited (to detect when the window has reset).
