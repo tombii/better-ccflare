@@ -761,6 +761,91 @@ curl -X POST http://localhost:8080/api/config/provider-model-defaults \
   -d '{"overrides": [{"provider": "codex", "family": "opus", "model": "gpt-5.3-codex"}]}'
 ```
 
+#### GET /api/config/combos-enabled
+
+Whether saved combos take part in routing. Config-file-only setting, no environment variable — see [FEATURE_COMBOS.md](../FEATURE_COMBOS.md).
+
+**Response:**
+```json
+{ "enabled": false, "source": "default" }
+```
+
+`source` is `"file"` when the config file has a stored value, `"default"` otherwise.
+
+**Example:**
+```bash
+curl http://localhost:8080/api/config/combos-enabled
+```
+
+#### POST /api/config/combos-enabled
+
+Enable or disable combo routing. Saved combos are never deleted by turning this off — they just stop being consulted during account selection.
+
+**Request:**
+```json
+{ "enabled": true }
+```
+
+**Response:**
+```json
+{ "success": true, "enabled": true, "source": "file", "effective": true }
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/config/combos-enabled \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+```
+
+#### GET /api/config/force-account-model
+
+Whether the model a client asks for must be the model that is sent — no combo slot, no account model mapping, no provider default map. Config-file-only setting, no environment variable, off by default — see [Force Account Model](configuration.md#force-account-model) in configuration.md.
+
+**Response:**
+```json
+{ "enabled": false, "source": "default" }
+```
+
+**Example:**
+```bash
+curl http://localhost:8080/api/config/force-account-model
+```
+
+#### POST /api/config/force-account-model
+
+Enable or disable forced account model. Takes effect immediately, no restart required.
+
+**Request:**
+```json
+{ "enabled": true }
+```
+
+**Response:**
+```json
+{ "success": true, "enabled": true, "source": "file", "effective": true }
+```
+
+With this on, a request whose model can't be served as-written by any account gets a `503`:
+```json
+{
+  "type": "error",
+  "error": {
+    "type": "service_unavailable_error",
+    "message": "No available account can serve \"claude-opus-4-20250514\", and forcing the account model is enabled so no substitute was used.",
+    "code": "force_account_model_no_account",
+    "model": "claude-opus-4-20250514"
+  }
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/config/force-account-model \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+```
+
 ---
 
 ### Analytics

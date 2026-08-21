@@ -185,6 +185,15 @@ All combo and family management endpoints are available via the REST API.
 | `GET` | `/api/families` | Get all family → combo assignments |
 | `PUT` | `/api/families/:family` | Assign or unassign a combo to a family |
 
+### Routing Switch
+
+| Method | Endpoint | Description |
+| ------ | -------- | ----------- |
+| `GET` | `/api/config/combos-enabled` | Whether saved combos currently take part in routing |
+| `POST` | `/api/config/combos-enabled` | Enable or disable combo routing (combos and slots are unaffected) |
+
+See [FEATURE_COMBOS.md](../FEATURE_COMBOS.md) and [api-http.md](api-http.md#get-apiconfigcombos-enabled) for details.
+
 ### Example: Create and Activate a Combo
 
 ```bash

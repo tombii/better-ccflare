@@ -11,6 +11,7 @@ This guide covers all configuration options for better-ccflare, including file-b
 - [Environment Variables](#environment-variables)
 - [Model Catalog](#model-catalog)
 - [Editable Provider Model Defaults](#editable-provider-model-defaults)
+- [Force Account Model](#force-account-model)
 - [Runtime Configuration API](#runtime-configuration-api)
 - [Example Configurations](#example-configurations)
 - [Auto-Fallback Setup](#auto-fallback-setup)
@@ -141,6 +142,8 @@ These environment variables are not stored in the configuration file and must be
 | `CCFLARE_RATE_LIMIT_RESET_STABILITY_MS` | Window after which a clean streak resets the consecutive-429 counter | `300000` (5min) | `CCFLARE_RATE_LIMIT_RESET_STABILITY_MS=600000` |
 | `HEALTH_DETAIL_ENABLED` | Expose per-account status on `GET /health?detail=1` | `false` | `HEALTH_DETAIL_ENABLED=true` |
 | `CCFLARE_DISABLE_COMBO_SESSION_FALLBACK` | **Legacy.** The setting now lives in Settings → Advanced → Combo Session Fallback and is read from the config file only. This variable is adopted into that setting once, at boot, when the config field is absent — so an install that was using it keeps behaving the same — and is never consulted again. It inverts on the way in: the switch says whether the fallthrough is *allowed*. Blocking the fallthrough is now the default for new installs | adopted once, then ignored | `CCFLARE_DISABLE_COMBO_SESSION_FALLBACK=true` |
+| — (no env var) | Whether saved combos take part in routing at all. Config-file-only (`combos_enabled`), no environment override — the `BETTER_CCFLARE_SHOW_COMBOS` env var that used to gate the Combos tab's visibility has been removed; the tab is now always visible and this switch controls routing only. Manage via Settings → Advanced → Combos, or `GET`/`POST /api/config/combos-enabled`. See [FEATURE_COMBOS.md](../FEATURE_COMBOS.md) | `false` | n/a — config file or API only |
+| — (no env var) | Whether the model a client asks for must be the model that is sent (`force_account_model`), skipping combos, agent model preferences, and provider default-model mapping. See [Force Account Model](#force-account-model) below. Deliberately ships without an env var, matching the combo switches | `false` | n/a — config file or API only |
 | `CCFLARE_ENABLE_HEADING_PROJECT_ATTRIBUTION` | When project attribution finds no `x-better-ccflare-project`/`x-project` header and no workspace path in the system prompt, it can fall back to the first eligible H1 heading (`# Heading`) in the system prompt as the project name. This heading is usually the client's own prompt boilerplate (e.g. a coding assistant's `# Harness` or `# Scratchpad Directory` section), not a real project identifier, so this fallback is off by default (#413). Enable only if your client's system prompt reliably opens with a real project-identifying H1 | `false` | `CCFLARE_ENABLE_HEADING_PROJECT_ATTRIBUTION=true` |
 | `MODEL_SCOPED_CAPACITY_ROUTING` | `off` leaves account selection unchanged. `exhausted` skips an account for a request when its weekly per-model-family cap (`limits[] kind=weekly_scoped`, e.g. a Fable/Opus/Sonnet-specific quota) is at/above 100% with a future reset AND overage cannot serve the account (`spend`/`extra_usage` signal unavailable; unknown or available fails open) — both in normal and combo-slot routing. Observed `out_of_credits` 429s additionally sideline the (account, family) pair for 5 minutes to bridge telemetry lag. When every candidate account for a model family is filtered out, the request gets a `429` with `error.type: rate_limit_error` and `error.code: model_family_exhausted` (capped Retry-After) instead of exhausting the per-account failover loop against accounts already known to reject that family. Telemetry can lag up to the poll interval; with polling degraded, expect one probe 429 per family every ~5 minutes. Same as the `model_scoped_capacity_routing` config file field; env var takes precedence | `off` | `MODEL_SCOPED_CAPACITY_ROUTING=exhausted` |
 | `BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS` | Discover agents distributed by Claude Code plugins (reads `~/.claude/plugins/installed_plugins.json`) | `false` | `BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS=true` |
@@ -291,6 +294,22 @@ The **global override** is an editable layer in between: an operator-set default
 Only `codex` is editable by default. `xai` and `qwen` use the same mechanism but are gated behind `CCFLARE_MODEL_DEFAULTS_PROVIDERS` (see [Additional Environment Variables](#additional-environment-variables)) since they haven't been exercised against real accounts as extensively. Disabling a provider doesn't discard its stored override — it just stops applying until the provider is re-enabled.
 
 Manage this via the dashboard (Settings → Advanced → Provider Model Defaults) or directly through the API — see [api-http.md](api-http.md#get-apiconfigprovider-model-defaults).
+
+## Force Account Model
+
+`force_account_model` (config file only — no environment variable, off by default) makes better-ccflare serve the model a client asked for, or nothing. With it on:
+
+- **Combos are skipped** — no slot model is applied.
+- **Agent model preferences are not applied** — the agent is still attributed, but the rewrite that would send a different model does not happen.
+- **`mapModelName` and `CodexProvider.mapModel` return the model untouched** — the compiled per-provider default map (see [Editable Provider Model Defaults](#editable-provider-model-defaults) above) never substitutes a model, including the global override layer.
+- **Account selection keeps only accounts that can serve the requested model as written.** An account's own model listing decides first, when available; otherwise the provider namespace decides, since a Claude model id can only travel untranslated to a provider that speaks Claude ids. A request with no eligible account gets a `503` with `error.code: force_account_model_no_account` instead of a substitute — this also applies to a request pinned with `x-better-ccflare-account-id`.
+- **Switching accounts to serve the same model is still allowed.** The setting is about the model, not the account, so failover across accounts continues to work.
+
+Internal probes (auto-refresh, keepalive) are exempt: they send a compiled-in model list to whatever account they're checking, independent of what any client asked for, so the switch is treated as off for the lifetime of a verified probe request.
+
+This is off by default because it changes what a Claude family model name means for the install: with it on, asking for a Claude model no longer silently reaches an OpenAI-compatible account through a mapping.
+
+Manage this via the dashboard (Settings → Advanced → Force Account Model) or the API — see [api-http.md](api-http.md#get-apiconfigforce-account-model).
 
 ## Runtime Configuration API
 
