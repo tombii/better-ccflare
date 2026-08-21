@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { AccountResponse } from "@better-ccflare/types";
 import {
 	computePoolUsage,
+	computeScopedPoolUsage,
 	isAlibabaShape,
 	isAnthropicStyleShape,
 	isNanoGPTShape,
@@ -802,5 +803,183 @@ describe("Anthropic limits[] primary (pool usage)", () => {
 		});
 		const five = computePoolUsage([acc], "five_hour", NOW);
 		expect(five.contributing[0]?.pct).toBe(33);
+	});
+});
+
+describe("computeScopedPoolUsage", () => {
+	const RESET_ISO = "2030-01-01T00:00:00.000Z";
+	const RESET_MS = Date.parse(RESET_ISO);
+
+	function mkScopedAccount(
+		name: string,
+		family: string,
+		percent: number | null,
+		extra?: Partial<AccountResponse>,
+	): AccountResponse {
+		return mkAccount({
+			name,
+			provider: "anthropic",
+			usageData: {
+				limits: [
+					{
+						kind: "weekly_scoped",
+						percent,
+						resets_at: RESET_ISO,
+						scope: { model: { id: null, display_name: family }, surface: null },
+					},
+				],
+			} as never,
+			...extra,
+		});
+	}
+
+	it("returns [] when no account has any weekly_scoped limits", () => {
+		const accounts: AccountResponse[] = [
+			mkAccount({
+				name: "plain",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 10, resets_at: null },
+					seven_day: { utilization: 10, resets_at: null },
+				} as never,
+			}),
+		];
+		expect(computeScopedPoolUsage(accounts, NOW)).toEqual([]);
+	});
+
+	it("matches accounts whose display_name carries surrounding whitespace", () => {
+		// discoverScopedFamilies trims the name ("Fable " -> family "Fable"), so
+		// extractWeeklyScoped must trim too or the padded account silently drops
+		// out of the very pool its entry created.
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("padded", "Fable ", 40),
+			mkScopedAccount("clean", "Fable", 60),
+		];
+		const pools = computeScopedPoolUsage(accounts, NOW);
+		expect(pools).toHaveLength(1);
+		expect(pools[0].family).toBe("Fable");
+		expect(pools[0].result.contributing.map((c) => c.name).sort()).toEqual([
+			"clean",
+			"padded",
+		]);
+	});
+
+	it("discovers the family from the data and aggregates that family's pool", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("a", "Fable", 20),
+			mkScopedAccount("b", "Fable", 40),
+		];
+		const pools = computeScopedPoolUsage(accounts, NOW);
+		expect(pools).toHaveLength(1);
+		expect(pools[0].family).toBe("Fable");
+		expect(pools[0].result.contributing).toHaveLength(2);
+		expect(pools[0].result.average).toBe(30);
+	});
+
+	it("discovers multiple families in stable alphabetical order", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("a", "Sonnet", 10),
+			mkScopedAccount("b", "Fable", 20),
+		];
+		const pools = computeScopedPoolUsage(accounts, NOW);
+		expect(pools.map((p) => p.family)).toEqual(["Fable", "Sonnet"]);
+	});
+
+	it("average includes scoped-exhausted (>=100%) accounts as 100, activeAverage excludes them", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("low", "Fable", 20),
+			mkScopedAccount("maxed", "Fable", 100),
+		];
+		const pool = computeScopedPoolUsage(accounts, NOW)[0].result;
+		expect(pool.average).toBe(60);
+		expect(pool.activeAverage).toBe(20);
+	});
+
+	it("scoped percent >= 100 is classified as family_exhausted", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("maxed", "Fable", 100),
+		];
+		const pool = computeScopedPoolUsage(accounts, NOW)[0].result;
+		expect(pool.exhausted).toEqual([
+			{ name: "maxed", reason: "family_exhausted", resetMs: RESET_MS },
+		]);
+	});
+
+	it("account 5h-exhausted (flat window) is disqualified in the family pool too", () => {
+		const account = mkScopedAccount("acc", "Fable", 10, {
+			usageData: {
+				five_hour: {
+					utilization: 100,
+					resets_at: new Date(NOW + 1_000_000).toISOString(),
+				},
+				seven_day: { utilization: 0, resets_at: null },
+				limits: [
+					{
+						kind: "weekly_scoped",
+						percent: 10,
+						resets_at: RESET_ISO,
+						scope: {
+							model: { id: null, display_name: "Fable" },
+							surface: null,
+						},
+					},
+				],
+			} as never,
+		});
+		const pool = computeScopedPoolUsage([account], NOW)[0].result;
+		expect(pool.contributing).toEqual([]);
+		expect(pool.exhausted).toEqual([
+			{ name: "acc", reason: "five_hour_exhausted", resetMs: NOW + 1_000_000 },
+		]);
+	});
+
+	it("entry present but percent null -> excluded no_usage_data", () => {
+		const account = mkScopedAccount("nulled", "Fable", null);
+		const pool = computeScopedPoolUsage([account], NOW)[0].result;
+		expect(pool.excluded).toEqual([
+			{ name: "nulled", reason: "no_usage_data", resetMs: RESET_MS },
+		]);
+	});
+
+	it("accounts without a scoped entry for the family are omitted, not fallback", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("member", "Fable", 20),
+			mkAccount({
+				name: "outsider",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 10, resets_at: null },
+					seven_day: { utilization: 10, resets_at: null },
+				} as never,
+			}),
+		];
+		const pool = computeScopedPoolUsage(accounts, NOW)[0].result;
+		expect(pool.contributing).toHaveLength(1);
+		expect(pool.fallback).toEqual([]);
+		expect(pool.excluded).toEqual([]);
+	});
+
+	it("projects atRisk using the seven_day window", () => {
+		const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+		const elapsedMs = 6 * 24 * 60 * 60 * 1000;
+		const resetMs = NOW + (SEVEN_DAY_MS - elapsedMs);
+		const account = mkScopedAccount("burner", "Fable", 95, {
+			usageData: {
+				limits: [
+					{
+						kind: "weekly_scoped",
+						percent: 95,
+						resets_at: new Date(resetMs).toISOString(),
+						scope: {
+							model: { id: null, display_name: "Fable" },
+							surface: null,
+						},
+					},
+				],
+			} as never,
+		});
+		const pool = computeScopedPoolUsage([account], NOW)[0].result;
+		expect(pool.atRisk).toHaveLength(1);
+		expect(pool.atRisk[0].name).toBe("burner");
 	});
 });

@@ -9,6 +9,7 @@ import { format } from "date-fns";
 import {
 	Activity,
 	BarChart3,
+	Boxes,
 	CheckCircle,
 	Clock,
 	DollarSign,
@@ -18,7 +19,7 @@ import {
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { REFRESH_INTERVALS } from "../constants";
 import { useAccounts, useAnalytics, useStats } from "../hooks/queries";
-import { computePoolUsage } from "../lib/pool-usage";
+import { computePoolUsage, computeScopedPoolUsage } from "../lib/pool-usage";
 import { ChartsSection } from "./overview/ChartsSection";
 import { LoadingSkeleton } from "./overview/LoadingSkeleton";
 import { MetricCard } from "./overview/MetricCard";
@@ -60,6 +61,10 @@ export const OverviewTab = React.memo(() => {
 	);
 	const weeklyPool = useMemo(
 		() => computePoolUsage(accounts ?? [], "seven_day", now),
+		[accounts, now],
+	);
+	const scopedPools = useMemo(
+		() => computeScopedPoolUsage(accounts ?? [], now),
 		[accounts, now],
 	);
 
@@ -297,6 +302,15 @@ export const OverviewTab = React.memo(() => {
 					result={weeklyPool}
 					window="seven_day"
 				/>
+				{scopedPools.map(({ family, result }) => (
+					<PoolMetricCard
+						key={family}
+						title={`${family} pool`}
+						icon={Boxes}
+						result={result}
+						window="weekly_scoped"
+					/>
+				))}
 			</div>
 
 			<ChartsSection

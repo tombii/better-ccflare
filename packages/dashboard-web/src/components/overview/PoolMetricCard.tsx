@@ -2,8 +2,8 @@ import { formatPercentage } from "@better-ccflare/ui-common";
 import { Info } from "lucide-react";
 import type {
 	ExcludedReason,
+	PoolCardWindow,
 	PoolUsageResult,
-	PoolWindow,
 } from "../../lib/pool-usage";
 import { cn } from "../../lib/utils";
 import { Card, CardContent } from "../ui/card";
@@ -13,7 +13,7 @@ interface PoolMetricCardProps {
 	title: string;
 	icon: React.ComponentType<{ className?: string }>;
 	result: PoolUsageResult;
-	window: PoolWindow;
+	window: PoolCardWindow;
 }
 
 const REASON_LABELS: Record<ExcludedReason, string> = {
@@ -23,6 +23,7 @@ const REASON_LABELS: Record<ExcludedReason, string> = {
 	usage_rate_limited: "Usage data unavailable (provider 429)",
 	five_hour_exhausted: "5h quota exhausted",
 	seven_day_exhausted: "7d quota exhausted",
+	family_exhausted: "Model quota exhausted",
 	no_usage_data: "No usage data yet",
 };
 
@@ -33,6 +34,7 @@ const REASON_ORDER: ExcludedReason[] = [
 	"usage_rate_limited",
 	"five_hour_exhausted",
 	"seven_day_exhausted",
+	"family_exhausted",
 	"no_usage_data",
 ];
 
@@ -70,10 +72,13 @@ function groupExcluded(
 
 function nextQuotaTimeLabel(
 	earliestResetMs: number,
-	window: PoolWindow,
+	window: PoolCardWindow,
 ): string {
 	const date = new Date(earliestResetMs);
-	return window === "seven_day"
+	// seven_day and weekly_scoped (per-model-family) pools both reset on a
+	// multi-day cadence, so both get the long month/day/time format; only
+	// five_hour gets the short time-only format.
+	return window !== "five_hour"
 		? date.toLocaleString(undefined, {
 				month: "short",
 				day: "numeric",
@@ -89,7 +94,7 @@ function nextQuotaTimeLabel(
 function nextQuotaLabel(
 	earliestResetMs: number,
 	accountName: string | null,
-	window: PoolWindow,
+	window: PoolCardWindow,
 ): string {
 	const name = accountName ?? "unknown";
 	return `${name} at ${nextQuotaTimeLabel(earliestResetMs, window)}`;
