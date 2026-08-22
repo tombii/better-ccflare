@@ -5,42 +5,23 @@
  * Verifies the /api/routing/observations response shape:
  * `{ observations: { [family]: RoutingObservation } }`.
  *
- * getRoutingObservations() is a process-singleton read out of @better-ccflare/proxy
- * (routing-observations.ts); its record/clear setters are intentionally NOT
- * re-exported from the package's top-level index (mirrors model-capacity.ts's
- * clearFamilyExhaustionCache, also internal-only), so this test controls the
- * singleton's return value via mock.module instead -- same pattern as
- * oauth.test.ts's clearAccountRefreshCache mock in this same package. mock.module
- * replaces the WHOLE module globally/across files in Bun, so the real module is
- * captured first and spread through, and restored in afterAll.
+ * The handler takes its reader as an injected dependency, so these tests pass
+ * a fake directly instead of mocking the proxy module. That matters: Bun's
+ * mock.module applies PROCESS-WIDE across file boundaries, so mocking
+ * "@better-ccflare/proxy" here also replaced the module that the proxy
+ * package's own routing-observations tests import, failing 6 of them whenever
+ * both files ran in one `bun test` invocation (order-independent, reproduced
+ * 2026-08-22). Injection keeps the two suites independent.
  */
-import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import type { RoutingObservation } from "@better-ccflare/proxy";
-
-const actualProxy = await import("@better-ccflare/proxy");
-let mockObservations: Record<string, RoutingObservation> = {};
-const mockGetRoutingObservations = mock(() => mockObservations);
-
-mock.module("@better-ccflare/proxy", () => ({
-	...actualProxy,
-	getRoutingObservations: mockGetRoutingObservations,
-}));
-
-afterAll(() => {
-	mock.module("@better-ccflare/proxy", () => actualProxy);
-});
-
-afterEach(() => {
-	mockObservations = {};
-});
-
-const { createRoutingObservationsHandler } = await import(
-	"../routing-observations"
-);
+import { createRoutingObservationsHandler } from "../routing-observations";
 
 describe("createRoutingObservationsHandler", () => {
 	it("returns HTTP 200 with an empty observations object when nothing was recorded", async () => {
-		const handler = createRoutingObservationsHandler();
+		const handler = createRoutingObservationsHandler(
+			() => ({}) as Record<string, RoutingObservation>,
+		);
 		const response = await handler();
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as Record<string, unknown>;
@@ -48,25 +29,30 @@ describe("createRoutingObservationsHandler", () => {
 	});
 
 	it("returns application/json content-type", async () => {
-		const handler = createRoutingObservationsHandler();
+		const handler = createRoutingObservationsHandler(
+			() => ({}) as Record<string, RoutingObservation>,
+		);
 		const response = await handler();
 		expect(response.headers.get("content-type")).toMatch(/application\/json/);
 	});
 
 	it("wraps getRoutingObservations() under the observations key, keyed by family", async () => {
-		mockObservations = {
-			fable: {
-				family: "fable",
-				order: [
-					{ id: "acc-1", name: "Alice" },
-					{ id: "acc-2", name: "Bob" },
-				],
-				model: "claude-fable-5",
-				observedAtMs: 1_700_000_000_000,
-			},
-		};
+		const readObservations = mock(
+			() =>
+				({
+					fable: {
+						family: "fable",
+						order: [
+							{ id: "acc-1", name: "Alice" },
+							{ id: "acc-2", name: "Bob" },
+						],
+						model: "claude-fable-5",
+						observedAtMs: 1_700_000_000_000,
+					},
+				}) as unknown as () => Record<string, RoutingObservation>,
+		);
 
-		const handler = createRoutingObservationsHandler();
+		const handler = createRoutingObservationsHandler(readObservations);
 		const response = await handler();
 		const body = (await response.json()) as {
 			observations: Record<string, unknown>;
@@ -85,22 +71,25 @@ describe("createRoutingObservationsHandler", () => {
 	});
 
 	it("reflects multiple families independently", async () => {
-		mockObservations = {
-			opus: {
-				family: "opus",
-				order: [{ id: "acc-1", name: "Alice" }],
-				model: "claude-opus-4-6",
-				observedAtMs: 1_000,
-			},
-			sonnet: {
-				family: "sonnet",
-				order: [{ id: "acc-2", name: "Bob" }],
-				model: "claude-sonnet-5-0",
-				observedAtMs: 2_000,
-			},
-		};
+		const readObservations = mock(
+			() =>
+				({
+					opus: {
+						family: "opus",
+						order: [{ id: "acc-1", name: "Alice" }],
+						model: "claude-opus-4-6",
+						observedAtMs: 1_000,
+					},
+					sonnet: {
+						family: "sonnet",
+						order: [{ id: "acc-2", name: "Bob" }],
+						model: "claude-sonnet-5-0",
+						observedAtMs: 2_000,
+					},
+				}) as unknown as () => Record<string, RoutingObservation>,
+		);
 
-		const handler = createRoutingObservationsHandler();
+		const handler = createRoutingObservationsHandler(readObservations);
 		const response = await handler();
 		const body = (await response.json()) as {
 			observations: Record<string, unknown>;
@@ -109,10 +98,12 @@ describe("createRoutingObservationsHandler", () => {
 		expect(Object.keys(body.observations).sort()).toEqual(["opus", "sonnet"]);
 	});
 
-	it("calls getRoutingObservations() exactly once per request", async () => {
-		mockGetRoutingObservations.mockClear();
-		const handler = createRoutingObservationsHandler();
+	it("calls its reader exactly once per request", async () => {
+		const readObservations = mock(
+			() => ({}) as Record<string, RoutingObservation>,
+		);
+		const handler = createRoutingObservationsHandler(readObservations);
 		await handler();
-		expect(mockGetRoutingObservations).toHaveBeenCalledTimes(1);
+		expect(readObservations).toHaveBeenCalledTimes(1);
 	});
 });
