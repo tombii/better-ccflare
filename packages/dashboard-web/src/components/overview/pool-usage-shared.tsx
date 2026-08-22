@@ -107,37 +107,14 @@ export function formatShortDuration(ms: number): string {
 	return `${minutes}m`;
 }
 
-/** Minimal shape routingOrderLabel needs from a RoutingObservation. */
-export interface RoutingOrderLabelInput {
-	order: Array<{ name: string }>;
-	observedAtMs: number;
-}
-
-/**
- * Renders the "observed routing order" line for a weekly_scoped pool row:
- * the proxy's own last-selected account order for this model family (see
- * packages/proxy/src/handlers/routing-observations.ts), never recomputed
- * here -- an absent/empty observation means no recent traffic to report,
- * not an error.
- */
-export function routingOrderLabel(
-	observation: RoutingOrderLabelInput | null | undefined,
-	now: number,
-): string {
-	if (!observation || observation.order.length === 0) {
-		return "No recent traffic for this family";
-	}
-	const age = formatShortDuration(now - observation.observedAtMs);
-	const names = observation.order.map((account) => account.name).join(" → ");
-	return `Routing order (observed ${age} ago): ${names}`;
-}
-
 /**
  * Whether a segment's "next" badge should render. Two independent
  * suppressions, both load-bearing:
- *  - weekly_scoped rows never show it -- the observed-routing-order line
- *    (routingOrderLabel) replaces it there with the real recorded decision
- *    instead of the isPrimary-derived guess.
+ *  - weekly_scoped rows never show it -- primaryAccountName reflects the
+ *    NEXT request overall, which may target a different family than this
+ *    pool's; the account-wide isPrimary flag is not a reliable guess for a
+ *    single family's routing order (see ObservedRoutingTable for the real
+ *    recorded per-family decision instead).
  *  - an exhausted segment never shows it, in ANY window -- an account with
  *    no capacity left can't credibly claim to serve the next request.
  */

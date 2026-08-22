@@ -2,7 +2,6 @@ import { formatPercentage } from "@better-ccflare/ui-common";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ComponentType } from "react";
 import { Fragment } from "react";
-import type { RoutingObservation } from "../../api";
 import {
 	buildPoolSegments,
 	formatRelativeReset,
@@ -16,7 +15,6 @@ import {
 	nextQuotaTimeLabel,
 	PoolUsagePopover,
 	REASON_LABELS,
-	routingOrderLabel,
 	shouldShowNextBadge,
 } from "./pool-usage-shared";
 
@@ -35,15 +33,8 @@ export interface PoolUsageRowProps {
 	// primary account can belong to a different family/window pool), in which
 	// case the "next" badge simply never renders.
 	primaryAccountName?: string | null;
-	// Only meaningful when window === "weekly_scoped": the proxy's last
-	// observed routing order for this pool's family, or null/undefined when
-	// there's no recent observation. Renders as the "Routing order (observed
-	// …)" line, which also REPLACES the "next" badge for this window (see
-	// shouldShowNextBadge) -- the real recorded decision instead of an
-	// isPrimary-derived guess.
-	routingObservation?: RoutingObservation | null;
-	// Current time (ms), refreshed periodically by the caller -- drives the
-	// routing observation's age label and each segment's relative reset time.
+	// Current time (ms), refreshed periodically by the caller -- drives each
+	// segment's relative reset time.
 	now: number;
 }
 
@@ -91,7 +82,6 @@ export function PoolUsageRow({
 	isExpanded,
 	onToggle,
 	primaryAccountName,
-	routingObservation,
 	now,
 }: PoolUsageRowProps) {
 	const { average, contributing, exhausted, earliestResetMs } = result;
@@ -215,18 +205,6 @@ export function PoolUsageRow({
 
 			{isExpanded && (
 				<div id={panelId} className="relative z-10 mt-4">
-					{/*
-					 * weekly_scoped-only: the proxy's own last-observed routing
-					 * decision for this family (routingOrderLabel), NEVER mixed with
-					 * the depletion-order caption below -- routing order and burn-rate
-					 * depletion order are two different statements about two different
-					 * things (see the caption's own comment).
-					 */}
-					{window === "weekly_scoped" && (
-						<p className="mb-2 text-xs text-muted-foreground">
-							{routingOrderLabel(routingObservation, now)}
-						</p>
-					)}
 					{/*
 					 * The caption is the load-bearing disclaimer: segment position
 					 * reflects capacity DEPLETION order (a burn-rate projection), never

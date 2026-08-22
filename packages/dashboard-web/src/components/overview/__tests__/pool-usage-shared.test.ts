@@ -1,9 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-	formatShortDuration,
-	routingOrderLabel,
-	shouldShowNextBadge,
-} from "../pool-usage-shared";
+import { formatShortDuration, shouldShowNextBadge } from "../pool-usage-shared";
 
 describe("formatShortDuration", () => {
 	it("formats sub-minute durations as seconds", () => {
@@ -39,45 +35,6 @@ describe("formatShortDuration", () => {
 
 	it("takes the seconds branch just below the 30s boundary", () => {
 		expect(formatShortDuration(29_999)).toBe("30s");
-	});
-});
-
-describe("routingOrderLabel", () => {
-	const NOW = 1_700_000_000_000;
-
-	it("returns the no-traffic message when there is no observation", () => {
-		expect(routingOrderLabel(null, NOW)).toBe(
-			"No recent traffic for this family",
-		);
-		expect(routingOrderLabel(undefined, NOW)).toBe(
-			"No recent traffic for this family",
-		);
-	});
-
-	it("returns the no-traffic message when the observation has an empty order", () => {
-		expect(
-			routingOrderLabel({ order: [], observedAtMs: NOW - 1000 }, NOW),
-		).toBe("No recent traffic for this family");
-	});
-
-	it("renders the observed age and the account chain joined by arrows", () => {
-		const observation = {
-			order: [{ name: "Alice" }, { name: "Bob" }, { name: "Carol" }],
-			observedAtMs: NOW - 12_000,
-		};
-		expect(routingOrderLabel(observation, NOW)).toBe(
-			"Routing order (observed 12s ago): Alice → Bob → Carol",
-		);
-	});
-
-	it("renders a single-account order without an arrow", () => {
-		const observation = {
-			order: [{ name: "Alice" }],
-			observedAtMs: NOW - 180_000,
-		};
-		expect(routingOrderLabel(observation, NOW)).toBe(
-			"Routing order (observed 3m ago): Alice",
-		);
 	});
 });
 
