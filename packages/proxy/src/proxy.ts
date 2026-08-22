@@ -1,5 +1,6 @@
 import {
 	type AccountUsageSnapshot,
+	getModelFamily,
 	requestEvents,
 	runForceAccountModelExempt,
 	ServiceUnavailableError,
@@ -35,6 +36,7 @@ import {
 	proxyWithAccount,
 	RequestBodyContext,
 	type RequestJsonBody,
+	recordRoutingObservation,
 	recordXaiAffinitySuccess,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
@@ -662,6 +664,30 @@ async function handleProxyRequest(
 	log.info(
 		`Selected ${accounts.length} accounts: ${accounts.map((a) => a.name).join(", ")}`,
 	);
+	// Record the routing decision the proxy just made for the dashboard's
+	// "observed routing order" display -- display-only telemetry, never fed
+	// back into selection (see routing-observations.ts). Uses the same
+	// effectiveModel the capacity filter (selectAccountsForRequest ->
+	// getModelFamily) already routed on, so the family attribution can't
+	// drift from what actually happened. Defensive: must never let a
+	// telemetry failure break the request path.
+	if (accounts.length > 0) {
+		try {
+			const observedFamily = effectiveModel
+				? getModelFamily(effectiveModel)
+				: null;
+			if (observedFamily) {
+				recordRoutingObservation(
+					observedFamily,
+					accounts.map((a) => ({ id: a.id, name: a.name })),
+					effectiveModel as string,
+					Date.now(),
+				);
+			}
+		} catch (err) {
+			log.error("Failed to record routing observation", err);
+		}
+	}
 	if (
 		process.env.DEBUG?.includes("proxy") ||
 		process.env.DEBUG === "true" ||

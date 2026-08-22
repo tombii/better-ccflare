@@ -1,49 +1,41 @@
-import { formatPercentage } from "@better-ccflare/ui-common";
 import { Info } from "lucide-react";
 import type {
 	ExcludedReason,
+	PoolCardWindow,
 	PoolUsageResult,
-	PoolWindow,
 } from "../../lib/pool-usage";
-import { cn } from "../../lib/utils";
-import { Card, CardContent } from "../ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 
-interface PoolMetricCardProps {
-	title: string;
-	icon: React.ComponentType<{ className?: string }>;
-	result: PoolUsageResult;
-	window: PoolWindow;
-}
-
-const REASON_LABELS: Record<ExcludedReason, string> = {
+export const REASON_LABELS: Record<ExcludedReason, string> = {
 	paused: "Paused",
 	rate_limited: "Rate-limited",
 	token_expired: "OAuth token expired",
 	usage_rate_limited: "Usage data unavailable (provider 429)",
 	five_hour_exhausted: "5h quota exhausted",
 	seven_day_exhausted: "7d quota exhausted",
+	family_exhausted: "Model quota exhausted",
 	no_usage_data: "No usage data yet",
 };
 
-const REASON_ORDER: ExcludedReason[] = [
+export const REASON_ORDER: ExcludedReason[] = [
 	"paused",
 	"rate_limited",
 	"token_expired",
 	"usage_rate_limited",
 	"five_hour_exhausted",
 	"seven_day_exhausted",
+	"family_exhausted",
 	"no_usage_data",
 ];
 
-function headlineColor(average: number | null): string | undefined {
+export function headlineColor(average: number | null): string | undefined {
 	if (average == null) return undefined;
 	if (average < 60) return "text-success";
 	if (average < 80) return "text-warning";
 	return "text-destructive";
 }
 
-function groupExcluded(
+export function groupExcluded(
 	excluded: PoolUsageResult["excluded"],
 ): Array<{ reason: ExcludedReason; items: PoolUsageResult["excluded"] }> {
 	const map = new Map<ExcludedReason, PoolUsageResult["excluded"]>();
@@ -68,12 +60,15 @@ function groupExcluded(
 	return groups;
 }
 
-function nextQuotaTimeLabel(
+export function nextQuotaTimeLabel(
 	earliestResetMs: number,
-	window: PoolWindow,
+	window: PoolCardWindow,
 ): string {
 	const date = new Date(earliestResetMs);
-	return window === "seven_day"
+	// seven_day and weekly_scoped (per-model-family) pools both reset on a
+	// multi-day cadence, so both get the long month/day/time format; only
+	// five_hour gets the short time-only format.
+	return window !== "five_hour"
 		? date.toLocaleString(undefined, {
 				month: "short",
 				day: "numeric",
@@ -86,24 +81,55 @@ function nextQuotaTimeLabel(
 			});
 }
 
-function nextQuotaLabel(
+export function nextQuotaLabel(
 	earliestResetMs: number,
 	accountName: string | null,
-	window: PoolWindow,
+	window: PoolCardWindow,
 ): string {
 	const name = accountName ?? "unknown";
 	return `${name} at ${nextQuotaTimeLabel(earliestResetMs, window)}`;
 }
 
-function formatShortDuration(ms: number): string {
+export function formatShortDuration(ms: number): string {
 	const totalMinutes = Math.max(0, Math.round(ms / 60000));
+	// Sub-30s-rounding-to-a-minute durations (< 30_000ms, since
+	// Math.round(ms / 60000) first hits 1 at ms === 30_000) get a seconds
+	// granularity instead of collapsing to "0m" -- used by the routing
+	// observation's age label ("observed 12s ago"). Everything from 30s
+	// upward keeps the exact prior minutes/hours formatting unchanged.
+	if (totalMinutes === 0) {
+		const totalSeconds = Math.max(0, Math.round(ms / 1000));
+		return `${totalSeconds}s`;
+	}
 	const hours = Math.floor(totalMinutes / 60);
 	const minutes = totalMinutes % 60;
 	if (hours > 0) return `${hours}h ${minutes}m`;
 	return `${minutes}m`;
 }
 
-function atRiskBadge(
+/**
+ * Whether a segment's "next" badge should render. Two independent
+ * suppressions, both load-bearing:
+ *  - weekly_scoped rows never show it -- primaryAccountName reflects the
+ *    NEXT request overall, which may target a different family than this
+ *    pool's; the account-wide isPrimary flag is not a reliable guess for a
+ *    single family's routing order (see ObservedRoutingTable for the real
+ *    recorded per-family decision instead).
+ *  - an exhausted segment never shows it, in ANY window -- an account with
+ *    no capacity left can't credibly claim to serve the next request.
+ */
+export function shouldShowNextBadge(
+	window: PoolCardWindow,
+	segmentKind: "active" | "exhausted" | "unknown",
+	isPrimarySegment: boolean,
+): boolean {
+	if (!isPrimarySegment) return false;
+	if (window === "weekly_scoped") return false;
+	if (segmentKind === "exhausted") return false;
+	return true;
+}
+
+export function atRiskBadge(
 	willRunOutCount: number,
 	capacityCount: number,
 ): { label: string | null; colorClass: string | null } {
@@ -118,14 +144,25 @@ function atRiskBadge(
 	};
 }
 
-export function PoolMetricCard({
-	title,
-	icon: Icon,
-	result,
-	window,
-}: PoolMetricCardProps) {
+interface PoolUsagePopoverProps {
+	result: PoolUsageResult;
+	window: PoolCardWindow;
+}
+
+/**
+ * The "(N/M active)" info chip + its popover breakdown (contributing / at
+ * risk / unavailable / unknown / fallback / more-quota). Shared, unchanged
+ * behavior between the old PoolMetricCard and PoolUsageRow -- see the task
+ * that introduced this extraction for the rationale.
+ *
+ * The trigger button stops click propagation so it can sit inside a row
+ * that is itself click-to-expand (PoolUsageRow) without also toggling that
+ * row; it still opens its own popover normally (stopPropagation only blocks
+ * bubbling to an ancestor's handler, not Radix's own click handling on this
+ * element).
+ */
+export function PoolUsagePopover({ result, window }: PoolUsagePopoverProps) {
 	const {
-		average,
 		activeAverage,
 		contributing,
 		exhausted,
@@ -138,19 +175,7 @@ export function PoolMetricCard({
 
 	const eligibleTotal =
 		contributing.length + exhausted.length + excluded.length;
-	const capacityCount = contributing.length + exhausted.length;
-	const willRunOutCount = atRisk.length + exhausted.length;
-	const { label: willRunOutText, colorClass: willRunOutColor } = atRiskBadge(
-		willRunOutCount,
-		capacityCount,
-	);
 	const showChip = eligibleTotal > 0;
-	const colorClass = headlineColor(average);
-	const headline = average != null ? formatPercentage(average, 0) : "—";
-	const nextQuotaText =
-		earliestResetMs == null
-			? null
-			: `more quota at ${nextQuotaTimeLabel(earliestResetMs, window)}`;
 
 	const sortedContributing = contributing.slice().sort((a, b) => b.pct - a.pct);
 	const sortedAtRisk = atRisk
@@ -165,12 +190,15 @@ export function PoolMetricCard({
 	const hasFallback = fallback.length > 0;
 	const hasAtRisk = atRisk.length > 0;
 
-	const triggerNode = showChip ? (
+	if (!showChip) return null;
+
+	return (
 		<Popover>
 			<PopoverTrigger asChild>
 				<button
 					type="button"
 					className="flex items-center gap-1 text-xs text-muted-foreground cursor-help focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+					onClick={(e) => e.stopPropagation()}
 				>
 					<span className="tabular-nums">
 						({contributing.length}/{eligibleTotal} active)
@@ -311,33 +339,5 @@ export function PoolMetricCard({
 				)}
 			</PopoverContent>
 		</Popover>
-	) : null;
-
-	return (
-		<Card>
-			<CardContent className="p-6">
-				<div className="flex items-center justify-between mb-4">
-					<Icon className="h-8 w-8 text-muted-foreground/20" />
-					{triggerNode}
-				</div>
-				<div className="space-y-1">
-					<p className="text-sm text-muted-foreground">{title}</p>
-					<p className={cn("text-2xl font-bold", colorClass)}>{headline}</p>
-					<p className="text-xs text-muted-foreground truncate">
-						capacity used
-					</p>
-					{nextQuotaText && (
-						<p className="text-xs text-muted-foreground truncate">
-							{nextQuotaText}
-						</p>
-					)}
-					{willRunOutText && (
-						<p className={cn("text-xs truncate", willRunOutColor)}>
-							{willRunOutText}
-						</p>
-					)}
-				</div>
-			</CardContent>
-		</Card>
 	);
 }

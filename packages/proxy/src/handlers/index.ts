@@ -55,6 +55,13 @@ export {
 } from "./request-handler";
 export { handleProxyError } from "./response-processor";
 export {
+	clearRoutingObservations,
+	getRoutingObservations,
+	type RoutingObservation,
+	type RoutingObservationAccount,
+	recordRoutingObservation,
+} from "./routing-observations";
+export {
 	checkAllAccountsHealth,
 	checkRefreshTokenHealth,
 	formatTokenHealthReport,

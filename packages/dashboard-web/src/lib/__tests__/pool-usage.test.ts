@@ -1,12 +1,19 @@
 import { describe, expect, it } from "bun:test";
 import type { AccountResponse } from "@better-ccflare/types";
+import type { RoutingObservation } from "../../api";
 import {
+	buildPoolSegments,
 	computePoolUsage,
+	computeScopedPoolUsage,
+	formatFamilyLabel,
+	formatRelativeReset,
 	isAlibabaShape,
 	isAnthropicStyleShape,
 	isNanoGPTShape,
 	isZaiShape,
+	listObservedFamilies,
 	normalizeResetMs,
+	type PoolUsageResult,
 } from "../pool-usage";
 
 const NOW = 1_700_000_000_000;
@@ -839,5 +846,594 @@ describe("Anthropic limits[] primary (pool usage)", () => {
 		});
 		const five = computePoolUsage([acc], "five_hour", NOW);
 		expect(five.contributing[0]?.pct).toBe(33);
+	});
+});
+
+describe("computeScopedPoolUsage", () => {
+	const RESET_ISO = "2030-01-01T00:00:00.000Z";
+	const RESET_MS = Date.parse(RESET_ISO);
+
+	function mkScopedAccount(
+		name: string,
+		family: string,
+		percent: number | null,
+		extra?: Partial<AccountResponse>,
+	): AccountResponse {
+		return mkAccount({
+			name,
+			provider: "anthropic",
+			usageData: {
+				limits: [
+					{
+						kind: "weekly_scoped",
+						percent,
+						resets_at: RESET_ISO,
+						scope: { model: { id: null, display_name: family }, surface: null },
+					},
+				],
+			} as never,
+			...extra,
+		});
+	}
+
+	it("returns [] when no account has any weekly_scoped limits", () => {
+		const accounts: AccountResponse[] = [
+			mkAccount({
+				name: "plain",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 10, resets_at: null },
+					seven_day: { utilization: 10, resets_at: null },
+				} as never,
+			}),
+		];
+		expect(computeScopedPoolUsage(accounts, NOW)).toEqual([]);
+	});
+
+	it("matches accounts whose display_name carries surrounding whitespace", () => {
+		// discoverScopedFamilies trims the name ("Fable " -> family "Fable"), so
+		// extractWeeklyScoped must trim too or the padded account silently drops
+		// out of the very pool its entry created.
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("padded", "Fable ", 40),
+			mkScopedAccount("clean", "Fable", 60),
+		];
+		const pools = computeScopedPoolUsage(accounts, NOW);
+		expect(pools).toHaveLength(1);
+		expect(pools[0].family).toBe("Fable");
+		expect(pools[0].result.contributing.map((c) => c.name).sort()).toEqual([
+			"clean",
+			"padded",
+		]);
+	});
+
+	it("discovers the family from the data and aggregates that family's pool", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("a", "Fable", 20),
+			mkScopedAccount("b", "Fable", 40),
+		];
+		const pools = computeScopedPoolUsage(accounts, NOW);
+		expect(pools).toHaveLength(1);
+		expect(pools[0].family).toBe("Fable");
+		expect(pools[0].result.contributing).toHaveLength(2);
+		expect(pools[0].result.average).toBe(30);
+	});
+
+	it("discovers multiple families in stable alphabetical order", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("a", "Sonnet", 10),
+			mkScopedAccount("b", "Fable", 20),
+		];
+		const pools = computeScopedPoolUsage(accounts, NOW);
+		expect(pools.map((p) => p.family)).toEqual(["Fable", "Sonnet"]);
+	});
+
+	it("average includes scoped-exhausted (>=100%) accounts as 100, activeAverage excludes them", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("low", "Fable", 20),
+			mkScopedAccount("maxed", "Fable", 100),
+		];
+		const pool = computeScopedPoolUsage(accounts, NOW)[0].result;
+		expect(pool.average).toBe(60);
+		expect(pool.activeAverage).toBe(20);
+	});
+
+	it("scoped percent >= 100 is classified as family_exhausted", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("maxed", "Fable", 100),
+		];
+		const pool = computeScopedPoolUsage(accounts, NOW)[0].result;
+		expect(pool.exhausted).toEqual([
+			{ name: "maxed", reason: "family_exhausted", resetMs: RESET_MS },
+		]);
+	});
+
+	it("account 5h-exhausted (flat window) is disqualified in the family pool too", () => {
+		const account = mkScopedAccount("acc", "Fable", 10, {
+			usageData: {
+				five_hour: {
+					utilization: 100,
+					resets_at: new Date(NOW + 1_000_000).toISOString(),
+				},
+				seven_day: { utilization: 0, resets_at: null },
+				limits: [
+					{
+						kind: "weekly_scoped",
+						percent: 10,
+						resets_at: RESET_ISO,
+						scope: {
+							model: { id: null, display_name: "Fable" },
+							surface: null,
+						},
+					},
+				],
+			} as never,
+		});
+		const pool = computeScopedPoolUsage([account], NOW)[0].result;
+		expect(pool.contributing).toEqual([]);
+		expect(pool.exhausted).toEqual([
+			{ name: "acc", reason: "five_hour_exhausted", resetMs: NOW + 1_000_000 },
+		]);
+	});
+
+	it("entry present but percent null -> excluded no_usage_data", () => {
+		const account = mkScopedAccount("nulled", "Fable", null);
+		const pool = computeScopedPoolUsage([account], NOW)[0].result;
+		expect(pool.excluded).toEqual([
+			{ name: "nulled", reason: "no_usage_data", resetMs: RESET_MS },
+		]);
+	});
+
+	it("accounts without a scoped entry for the family are omitted, not fallback", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("member", "Fable", 20),
+			mkAccount({
+				name: "outsider",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 10, resets_at: null },
+					seven_day: { utilization: 10, resets_at: null },
+				} as never,
+			}),
+		];
+		const pool = computeScopedPoolUsage(accounts, NOW)[0].result;
+		expect(pool.contributing).toHaveLength(1);
+		expect(pool.fallback).toEqual([]);
+		expect(pool.excluded).toEqual([]);
+	});
+
+	it("projects atRisk using the seven_day window", () => {
+		const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+		const elapsedMs = 6 * 24 * 60 * 60 * 1000;
+		const resetMs = NOW + (SEVEN_DAY_MS - elapsedMs);
+		const account = mkScopedAccount("burner", "Fable", 95, {
+			usageData: {
+				limits: [
+					{
+						kind: "weekly_scoped",
+						percent: 95,
+						resets_at: new Date(resetMs).toISOString(),
+						scope: {
+							model: { id: null, display_name: "Fable" },
+							surface: null,
+						},
+					},
+				],
+			} as never,
+		});
+		const pool = computeScopedPoolUsage([account], NOW)[0].result;
+		expect(pool.atRisk).toHaveLength(1);
+		expect(pool.atRisk[0].name).toBe("burner");
+	});
+});
+
+describe("buildPoolSegments", () => {
+	function mkResult(partial: Partial<PoolUsageResult>): PoolUsageResult {
+		return {
+			average: null,
+			activeAverage: null,
+			worst: null,
+			contributing: [],
+			exhausted: [],
+			excluded: [],
+			fallback: [],
+			earliestResetMs: null,
+			earliestResetAccountName: null,
+			atRisk: [],
+			...partial,
+		};
+	}
+
+	it("maps contributing accounts to active segments with their own pct", () => {
+		const result = mkResult({
+			contributing: [
+				{ name: "a", pct: 42, resetMs: null },
+				{ name: "b", pct: 10, resetMs: null },
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toHaveLength(2);
+		expect(segments.every((s) => s.kind === "active")).toBe(true);
+		expect(segments.find((s) => s.name === "a")?.pct).toBe(42);
+		expect(segments.find((s) => s.name === "b")?.pct).toBe(10);
+	});
+
+	it("maps exhausted accounts to pct=100, kind exhausted, carrying their reason", () => {
+		const result = mkResult({
+			exhausted: [{ name: "x", reason: "five_hour_exhausted", resetMs: null }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toEqual([
+			{
+				name: "x",
+				pct: 100,
+				kind: "exhausted",
+				reason: "five_hour_exhausted",
+				resetMs: null,
+			},
+		]);
+	});
+
+	it("maps excluded accounts to pct=null, kind unknown, carrying their reason", () => {
+		const result = mkResult({
+			excluded: [{ name: "u", reason: "no_usage_data", resetMs: null }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toEqual([
+			{
+				name: "u",
+				pct: null,
+				kind: "unknown",
+				reason: "no_usage_data",
+				resetMs: null,
+			},
+		]);
+	});
+
+	it("carries resetMs through from contributing/exhausted/excluded entries", () => {
+		const result = mkResult({
+			contributing: [{ name: "a", pct: 42, resetMs: NOW + 1000 }],
+			exhausted: [
+				{ name: "x", reason: "five_hour_exhausted", resetMs: NOW + 2000 },
+			],
+			excluded: [{ name: "u", reason: "no_usage_data", resetMs: NOW + 3000 }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.find((s) => s.name === "a")?.resetMs).toBe(NOW + 1000);
+		expect(segments.find((s) => s.name === "x")?.resetMs).toBe(NOW + 2000);
+		expect(segments.find((s) => s.name === "u")?.resetMs).toBe(NOW + 3000);
+	});
+
+	it("resetMs is null on a segment when the source entry's resetMs is null", () => {
+		const result = mkResult({
+			contributing: [{ name: "a", pct: 42, resetMs: null }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments[0].resetMs).toBeNull();
+	});
+
+	it("omits fallback accounts entirely", () => {
+		const result = mkResult({
+			contributing: [{ name: "a", pct: 50, resetMs: null }],
+			fallback: [{ name: "f", provider: "claude-console-api" }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual(["a"]);
+	});
+
+	it("sorts descending by pct, with null (unknown) always last", () => {
+		const result = mkResult({
+			contributing: [
+				{ name: "mid", pct: 50, resetMs: null },
+				{ name: "high", pct: 90, resetMs: null },
+			],
+			exhausted: [
+				{ name: "maxed", reason: "seven_day_exhausted", resetMs: null },
+			],
+			excluded: [{ name: "unk", reason: "no_usage_data", resetMs: null }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual([
+			"maxed",
+			"high",
+			"mid",
+			"unk",
+		]);
+	});
+
+	it("breaks ties at equal pct alphabetically by name (deterministic)", () => {
+		const result = mkResult({
+			contributing: [
+				{ name: "zeta", pct: 50, resetMs: null },
+				{ name: "alpha", pct: 50, resetMs: null },
+				{ name: "mike", pct: 50, resetMs: null },
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual(["alpha", "mike", "zeta"]);
+	});
+
+	it("breaks ties among multiple null (unknown) segments alphabetically by name", () => {
+		const result = mkResult({
+			excluded: [
+				{ name: "zeta", reason: "no_usage_data", resetMs: null },
+				{ name: "alpha", reason: "no_usage_data", resetMs: null },
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual(["alpha", "zeta"]);
+	});
+
+	it("orders segments: exhausted (alphabetical) -> at-risk (ascending exhaustsAtMs) -> rest (descending pct)", () => {
+		const result = mkResult({
+			contributing: [
+				{ name: "risk-later", pct: 40, resetMs: null },
+				{ name: "risk-soon", pct: 70, resetMs: null },
+				{ name: "safe-high", pct: 90, resetMs: null },
+				{ name: "safe-low", pct: 10, resetMs: null },
+			],
+			exhausted: [
+				{ name: "zzz-exhausted", reason: "five_hour_exhausted", resetMs: null },
+				{ name: "aaa-exhausted", reason: "five_hour_exhausted", resetMs: null },
+			],
+			atRisk: [
+				{
+					name: "risk-soon",
+					pct: 70,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 500,
+					timeToExhaustMs: 500,
+					remainingMs: 1000,
+				},
+				{
+					name: "risk-later",
+					pct: 40,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 900,
+					timeToExhaustMs: 900,
+					remainingMs: 1000,
+				},
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual([
+			"aaa-exhausted",
+			"zzz-exhausted",
+			"risk-soon",
+			"risk-later",
+			"safe-high",
+			"safe-low",
+		]);
+	});
+
+	it("breaks ties within the at-risk group alphabetically when exhaustsAtMs is equal", () => {
+		const result = mkResult({
+			contributing: [
+				{ name: "zed", pct: 50, resetMs: null },
+				{ name: "alpha", pct: 50, resetMs: null },
+			],
+			atRisk: [
+				{
+					name: "zed",
+					pct: 50,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 500,
+					timeToExhaustMs: 500,
+					remainingMs: 1000,
+				},
+				{
+					name: "alpha",
+					pct: 50,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 500,
+					timeToExhaustMs: 500,
+					remainingMs: 1000,
+				},
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual(["alpha", "zed"]);
+	});
+
+	it("copies exhaustsAtMs from the matching atRisk entry onto its segment", () => {
+		const result = mkResult({
+			contributing: [{ name: "a", pct: 70, resetMs: null }],
+			atRisk: [
+				{
+					name: "a",
+					pct: 70,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 500,
+					timeToExhaustMs: 500,
+					remainingMs: 1000,
+				},
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toHaveLength(1);
+		expect(segments[0].exhaustsAtMs).toBe(NOW + 500);
+	});
+
+	it("leaves exhaustsAtMs undefined for a contributing segment with no atRisk entry", () => {
+		const result = mkResult({
+			contributing: [{ name: "a", pct: 70, resetMs: null }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toHaveLength(1);
+		expect(segments[0].exhaustsAtMs).toBeUndefined();
+	});
+
+	it("never assigns exhaustsAtMs to an exhausted segment even if its name matches an atRisk entry", () => {
+		// atRisk is only ever built from contributing accounts (finalizePoolResult),
+		// so this should not happen in practice, but the segment mapping must not
+		// accidentally pick it up via a shared name if it ever did.
+		const result = mkResult({
+			exhausted: [{ name: "a", reason: "five_hour_exhausted", resetMs: null }],
+			atRisk: [
+				{
+					name: "a",
+					pct: 100,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 500,
+					timeToExhaustMs: 500,
+					remainingMs: 1000,
+				},
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toHaveLength(1);
+		expect(segments[0].exhaustsAtMs).toBeUndefined();
+	});
+
+	it("invariant: the average of non-unknown segments equals result.average", () => {
+		const accounts: AccountResponse[] = [
+			mkAccount({
+				name: "a",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 30, resets_at: null },
+					seven_day: { utilization: 0, resets_at: null },
+				} as never,
+			}),
+			mkAccount({
+				name: "b",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 90, resets_at: null },
+					seven_day: { utilization: 0, resets_at: null },
+				} as never,
+			}),
+			mkAccount({
+				name: "c",
+				provider: "anthropic",
+				paused: true,
+			}),
+			mkAccount({
+				name: "d",
+				provider: "anthropic",
+				usageData: null,
+			}),
+		];
+		const result = computePoolUsage(accounts, "five_hour", NOW);
+		const segments = buildPoolSegments(result);
+		const counted = segments.filter((s) => s.kind !== "unknown");
+		expect(counted.length).toBeGreaterThan(0);
+		const avg =
+			counted.reduce((sum, s) => sum + (s.pct ?? 0), 0) / counted.length;
+		expect(avg).toBeCloseTo(result.average as number, 10);
+	});
+
+	it("empty result produces no segments", () => {
+		expect(buildPoolSegments(mkResult({}))).toEqual([]);
+	});
+});
+
+describe("formatRelativeReset", () => {
+	it("returns null when resetMs is null", () => {
+		expect(formatRelativeReset(null, NOW)).toBeNull();
+	});
+
+	it("returns null when resetMs is in the past", () => {
+		expect(formatRelativeReset(NOW - 1000, NOW)).toBeNull();
+	});
+
+	it("returns null when resetMs equals now (not strictly future)", () => {
+		expect(formatRelativeReset(NOW, NOW)).toBeNull();
+	});
+
+	it("formats under an hour as minutes only (boundary: 59m)", () => {
+		expect(formatRelativeReset(NOW + 59 * 60 * 1000, NOW)).toBe("in 59m");
+	});
+
+	it("formats just over an hour as hours + minutes (boundary: 61m)", () => {
+		expect(formatRelativeReset(NOW + 61 * 60 * 1000, NOW)).toBe("in 1h 1m");
+	});
+
+	it("formats just under a day as hours + minutes (boundary: 23h)", () => {
+		expect(formatRelativeReset(NOW + 23 * 60 * 60 * 1000, NOW)).toBe(
+			"in 23h 0m",
+		);
+	});
+
+	it("formats a day or more as days + hours (boundary: 25h)", () => {
+		expect(formatRelativeReset(NOW + 25 * 60 * 60 * 1000, NOW)).toBe(
+			"in 1d 1h",
+		);
+	});
+
+	it("formats exactly 1 day as days + hours (boundary: 24h)", () => {
+		expect(formatRelativeReset(NOW + 24 * 60 * 60 * 1000, NOW)).toBe(
+			"in 1d 0h",
+		);
+	});
+
+	it("formats multiple days", () => {
+		expect(formatRelativeReset(NOW + (2 * 24 + 4) * 60 * 60 * 1000, NOW)).toBe(
+			"in 2d 4h",
+		);
+	});
+
+	it("formats exactly 1 minute", () => {
+		expect(formatRelativeReset(NOW + 60 * 1000, NOW)).toBe("in 1m");
+	});
+});
+
+describe("listObservedFamilies", () => {
+	function mkObservation(family: string): RoutingObservation {
+		return {
+			family,
+			order: [{ id: "1", name: "acc-a" }],
+			model: `claude-${family}`,
+			observedAtMs: NOW,
+		};
+	}
+
+	it("returns [] for undefined, null, and empty observations", () => {
+		expect(listObservedFamilies(undefined)).toEqual([]);
+		expect(listObservedFamilies(null)).toEqual([]);
+		expect(listObservedFamilies({})).toEqual([]);
+	});
+
+	it("returns every family, sorted alphabetically by family key", () => {
+		const observations = {
+			sonnet: mkObservation("sonnet"),
+			opus: mkObservation("opus"),
+			fable: mkObservation("fable"),
+		};
+		const result = listObservedFamilies(observations);
+		expect(result.map((r) => r.family)).toEqual(["fable", "opus", "sonnet"]);
+		expect(result[0].observation).toEqual(observations.fable);
+		expect(result[1].observation).toEqual(observations.opus);
+		expect(result[2].observation).toEqual(observations.sonnet);
+	});
+
+	it("includes a family that also has its own pool row (e.g. fable)", () => {
+		const observations = { fable: mkObservation("fable") };
+		expect(listObservedFamilies(observations)).toEqual([
+			{ family: "fable", observation: observations.fable },
+		]);
+	});
+});
+
+describe("formatFamilyLabel", () => {
+	it("capitalizes a lowercase family name", () => {
+		expect(formatFamilyLabel("fable")).toBe("Fable");
+		expect(formatFamilyLabel("opus")).toBe("Opus");
+	});
+
+	it("leaves an already-capitalized family name unchanged", () => {
+		expect(formatFamilyLabel("Fable")).toBe("Fable");
+	});
+
+	it("returns an empty string for an empty family name", () => {
+		expect(formatFamilyLabel("")).toBe("");
+	});
+
+	it("trims surrounding whitespace before capitalizing", () => {
+		expect(formatFamilyLabel("  fable  ")).toBe("Fable");
+	});
+
+	it("leaves the remainder of the string unchanged (no lowercasing)", () => {
+		expect(formatFamilyLabel("fABLE")).toBe("FABLE");
 	});
 });

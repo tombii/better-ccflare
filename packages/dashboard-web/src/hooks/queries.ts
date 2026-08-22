@@ -89,6 +89,17 @@ export const useAccounts = () => {
 	});
 };
 
+export const useRoutingObservations = () => {
+	return useQuery({
+		queryKey: queryKeys.routingObservations(),
+		queryFn: () => api.getRoutingObservations(),
+		staleTime: 20000, // Consider data fresh for 20 seconds
+		refetchInterval: 60000, // Same cadence as useAccounts -- both drive the pool cards
+		refetchIntervalInBackground: false, // Don't refresh when tab is not focused
+		gcTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
+	});
+};
+
 export const useAgents = () => {
 	return useQuery({
 		queryKey: queryKeys.agents(),

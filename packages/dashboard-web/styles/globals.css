@@ -172,4 +172,18 @@
 	.bg-warning {
 		@apply bg-yellow-100 dark:bg-yellow-900/20;
 	}
+
+	/*
+	 * Solid counterparts of .bg-success / .bg-warning. The tinted variants above
+	 * are badge backgrounds that carry text; a progress/capacity bar fill needs
+	 * full-strength colour instead, matching .text-success / .text-warning and
+	 * the solid .bg-destructive it sits next to.
+	 */
+	.bg-success-solid {
+		@apply bg-green-600 dark:bg-green-500;
+	}
+
+	.bg-warning-solid {
+		@apply bg-yellow-500 dark:bg-yellow-400;
+	}
 }
