@@ -18,12 +18,20 @@ import {
 } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { REFRESH_INTERVALS } from "../constants";
-import { useAccounts, useAnalytics, useStats } from "../hooks/queries";
+import {
+	useAccounts,
+	useAnalytics,
+	useRoutingObservations,
+	useStats,
+} from "../hooks/queries";
 import { computePoolUsage, computeScopedPoolUsage } from "../lib/pool-usage";
 import { ChartsSection } from "./overview/ChartsSection";
 import { LoadingSkeleton } from "./overview/LoadingSkeleton";
 import { MetricCard } from "./overview/MetricCard";
-import { PoolMetricCard } from "./overview/PoolMetricCard";
+import {
+	PoolCapacitySection,
+	type PoolCapacitySectionPool,
+} from "./overview/PoolCapacitySection";
 import { RateLimitInfo } from "./overview/RateLimitInfo";
 import {
 	StorageIntegrityBanner,
@@ -44,6 +52,7 @@ export const OverviewTab = React.memo(() => {
 		"normal",
 	);
 	const { data: accounts, isLoading: accountsLoading } = useAccounts();
+	const { data: routingObservationsResponse } = useRoutingObservations();
 
 	const [now, setNow] = useState(() => Date.now());
 	useEffect(() => {
@@ -66,6 +75,50 @@ export const OverviewTab = React.memo(() => {
 	const scopedPools = useMemo(
 		() => computeScopedPoolUsage(accounts ?? [], now),
 		[accounts, now],
+	);
+
+	// The account the active load-balancing strategy would pick for the NEXT
+	// request (AccountResponse.isPrimary, filled server-side from
+	// strategy.peek() -- see packages/types/src/account.ts). This is the
+	// SINGLE source for "next request" display: PoolUsageRow must never
+	// recompute routing order itself, since that logic lives in the backend
+	// strategy and would drift from it. May be null if no account is primary
+	// right now.
+	const primaryAccountName = useMemo(
+		() => accounts?.find((a) => a.isPrimary)?.name ?? null,
+		[accounts],
+	);
+
+	const capacityPools: PoolCapacitySectionPool[] = useMemo(
+		() => [
+			{
+				id: "five_hour",
+				title: "5h Pool",
+				icon: Gauge,
+				result: fiveHourPool,
+				window: "five_hour" as const,
+			},
+			{
+				id: "seven_day",
+				title: "7d Pool",
+				icon: BarChart3,
+				result: weeklyPool,
+				window: "seven_day" as const,
+			},
+			...scopedPools.map(({ family, result }) => ({
+				id: `scoped:${family}`,
+				title: `${family} pool`,
+				icon: Boxes,
+				result,
+				window: "weekly_scoped" as const,
+				// The proxy's last observed routing order for THIS family, or null
+				// when there's no recent observation yet -- see PoolUsageRow's
+				// "Routing order (observed …)" line.
+				routingObservation:
+					routingObservationsResponse?.observations[family] ?? null,
+			})),
+		],
+		[fiveHourPool, weeklyPool, scopedPools, routingObservationsResponse],
 	);
 
 	// Memoize percentage change calculation (must be at top level)
@@ -208,7 +261,7 @@ export const OverviewTab = React.memo(() => {
 			</div>
 
 			{/* Metrics Grid */}
-			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8 gap-4">
+			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-4">
 				<MetricCard
 					title="Total Requests"
 					value={formatNumber(analytics?.totals.requests || 0)}
@@ -290,28 +343,13 @@ export const OverviewTab = React.memo(() => {
 					trendPeriod={trendPeriod}
 					icon={Zap}
 				/>
-				<PoolMetricCard
-					title="5h Pool"
-					icon={Gauge}
-					result={fiveHourPool}
-					window="five_hour"
-				/>
-				<PoolMetricCard
-					title="7d Pool"
-					icon={BarChart3}
-					result={weeklyPool}
-					window="seven_day"
-				/>
-				{scopedPools.map(({ family, result }) => (
-					<PoolMetricCard
-						key={family}
-						title={`${family} pool`}
-						icon={Boxes}
-						result={result}
-						window="weekly_scoped"
-					/>
-				))}
 			</div>
+
+			<PoolCapacitySection
+				pools={capacityPools}
+				primaryAccountName={primaryAccountName}
+				now={now}
+			/>
 
 			<ChartsSection
 				timeSeriesData={timeSeriesData}

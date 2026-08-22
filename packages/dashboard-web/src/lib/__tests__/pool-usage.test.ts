@@ -1,13 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import type { AccountResponse } from "@better-ccflare/types";
 import {
+	buildPoolSegments,
 	computePoolUsage,
 	computeScopedPoolUsage,
+	formatRelativeReset,
 	isAlibabaShape,
 	isAnthropicStyleShape,
 	isNanoGPTShape,
 	isZaiShape,
 	normalizeResetMs,
+	type PoolUsageResult,
 } from "../pool-usage";
 
 const NOW = 1_700_000_000_000;
@@ -981,5 +984,356 @@ describe("computeScopedPoolUsage", () => {
 		const pool = computeScopedPoolUsage([account], NOW)[0].result;
 		expect(pool.atRisk).toHaveLength(1);
 		expect(pool.atRisk[0].name).toBe("burner");
+	});
+});
+
+describe("buildPoolSegments", () => {
+	function mkResult(partial: Partial<PoolUsageResult>): PoolUsageResult {
+		return {
+			average: null,
+			activeAverage: null,
+			worst: null,
+			contributing: [],
+			exhausted: [],
+			excluded: [],
+			fallback: [],
+			earliestResetMs: null,
+			earliestResetAccountName: null,
+			atRisk: [],
+			...partial,
+		};
+	}
+
+	it("maps contributing accounts to active segments with their own pct", () => {
+		const result = mkResult({
+			contributing: [
+				{ name: "a", pct: 42, resetMs: null },
+				{ name: "b", pct: 10, resetMs: null },
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toHaveLength(2);
+		expect(segments.every((s) => s.kind === "active")).toBe(true);
+		expect(segments.find((s) => s.name === "a")?.pct).toBe(42);
+		expect(segments.find((s) => s.name === "b")?.pct).toBe(10);
+	});
+
+	it("maps exhausted accounts to pct=100, kind exhausted, carrying their reason", () => {
+		const result = mkResult({
+			exhausted: [{ name: "x", reason: "five_hour_exhausted", resetMs: null }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toEqual([
+			{
+				name: "x",
+				pct: 100,
+				kind: "exhausted",
+				reason: "five_hour_exhausted",
+				resetMs: null,
+			},
+		]);
+	});
+
+	it("maps excluded accounts to pct=null, kind unknown, carrying their reason", () => {
+		const result = mkResult({
+			excluded: [{ name: "u", reason: "no_usage_data", resetMs: null }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toEqual([
+			{
+				name: "u",
+				pct: null,
+				kind: "unknown",
+				reason: "no_usage_data",
+				resetMs: null,
+			},
+		]);
+	});
+
+	it("carries resetMs through from contributing/exhausted/excluded entries", () => {
+		const result = mkResult({
+			contributing: [{ name: "a", pct: 42, resetMs: NOW + 1000 }],
+			exhausted: [
+				{ name: "x", reason: "five_hour_exhausted", resetMs: NOW + 2000 },
+			],
+			excluded: [{ name: "u", reason: "no_usage_data", resetMs: NOW + 3000 }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.find((s) => s.name === "a")?.resetMs).toBe(NOW + 1000);
+		expect(segments.find((s) => s.name === "x")?.resetMs).toBe(NOW + 2000);
+		expect(segments.find((s) => s.name === "u")?.resetMs).toBe(NOW + 3000);
+	});
+
+	it("resetMs is null on a segment when the source entry's resetMs is null", () => {
+		const result = mkResult({
+			contributing: [{ name: "a", pct: 42, resetMs: null }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments[0].resetMs).toBeNull();
+	});
+
+	it("omits fallback accounts entirely", () => {
+		const result = mkResult({
+			contributing: [{ name: "a", pct: 50, resetMs: null }],
+			fallback: [{ name: "f", provider: "claude-console-api" }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual(["a"]);
+	});
+
+	it("sorts descending by pct, with null (unknown) always last", () => {
+		const result = mkResult({
+			contributing: [
+				{ name: "mid", pct: 50, resetMs: null },
+				{ name: "high", pct: 90, resetMs: null },
+			],
+			exhausted: [
+				{ name: "maxed", reason: "seven_day_exhausted", resetMs: null },
+			],
+			excluded: [{ name: "unk", reason: "no_usage_data", resetMs: null }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual([
+			"maxed",
+			"high",
+			"mid",
+			"unk",
+		]);
+	});
+
+	it("breaks ties at equal pct alphabetically by name (deterministic)", () => {
+		const result = mkResult({
+			contributing: [
+				{ name: "zeta", pct: 50, resetMs: null },
+				{ name: "alpha", pct: 50, resetMs: null },
+				{ name: "mike", pct: 50, resetMs: null },
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual(["alpha", "mike", "zeta"]);
+	});
+
+	it("breaks ties among multiple null (unknown) segments alphabetically by name", () => {
+		const result = mkResult({
+			excluded: [
+				{ name: "zeta", reason: "no_usage_data", resetMs: null },
+				{ name: "alpha", reason: "no_usage_data", resetMs: null },
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual(["alpha", "zeta"]);
+	});
+
+	it("orders segments: exhausted (alphabetical) -> at-risk (ascending exhaustsAtMs) -> rest (descending pct)", () => {
+		const result = mkResult({
+			contributing: [
+				{ name: "risk-later", pct: 40, resetMs: null },
+				{ name: "risk-soon", pct: 70, resetMs: null },
+				{ name: "safe-high", pct: 90, resetMs: null },
+				{ name: "safe-low", pct: 10, resetMs: null },
+			],
+			exhausted: [
+				{ name: "zzz-exhausted", reason: "five_hour_exhausted", resetMs: null },
+				{ name: "aaa-exhausted", reason: "five_hour_exhausted", resetMs: null },
+			],
+			atRisk: [
+				{
+					name: "risk-soon",
+					pct: 70,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 500,
+					timeToExhaustMs: 500,
+					remainingMs: 1000,
+				},
+				{
+					name: "risk-later",
+					pct: 40,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 900,
+					timeToExhaustMs: 900,
+					remainingMs: 1000,
+				},
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual([
+			"aaa-exhausted",
+			"zzz-exhausted",
+			"risk-soon",
+			"risk-later",
+			"safe-high",
+			"safe-low",
+		]);
+	});
+
+	it("breaks ties within the at-risk group alphabetically when exhaustsAtMs is equal", () => {
+		const result = mkResult({
+			contributing: [
+				{ name: "zed", pct: 50, resetMs: null },
+				{ name: "alpha", pct: 50, resetMs: null },
+			],
+			atRisk: [
+				{
+					name: "zed",
+					pct: 50,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 500,
+					timeToExhaustMs: 500,
+					remainingMs: 1000,
+				},
+				{
+					name: "alpha",
+					pct: 50,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 500,
+					timeToExhaustMs: 500,
+					remainingMs: 1000,
+				},
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments.map((s) => s.name)).toEqual(["alpha", "zed"]);
+	});
+
+	it("copies exhaustsAtMs from the matching atRisk entry onto its segment", () => {
+		const result = mkResult({
+			contributing: [{ name: "a", pct: 70, resetMs: null }],
+			atRisk: [
+				{
+					name: "a",
+					pct: 70,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 500,
+					timeToExhaustMs: 500,
+					remainingMs: 1000,
+				},
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toHaveLength(1);
+		expect(segments[0].exhaustsAtMs).toBe(NOW + 500);
+	});
+
+	it("leaves exhaustsAtMs undefined for a contributing segment with no atRisk entry", () => {
+		const result = mkResult({
+			contributing: [{ name: "a", pct: 70, resetMs: null }],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toHaveLength(1);
+		expect(segments[0].exhaustsAtMs).toBeUndefined();
+	});
+
+	it("never assigns exhaustsAtMs to an exhausted segment even if its name matches an atRisk entry", () => {
+		// atRisk is only ever built from contributing accounts (finalizePoolResult),
+		// so this should not happen in practice, but the segment mapping must not
+		// accidentally pick it up via a shared name if it ever did.
+		const result = mkResult({
+			exhausted: [{ name: "a", reason: "five_hour_exhausted", resetMs: null }],
+			atRisk: [
+				{
+					name: "a",
+					pct: 100,
+					resetMs: NOW + 1000,
+					exhaustsAtMs: NOW + 500,
+					timeToExhaustMs: 500,
+					remainingMs: 1000,
+				},
+			],
+		});
+		const segments = buildPoolSegments(result);
+		expect(segments).toHaveLength(1);
+		expect(segments[0].exhaustsAtMs).toBeUndefined();
+	});
+
+	it("invariant: the average of non-unknown segments equals result.average", () => {
+		const accounts: AccountResponse[] = [
+			mkAccount({
+				name: "a",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 30, resets_at: null },
+					seven_day: { utilization: 0, resets_at: null },
+				} as never,
+			}),
+			mkAccount({
+				name: "b",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 90, resets_at: null },
+					seven_day: { utilization: 0, resets_at: null },
+				} as never,
+			}),
+			mkAccount({
+				name: "c",
+				provider: "anthropic",
+				paused: true,
+			}),
+			mkAccount({
+				name: "d",
+				provider: "anthropic",
+				usageData: null,
+			}),
+		];
+		const result = computePoolUsage(accounts, "five_hour", NOW);
+		const segments = buildPoolSegments(result);
+		const counted = segments.filter((s) => s.kind !== "unknown");
+		expect(counted.length).toBeGreaterThan(0);
+		const avg =
+			counted.reduce((sum, s) => sum + (s.pct ?? 0), 0) / counted.length;
+		expect(avg).toBeCloseTo(result.average as number, 10);
+	});
+
+	it("empty result produces no segments", () => {
+		expect(buildPoolSegments(mkResult({}))).toEqual([]);
+	});
+});
+
+describe("formatRelativeReset", () => {
+	it("returns null when resetMs is null", () => {
+		expect(formatRelativeReset(null, NOW)).toBeNull();
+	});
+
+	it("returns null when resetMs is in the past", () => {
+		expect(formatRelativeReset(NOW - 1000, NOW)).toBeNull();
+	});
+
+	it("returns null when resetMs equals now (not strictly future)", () => {
+		expect(formatRelativeReset(NOW, NOW)).toBeNull();
+	});
+
+	it("formats under an hour as minutes only (boundary: 59m)", () => {
+		expect(formatRelativeReset(NOW + 59 * 60 * 1000, NOW)).toBe("in 59m");
+	});
+
+	it("formats just over an hour as hours + minutes (boundary: 61m)", () => {
+		expect(formatRelativeReset(NOW + 61 * 60 * 1000, NOW)).toBe("in 1h 1m");
+	});
+
+	it("formats just under a day as hours + minutes (boundary: 23h)", () => {
+		expect(formatRelativeReset(NOW + 23 * 60 * 60 * 1000, NOW)).toBe(
+			"in 23h 0m",
+		);
+	});
+
+	it("formats a day or more as days + hours (boundary: 25h)", () => {
+		expect(formatRelativeReset(NOW + 25 * 60 * 60 * 1000, NOW)).toBe(
+			"in 1d 1h",
+		);
+	});
+
+	it("formats exactly 1 day as days + hours (boundary: 24h)", () => {
+		expect(formatRelativeReset(NOW + 24 * 60 * 60 * 1000, NOW)).toBe(
+			"in 1d 0h",
+		);
+	});
+
+	it("formats multiple days", () => {
+		expect(formatRelativeReset(NOW + (2 * 24 + 4) * 60 * 60 * 1000, NOW)).toBe(
+			"in 2d 4h",
+		);
+	});
+
+	it("formats exactly 1 minute", () => {
+		expect(formatRelativeReset(NOW + 60 * 1000, NOW)).toBe("in 1m");
 	});
 });

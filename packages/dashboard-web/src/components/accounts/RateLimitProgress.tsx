@@ -1,6 +1,7 @@
 import { computeWindowStartMs, registerUIRefresh } from "@better-ccflare/core";
 import type { AnthropicUsageData, FullUsageData } from "@better-ccflare/types";
 import { useEffect, useState } from "react";
+import { formatRelativeReset } from "../../lib/pool-usage";
 import { cn } from "../../lib/utils";
 import {
 	isAnthropicPeakHour,
@@ -711,6 +712,13 @@ export function RateLimitProgress({
 													minute: "2-digit",
 												},
 											)} (local)`}
+									{(() => {
+										const relativeReset = formatRelativeReset(
+											new Date(usage.resetTime).getTime(),
+											now,
+										);
+										return relativeReset != null ? ` · ${relativeReset}` : "";
+									})()}
 								</span>
 							</div>
 						)}

@@ -4,9 +4,9 @@ import type { AccountResponse, FullUsageData } from "@better-ccflare/types";
 export type PoolWindow = "five_hour" | "seven_day";
 
 /**
- * What a PoolMetricCard can display: the two account-wide windows, or an
+ * What a PoolUsageRow can display: the two account-wide windows, or an
  * aggregated per-model-family weekly_scoped pool (computed by
- * computeScopedPoolUsage). Only the card's date formatting depends on this;
+ * computeScopedPoolUsage). Only the row's date formatting depends on this;
  * computePoolUsage itself accepts the two account-wide windows only.
  */
 export type PoolCardWindow = PoolWindow | "weekly_scoped";
@@ -593,4 +593,146 @@ export function computeScopedPoolUsage(
 		family,
 		result: computeScopedPoolUsageForFamily(accounts, family, now),
 	}));
+}
+
+export interface PoolSegment {
+	name: string;
+	pct: number | null;
+	kind: "active" | "exhausted" | "unknown";
+	reason?: ExcludedReason;
+	// The projected exhaustion timestamp (ms) for this segment's account, taken
+	// from result.atRisk by name. Only ever set for "active" segments -- atRisk
+	// is built exclusively from `contributing` accounts (finalizePoolResult), so
+	// an "exhausted" or "unknown" segment never carries one. Undefined (not
+	// null) when the account has no burn-rate projection, matching the "absent
+	// = not applicable" convention used by the other optional PoolSegment
+	// fields (e.g. `reason`).
+	exhaustsAtMs?: number;
+	// The account's own window reset (ms), carried straight through from its
+	// contributing/exhausted/excluded source entry -- null when unknown, never
+	// omitted (unlike `reason`/`exhaustsAtMs`, every segment has a resetMs,
+	// even if it's null). Feeds the "in Xd Yh" relative-reset mini-row in
+	// PoolUsageRow via formatRelativeReset.
+	resetMs: number | null;
+}
+
+/**
+ * Turns a PoolUsageResult into one segment per pool account, for the
+ * segmented bar in PoolUsageRow. Only contributing/exhausted/excluded
+ * accounts become segments -- fallback accounts are not part of the pool
+ * (see computePoolUsage/computeScopedPoolUsage) and are intentionally
+ * omitted here too.
+ *
+ * Sort order groups segments by what their position can actually communicate
+ * -- capacity depletion order, never routing order (routing is a backend
+ * decision; see PoolUsageRow's "next" badge, driven by isPrimary, for that):
+ *
+ *   1. Already-exhausted accounts (kind "exhausted") first -- they are
+ *      already empty, so there is nothing left to sequence between them;
+ *      ties (i.e. all of them) are broken alphabetically by name for a
+ *      deterministic order.
+ *   2. Accounts with a burn-rate projection (`exhaustsAtMs` present, from
+ *      result.atRisk), ascending by exhaustsAtMs -- the one projected to run
+ *      out soonest comes first. Ties broken alphabetically by name.
+ *   3. Everything else (no projection, including "unknown" segments),
+ *      descending by pct, with null (unknown) segments always last and ties
+ *      broken alphabetically by name.
+ *
+ * Within any tie, alphabetical-by-name keeps the overall order fully
+ * deterministic regardless of input order.
+ */
+export function buildPoolSegments(result: PoolUsageResult): PoolSegment[] {
+	const exhaustsAtMsByName = new Map<string, number>();
+	for (const projection of result.atRisk) {
+		exhaustsAtMsByName.set(projection.name, projection.exhaustsAtMs);
+	}
+
+	const segments: PoolSegment[] = [
+		...result.contributing.map(
+			(c): PoolSegment => ({
+				name: c.name,
+				pct: c.pct,
+				kind: "active",
+				exhaustsAtMs: exhaustsAtMsByName.get(c.name),
+				resetMs: c.resetMs,
+			}),
+		),
+		...result.exhausted.map(
+			(e): PoolSegment => ({
+				name: e.name,
+				pct: 100,
+				kind: "exhausted",
+				reason: e.reason,
+				resetMs: e.resetMs,
+			}),
+		),
+		...result.excluded.map(
+			(e): PoolSegment => ({
+				name: e.name,
+				pct: null,
+				kind: "unknown",
+				reason: e.reason,
+				resetMs: e.resetMs,
+			}),
+		),
+	];
+
+	// 0 = already exhausted, 1 = projected (has exhaustsAtMs), 2 = the rest.
+	const groupOf = (s: PoolSegment): 0 | 1 | 2 => {
+		if (s.kind === "exhausted") return 0;
+		if (s.exhaustsAtMs != null) return 1;
+		return 2;
+	};
+
+	return segments.sort((a, b) => {
+		const groupA = groupOf(a);
+		const groupB = groupOf(b);
+		if (groupA !== groupB) return groupA - groupB;
+
+		if (groupA === 0) {
+			return a.name.localeCompare(b.name);
+		}
+		if (groupA === 1) {
+			// Both have exhaustsAtMs by construction of groupOf.
+			const diff = (a.exhaustsAtMs as number) - (b.exhaustsAtMs as number);
+			return diff !== 0 ? diff : a.name.localeCompare(b.name);
+		}
+		if (a.pct === null && b.pct === null) return a.name.localeCompare(b.name);
+		if (a.pct === null) return 1;
+		if (b.pct === null) return -1;
+		if (a.pct !== b.pct) return b.pct - a.pct;
+		return a.name.localeCompare(b.name);
+	});
+}
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Human-readable relative time until `resetMs` ("in 2d 4h" / "in 1h 1m" /
+ * "in 45m"), or null when there's nothing to show (no resetMs, or it's
+ * already in the past / equal to `now`). Days + hours from 1 full day
+ * onward; hours + minutes below that, dropping the hours component
+ * entirely under a full hour. Shared between the pool-capacity segments
+ * (PoolUsageRow) and the per-account rate-limit rows (RateLimitProgress) --
+ * kept here in lib/ rather than a components/ file so both can import it
+ * without an awkward components/accounts -> components/overview dependency.
+ */
+export function formatRelativeReset(
+	resetMs: number | null,
+	now: number,
+): string | null {
+	if (resetMs == null) return null;
+	const diffMs = resetMs - now;
+	if (diffMs <= 0) return null;
+
+	if (diffMs >= ONE_DAY_MS) {
+		const days = Math.floor(diffMs / ONE_DAY_MS);
+		const hours = Math.floor((diffMs - days * ONE_DAY_MS) / (60 * 60 * 1000));
+		return `in ${days}d ${hours}h`;
+	}
+
+	const totalMinutes = Math.floor(diffMs / 60000);
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+	return hours > 0 ? `in ${hours}h ${minutes}m` : `in ${minutes}m`;
 }

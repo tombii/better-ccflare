@@ -70,6 +70,29 @@ export interface StorageInfoResponse {
 	null_account_rows_24h: number;
 }
 
+/** One account in a routing observation's order. */
+export interface RoutingObservationAccount {
+	id: string;
+	name: string;
+}
+
+/**
+ * The proxy's last-observed account order for one model family -- display-only
+ * telemetry recorded from the real request path (see
+ * packages/proxy/src/handlers/routing-observations.ts), never a simulation.
+ */
+export interface RoutingObservation {
+	family: string;
+	order: RoutingObservationAccount[];
+	model: string;
+	observedAtMs: number;
+}
+
+/** Response from `GET /api/routing/observations`. */
+export interface RoutingObservationsResponse {
+	observations: Record<string, RoutingObservation>;
+}
+
 /**
  * Response from `POST /api/storage/integrity/check`.
  *
@@ -2347,6 +2370,24 @@ class API extends HttpClient {
 		this.logger.debug(`→ GET ${url}`);
 		try {
 			const response = await this.get<StorageInfoResponse>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+			});
+			throw error;
+		}
+	}
+
+	async getRoutingObservations(): Promise<RoutingObservationsResponse> {
+		const startTime = Date.now();
+		const url = "/api/routing/observations";
+		this.logger.debug(`→ GET ${url}`);
+		try {
+			const response = await this.get<RoutingObservationsResponse>(url);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
 			return response;
