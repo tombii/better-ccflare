@@ -1,6 +1,5 @@
 import {
 	type AccountUsageSnapshot,
-	getModelFamily,
 	requestEvents,
 	ServiceUnavailableError,
 	trackClientVersion,
@@ -33,7 +32,7 @@ import {
 	proxyWithAccount,
 	RequestBodyContext,
 	type RequestJsonBody,
-	recordRoutingObservation,
+	recordSelectedOrder,
 	recordXaiAffinitySuccess,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
@@ -569,25 +568,12 @@ export async function handleProxy(
 	// back into selection (see routing-observations.ts). Uses the same
 	// effectiveModel the capacity filter (selectAccountsForRequest ->
 	// getModelFamily) already routed on, so the family attribution can't
-	// drift from what actually happened. Defensive: must never let a
-	// telemetry failure break the request path.
-	if (accounts.length > 0) {
-		try {
-			const observedFamily = effectiveModel
-				? getModelFamily(effectiveModel)
-				: null;
-			if (observedFamily) {
-				recordRoutingObservation(
-					observedFamily,
-					accounts.map((a) => ({ id: a.id, name: a.name })),
-					effectiveModel as string,
-					Date.now(),
-				);
-			}
-		} catch (err) {
-			log.error("Failed to record routing observation", err);
-		}
-	}
+	// drift from what actually happened. Not the final word, though: the
+	// combo-fallback re-selection below calls recordSelectedOrder again for
+	// the same family when it actually runs, and that later call wins
+	// (last-write-wins) since it reflects the accounts that really served
+	// the request.
+	recordSelectedOrder(effectiveModel, accounts, Date.now());
 	if (
 		process.env.DEBUG?.includes("proxy") ||
 		process.env.DEBUG === "true" ||
@@ -761,6 +747,14 @@ export async function handleProxy(
 			throttled: throttledFallbackAccounts,
 		} = applyUsageThrottling(selectedFallbackAccounts);
 		fallbackAccounts = filteredFallbackAccounts;
+		// This re-selection is what actually serves the request when a combo
+		// falls back to SessionStrategy routing, so it must overwrite the
+		// dashboard's "observed routing order" entry the initial selection
+		// recorded above -- otherwise the table would keep showing the failed
+		// combo order as the (stale, never-served) last decision for this
+		// family. recordSelectedOrder's last-write-wins semantics make this
+		// safe to call unconditionally.
+		recordSelectedOrder(effectiveModel, fallbackAccounts, Date.now());
 
 		if (fallbackAccounts.length > 0) {
 			log.info(

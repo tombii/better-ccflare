@@ -24,7 +24,11 @@ import {
 	useRoutingObservations,
 	useStats,
 } from "../hooks/queries";
-import { computePoolUsage, computeScopedPoolUsage } from "../lib/pool-usage";
+import {
+	computePoolUsage,
+	computeScopedPoolUsage,
+	formatFamilyLabel,
+} from "../lib/pool-usage";
 import { ChartsSection } from "./overview/ChartsSection";
 import { LoadingSkeleton } from "./overview/LoadingSkeleton";
 import { MetricCard } from "./overview/MetricCard";
@@ -107,7 +111,10 @@ export const OverviewTab = React.memo(() => {
 			},
 			...scopedPools.map(({ family, result }) => ({
 				id: `scoped:${family}`,
-				title: `${family} pool`,
+				// `family` is the normalized routing key (e.g. "fable") --
+				// formatFamilyLabel re-capitalizes it for display ("Fable pool"),
+				// matching how ObservedRoutingTable titles the same key.
+				title: `${formatFamilyLabel(family)} pool`,
 				icon: Boxes,
 				result,
 				window: "weekly_scoped" as const,

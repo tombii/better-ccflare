@@ -1,4 +1,4 @@
-import { computeWindowStartMs } from "@better-ccflare/core";
+import { computeWindowStartMs, getModelFamily } from "@better-ccflare/core";
 import type { AccountResponse, FullUsageData } from "@better-ccflare/types";
 import type { RoutingObservation } from "../api";
 
@@ -454,45 +454,105 @@ export function computePoolUsage(
 	});
 }
 
-// Read a weekly_scoped entry (a per-model-family weekly cap) from the generic
-// limits[] array for the given family display name (e.g. "Fable"). Unlike
+// Normalizes a weekly_scoped display name into the same family key the
+// proxy's routing/capacity logic uses (getModelFamily), so the dashboard's
+// pool grouping can never drift from what the backend actually routed on --
+// see usage-throttling.ts:collectWindows and model-capacity.ts:
+// isAccountExhaustedForModel, both of which key their weekly_scoped rows on
+// `getModelFamily(display_name.trim()) ?? undefined`. A display name
+// matching no known pattern (a family the normalizer doesn't recognize yet)
+// falls back to its own trimmed, lowercased key instead of being dropped --
+// silently discarding it would make a genuinely new family invisible in the
+// overview instead of surfaced as its own pool. NEVER use this for display
+// -- see formatFamilyLabel below for that.
+function deriveScopedFamilyKey(displayName: string): string {
+	const trimmed = displayName.trim();
+	return getModelFamily(trimmed) ?? trimmed.toLowerCase();
+}
+
+interface ScopedExtractedValue extends ExtractedValue {
+	// True only when EVERY weekly_scoped row matched for this family has a
+	// numeric percent >= 100 -- mirrors the backend's
+	// isAccountExhaustedForModel (model-capacity.ts), which requires ALL
+	// scoped rows for a family to be exhausted before excluding the account.
+	// A row with percent === null makes this false (fail open), matching the
+	// backend's countRawScopedFamilyRows guard against exhaustion-by-omission.
+	allRowsExhausted: boolean;
+}
+
+// Read every weekly_scoped entry (a per-model-family weekly cap) from the
+// generic limits[] array that normalizes to the given family key. Unlike
 // extractAnthropicLimit (session/weekly_all), this returns null ONLY when no
-// matching entry exists at all -- that is the family-pool membership signal
+// matching row exists at all -- that is the family-pool membership signal
 // (computeScopedPoolUsage skips accounts entirely when they have no entry for
-// the family, per the "no fallback noise" requirement). When a matching entry
-// DOES exist but its percent is null, `{ pct: null, resetMs }` is returned so
-// the caller can distinguish "not part of this family" from "part of this
-// family, but no usage value yet" (-> excluded "no_usage_data"), mirroring how
-// computePoolUsage already treats `extracted.pct === null` from
-// extractFiveHour/extractSevenDay above.
+// the family, per the "no fallback noise" requirement). An account can carry
+// MULTIPLE rows for one family (e.g. distinct surfaces); when it does:
+//   - pct is the MAXIMUM of the rows' non-null percents -- the binding
+//     constraint, i.e. the value the user actually feels. Rows with
+//     percent == null are excluded from the maximum. pct is null only when
+//     NONE of the matched rows carry a numeric percent.
+//   - resetMs is the earliest reset among the rows that hold that maximum
+//     value; if none of those carry a reset, it falls back to the earliest
+//     reset among all matched rows.
+//   - allRowsExhausted is true only when every matched row is individually
+//     at percent >= 100 AND still has a reset in the future (see
+//     ScopedExtractedValue).
 function extractWeeklyScoped(
 	usageData: FullUsageData,
 	family: string,
-): ExtractedValue | null {
+	now: number,
+): ScopedExtractedValue | null {
 	const limits = (usageData as { limits?: unknown }).limits;
 	if (!Array.isArray(limits)) return null;
-	const entry = limits.find(
+
+	const rows = limits.filter(
 		(l) =>
 			l &&
 			typeof l === "object" &&
 			(l as { kind?: string }).kind === "weekly_scoped" &&
-			// Trim before comparing: discoverScopedFamilies trims the discovered
-			// family name, so a padded display_name must still match its pool.
-			(
-				l as { scope?: { model?: { display_name?: string } } }
-			).scope?.model?.display_name?.trim() === family,
-	) as { percent?: number | null; resets_at?: string | null } | undefined;
-	if (!entry) return null;
-	return {
-		pct: entry.percent ?? null,
-		resetMs: normalizeResetMs(entry.resets_at ?? null),
+			deriveScopedFamilyKey(
+				(l as { scope?: { model?: { display_name?: string } } }).scope?.model
+					?.display_name ?? "",
+			) === family,
+	) as Array<{ percent?: number | null; resets_at?: string | null }>;
+	if (rows.length === 0) return null;
+
+	const numericPercents = rows
+		.map((row) => row.percent)
+		.filter((percent): percent is number => typeof percent === "number");
+	const pct =
+		numericPercents.length === 0 ? null : Math.max(...numericPercents);
+
+	const resetsOf = (candidates: typeof rows): number | null => {
+		const resets = candidates
+			.map((row) => normalizeResetMs(row.resets_at ?? null))
+			.filter((reset): reset is number => reset !== null);
+		return resets.length === 0 ? null : Math.min(...resets);
 	};
+	const maxRows = pct === null ? [] : rows.filter((row) => row.percent === pct);
+	const resetMs = resetsOf(maxRows) ?? resetsOf(rows);
+
+	// Backend parity (model-capacity.ts:111-113): a row only proves exhaustion
+	// when it is at/over 100% AND its reset still lies in the future. A 100% row
+	// with a passed or unparsable reset is stale/unproven telemetry the router
+	// fails OPEN on — branding it family_exhausted here would claim an exclusion
+	// routing does not make.
+	const allRowsExhausted = rows.every((row) => {
+		if (typeof row.percent !== "number" || row.percent < 100) return false;
+		const rowReset = normalizeResetMs(row.resets_at ?? null);
+		return rowReset !== null && rowReset > now;
+	});
+
+	return { pct, resetMs, allRowsExhausted };
 }
 
 // Discover the set of per-model-family weekly_scoped pools present across all
-// accounts' usageData, in stable alphabetical order. An entry without a
-// display name is skipped (mirrors collectAnthropicLimitRows in
-// rate-limit-helpers.ts, which does the same for the per-account display).
+// accounts' usageData, in stable alphabetical order. Keyed by the normalized
+// family (deriveScopedFamilyKey), so two accounts whose scoped display names
+// resolve to the same family (e.g. "Fable" and "Claude Fable 5") share ONE
+// pool instead of splitting into two. An entry without a display name is
+// skipped (mirrors collectAnthropicLimitRows in rate-limit-helpers.ts, which
+// does the same for the per-account display).
 function discoverScopedFamilies(accounts: AccountResponse[]): string[] {
 	const families = new Set<string>();
 	for (const account of accounts) {
@@ -506,7 +566,7 @@ function discoverScopedFamilies(accounts: AccountResponse[]): string[] {
 			const name = (
 				l as { scope?: { model?: { display_name?: string } } }
 			).scope?.model?.display_name?.trim();
-			if (name) families.add(name);
+			if (name) families.add(deriveScopedFamilyKey(name));
 		}
 	}
 	return Array.from(families).sort();
@@ -529,7 +589,7 @@ function computeScopedPoolUsageForFamily(
 	for (const account of accounts) {
 		if (!account.usageData) continue;
 
-		const extracted = extractWeeklyScoped(account.usageData, family);
+		const extracted = extractWeeklyScoped(account.usageData, family, now);
 		if (extracted === null) continue; // not part of this family's pool
 
 		const exclusion =
@@ -552,7 +612,12 @@ function computeScopedPoolUsageForFamily(
 			continue;
 		}
 
-		if (extracted.pct >= 100) {
+		// Only when EVERY row for this family is exhausted -- mirrors the
+		// backend's isAccountExhaustedForModel. An account with one exhausted
+		// row and one still-usable row for the same family keeps contributing
+		// (with pct at the binding maximum), exactly as routing would still
+		// use it for the non-exhausted surface.
+		if (extracted.allRowsExhausted) {
 			exhausted.push({
 				name: account.name,
 				reason: "family_exhausted",

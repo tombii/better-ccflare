@@ -58,6 +58,7 @@ export {
 	type RoutingObservation,
 	type RoutingObservationAccount,
 	recordRoutingObservation,
+	recordSelectedOrder,
 } from "./routing-observations";
 export {
 	checkAllAccountsHealth,

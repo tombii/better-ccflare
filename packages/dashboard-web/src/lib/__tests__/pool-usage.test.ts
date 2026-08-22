@@ -854,16 +854,17 @@ describe("computeScopedPoolUsage", () => {
 	});
 
 	it("matches accounts whose display_name carries surrounding whitespace", () => {
-		// discoverScopedFamilies trims the name ("Fable " -> family "Fable"), so
-		// extractWeeklyScoped must trim too or the padded account silently drops
-		// out of the very pool its entry created.
+		// discoverScopedFamilies trims and normalizes the name via
+		// getModelFamily ("Fable " -> family "fable"), so extractWeeklyScoped
+		// must apply the same normalization or the padded account silently
+		// drops out of the very pool its entry created.
 		const accounts: AccountResponse[] = [
 			mkScopedAccount("padded", "Fable ", 40),
 			mkScopedAccount("clean", "Fable", 60),
 		];
 		const pools = computeScopedPoolUsage(accounts, NOW);
 		expect(pools).toHaveLength(1);
-		expect(pools[0].family).toBe("Fable");
+		expect(pools[0].family).toBe("fable");
 		expect(pools[0].result.contributing.map((c) => c.name).sort()).toEqual([
 			"clean",
 			"padded",
@@ -877,7 +878,7 @@ describe("computeScopedPoolUsage", () => {
 		];
 		const pools = computeScopedPoolUsage(accounts, NOW);
 		expect(pools).toHaveLength(1);
-		expect(pools[0].family).toBe("Fable");
+		expect(pools[0].family).toBe("fable");
 		expect(pools[0].result.contributing).toHaveLength(2);
 		expect(pools[0].result.average).toBe(30);
 	});
@@ -888,7 +889,33 @@ describe("computeScopedPoolUsage", () => {
 			mkScopedAccount("b", "Fable", 20),
 		];
 		const pools = computeScopedPoolUsage(accounts, NOW);
-		expect(pools.map((p) => p.family)).toEqual(["Fable", "Sonnet"]);
+		expect(pools.map((p) => p.family)).toEqual(["fable", "sonnet"]);
+	});
+
+	it("two display names normalizing to the same family (e.g. 'Fable' and 'Claude Fable 5') land in ONE pool", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("a", "Fable", 20),
+			mkScopedAccount("b", "Claude Fable 5", 40),
+		];
+		const pools = computeScopedPoolUsage(accounts, NOW);
+		expect(pools).toHaveLength(1);
+		expect(pools[0].family).toBe("fable");
+		expect(pools[0].result.contributing.map((c) => c.name).sort()).toEqual([
+			"a",
+			"b",
+		]);
+	});
+
+	it("a display name with no known family pattern still gets its own pool (fallback key), not dropped", () => {
+		const accounts: AccountResponse[] = [
+			mkScopedAccount("a", "Zeta Ultra", 20),
+		];
+		const pools = computeScopedPoolUsage(accounts, NOW);
+		expect(pools).toHaveLength(1);
+		expect(pools[0].family).toBe("zeta ultra");
+		expect(pools[0].result.contributing).toEqual([
+			{ name: "a", pct: 20, resetMs: RESET_MS },
+		]);
 	});
 
 	it("average includes scoped-exhausted (>=100%) accounts as 100, activeAverage excludes them", () => {
@@ -908,6 +935,68 @@ describe("computeScopedPoolUsage", () => {
 		const pool = computeScopedPoolUsage(accounts, NOW)[0].result;
 		expect(pool.exhausted).toEqual([
 			{ name: "maxed", reason: "family_exhausted", resetMs: RESET_MS },
+		]);
+	});
+
+	// An account can carry MULTIPLE weekly_scoped rows for the same family
+	// (e.g. distinct surfaces) -- extractWeeklyScoped must aggregate all of
+	// them, not just the first `.find()` match, mirroring the backend's
+	// isAccountExhaustedForModel (model-capacity.ts), which requires EVERY
+	// row for a family to be exhausted before excluding the account.
+	function mkMultiScopedAccount(
+		name: string,
+		family: string,
+		rows: Array<{ percent: number | null; resetsAt?: string }>,
+		extra?: Partial<AccountResponse>,
+	): AccountResponse {
+		return mkAccount({
+			name,
+			provider: "anthropic",
+			usageData: {
+				limits: rows.map((row) => ({
+					kind: "weekly_scoped",
+					percent: row.percent,
+					resets_at: row.resetsAt ?? RESET_ISO,
+					scope: { model: { id: null, display_name: family }, surface: null },
+				})),
+			} as never,
+			...extra,
+		});
+	}
+
+	it("two rows (100 and 40): pct is the max (100), but NOT family_exhausted (not all rows exhausted) -> contributing", () => {
+		const account = mkMultiScopedAccount("acc", "Fable", [
+			{ percent: 100 },
+			{ percent: 40 },
+		]);
+		const pool = computeScopedPoolUsage([account], NOW)[0].result;
+		expect(pool.exhausted).toEqual([]);
+		expect(pool.contributing).toEqual([
+			{ name: "acc", pct: 100, resetMs: RESET_MS },
+		]);
+	});
+
+	it("two rows both at 100 -> family_exhausted", () => {
+		const account = mkMultiScopedAccount("acc", "Fable", [
+			{ percent: 100 },
+			{ percent: 100 },
+		]);
+		const pool = computeScopedPoolUsage([account], NOW)[0].result;
+		expect(pool.contributing).toEqual([]);
+		expect(pool.exhausted).toEqual([
+			{ name: "acc", reason: "family_exhausted", resetMs: RESET_MS },
+		]);
+	});
+
+	it("two rows (100 and percent null) -> NOT exhausted (fail open, mirrors the backend)", () => {
+		const account = mkMultiScopedAccount("acc", "Fable", [
+			{ percent: 100 },
+			{ percent: null },
+		]);
+		const pool = computeScopedPoolUsage([account], NOW)[0].result;
+		expect(pool.exhausted).toEqual([]);
+		expect(pool.contributing).toEqual([
+			{ name: "acc", pct: 100, resetMs: RESET_MS },
 		]);
 	});
 
@@ -1398,5 +1487,70 @@ describe("formatFamilyLabel", () => {
 
 	it("leaves the remainder of the string unchanged (no lowercasing)", () => {
 		expect(formatFamilyLabel("fABLE")).toBe("FABLE");
+	});
+});
+
+describe("scoped exhaustion requires a FUTURE reset (backend parity)", () => {
+	// model-capacity.ts:111-113 excludes an account for a family only when every
+	// scoped row is `utilization >= 100 && resetAtMs > now`. A 100% row whose
+	// reset already passed is stale telemetry the backend deliberately fails
+	// OPEN on — the dashboard must not brand it family_exhausted while routing
+	// still uses it.
+	function mkFableAccount(
+		name: string,
+		percent: number | null,
+		resetsAt: string | null,
+	): AccountResponse {
+		return mkAccount({
+			name,
+			provider: "anthropic",
+			usageData: {
+				limits: [
+					{
+						kind: "weekly_scoped",
+						percent,
+						resets_at: resetsAt,
+						scope: {
+							model: { id: null, display_name: "Fable" },
+							surface: null,
+						},
+					},
+				],
+			} as never,
+		});
+	}
+
+	const FUTURE = new Date(NOW + 86_400_000).toISOString();
+	const PAST = new Date(NOW - 86_400_000).toISOString();
+
+	it("100% with a past reset is NOT family_exhausted (fail open)", () => {
+		const pools = computeScopedPoolUsage(
+			[mkFableAccount("stale", 100, PAST)],
+			NOW,
+		);
+		expect(pools).toHaveLength(1);
+		expect(pools[0].result.exhausted).toEqual([]);
+		expect(pools[0].result.contributing.map((c) => c.name)).toEqual(["stale"]);
+	});
+
+	it("100% without any reset is NOT family_exhausted (unproven capacity)", () => {
+		const pools = computeScopedPoolUsage(
+			[mkFableAccount("noreset", 100, null)],
+			NOW,
+		);
+		expect(pools[0].result.exhausted).toEqual([]);
+		expect(pools[0].result.contributing.map((c) => c.name)).toEqual([
+			"noreset",
+		]);
+	});
+
+	it("100% with a future reset IS family_exhausted", () => {
+		const pools = computeScopedPoolUsage(
+			[mkFableAccount("done", 100, FUTURE)],
+			NOW,
+		);
+		expect(pools[0].result.exhausted).toEqual([
+			{ name: "done", reason: "family_exhausted", resetMs: Date.parse(FUTURE) },
+		]);
 	});
 });

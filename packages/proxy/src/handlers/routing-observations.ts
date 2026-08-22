@@ -1,3 +1,8 @@
+import { getModelFamily } from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
+
+const log = new Logger("RoutingObservations");
+
 /**
  * In-memory, process-singleton record of the LAST account order the proxy
  * actually selected for each model family (mirrors the process-singleton
@@ -48,6 +53,40 @@ export function recordRoutingObservation(
 		model,
 		observedAtMs: now,
 	});
+}
+
+/**
+ * Derives the model family from `model` and records `accounts` as the order
+ * the proxy just selected for that family -- the single entry point proxy.ts
+ * uses at EVERY point it actually selects an account order (the initial
+ * selection, and the combo-fallback re-selection), so the last call for a
+ * family always wins regardless of which selection path produced it.
+ *
+ * No-ops (never records) when `model` is missing, has no known family, or
+ * `accounts` is empty -- there is nothing meaningful to display in those
+ * cases. This is display-only telemetry in the hot request path: it must
+ * NEVER throw, so every failure (including a malformed account entry) is
+ * swallowed internally rather than propagated to the caller.
+ */
+export function recordSelectedOrder(
+	model: string | null | undefined,
+	accounts: Array<{ id: string; name: string }>,
+	now: number = Date.now(),
+): void {
+	try {
+		if (!model) return;
+		const family = getModelFamily(model);
+		if (!family) return;
+		if (!accounts || accounts.length === 0) return;
+		recordRoutingObservation(
+			family,
+			accounts.map((account) => ({ id: account.id, name: account.name })),
+			model,
+			now,
+		);
+	} catch (err) {
+		log.error("Failed to record selected routing order", err);
+	}
 }
 
 /**
