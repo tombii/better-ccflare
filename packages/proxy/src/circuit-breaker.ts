@@ -208,6 +208,14 @@ interface CircuitEntry {
  * in rotation — so counting it would open the breaker on an account that is
  * still serving traffic.
  *
+ * `org_permission_denied` (403 `permission_error` — the org forbids OAuth /
+ * Claude Code access) is the opposite of the scoped kinds above: the account
+ * cannot serve ANY request, and it stays that way until an admin changes a
+ * setting upstream. Since the breaker is keyed per `(provider, accountId)`,
+ * opening it here is exactly the desired effect — the account is skipped
+ * fail-fast, without an upstream round-trip per request — and it cannot take
+ * healthy accounts of the same provider down with it.
+ *
  * Every other `RateLimitReason` — account/provider-wide exhaustion,
  * 529 overload — counts as a circuit failure.
  *
@@ -245,6 +253,9 @@ export function shouldCountAsCircuitFailure(kind: FailureKind): boolean {
 		case "all_models_exhausted_429":
 		case "upstream_529_overloaded_with_reset":
 		case "upstream_529_overloaded_no_reset":
+		// Account-wide and admin-gated: fail-fast is strictly better than
+		// re-discovering the same 403 on every request.
+		case "org_permission_denied":
 			return true;
 		default:
 			return assertNever(kind);

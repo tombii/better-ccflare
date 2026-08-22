@@ -105,16 +105,19 @@ describe("issue #273 — Group A: helper contract", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Group B — call-site coverage. Static check that the 13 drain sites the
-// spec calls out (429/529/401 failover return-null + retry-loop overwrite)
+// Group B — call-site coverage. Static check that the 14 drain sites the
+// spec calls out (429/529/401/403 failover return-null + retry-loop overwrite)
 // are wired into proxy-operations.ts. The negative-control run removes
 // these lines; this check fails if any are missing.
+//
+// Went from 13 to 14 with the org_permission_denied branch (403
+// `permission_error`), which is a new discard-then-return-null failover site.
 // ---------------------------------------------------------------------------
 
-const EXPECTED_SITE_COUNT = 13;
+const EXPECTED_SITE_COUNT = 14;
 
 describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", () => {
-	it("proxy-operations.ts has exactly 13 cancelDiscardedResponseBody call sites", () => {
+	it("proxy-operations.ts has exactly 14 cancelDiscardedResponseBody call sites", () => {
 		const source = readFileSync(
 			"packages/proxy/src/handlers/proxy-operations.ts",
 			"utf-8",
