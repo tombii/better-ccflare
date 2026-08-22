@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import type { AccountResponse } from "@better-ccflare/types";
+import type { RoutingObservation } from "../../api";
 import {
 	buildPoolSegments,
 	computePoolUsage,
 	computeScopedPoolUsage,
+	findRoutingObservation,
 	formatRelativeReset,
 	isAlibabaShape,
 	isAnthropicStyleShape,
@@ -11,6 +13,7 @@ import {
 	isZaiShape,
 	normalizeResetMs,
 	type PoolUsageResult,
+	selectUnpairedObservations,
 } from "../pool-usage";
 
 const NOW = 1_700_000_000_000;
@@ -1335,5 +1338,91 @@ describe("formatRelativeReset", () => {
 
 	it("formats exactly 1 minute", () => {
 		expect(formatRelativeReset(NOW + 60 * 1000, NOW)).toBe("in 1m");
+	});
+});
+
+describe("findRoutingObservation", () => {
+	function mkObservation(family: string): RoutingObservation {
+		return {
+			family,
+			order: [{ id: "1", name: "acc-a" }],
+			model: `claude-${family}`,
+			observedAtMs: NOW,
+		};
+	}
+
+	it("finds a lowercase key by an uppercase-varying family argument", () => {
+		const observations = { fable: mkObservation("fable") };
+		expect(findRoutingObservation(observations, "Fable")).toEqual(
+			observations.fable,
+		);
+	});
+
+	it("finds an uppercase key by a lowercase family argument", () => {
+		const observations = { Fable: mkObservation("Fable") };
+		expect(findRoutingObservation(observations, "fable")).toEqual(
+			observations.Fable,
+		);
+	});
+
+	it("matches across surrounding whitespace on the family argument", () => {
+		const observations = { fable: mkObservation("fable") };
+		expect(findRoutingObservation(observations, " Fable ")).toEqual(
+			observations.fable,
+		);
+	});
+
+	it("returns null for an unknown family", () => {
+		const observations = { fable: mkObservation("fable") };
+		expect(findRoutingObservation(observations, "opus")).toBeNull();
+	});
+
+	it("returns null when observations is undefined", () => {
+		expect(findRoutingObservation(undefined, "fable")).toBeNull();
+	});
+
+	it("returns null when observations is null", () => {
+		expect(findRoutingObservation(null, "fable")).toBeNull();
+	});
+});
+
+describe("selectUnpairedObservations", () => {
+	function mkObservation(family: string): RoutingObservation {
+		return {
+			family,
+			order: [{ id: "1", name: "acc-a" }],
+			model: `claude-${family}`,
+			observedAtMs: NOW,
+		};
+	}
+
+	it("pairs 'Fable' pool family away 'fable' observation key -- it does not appear in the result", () => {
+		const observations = { fable: mkObservation("fable") };
+		expect(selectUnpairedObservations(observations, ["Fable"])).toEqual([]);
+	});
+
+	it("surfaces families with no matching pool family, sorted alphabetically", () => {
+		const observations = {
+			sonnet: mkObservation("sonnet"),
+			opus: mkObservation("opus"),
+			fable: mkObservation("fable"),
+		};
+		const result = selectUnpairedObservations(observations, ["Fable"]);
+		expect(result.map((r) => r.family)).toEqual(["opus", "sonnet"]);
+		expect(result[0].observation).toEqual(observations.opus);
+		expect(result[1].observation).toEqual(observations.sonnet);
+	});
+
+	it("returns [] for empty, undefined, and null observations", () => {
+		expect(selectUnpairedObservations({}, ["Fable"])).toEqual([]);
+		expect(selectUnpairedObservations(undefined, ["Fable"])).toEqual([]);
+		expect(selectUnpairedObservations(null, ["Fable"])).toEqual([]);
+	});
+
+	it("includes every observed family when there are no pool families at all", () => {
+		const observations = { opus: mkObservation("opus") };
+		expect(selectUnpairedObservations(observations, [])).toEqual([
+			{ family: "opus", observation: observations.opus },
+		]);
 	});
 });

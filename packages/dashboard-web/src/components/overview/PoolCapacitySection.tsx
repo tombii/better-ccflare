@@ -1,10 +1,15 @@
 import type { ComponentType } from "react";
 import type { RoutingObservation } from "../../api";
 import { usePersistedExpansion } from "../../hooks/usePersistedExpansion";
-import type { PoolCardWindow, PoolUsageResult } from "../../lib/pool-usage";
+import {
+	type PoolCardWindow,
+	type PoolUsageResult,
+	selectUnpairedObservations,
+} from "../../lib/pool-usage";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
 import { PoolUsageRow } from "./PoolUsageRow";
+import { formatShortDuration } from "./pool-usage-shared";
 
 const STORAGE_KEY = "ccflare.poolCapacity.expanded";
 
@@ -33,6 +38,18 @@ interface PoolCapacitySectionProps {
 	// drives the routing observation's "observed Xs/Xm ago" age label and the
 	// per-segment relative reset time, both in PoolUsageRow.
 	now: number;
+	// The full /api/routing/observations response map, keyed by the proxy's
+	// (lowercase) getModelFamily() result -- used ONLY to find recorded
+	// families that have NO pool row among `pools` (see
+	// selectUnpairedObservations below), rendered as the "other model
+	// families" block. Undefined/null while the query hasn't loaded yet, or
+	// once loaded but empty -- both simply render no extra block.
+	observations?: Record<string, RoutingObservation> | null;
+	// The family display names that already have a pool row in `pools` (every
+	// weekly_scoped pool's family, e.g. ["Fable"]) -- excluded from the
+	// "other model families" block so a family is never shown twice. Resolved
+	// once by the caller (OverviewTab), same as primaryAccountName above.
+	poolFamilies: string[];
 }
 
 /**
@@ -45,6 +62,8 @@ export function PoolCapacitySection({
 	pools,
 	primaryAccountName,
 	now,
+	observations,
+	poolFamilies,
 }: PoolCapacitySectionProps) {
 	const { isExpanded, toggle, expandAll, collapseAll, expandedCount } =
 		usePersistedExpansion(STORAGE_KEY);
@@ -52,6 +71,10 @@ export function PoolCapacitySection({
 	if (pools.length === 0) return null;
 
 	const allExpanded = expandedCount >= pools.length;
+	const unpairedObservations = selectUnpairedObservations(
+		observations,
+		poolFamilies,
+	);
 
 	return (
 		<Card>
@@ -87,6 +110,33 @@ export function PoolCapacitySection({
 						/>
 					))}
 				</div>
+				{/*
+				 * Recorded families with NO pool row above -- e.g. "opus"/"sonnet",
+				 * which only ever get an observation because there's no
+				 * weekly_scoped limit (hence no pool card) for them. Renders
+				 * nothing at all when there's nothing unpaired (no heading, no
+				 * empty box) -- see selectUnpairedObservations.
+				 */}
+				{unpairedObservations.length > 0 && (
+					<div className="mt-4 border-t pt-3">
+						<h4 className="mb-1.5 text-xs font-medium text-muted-foreground">
+							Observed routing — other model families
+						</h4>
+						<ul className="space-y-1">
+							{unpairedObservations.map(({ family, observation }) => (
+								<li
+									key={family}
+									className="truncate text-xs text-muted-foreground"
+								>
+									<span className="font-medium text-foreground">{family}</span>{" "}
+									· observed{" "}
+									{formatShortDuration(now - observation.observedAtMs)} ago ·{" "}
+									{observation.order.map((account) => account.name).join(" → ")}
+								</li>
+							))}
+						</ul>
+					</div>
+				)}
 			</CardContent>
 		</Card>
 	);

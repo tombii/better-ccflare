@@ -1,5 +1,6 @@
 import { computeWindowStartMs } from "@better-ccflare/core";
 import type { AccountResponse, FullUsageData } from "@better-ccflare/types";
+import type { RoutingObservation } from "../api";
 
 export type PoolWindow = "five_hour" | "seven_day";
 
@@ -735,4 +736,63 @@ export function formatRelativeReset(
 	const hours = Math.floor(totalMinutes / 60);
 	const minutes = totalMinutes % 60;
 	return hours > 0 ? `in ${hours}h ${minutes}m` : `in ${minutes}m`;
+}
+
+// Shared normalization for matching a routing-observation key against a pool
+// family display name: both findRoutingObservation and
+// selectUnpairedObservations use this SAME rule (never a second comparison
+// rule) so the two stay in lockstep by construction. Trimmed in addition to
+// lowercased -- the observation keys come from getModelFamily() (already
+// lowercase, no padding), but a caller-supplied family (e.g. a pool's
+// scope.model.display_name, discovered via discoverScopedFamilies, which
+// already trims) may still carry different casing.
+function normalizeFamilyKey(value: string): string {
+	return value.trim().toLowerCase();
+}
+
+/**
+ * Looks up a family's routing observation in the /api/routing/observations
+ * response, matching case- and whitespace-insensitively.
+ *
+ * The two sides of this comparison come from genuinely different sources and
+ * are NOT guaranteed to share casing: observation keys are the proxy's
+ * getModelFamily() result (lowercase, e.g. "fable"), while `family` here is
+ * typically a pool's scope.model.display_name (e.g. "Fable", as recorded in
+ * a weekly_scoped limit entry). Returns null when observations is
+ * absent/null or no key matches.
+ */
+export function findRoutingObservation(
+	observations: Record<string, RoutingObservation> | undefined | null,
+	family: string,
+): RoutingObservation | null {
+	if (!observations) return null;
+	const target = normalizeFamilyKey(family);
+	for (const [key, observation] of Object.entries(observations)) {
+		if (normalizeFamilyKey(key) === target) return observation;
+	}
+	return null;
+}
+
+/**
+ * The routing observations that have NO corresponding pool row -- e.g.
+ * "opus"/"sonnet" families that are only ever recorded as an observation
+ * (there's no weekly_scoped limit, hence no pool card, for them), unlike
+ * "fable" which pairs with a "Fable" pool row and is therefore excluded
+ * here. Uses the exact same normalizeFamilyKey comparison as
+ * findRoutingObservation so the two functions can never disagree about what
+ * counts as "paired". Result is sorted alphabetically by family (the
+ * observations record's own key) for a deterministic render order.
+ */
+export function selectUnpairedObservations(
+	observations: Record<string, RoutingObservation> | undefined | null,
+	poolFamilies: string[],
+): Array<{ family: string; observation: RoutingObservation }> {
+	if (!observations) return [];
+	const poolKeys = new Set(poolFamilies.map(normalizeFamilyKey));
+	const result: Array<{ family: string; observation: RoutingObservation }> = [];
+	for (const [key, observation] of Object.entries(observations)) {
+		if (poolKeys.has(normalizeFamilyKey(key))) continue;
+		result.push({ family: key, observation });
+	}
+	return result.sort((a, b) => a.family.localeCompare(b.family));
 }

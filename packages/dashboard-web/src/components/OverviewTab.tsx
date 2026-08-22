@@ -24,7 +24,11 @@ import {
 	useRoutingObservations,
 	useStats,
 } from "../hooks/queries";
-import { computePoolUsage, computeScopedPoolUsage } from "../lib/pool-usage";
+import {
+	computePoolUsage,
+	computeScopedPoolUsage,
+	findRoutingObservation,
+} from "../lib/pool-usage";
 import { ChartsSection } from "./overview/ChartsSection";
 import { LoadingSkeleton } from "./overview/LoadingSkeleton";
 import { MetricCard } from "./overview/MetricCard";
@@ -113,9 +117,15 @@ export const OverviewTab = React.memo(() => {
 				window: "weekly_scoped" as const,
 				// The proxy's last observed routing order for THIS family, or null
 				// when there's no recent observation yet -- see PoolUsageRow's
-				// "Routing order (observed …)" line.
-				routingObservation:
-					routingObservationsResponse?.observations[family] ?? null,
+				// "Routing order (observed …)" line. Looked up case-/whitespace-
+				// insensitively (findRoutingObservation): observation keys are the
+				// proxy's lowercase getModelFamily() result (e.g. "fable"), while
+				// `family` here is the pool's scope.model.display_name (e.g.
+				// "Fable") -- a direct index access would silently never match.
+				routingObservation: findRoutingObservation(
+					routingObservationsResponse?.observations,
+					family,
+				),
 			})),
 		],
 		[fiveHourPool, weeklyPool, scopedPools, routingObservationsResponse],
@@ -349,6 +359,8 @@ export const OverviewTab = React.memo(() => {
 				pools={capacityPools}
 				primaryAccountName={primaryAccountName}
 				now={now}
+				observations={routingObservationsResponse?.observations}
+				poolFamilies={scopedPools.map(({ family }) => family)}
 			/>
 
 			<ChartsSection
