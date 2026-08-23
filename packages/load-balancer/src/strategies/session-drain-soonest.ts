@@ -129,9 +129,12 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 	 * The single canonical comparator of "strict" mode: earliest future
 	 * weekly reset first (unknown/past last), then ACTIVE sessions before
 	 * inactive ones (this tie-break — not a pre-filter — is what prevents
-	 * both the sticky lock-in and cold-cache spraying), then priority ASC,
-	 * utilization ASC, and the account id as a total-order determinism
-	 * anchor so equal candidates never depend on input order.
+	 * both the sticky lock-in and cold-cache spraying), then priority
+	 * preference (compareAccountPreference — a sustained probe-backoff
+	 * penalty outranks a configured priority number, same as the sibling
+	 * sticky comparator above), utilization ASC, and the account id as a
+	 * total-order determinism anchor so equal candidates never depend on
+	 * input order.
 	 */
 	private compareAccountsStrict(a: Account, b: Account, now: number): number {
 		const resetA = this.getWeeklyReset(a, now);
@@ -144,7 +147,8 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 		const activeA = this.hasActiveSession(a, now) ? 1 : 0;
 		const activeB = this.hasActiveSession(b, now) ? 1 : 0;
 		if (activeA !== activeB) return activeB - activeA;
-		if (a.priority !== b.priority) return a.priority - b.priority;
+		const preference = compareAccountPreference(a, b, now);
+		if (preference !== 0) return preference;
 		const utilA = this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
 		const utilB = this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
 		if (utilA !== utilB) return utilA - utilB;

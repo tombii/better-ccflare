@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+	clearAllProbeBackoff,
+	PROBE_BACKOFF_PENALTY_THRESHOLD_MS,
+	setProbeBackoff,
+} from "@better-ccflare/core";
 import { SessionDrainSoonestStrategy } from "@better-ccflare/load-balancer";
 import type {
 	Account,
@@ -279,9 +284,62 @@ describe("SessionDrainSoonestStrategy — strict ranking mode (A11)", () => {
 	let store: MockStrategyStore;
 
 	beforeEach(() => {
+		clearAllProbeBackoff();
 		strategy = new SessionDrainSoonestStrategy(undefined, "strict");
 		store = new MockStrategyStore();
 		strategy.initialize(store);
+	});
+
+	afterEach(() => {
+		clearAllProbeBackoff();
+	});
+
+	it("a probe-backed-off account does not win strict-mode position 0 on priority alone", () => {
+		const now = Date.now();
+		// Equal weekly reset and equal activity (both inactive) puts this tie on
+		// priority — where a raw a.priority - b.priority comparison would let
+		// the backed-off account win purely because it configures a better
+		// (lower) priority number. compareAccountPreference must intervene
+		// first, exactly like the sibling sticky comparator already does.
+		const backedOff = makeAccount({
+			id: "sick",
+			name: "sick",
+			priority: 0, // better priority number — must NOT win while penalised
+			session_start: null,
+		});
+		const healthy = makeAccount({
+			id: "well",
+			name: "well",
+			priority: 5,
+			session_start: null,
+		});
+		store.setWeeklyReset("sick", now + 1 * DAY);
+		store.setWeeklyReset("well", now + 1 * DAY);
+		setProbeBackoff(backedOff.id, now + PROBE_BACKOFF_PENALTY_THRESHOLD_MS);
+
+		const result = strategy.select([backedOff, healthy], meta);
+		expect(result.map((a) => a.id)).toEqual(["well", "sick"]);
+		expect(strategy.peek([backedOff, healthy])).toBe("well");
+	});
+
+	it("leaves strict priority order alone when nobody is penalised", () => {
+		const now = Date.now();
+		const lowPrio = makeAccount({
+			id: "acc-a",
+			name: "acc-a",
+			priority: 5,
+			session_start: null,
+		});
+		const highPrio = makeAccount({
+			id: "acc-z",
+			name: "acc-z",
+			priority: 0,
+			session_start: null,
+		});
+		store.setWeeklyReset("acc-a", now + 1 * DAY);
+		store.setWeeklyReset("acc-z", now + 1 * DAY);
+
+		expect(strategy.select([lowPrio, highPrio], meta)[0].id).toBe("acc-z");
 	});
 
 	it("select() picks the drain-earliest account even when another account has the youngest active session", () => {
