@@ -110,6 +110,7 @@ import {
 	createRequestsSummaryHandler,
 } from "./handlers/requests";
 import { createRequestsStreamHandler } from "./handlers/requests-stream";
+import { createRoutingObservationsHandler } from "./handlers/routing-observations";
 import { createSessionAccountHandler } from "./handlers/sessions";
 import { createStatsHandler, createStatsResetHandler } from "./handlers/stats";
 import {
@@ -315,6 +316,13 @@ export class APIRouter {
 		this.handlers.set(
 			"GET:/api/token-health/reauth-needed",
 			reauthNeededHandler,
+		);
+
+		// Last-observed routing order per model family (display-only telemetry
+		// from the proxy's own account selection -- see routing-observations.ts).
+		const routingObservationsHandler = createRoutingObservationsHandler();
+		this.handlers.set("GET:/api/routing/observations", () =>
+			routingObservationsHandler(),
 		);
 
 		this.handlers.set("POST:/api/oauth/init", (req) => oauthInitHandler(req));

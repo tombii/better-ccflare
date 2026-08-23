@@ -35,6 +35,7 @@ import {
 	proxyWithAccount,
 	RequestBodyContext,
 	type RequestJsonBody,
+	recordSelectedOrder,
 	recordXaiAffinitySuccess,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
@@ -662,6 +663,17 @@ async function handleProxyRequest(
 	log.info(
 		`Selected ${accounts.length} accounts: ${accounts.map((a) => a.name).join(", ")}`,
 	);
+	// Record the routing decision the proxy just made for the dashboard's
+	// "observed routing order" display -- display-only telemetry, never fed
+	// back into selection (see routing-observations.ts). Uses the same
+	// effectiveModel the capacity filter (selectAccountsForRequest ->
+	// getModelFamily) already routed on, so the family attribution can't
+	// drift from what actually happened. Not the final word, though: the
+	// combo-fallback re-selection below calls recordSelectedOrder again for
+	// the same family when it actually runs, and that later call wins
+	// (last-write-wins) since it reflects the accounts that really served
+	// the request.
+	recordSelectedOrder(effectiveModel, accounts, Date.now());
 	if (
 		process.env.DEBUG?.includes("proxy") ||
 		process.env.DEBUG === "true" ||
@@ -835,6 +847,14 @@ async function handleProxyRequest(
 			throttled: throttledFallbackAccounts,
 		} = applyUsageThrottling(selectedFallbackAccounts);
 		fallbackAccounts = filteredFallbackAccounts;
+		// This re-selection is what actually serves the request when a combo
+		// falls back to SessionStrategy routing, so it must overwrite the
+		// dashboard's "observed routing order" entry the initial selection
+		// recorded above -- otherwise the table would keep showing the failed
+		// combo order as the (stale, never-served) last decision for this
+		// family. recordSelectedOrder's last-write-wins semantics make this
+		// safe to call unconditionally.
+		recordSelectedOrder(effectiveModel, fallbackAccounts, Date.now());
 
 		if (fallbackAccounts.length > 0) {
 			log.info(
