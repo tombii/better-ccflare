@@ -235,6 +235,58 @@ describe("Codex transform, disable_parallel_tool_use mapping", () => {
 		});
 		expect(body.parallel_tool_calls).toBeUndefined();
 	});
+
+	test("preserves an explicit Responses API false value", async () => {
+		const body = await transform({
+			...base,
+			__better_ccflare_codex_passthrough: {
+				parallel_tool_calls: false,
+			},
+		});
+		expect(body.parallel_tool_calls).toBe(false);
+	});
+});
+
+describe("Codex transform, store field", () => {
+	const base = {
+		model: "claude-opus-4-8",
+		max_tokens: 10,
+		messages: [{ role: "user", content: "hi" }],
+	};
+
+	test("defaults to explicit false for ordinary requests", async () => {
+		const body = await transform(base);
+		expect(body.store).toBe(false);
+	});
+
+	test("honors an explicit Responses API true value", async () => {
+		const body = await transform({
+			...base,
+			__better_ccflare_codex_passthrough: { store: true },
+		});
+		expect(body.store).toBe(true);
+	});
+});
+
+describe("Codex transform, tools field", () => {
+	test("omits tools entirely for tool-less requests", async () => {
+		const body = await transform({
+			model: "claude-opus-4-8",
+			max_tokens: 10,
+			messages: [{ role: "user", content: "hi" }],
+		});
+		expect(body.tools).toBeUndefined();
+	});
+
+	test("maps Anthropic tools when present", async () => {
+		const body = await transform({
+			model: "claude-opus-4-8",
+			max_tokens: 10,
+			messages: [{ role: "user", content: "hi" }],
+			tools: [{ name: "Read", input_schema: { type: "object" } }],
+		});
+		expect(body.tools).toHaveLength(1);
+	});
 });
 
 describe("Codex transform, Skill nudge in mixed parallel final turns", () => {

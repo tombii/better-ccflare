@@ -114,6 +114,17 @@ export async function transformRequestBodyModel<T extends TransformRequestBody>(
 	try {
 		const clonedRequest = request.clone();
 		const body: T = await clonedRequest.json();
+		let bodyChanged = false;
+
+		// Codex-only passthrough metadata; strip it in case failover ever
+		// routes here so it doesn't reach a non-Codex upstream unrecognized.
+		if (
+			"__better_ccflare_codex_passthrough" in (body as Record<string, unknown>)
+		) {
+			delete (body as Record<string, unknown>)
+				.__better_ccflare_codex_passthrough;
+			bodyChanged = true;
+		}
 
 		// Only transform if model field exists
 		if (body.model) {
@@ -127,27 +138,27 @@ export async function transformRequestBodyModel<T extends TransformRequestBody>(
 				mappedModel = getModelName(originalModel, account);
 			}
 
-			// Only create new request if model actually changed
 			if (mappedModel !== originalModel) {
 				body.model = mappedModel;
 				log.debug(
 					`Mapped model in request: ${originalModel} -> ${mappedModel}`,
 				);
-
-				// Create new request with transformed body.
-				// Rebuilding from `request.url` (a string) does not inherit the
-				// signal, so it is carried over explicitly — otherwise a client
-				// disconnect can no longer abort the upstream fetch for every
-				// account that has a model mapping.
-				const transformedRequest = new Request(request.url, {
-					method: request.method,
-					headers: request.headers,
-					body: JSON.stringify(body),
-					signal: request.signal,
-				});
-
-				return transformedRequest;
+				bodyChanged = true;
 			}
+		}
+
+		if (bodyChanged) {
+			// Create new request with transformed body.
+			// Rebuilding from `request.url` (a string) does not inherit the
+			// signal, so it is carried over explicitly — otherwise a client
+			// disconnect can no longer abort the upstream fetch for every
+			// account that has a model mapping.
+			return new Request(request.url, {
+				method: request.method,
+				headers: request.headers,
+				body: JSON.stringify(body),
+				signal: request.signal,
+			});
 		}
 
 		return request;

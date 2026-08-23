@@ -288,7 +288,7 @@ describe("CodexProvider request conversion", () => {
 		const transformed = await provider.transformRequestBody(request);
 		const body = await transformed.json();
 
-		expect(body.reasoning).toEqual({ effort: "high" });
+		expect(body.reasoning).toEqual({ effort: "high", context: "all_turns" });
 	});
 
 	it("adds a continuation nudge after Skill tool results", async () => {
@@ -444,7 +444,7 @@ describe("CodexProvider request conversion", () => {
 		const transformed = await provider.transformRequestBody(request);
 		const body = await transformed.json();
 
-		expect(body.reasoning).toEqual({ effort: "xhigh" });
+		expect(body.reasoning).toEqual({ effort: "xhigh", context: "all_turns" });
 	});
 
 	it("uses role-appropriate text block types in Codex input", async () => {
@@ -547,7 +547,7 @@ describe("CodexProvider request conversion", () => {
 		const transformed = await provider.transformRequestBody(request);
 		const body = await transformed.json();
 
-		expect(body.reasoning).toEqual({ effort: "medium" });
+		expect(body.reasoning).toEqual({ effort: "medium", context: "all_turns" });
 	});
 
 	it("rejects unsupported reasoning effort values", async () => {
@@ -587,7 +587,7 @@ describe("CodexProvider request conversion", () => {
 
 		const transformed = await provider.transformRequestBody(request, account);
 		const body = await transformed.json();
-		expect(body.reasoning).toEqual({ effort: "medium" });
+		expect(body.reasoning).toEqual({ effort: "medium", context: "all_turns" });
 	});
 
 	it("omits empty Read.pages when replaying Anthropic history to Codex", async () => {

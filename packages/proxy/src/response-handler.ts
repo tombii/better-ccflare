@@ -159,6 +159,13 @@ export async function forwardToClient(
 
 	// Always strip compression headers *before* we do anything else
 	const response = withSanitizedProxyHeaders(responseRaw);
+	// Not stripping x-better-ccflare-codex-response-format: for /v1/responses
+	// traffic this goes to handler.ts (not the real client), which reads it
+	// and strips it itself.
+	const isCodexResponsesPassthrough = response.headers.has(
+		"x-better-ccflare-codex-response-format",
+	);
+	response.headers.delete("x-better-ccflare-request-path");
 
 	// Prepare objects once for serialisation - sanitize headers before storing
 	const sanitizedReq = sanitizeRequestHeaders(requestHeaders);
@@ -393,6 +400,8 @@ export async function forwardToClient(
 			method === "POST" &&
 			path === "/v1/messages" &&
 			response.ok &&
+			// Skip Anthropic terminal-state tracking for Codex passthrough responses
+			!isCodexResponsesPassthrough &&
 			(response.headers
 				.get("content-type")
 				?.toLowerCase()
@@ -447,14 +456,17 @@ export async function forwardToClient(
 			onError,
 		});
 
+		const headers = withModelRewriteHeader(
+			response.headers,
+			originalModel,
+			appliedModel,
+		);
+		headers.delete("x-better-ccflare-request-path");
+
 		return new Response(passthroughBody, {
 			status: response.status,
 			statusText: response.statusText,
-			headers: withModelRewriteHeader(
-				response.headers,
-				originalModel,
-				appliedModel,
-			),
+			headers,
 		});
 	}
 
@@ -526,13 +538,16 @@ export async function forwardToClient(
 		},
 	});
 
+	const headers = withModelRewriteHeader(
+		response.headers,
+		originalModel,
+		appliedModel,
+	);
+	headers.delete("x-better-ccflare-request-path");
+
 	return new Response(passthroughBody, {
 		status: response.status,
 		statusText: response.statusText,
-		headers: withModelRewriteHeader(
-			response.headers,
-			originalModel,
-			appliedModel,
-		),
+		headers,
 	});
 }

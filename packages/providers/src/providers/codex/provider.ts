@@ -43,6 +43,7 @@ export const CODEX_CACHE_KEY_MODE_ENV = "CCFLARE_CODEX_CACHE_KEY_MODE";
 const INTERNAL_HEADERS = [
 	"x-better-ccflare-request-id",
 	"x-better-ccflare-request-stream",
+	"x-better-ccflare-codex-custom-tools",
 ];
 
 function sanitizeResponseHeaders(headers: Headers): Headers {
@@ -51,6 +52,15 @@ function sanitizeResponseHeaders(headers: Headers): Headers {
 		sanitized.delete(h);
 	}
 	return sanitized;
+}
+
+// Matches the SSE event name or item "type" marker, not a bare substring,
+// so assistant-generated text can't trigger a false positive.
+const CUSTOM_TOOL_CALL_PATTERN =
+	/(?:^|\n)event:\s*response\.custom_tool_call|"type"\s*:\s*"(?:response\.)?custom_tool_call/;
+
+function hasCustomToolCallEvent(sseText: string): boolean {
+	return CUSTOM_TOOL_CALL_PATTERN.test(sseText);
 }
 
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -249,9 +259,9 @@ interface CodexRequest {
 	model: string;
 	input: (CodexMessage | CodexFunctionCallItem | CodexFunctionCallOutputItem)[];
 	stream: boolean;
-	store: false;
+	store: boolean;
 	max_output_tokens?: number;
-	reasoning?: { effort: string };
+	reasoning?: { effort: string; context?: string };
 	instructions?: string;
 	tools?: CodexTool[];
 	prompt_cache_key?: string;
@@ -453,10 +463,11 @@ export class CodexProvider extends BaseProvider {
 	// Fallback map: proxy-operations.ts injects x-better-ccflare-request-id and
 	// x-better-ccflare-request-stream into the upstream response before calling
 	// processResponse, so headerRequestedStream is normally set. This map covers
-	// the race where a response arrives after the 30s TTL sweep evicts the entry.
+	// the race where a response arrives after the 30s TTL sweep evicts the entry,
+	// and the 529 in-place retry path (which doesn't re-tag those headers).
 	private requestStreamById = new Map<
 		string,
-		{ stream: boolean; ts: number }
+		{ stream: boolean; hasCustomTools: boolean; ts: number }
 	>();
 
 	private sweepRequestStreamById(): void {
@@ -469,7 +480,11 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	canHandle(path: string): boolean {
-		return path === "/v1/messages" || path === "/v1/messages/count_tokens";
+		return (
+			path === "/v1/messages" ||
+			path === "/v1/messages/count_tokens" ||
+			path === "/v1/models"
+		);
 	}
 
 	async refreshToken(
@@ -551,6 +566,10 @@ export class CodexProvider extends BaseProvider {
 			return CODEX_SYNTHETIC_COUNT_TOKENS_URL;
 		}
 
+		if (_path === "/v1/models") {
+			return `https://chatgpt.com/backend-api/codex/models?client_version=${encodeURIComponent(CODEX_VERSION)}`;
+		}
+
 		if (account?.custom_endpoint) {
 			try {
 				return validateEndpointUrl(account.custom_endpoint, "custom_endpoint");
@@ -575,6 +594,13 @@ export class CodexProvider extends BaseProvider {
 		newHeaders.delete("x-api-key");
 		newHeaders.delete("host");
 
+		// Remove internal proxy headers.
+		for (const key of [...newHeaders.keys()]) {
+			if (key.startsWith("x-better-ccflare-")) {
+				newHeaders.delete(key);
+			}
+		}
+
 		// Set Codex-required headers
 		if (accessToken) {
 			newHeaders.set("Authorization", `Bearer ${accessToken}`);
@@ -591,6 +617,12 @@ export class CodexProvider extends BaseProvider {
 		request: Request,
 		account?: Account,
 	): Promise<Request> {
+		// /v1/models is handled as a passthrough GET.
+		const codexModelsUrl = `https://chatgpt.com/backend-api/codex/models?client_version=${encodeURIComponent(CODEX_VERSION)}`;
+		if (request.url.startsWith(codexModelsUrl.split("?")[0])) {
+			return request;
+		}
+
 		const isSyntheticCountTokens = this.isSyntheticCountTokensRequest(
 			request.url,
 		);
@@ -627,18 +659,33 @@ export class CodexProvider extends BaseProvider {
 			}
 
 			const requestId = request.headers.get("x-better-ccflare-request-id");
-			if (requestId) {
-				this.requestStreamById.set(requestId, {
-					stream: body.stream === true,
-					ts: Date.now(),
-				});
-			}
+			// Extract internal passthrough metadata.
+			const passthrough = body.__better_ccflare_codex_passthrough as
+				| Record<string, unknown>
+				| undefined;
+			delete body.__better_ccflare_codex_passthrough;
 			const codexBody = this.convertToCodexFormat(
 				body,
 				account,
 				requestId ?? undefined,
 				isSubscriptionEndpoint,
+				passthrough,
 			);
+
+			// Only custom (non-function) tools can produce custom_tool_call output;
+			// let processResponse skip buffering when none were declared.
+			const hasCustomTools =
+				codexBody.tools?.some(
+					(t) => (t as { type?: string }).type !== "function",
+				) ?? false;
+
+			if (requestId) {
+				this.requestStreamById.set(requestId, {
+					stream: body.stream === true,
+					hasCustomTools,
+					ts: Date.now(),
+				});
+			}
 
 			const newHeaders = new Headers(request.headers);
 			newHeaders.set("content-type", "application/json");
@@ -646,12 +693,18 @@ export class CodexProvider extends BaseProvider {
 				"x-better-ccflare-request-stream",
 				body.stream === true ? "true" : "false",
 			);
+			newHeaders.set(
+				"x-better-ccflare-codex-custom-tools",
+				hasCustomTools ? "true" : "false",
+			);
 			newHeaders.delete("content-length");
+
+			const serializedBody = JSON.stringify(codexBody);
 
 			return new Request(request.url, {
 				method: request.method,
 				headers: newHeaders,
-				body: JSON.stringify(codexBody),
+				body: serializedBody,
 			});
 		} catch (error) {
 			if (error instanceof ValidationError) {
@@ -676,8 +729,26 @@ export class CodexProvider extends BaseProvider {
 		_requestHeaders?: Headers,
 		drainAbort?: AbortController,
 	): Promise<Response> {
+		// /v1/models responses: translate Codex format → OpenAI /v1/models format
+		// with full capability fields preserved for the CLI.
+		const requestPath = response.headers.get("x-better-ccflare-request-path");
+		if (requestPath === "/v1/models") {
+			return this.transformModelsListResponse(response);
+		}
+
 		const contentType = response.headers.get("content-type");
 		const requestId = response.headers.get("x-better-ccflare-request-id");
+		const fallbackEntry = requestId
+			? this.requestStreamById.get(requestId)
+			: undefined;
+		// Sliding TTL: refresh on read so a still-retrying request survives the
+		// 30s sweep instead of expiring mid-backoff.
+		if (requestId && fallbackEntry) {
+			this.requestStreamById.set(requestId, {
+				...fallbackEntry,
+				ts: Date.now(),
+			});
+		}
 		const headerRequestedStream = response.headers.get(
 			"x-better-ccflare-request-stream",
 		);
@@ -686,18 +757,55 @@ export class CodexProvider extends BaseProvider {
 				? true
 				: headerRequestedStream === "false"
 					? false
-					: requestId
-						? (this.requestStreamById.get(requestId)?.stream ?? true)
-						: true;
-		if (requestId) {
-			this.requestStreamById.delete(requestId);
-		}
+					: (fallbackEntry?.stream ?? true);
+		const headerCustomTools = response.headers.get(
+			"x-better-ccflare-codex-custom-tools",
+		);
+		const mightHaveCustomToolCalls =
+			headerCustomTools === "true"
+				? true
+				: headerCustomTools === "false"
+					? false
+					: (fallbackEntry?.hasCustomTools ?? false);
+		// Not deleted: an in-place 529 retry re-invokes processResponse and needs
+		// this entry too. sweepRequestStreamById reclaims it after 30s instead.
 		const isEventStream = contentType?.includes("text/event-stream") ?? false;
 		if (isEventStream) {
-			if (requestedStream) {
-				return this.transformStreamingResponse(response, drainAbort);
+			// No custom tools declared, so no custom_tool_call is possible: skip
+			// buffering and stream straight through.
+			if (!mightHaveCustomToolCalls) {
+				if (requestedStream) {
+					return this.transformStreamingResponse(response, drainAbort);
+				}
+				return this.transformSseResponseToJson(response);
 			}
-			return this.transformSseResponseToJson(response);
+			// A custom_tool_call can appear at any point in the stream, and the
+			// passthrough-vs-transform choice must be made before the first byte
+			// is returned, so sniffing for one would buffer the whole stream and
+			// withhold deltas and keepalives until upstream EOF. Custom tools only
+			// originate from the /v1/responses adapter, whose client speaks
+			// Responses SSE natively — pass the live stream through untouched.
+			if (requestedStream) {
+				return this.buildCustomToolCallPassthroughResponse(
+					response.body,
+					response,
+				);
+			}
+			// Non-streaming clients block on the full body anyway, so sniffing
+			// here costs nothing extra.
+			const streamBody = await response.text();
+			if (hasCustomToolCallEvent(streamBody)) {
+				return this.buildCustomToolCallPassthroughResponse(
+					streamBody,
+					response,
+				);
+			}
+			const streamResponse = new Response(streamBody, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: response.headers,
+			});
+			return this.transformSseResponseToJson(streamResponse);
 		}
 
 		if (response.ok && response.body !== null) {
@@ -709,6 +817,16 @@ export class CodexProvider extends BaseProvider {
 				log.warn(
 					`Codex returned successful response without SSE content-type (${contentType ?? "<missing>"}); transforming as ${requestedStream ? "SSE" : "JSON"}`,
 				);
+				// Preserve Responses Lite custom tool calls.
+				if (hasCustomToolCallEvent(probeText)) {
+					log.info(
+						"[codex:passthrough] Custom tool call events detected, bypassing Anthropic conversion",
+					);
+					return this.buildCustomToolCallPassthroughResponse(
+						probeText,
+						response,
+					);
+				}
 				const headers = sanitizeResponseHeaders(response.headers);
 				headers.set("content-type", "text/event-stream");
 				const sseResponse = new Response(probeText, {
@@ -732,6 +850,20 @@ export class CodexProvider extends BaseProvider {
 
 		const headers = sanitizeResponseHeaders(response.headers);
 		return new Response(response.body, {
+			status: response.status,
+			statusText: response.statusText,
+			headers,
+		});
+	}
+
+	private buildCustomToolCallPassthroughResponse(
+		body: BodyInit | null,
+		response: Response,
+	): Response {
+		const headers = sanitizeResponseHeaders(response.headers);
+		headers.set("content-type", "text/event-stream");
+		headers.set("x-better-ccflare-codex-response-format", "responses-api");
+		return new Response(body, {
 			status: response.status,
 			statusText: response.statusText,
 			headers,
@@ -1068,6 +1200,48 @@ export class CodexProvider extends BaseProvider {
 		return url === CODEX_SYNTHETIC_COUNT_TOKENS_URL;
 	}
 
+	private async transformModelsListResponse(
+		response: Response,
+	): Promise<Response> {
+		if (!response.ok) {
+			return response;
+		}
+		try {
+			const raw = (await response.clone().json()) as {
+				models?: Array<
+					Record<string, unknown> & {
+						slug?: string;
+						visibility?: string;
+					}
+				>;
+			};
+			const data = (raw.models ?? [])
+				.filter(
+					(m) =>
+						typeof m.slug === "string" &&
+						m.slug.length > 0 &&
+						(!m.visibility || m.visibility === "list"),
+				)
+				.map((m) => ({
+					...m,
+					id: m.slug as string,
+					object: "model" as const,
+					created: Math.floor(Date.now() / 1000),
+					owned_by: "openai",
+				}));
+			return new Response(
+				JSON.stringify({ object: "list", data, models: data }),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		} catch (err) {
+			log.warn(`Failed to transform Codex models response: ${err}`);
+			return response;
+		}
+	}
+
 	private createSyntheticJsonResponse(
 		request: Request,
 		status: number,
@@ -1266,6 +1440,7 @@ export class CodexProvider extends BaseProvider {
 		account?: Account,
 		requestId?: string,
 		isSubscriptionEndpoint = isCodexSubscriptionEndpoint(account),
+		passthrough?: Record<string, unknown>,
 	): CodexRequest {
 		const model = this.mapModel(body.model, account);
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
@@ -1328,7 +1503,13 @@ export class CodexProvider extends BaseProvider {
 			}));
 		}
 
-		const reasoningResolution = resolveReasoningEffort(body.reasoning?.effort, {
+		// Preserve original reasoning settings.
+		const passthroughReasoning = passthrough?.reasoning as
+			| { effort?: string; context?: string }
+			| undefined;
+		const reasoningEffort =
+			passthroughReasoning?.effort ?? body.reasoning?.effort;
+		const reasoningResolution = resolveReasoningEffort(reasoningEffort, {
 			sourceModel: body.model,
 			targetModel: model,
 		});
@@ -1346,9 +1527,33 @@ export class CodexProvider extends BaseProvider {
 			model,
 			input,
 			stream: true,
-			store: false,
-			reasoning: { effort: reasoningResolution.effort ?? "medium" },
+			// Responses Lite may request store: true explicitly; default false otherwise.
+			store:
+				typeof passthrough?.store === "boolean" ? passthrough.store : false,
+			reasoning: {
+				effort: reasoningResolution.effort ?? "medium",
+				context: "all_turns",
+			},
 		};
+
+		// Preserve the original model name.
+		if (typeof passthrough?.model === "string") {
+			codexRequest.model = passthrough.model;
+		}
+		// Restore Responses Lite tools first.
+		const passthroughAdditionalTools = passthrough?.additional_tools;
+		if (
+			Array.isArray(passthroughAdditionalTools) &&
+			passthroughAdditionalTools.length > 0
+		) {
+			codexRequest.input.unshift(
+				...(passthroughAdditionalTools as (
+					| CodexMessage
+					| CodexFunctionCallItem
+					| CodexFunctionCallOutputItem
+				)[]),
+			);
+		}
 		if (
 			!isSubscriptionEndpoint &&
 			typeof body.max_tokens === "number" &&
@@ -1362,12 +1567,18 @@ export class CodexProvider extends BaseProvider {
 		}
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
-		const promptCacheKey = this.derivePromptCacheKey(
+		// Prefer the original cache key, then use the derived key.
+		const originalCacheKey =
+			typeof passthrough?.prompt_cache_key === "string"
+				? passthrough.prompt_cache_key
+				: undefined;
+		const derivedCacheKey = this.derivePromptCacheKey(
 			body,
 			codexRequest.instructions,
 			input,
 			account,
 		);
+		const promptCacheKey = originalCacheKey ?? derivedCacheKey;
 		if (promptCacheKey) {
 			codexRequest.prompt_cache_key = promptCacheKey;
 		}
@@ -1390,7 +1601,15 @@ export class CodexProvider extends BaseProvider {
 		if (body.tool_choice?.disable_parallel_tool_use === true) {
 			codexRequest.parallel_tool_calls = false;
 		}
-		if (tools) {
+		// Responses Lite requires explicit false.
+		if (passthrough?.parallel_tool_calls === false) {
+			codexRequest.parallel_tool_calls = false;
+		}
+		// Preserve the original tool list.
+		const passthroughTools = passthrough?.tools;
+		if (Array.isArray(passthroughTools) && passthroughTools.length > 0) {
+			codexRequest.tools = passthroughTools as CodexTool[];
+		} else if (tools && tools.length > 0) {
 			codexRequest.tools = tools;
 		}
 

@@ -121,6 +121,30 @@ export async function handleResponsesRequest(
 	// claude-oauth accounts use Claude's OAuth tokens — Anthropic bans them
 	// when used outside Claude CLI. Always exclude from Codex CLI traffic.
 	syntheticHeaders.set("x-better-ccflare-exclude-providers", "anthropic-oauth");
+	// Preserve Codex-only fields.
+	const codexPassthrough: Record<string, unknown> = {};
+	if (body.model !== undefined) codexPassthrough.model = body.model;
+	if (body.reasoning !== undefined) codexPassthrough.reasoning = body.reasoning;
+	if (body.prompt_cache_key !== undefined)
+		codexPassthrough.prompt_cache_key = body.prompt_cache_key;
+	if (body.tools !== undefined) codexPassthrough.tools = body.tools;
+	if (body.parallel_tool_calls !== undefined)
+		codexPassthrough.parallel_tool_calls = body.parallel_tool_calls;
+	if (body.store !== undefined) codexPassthrough.store = body.store;
+	// Preserve Responses Lite tools.
+	const additionalToolsItems = Array.isArray(body.input)
+		? body.input.filter((item: any) => item.type === "additional_tools")
+		: [];
+	if (additionalToolsItems.length > 0) {
+		codexPassthrough.additional_tools = additionalToolsItems;
+	}
+	if (Object.keys(codexPassthrough).length > 0) {
+		(
+			anthropicBody as typeof anthropicBody & {
+				__better_ccflare_codex_passthrough?: Record<string, unknown>;
+			}
+		).__better_ccflare_codex_passthrough = codexPassthrough;
+	}
 	const syntheticReq = new Request(messagesUrl.toString(), {
 		method: "POST",
 		headers: syntheticHeaders,
@@ -208,6 +232,18 @@ export async function handleResponsesRequest(
 
 	// 8. Stream path
 	if (body.stream) {
+		// Preserve native Responses SSE.
+		const responseFormat = anthropicResp.headers.get(
+			"x-better-ccflare-codex-response-format",
+		);
+		if (responseFormat === "responses-api") {
+			const headers = new Headers(anthropicResp.headers);
+			headers.delete("x-better-ccflare-codex-response-format");
+			return new Response(anthropicResp.body, {
+				status: anthropicResp.status,
+				headers,
+			});
+		}
 		return translateAnthropicStreamToResponses(
 			anthropicResp,
 			responseId,
