@@ -673,11 +673,17 @@ export class CodexProvider extends BaseProvider {
 			);
 
 			// Only custom (non-function) tools can produce custom_tool_call output;
-			// let processResponse skip buffering when none were declared.
+			// let processResponse skip buffering when none were declared. Responses
+			// Lite can also declare custom tools via an "additional_tools" input
+			// item instead of codexBody.tools.
 			const hasCustomTools =
-				codexBody.tools?.some(
+				(codexBody.tools?.some(
 					(t) => (t as { type?: string }).type !== "function",
-				) ?? false;
+				) ??
+					false) ||
+				codexBody.input.some(
+					(item) => (item as { type?: string }).type === "additional_tools",
+				);
 
 			if (requestId) {
 				this.requestStreamById.set(requestId, {

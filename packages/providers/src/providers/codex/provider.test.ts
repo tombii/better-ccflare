@@ -2709,6 +2709,33 @@ describe("CodexProvider.transformRequestBody", () => {
 		expect(body.reasoning.effort).toBe("medium");
 	});
 
+	it("flags custom tools declared only via a Responses Lite additional_tools input item", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "gpt-5.4-mini",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+				__better_ccflare_codex_passthrough: {
+					additional_tools: [
+						{
+							type: "additional_tools",
+							tools: [{ type: "custom", name: "shell" }],
+						},
+					],
+				},
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+
+		expect(transformed.headers.get("x-better-ccflare-codex-custom-tools")).toBe(
+			"true",
+		);
+	});
+
 	it("forces StructuredOutput tool_choice when the Claude Code schema tool is present", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {
