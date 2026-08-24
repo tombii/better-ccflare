@@ -4,8 +4,8 @@
  * native buffer; draining actually releases it. Errors are swallowed since
  * this is best-effort cleanup, not part of the caller's control flow (#382).
  */
-export async function drainReader(
-	reader: ReadableStreamDefaultReader<Uint8Array>,
+export async function drainReader<T>(
+	reader: ReadableStreamDefaultReader<T>,
 ): Promise<void> {
 	try {
 		while (true) {

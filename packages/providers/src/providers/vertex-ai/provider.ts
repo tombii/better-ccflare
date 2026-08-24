@@ -284,8 +284,6 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 		}
 
 		try {
-			// Clone response to read body
-			const clonedResponse = response.clone();
 			const contentType = response.headers.get("content-type") || "";
 
 			console.log(`[Vertex AI] Response content-type: ${contentType}`);
@@ -297,6 +295,11 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 				);
 				return super.processResponse(response, account);
 			}
+
+			// Clone only on the JSON path — cloning before the gate leaves the
+			// clone's tee branch unread on every SSE response, retaining its
+			// native buffer (#382).
+			const clonedResponse = response.clone();
 
 			const text = await clonedResponse.text();
 			const data = JSON.parse(text);

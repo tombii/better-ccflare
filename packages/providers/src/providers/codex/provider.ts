@@ -15,7 +15,7 @@ import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import { resolveProviderModelDefault } from "../../provider-model-defaults";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
-import { drainReaderWithDeadline } from "../../utils/stream-drain";
+import { drainReader, drainReaderWithDeadline } from "../../utils/stream-drain";
 import {
 	CodexStreamLiveness,
 	type CodexStreamLivenessOptions,
@@ -1496,6 +1496,12 @@ export class CodexProvider extends BaseProvider {
 					}
 				}
 				if (pending) processLine(pending);
+			} catch (readError) {
+				// releaseLock() alone doesn't free the native buffer backing the
+				// stream on Bun (#382) — drain to `done` first, which also
+				// releases the lock.
+				await drainReader(reader);
+				throw readError;
 			} finally {
 				reader.releaseLock();
 			}

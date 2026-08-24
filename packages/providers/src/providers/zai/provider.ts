@@ -27,6 +27,12 @@ export class ZaiProvider extends BaseAnthropicCompatibleProvider {
 		response: Response,
 	): Promise<number | undefined> {
 		try {
+			// Only JSON bodies carry the Zai rate-limit payload; cloning an SSE
+			// body here leaves the clone's tee branch unread (#382).
+			const contentType = response.headers.get("content-type") || "";
+			if (!contentType.includes("application/json")) {
+				return undefined;
+			}
 			const clone = response.clone();
 			const body = await clone.json();
 

@@ -745,8 +745,13 @@ export async function proxyWithAccount(
 			? await provider.transformRequestBody(providerRequest, account)
 			: providerRequest;
 
-		// Pre-strip cache_control for (account, model) pairs known to reject it
+		// Pre-strip cache_control for (account, model) pairs known to reject it.
+		// Also doubles as the buffered body for in-place 529 retries below —
+		// cloning the Request for retries tees the body into a branch nothing
+		// reads on the no-retry path, retaining its native buffer per request
+		// (#382).
 		const transformedBodyText = await transformedRequest.clone().text();
+		let retryBodyText = transformedBodyText;
 		let transformedBodyJson: Record<string, unknown> | null = null;
 		try {
 			transformedBodyJson = JSON.parse(transformedBodyText);
@@ -774,13 +779,11 @@ export async function proxyWithAccount(
 				// A URL-based rebuild drops the signal — carry it over.
 				signal: req.signal,
 			});
+			retryBodyText = JSON.stringify(transformedBodyJson);
 			log.debug(
 				`Pre-stripped cache_control for known rejector: account=${account.name} model=${transformedModel}`,
 			);
 		}
-
-		// Capture a clone for in-place 529 retries before the body is consumed.
-		const transformedRequestForRetry = transformedRequest.clone();
 
 		// Make the request (or unwrap a synthetic provider response)
 		let rawResponse = isSyntheticProviderResponse(transformedRequest)
@@ -1398,11 +1401,18 @@ export async function proxyWithAccount(
 							`Account ${account.name}: in-place retry ${attempt}/${retryCfg.maxAttempts - 1} after ${Math.round(delayMs)}ms for 529 overloaded_error`,
 						);
 
-						const retryRaw = isSyntheticProviderResponse(
-							transformedRequestForRetry,
-						)
-							? materializeSyntheticResponse(transformedRequestForRetry.clone())
-							: await forwardUpstream(transformedRequestForRetry.clone());
+						// Rebuild from the buffered body text instead of a
+						// pre-cloned Request — an unread clone branch retains
+						// its native buffer (#382).
+						const retryRequest = new Request(transformedRequest.url, {
+							method: transformedRequest.method,
+							headers: transformedRequest.headers,
+							body: retryBodyText || undefined,
+							signal: req.signal,
+						});
+						const retryRaw = isSyntheticProviderResponse(retryRequest)
+							? materializeSyntheticResponse(retryRequest)
+							: await forwardUpstream(retryRequest);
 
 						const retryTaggedHeaders = new Headers(retryRaw.headers);
 						retryTaggedHeaders.set(
