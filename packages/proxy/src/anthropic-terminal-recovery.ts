@@ -614,6 +614,7 @@ export function createAnthropicTerminalRecoveryStream(
 					}
 					fireTerminalState();
 					controller.close();
+					reader.releaseLock();
 					return;
 				}
 
@@ -635,6 +636,7 @@ export function createAnthropicTerminalRecoveryStream(
 				markTerminalFailure();
 				fireTerminalState();
 				controller.error(error);
+				reader.releaseLock();
 			}
 		},
 

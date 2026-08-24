@@ -32,6 +32,7 @@ export function teeStream(
 				if (done) {
 					onClose?.(buffered);
 					controller.close();
+					reader.releaseLock();
 					return;
 				}
 
@@ -57,6 +58,7 @@ export function teeStream(
 			} catch (error) {
 				onError?.(error as Error);
 				controller.error(error);
+				reader.releaseLock();
 			}
 		},
 
