@@ -2636,6 +2636,79 @@ describe("CodexProvider.transformRequestBody", () => {
 		expect(body.model).toBe("gpt-5.4-mini");
 	});
 
+	it("prefers an explicit account model mapping over the raw passthrough model", async () => {
+		const provider = new CodexProvider();
+		const account = {
+			model_mappings: JSON.stringify({ sonnet: "gpt-5.3-codex" }),
+		} as Parameters<typeof provider.transformRequestBody>[1];
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+				__better_ccflare_codex_passthrough: { model: "gpt-5.4-mini" },
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, account);
+		const body = await transformed.json();
+
+		expect(body.model).toBe("gpt-5.3-codex");
+	});
+
+	it("restores the raw passthrough model over a family-tier default", async () => {
+		setDerivedProviderModelDefaults("codex", "acc-1", {
+			fable: "gpt-5.6-sol",
+			opus: "gpt-5.6-sol",
+			sonnet: "gpt-5.6-terra",
+			haiku: "gpt-5.6-luna",
+		});
+		const provider = new CodexProvider();
+		const account = {
+			id: "acc-1",
+		} as Parameters<typeof provider.transformRequestBody>[1];
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+				__better_ccflare_codex_passthrough: { model: "gpt-5.4-mini" },
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, account);
+		const body = await transformed.json();
+
+		expect(body.model).toBe("gpt-5.4-mini");
+	});
+
+	it("resolves reasoning effort against the model actually sent", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+				reasoning: { effort: "high" },
+				__better_ccflare_codex_passthrough: { model: "gpt-5.4-mini" },
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		// "claude-3-7-sonnet" supports "high"; "gpt-5.4-mini" — the model that
+		// actually ships — only supports up to "medium".
+		expect(body.model).toBe("gpt-5.4-mini");
+		expect(body.reasoning.effort).toBe("medium");
+	});
+
 	it("forces StructuredOutput tool_choice when the Claude Code schema tool is present", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {

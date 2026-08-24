@@ -908,17 +908,24 @@ export class CodexProvider extends BaseProvider {
 
 	// ── Private helpers ──────────────────────────────────────────────────────
 
-	private mapModel(anthropicModel: string, account?: Account): string {
+	// isExplicitMapping: true only for a per-account model_mappings hit, not
+	// a family-tier default — callers use it to decide precedence.
+	private mapModel(
+		anthropicModel: string,
+		account?: Account,
+	): { model: string; isExplicitMapping: boolean } {
 		// "Force account model" forbids every substitution below, including the
 		// family defaults derived from the account's own listing: those answer
 		// "which model should a Claude family become here", a question nobody
 		// asked when the client named the model outright.
-		if (isForceAccountModelEnabled()) return anthropicModel;
+		if (isForceAccountModelEnabled()) {
+			return { model: anthropicModel, isExplicitMapping: false };
+		}
 
 		if (account) {
 			const mapped = mapModelName(anthropicModel, account);
 			if (mapped !== anthropicModel) {
-				return mapped;
+				return { model: mapped, isExplicitMapping: true };
 			}
 		}
 
@@ -927,21 +934,17 @@ export class CodexProvider extends BaseProvider {
 		// Resolved per account: the account's own listing is what decides, and
 		// two accounts of this provider can be on different plans.
 		const id = account?.id;
-		if (lower.includes("fable"))
-			return (
-				resolveProviderModelDefault("codex", "fable", id) ?? anthropicModel
-			);
-		if (lower.includes("haiku"))
-			return (
-				resolveProviderModelDefault("codex", "haiku", id) ?? anthropicModel
-			);
-		if (lower.includes("sonnet"))
-			return (
-				resolveProviderModelDefault("codex", "sonnet", id) ?? anthropicModel
-			);
-		if (lower.includes("opus"))
-			return resolveProviderModelDefault("codex", "opus", id) ?? anthropicModel;
-		return anthropicModel;
+		let model = anthropicModel;
+		if (lower.includes("fable")) {
+			model = resolveProviderModelDefault("codex", "fable", id) ?? model;
+		} else if (lower.includes("haiku")) {
+			model = resolveProviderModelDefault("codex", "haiku", id) ?? model;
+		} else if (lower.includes("sonnet")) {
+			model = resolveProviderModelDefault("codex", "sonnet", id) ?? model;
+		} else if (lower.includes("opus")) {
+			model = resolveProviderModelDefault("codex", "opus", id) ?? model;
+		}
+		return { model, isExplicitMapping: false };
 	}
 
 	private extractSystemPrompt(
@@ -1442,7 +1445,16 @@ export class CodexProvider extends BaseProvider {
 		isSubscriptionEndpoint = isCodexSubscriptionEndpoint(account),
 		passthrough?: Record<string, unknown>,
 	): CodexRequest {
-		const model = this.mapModel(body.model, account);
+		const { model: mappedModel, isExplicitMapping } = this.mapModel(
+			body.model,
+			account,
+		);
+		// Explicit account mapping wins; otherwise prefer the raw Codex model
+		// over a family-tier default, since the alias can't distinguish variants.
+		const model =
+			!isExplicitMapping && typeof passthrough?.model === "string"
+				? passthrough.model
+				: mappedModel;
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
 			log.info(
 				`[codex:model-debug] request_id=${requestId ?? "unknown"} request_model=${body.model} mapped_model=${model} account=${account?.name ?? "unknown"}`,
@@ -1536,10 +1548,6 @@ export class CodexProvider extends BaseProvider {
 			},
 		};
 
-		// Preserve the original model name.
-		if (typeof passthrough?.model === "string") {
-			codexRequest.model = passthrough.model;
-		}
 		// Restore Responses Lite tools first.
 		const passthroughAdditionalTools = passthrough?.additional_tools;
 		if (
