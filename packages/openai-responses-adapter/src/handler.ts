@@ -7,6 +7,47 @@ import type { HandleProxyFn, ResponseItem, ResponsesRequest } from "./types";
 
 const log = new Logger("openai-responses-adapter");
 
+const TERMINAL_RESPONSE_EVENT_TYPES = new Set([
+	"response.completed",
+	"response.incomplete",
+	"response.failed",
+]);
+
+function extractTerminalNativeResponse(
+	sseText: string,
+): Record<string, unknown> | null {
+	const rawEvents = sseText.split("\n\n");
+	for (let i = rawEvents.length - 1; i >= 0; i--) {
+		const rawEvent = rawEvents[i];
+		if (!rawEvent.trim()) continue;
+
+		let eventType = "";
+		let dataStr = "";
+		for (const line of rawEvent.split("\n")) {
+			if (line.startsWith("event:")) {
+				eventType = line.slice("event:".length).trim();
+			} else if (line.startsWith("data:")) {
+				dataStr = line.slice("data:".length).trim();
+			}
+		}
+		if (!dataStr) continue;
+
+		try {
+			const data = JSON.parse(dataStr) as {
+				type?: string;
+				response?: Record<string, unknown>;
+			};
+			const type = data.type ?? eventType;
+			if (type && TERMINAL_RESPONSE_EVENT_TYPES.has(type) && data.response) {
+				return data.response;
+			}
+		} catch {
+			// Malformed event — keep scanning earlier events.
+		}
+	}
+	return null;
+}
+
 export async function handleResponsesRequest(
 	req: Request,
 	url: URL,
@@ -121,6 +162,30 @@ export async function handleResponsesRequest(
 	// claude-oauth accounts use Claude's OAuth tokens — Anthropic bans them
 	// when used outside Claude CLI. Always exclude from Codex CLI traffic.
 	syntheticHeaders.set("x-better-ccflare-exclude-providers", "anthropic-oauth");
+	// Preserve Codex-only fields.
+	const codexPassthrough: Record<string, unknown> = {};
+	if (body.model !== undefined) codexPassthrough.model = body.model;
+	if (body.reasoning !== undefined) codexPassthrough.reasoning = body.reasoning;
+	if (body.prompt_cache_key !== undefined)
+		codexPassthrough.prompt_cache_key = body.prompt_cache_key;
+	if (body.tools !== undefined) codexPassthrough.tools = body.tools;
+	if (body.parallel_tool_calls !== undefined)
+		codexPassthrough.parallel_tool_calls = body.parallel_tool_calls;
+	if (body.store !== undefined) codexPassthrough.store = body.store;
+	// Preserve Responses Lite tools.
+	const additionalToolsItems = Array.isArray(body.input)
+		? body.input.filter((item: any) => item.type === "additional_tools")
+		: [];
+	if (additionalToolsItems.length > 0) {
+		codexPassthrough.additional_tools = additionalToolsItems;
+	}
+	if (Object.keys(codexPassthrough).length > 0) {
+		(
+			anthropicBody as typeof anthropicBody & {
+				__better_ccflare_codex_passthrough?: Record<string, unknown>;
+			}
+		).__better_ccflare_codex_passthrough = codexPassthrough;
+	}
 	const syntheticReq = new Request(messagesUrl.toString(), {
 		method: "POST",
 		headers: syntheticHeaders,
@@ -202,6 +267,41 @@ export async function handleResponsesRequest(
 		}
 		return new Response(JSON.stringify(errorBody), {
 			status: anthropicResp.status,
+			headers: { "Content-Type": "application/json" },
+		});
+	}
+
+	// Set regardless of whether the original request streamed, so this check
+	// must run before the body.stream branch below.
+	const responseFormat = anthropicResp.headers.get(
+		"x-better-ccflare-codex-response-format",
+	);
+	if (responseFormat === "responses-api") {
+		if (body.stream) {
+			const headers = new Headers(anthropicResp.headers);
+			headers.delete("x-better-ccflare-codex-response-format");
+			return new Response(anthropicResp.body, {
+				status: anthropicResp.status,
+				headers,
+			});
+		}
+		// Client expects a JSON body, not SSE framing.
+		const sseText = await anthropicResp.text();
+		const nativeResponse = extractTerminalNativeResponse(sseText);
+		if (!nativeResponse) {
+			return new Response(
+				JSON.stringify({
+					error: {
+						message: "Failed to parse upstream response",
+						type: "api_error",
+						code: "api_error",
+					},
+				}),
+				{ status: 502, headers: { "Content-Type": "application/json" } },
+			);
+		}
+		return new Response(JSON.stringify(nativeResponse), {
+			status: 200,
 			headers: { "Content-Type": "application/json" },
 		});
 	}

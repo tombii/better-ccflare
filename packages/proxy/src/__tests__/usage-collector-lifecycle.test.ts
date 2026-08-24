@@ -8,7 +8,7 @@ import {
 	mock,
 } from "bun:test";
 import { logBus } from "@better-ccflare/logger";
-import type { LogEvent } from "@better-ccflare/types";
+import type { LogEvent, RequestResponse } from "@better-ccflare/types";
 import type { EndMessage, StartMessage } from "../worker-messages";
 
 interface PricingTokens {
@@ -75,6 +75,7 @@ interface TestHarness {
 	payloads: Map<string, string>;
 	summaryCosts: Map<string, number | undefined>;
 	summaries: string[];
+	summaryRecords: Map<string, RequestResponse>;
 	writerState: { disposed: boolean };
 }
 
@@ -143,6 +144,7 @@ function createHarness(storePayloads = false): TestHarness {
 	const payloadDrops: number[] = [];
 	const summaryCosts = new Map<string, number | undefined>();
 	const summaries: string[] = [];
+	const summaryRecords = new Map<string, RequestResponse>();
 	const writerState = { disposed: false };
 	const pendingWrites = new Set<Promise<void>>();
 
@@ -191,6 +193,7 @@ function createHarness(storePayloads = false): TestHarness {
 		(summary) => {
 			summaries.push(summary.id);
 			summaryCosts.set(summary.id, summary.costUsd);
+			summaryRecords.set(summary.id, summary);
 		},
 	);
 
@@ -201,6 +204,7 @@ function createHarness(storePayloads = false): TestHarness {
 		payloads,
 		summaries,
 		summaryCosts,
+		summaryRecords,
 		writerState,
 	};
 }
@@ -251,6 +255,34 @@ describe("UsageCollector request lifecycle", () => {
 		collectors.push(value.collector);
 		return value;
 	}
+
+	it("extracts usage from Codex Responses-format passthrough streams", async () => {
+		const { collector, summaryRecords } = harness();
+		collector.handleStart(
+			makeStartMessage("codex-passthrough", { providerName: "codex" }),
+		);
+
+		collector.handleChunk(
+			"codex-passthrough",
+			new TextEncoder().encode(
+				"event: response.completed\n" +
+					'data: {"type":"response.completed","response":{"model":"gpt-5.1-codex","usage":{"input_tokens":120,"output_tokens":30,"input_tokens_details":{"cached_tokens":100,"cache_creation_input_tokens":8}}}}\n\n',
+			),
+		);
+		await collector.handleEnd({
+			type: "end",
+			requestId: "codex-passthrough",
+			success: true,
+		});
+
+		const summary = summaryRecords.get("codex-passthrough");
+		expect(summary?.model).toBe("gpt-5.1-codex");
+		// OpenAI input_tokens is cache-inclusive; normalized to Anthropic additive
+		// semantics where input excludes cache reads.
+		expect(summary?.promptTokens).toBe(20);
+		expect(summary?.completionTokens).toBe(30);
+		expect(summary?.totalTokens).toBe(158);
+	});
 
 	it("keeps an actively chunking stream beyond two minutes and persists it on end", async () => {
 		const { collector, saveRequestIds, summaries } = harness();

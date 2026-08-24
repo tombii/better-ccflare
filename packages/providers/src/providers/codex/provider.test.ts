@@ -288,7 +288,7 @@ describe("CodexProvider request conversion", () => {
 		const transformed = await provider.transformRequestBody(request);
 		const body = await transformed.json();
 
-		expect(body.reasoning).toEqual({ effort: "high" });
+		expect(body.reasoning).toEqual({ effort: "high", context: "all_turns" });
 	});
 
 	it("adds a continuation nudge after Skill tool results", async () => {
@@ -444,7 +444,7 @@ describe("CodexProvider request conversion", () => {
 		const transformed = await provider.transformRequestBody(request);
 		const body = await transformed.json();
 
-		expect(body.reasoning).toEqual({ effort: "xhigh" });
+		expect(body.reasoning).toEqual({ effort: "xhigh", context: "all_turns" });
 	});
 
 	it("uses role-appropriate text block types in Codex input", async () => {
@@ -547,7 +547,7 @@ describe("CodexProvider request conversion", () => {
 		const transformed = await provider.transformRequestBody(request);
 		const body = await transformed.json();
 
-		expect(body.reasoning).toEqual({ effort: "medium" });
+		expect(body.reasoning).toEqual({ effort: "medium", context: "all_turns" });
 	});
 
 	it("rejects unsupported reasoning effort values", async () => {
@@ -587,7 +587,7 @@ describe("CodexProvider request conversion", () => {
 
 		const transformed = await provider.transformRequestBody(request, account);
 		const body = await transformed.json();
-		expect(body.reasoning).toEqual({ effort: "medium" });
+		expect(body.reasoning).toEqual({ effort: "medium", context: "all_turns" });
 	});
 
 	it("omits empty Read.pages when replaying Anthropic history to Codex", async () => {
@@ -2634,6 +2634,106 @@ describe("CodexProvider.transformRequestBody", () => {
 		const body = await transformed.json();
 
 		expect(body.model).toBe("gpt-5.4-mini");
+	});
+
+	it("prefers an explicit account model mapping over the raw passthrough model", async () => {
+		const provider = new CodexProvider();
+		const account = {
+			model_mappings: JSON.stringify({ sonnet: "gpt-5.3-codex" }),
+		} as Parameters<typeof provider.transformRequestBody>[1];
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+				__better_ccflare_codex_passthrough: { model: "gpt-5.4-mini" },
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, account);
+		const body = await transformed.json();
+
+		expect(body.model).toBe("gpt-5.3-codex");
+	});
+
+	it("restores the raw passthrough model over a family-tier default", async () => {
+		setDerivedProviderModelDefaults("codex", "acc-1", {
+			fable: "gpt-5.6-sol",
+			opus: "gpt-5.6-sol",
+			sonnet: "gpt-5.6-terra",
+			haiku: "gpt-5.6-luna",
+		});
+		const provider = new CodexProvider();
+		const account = {
+			id: "acc-1",
+		} as Parameters<typeof provider.transformRequestBody>[1];
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+				__better_ccflare_codex_passthrough: { model: "gpt-5.4-mini" },
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, account);
+		const body = await transformed.json();
+
+		expect(body.model).toBe("gpt-5.4-mini");
+	});
+
+	it("resolves reasoning effort against the model actually sent", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+				reasoning: { effort: "high" },
+				__better_ccflare_codex_passthrough: { model: "gpt-5.4-mini" },
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		// "claude-3-7-sonnet" supports "high"; "gpt-5.4-mini" — the model that
+		// actually ships — only supports up to "medium".
+		expect(body.model).toBe("gpt-5.4-mini");
+		expect(body.reasoning.effort).toBe("medium");
+	});
+
+	it("flags custom tools declared only via a Responses Lite additional_tools input item", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "gpt-5.4-mini",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+				__better_ccflare_codex_passthrough: {
+					additional_tools: [
+						{
+							type: "additional_tools",
+							tools: [{ type: "custom", name: "shell" }],
+						},
+					],
+				},
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+
+		expect(transformed.headers.get("x-better-ccflare-codex-custom-tools")).toBe(
+			"true",
+		);
 	});
 
 	it("forces StructuredOutput tool_choice when the Claude Code schema tool is present", async () => {

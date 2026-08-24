@@ -162,6 +162,26 @@ describe("transformRequestBodyModel", () => {
 		expect(resultBody.messages).toEqual([{ role: "user", content: "test" }]);
 		expect(resultBody.model).toBeUndefined();
 	});
+
+	it("strips the internal Codex passthrough field before forwarding upstream", async () => {
+		const requestBody = {
+			model: "claude-sonnet-4-5-20250929",
+			messages: [{ role: "user", content: "test" }],
+			__better_ccflare_codex_passthrough: { store: true },
+		};
+
+		const request = new Request("http://test.com", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(requestBody),
+		});
+
+		const result = await transformRequestBodyModel(request, undefined);
+		const resultBody = await result.json();
+
+		expect(resultBody).not.toHaveProperty("__better_ccflare_codex_passthrough");
+		expect(resultBody.model).toBe("claude-sonnet-4-5-20250929");
+	});
 });
 
 describe("transformRequestBodyModelForce", () => {

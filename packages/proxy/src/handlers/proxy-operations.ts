@@ -1351,6 +1351,19 @@ export async function proxyWithAccount(
 				internalRequestStream,
 			);
 		}
+		const internalCustomTools = transformedRequest.headers.get(
+			"x-better-ccflare-codex-custom-tools",
+		);
+		if (internalCustomTools === "true" || internalCustomTools === "false") {
+			responseHeaders.set(
+				"x-better-ccflare-codex-custom-tools",
+				internalCustomTools,
+			);
+		}
+		// Inject the original request path so providers can identify the
+		// response type (e.g. /v1/models vs /v1/messages) in processResponse
+		// without needing the original request object.
+		responseHeaders.set("x-better-ccflare-request-path", requestMeta.path);
 		const taggedRawResponse = new Response(rawResponse.body, {
 			status: rawResponse.status,
 			statusText: rawResponse.statusText,
@@ -1414,10 +1427,39 @@ export async function proxyWithAccount(
 							? materializeSyntheticResponse(retryRequest)
 							: await forwardUpstream(retryRequest);
 
+						// Mirror the first response's metadata tagging: providers read
+						// stream intent / custom-tool state from these headers, and the
+						// map fallback behind them has a 30s TTL a long backoff can
+						// outlive — the request ID alone is not enough.
 						const retryTaggedHeaders = new Headers(retryRaw.headers);
 						retryTaggedHeaders.set(
 							"x-better-ccflare-request-id",
 							requestMeta.id,
+						);
+						const retryRequestStream = transformedRequestForRetry.headers.get(
+							"x-better-ccflare-request-stream",
+						);
+						if (
+							retryRequestStream === "true" ||
+							retryRequestStream === "false"
+						) {
+							retryTaggedHeaders.set(
+								"x-better-ccflare-request-stream",
+								retryRequestStream,
+							);
+						}
+						const retryCustomTools = transformedRequestForRetry.headers.get(
+							"x-better-ccflare-codex-custom-tools",
+						);
+						if (retryCustomTools === "true" || retryCustomTools === "false") {
+							retryTaggedHeaders.set(
+								"x-better-ccflare-codex-custom-tools",
+								retryCustomTools,
+							);
+						}
+						retryTaggedHeaders.set(
+							"x-better-ccflare-request-path",
+							requestMeta.path,
 						);
 						const retryTaggedRaw = new Response(retryRaw.body, {
 							status: retryRaw.status,
