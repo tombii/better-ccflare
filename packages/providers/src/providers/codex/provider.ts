@@ -1247,7 +1247,22 @@ export class CodexProvider extends BaseProvider {
 			);
 		} catch (err) {
 			log.warn(`Failed to transform Codex models response: ${err}`);
-			return response;
+			// The upstream body was malformed JSON despite a 200 status — passing
+			// the original response through would present it to the client as a
+			// successful (if empty) model list. Surface it as a failure instead.
+			return new Response(
+				JSON.stringify({
+					error: {
+						type: "api_error",
+						message: "Codex models response could not be parsed",
+					},
+				}),
+				{
+					status: 502,
+					statusText: "Bad Gateway",
+					headers: { "Content-Type": "application/json" },
+				},
+			);
 		}
 	}
 

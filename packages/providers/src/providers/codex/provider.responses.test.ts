@@ -79,7 +79,7 @@ test("streams straight through without buffering when no custom tools were decla
 	).not.toBe("responses-api");
 });
 
-test("preserves malformed Codex model-list responses", async () => {
+test("surfaces malformed Codex model-list responses as an error instead of an empty success", async () => {
 	const provider = new CodexProvider();
 	const response = new Response("not json", {
 		status: 200,
@@ -88,6 +88,20 @@ test("preserves malformed Codex model-list responses", async () => {
 
 	const transformed = await provider.processResponse(response, null);
 
-	expect(transformed.status).toBe(200);
-	expect(await transformed.text()).toBe("not json");
+	expect(transformed.status).toBe(502);
+	const body = (await transformed.json()) as { error?: { type?: string } };
+	expect(body.error?.type).toBe("api_error");
+});
+
+test("passes through non-2xx Codex model-list responses unchanged", async () => {
+	const provider = new CodexProvider();
+	const response = new Response("upstream down", {
+		status: 503,
+		headers: { "x-better-ccflare-request-path": "/v1/models" },
+	});
+
+	const transformed = await provider.processResponse(response, null);
+
+	expect(transformed.status).toBe(503);
+	expect(await transformed.text()).toBe("upstream down");
 });

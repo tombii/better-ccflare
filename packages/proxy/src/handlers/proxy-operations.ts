@@ -1436,7 +1436,7 @@ export async function proxyWithAccount(
 							"x-better-ccflare-request-id",
 							requestMeta.id,
 						);
-						const retryRequestStream = transformedRequestForRetry.headers.get(
+						const retryRequestStream = transformedRequest.headers.get(
 							"x-better-ccflare-request-stream",
 						);
 						if (
@@ -1448,7 +1448,7 @@ export async function proxyWithAccount(
 								retryRequestStream,
 							);
 						}
-						const retryCustomTools = transformedRequestForRetry.headers.get(
+						const retryCustomTools = transformedRequest.headers.get(
 							"x-better-ccflare-codex-custom-tools",
 						);
 						if (retryCustomTools === "true" || retryCustomTools === "false") {
