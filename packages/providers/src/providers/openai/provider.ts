@@ -250,17 +250,19 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		outputTokens?: number;
 	} | null> {
 		try {
-			const clone = response.clone();
 			const contentType = response.headers.get("content-type");
 
 			// Handle streaming responses (SSE)
 			if (contentType?.includes("text/event-stream")) {
-				// For streaming, we can only extract usage from the final chunk
-				// This is complex to implement properly, so we'll return null for now
-				// In a full implementation, we'd need to buffer the entire stream
+				// For streaming, we can only extract usage from the final chunk.
+				// This is complex to implement properly, so we return null for
+				// now — deliberately not cloning the body here: an unread clone
+				// leaves its tee branch open, retaining the native buffer for a
+				// body nobody will ever consume (#382).
 				return null;
 			} else {
 				// Handle non-streaming JSON responses
+				const clone = response.clone();
 				const json = (await clone.json()) as {
 					model?: string;
 					usage?: {
