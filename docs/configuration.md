@@ -69,7 +69,7 @@ The configuration file is stored at:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `lb_strategy` | string | `"session"` | Load balancing strategy. Use session-class strategies only: `"session"` (default) or `"session-drain-soonest"` (same session semantics, prefers the soonest-resetting weekly window). Per-request spreading strategies risk account bans — see warning below |
+| `lb_strategy` | string | `"session"` | Load balancing strategy. Use session-class strategies only: `"session"` (default), `"session-drain-soonest"` (same session semantics, prefers the soonest-resetting weekly window), or `"session-drain-soonest-strict"` (drain ranking applies to every selection; an active 5h session only breaks ties). Per-request spreading strategies risk account bans — see warning below |
 | `client_id` | string | `"9d1c250a-e61b-44d9-88ed-5944d1962f5e"` | OAuth client ID for authentication |
 | `retry_attempts` | number | `3` | Maximum number of retry attempts for failed requests |
 | `retry_delay_ms` | number | `1000` | Initial delay in milliseconds between retry attempts |
@@ -79,12 +79,13 @@ The configuration file is stored at:
 
 ### Load Balancing Strategy
 
-⚠️ **WARNING**: Only use session-class strategies — `session` (default) or `session-drain-soonest`, which shares the same 5-hour session affinity semantics. Strategies that spread individual requests across accounts can trigger Claude's anti-abuse systems and result in account bans.
+⚠️ **WARNING**: Only use session-class strategies — `session` (default), `session-drain-soonest`, or `session-drain-soonest-strict`, which share the same 5-hour session semantics. Strategies that spread individual requests across accounts can trigger Claude's anti-abuse systems and result in account bans.
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
 | `session` | Maintains client-account affinity for session duration, with automatic alignment to Anthropic OAuth usage window resets | Default and recommended - mimics natural usage patterns and optimizes resource utilization |
-| `session-drain-soonest` | Same session semantics as `session` (5h windows, auto-fallback, session stickiness), but at every fresh selection (session start/expiry, account unavailable) it prefers the account whose weekly_all usage window resets soonest, so weekly capacity is drained before it expires ("use it or lose it"). Active sessions are never preempted by drain ranking mid-window; the one deliberate exception is auto-fallback reactivation (same as `session`): an eligible account whose usage window has reset takes over immediately. Accounts without weekly telemetry rank last; ties fall back to priority, then utilization | Multi-account pools with staggered weekly resets where unused weekly capacity should be consumed before it is lost |
+| `session-drain-soonest` | Same session semantics as `session` (5h windows, auto-fallback, session stickiness), but at every fresh selection (session start/expiry, account unavailable) it prefers the account whose weekly_all usage window resets soonest, so weekly capacity is drained before it expires ("use it or lose it"). Active sessions are never preempted by drain ranking mid-window; the one deliberate exception is auto-fallback reactivation (same as `session`): an eligible account whose usage window has reset takes over immediately. Accounts without weekly telemetry rank last; ties fall back to priority, then utilization. Note: with several concurrently active sessions (opened by served requests, keepalive probes, or the usage poller), the MOST RECENTLY started session holds all traffic — the drain ranking only orders the failover tail | Multi-account pools with staggered weekly resets where unused weekly capacity should be consumed before it is lost |
+| `session-drain-soonest-strict` | Same strategy class in strict mode: one canonical comparator ranks every available account at every selection — earliest future weekly_all reset first, then active-session status as the tie-break (an active 5h session no longer pins the account), then priority, utilization, and account id. The drain-earliest account keeps winning even after its own 5h window ages out; with all weekly resets unknown (cold usage cache right after a restart) the incumbent active account keeps the traffic. Auto-fallback reactivation still forces position 0 | Pools where traffic must actually follow the earliest-resetting account instead of the most recently started session |
 
 ### Logging Configuration (Environment Only)
 

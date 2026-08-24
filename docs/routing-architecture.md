@@ -1,14 +1,15 @@
 # Account Routing Architecture
 
-This document explains how better-ccflare picks an account for each proxied request: the master pipeline, the four load-balancing strategies, usage-throttling, model-scoped capacity routing, and auto-fallback. It is a technical reference for understanding *why* a given request landed on a given account — for user-facing setup guides see [Load Balancing](./load-balancing.md), [Auto-Fallback Configuration](./auto-fallback.md), [Combos](./combos.md), and [Configuration](./configuration.md).
+This document explains how better-ccflare picks an account for each proxied request: the master pipeline, the load-balancing strategies, usage-throttling, model-scoped capacity routing, and auto-fallback. It is a technical reference for understanding *why* a given request landed on a given account — for user-facing setup guides see [Load Balancing](./load-balancing.md), [Auto-Fallback Configuration](./auto-fallback.md), [Combos](./combos.md), and [Configuration](./configuration.md).
 
 ## Table of Contents
 
 1. [Overview: Three Orthogonal Axes](#overview-three-orthogonal-axes)
 2. [Master Pipeline](#master-pipeline)
-3. [The Four Load-Balancing Strategies](#the-four-load-balancing-strategies)
+3. [The Load-Balancing Strategies](#the-load-balancing-strategies)
    - [session](#session-sessionstrategy)
    - [session-drain-soonest](#session-drain-soonest-sessiondrainsoonestrategy)
+   - [session-drain-soonest-strict](#session-drain-soonest-strict-sessiondrainsooneststrategy-in-strict-mode)
    - [session-affinity](#session-affinity-sessionaffinitystrategy)
    - [least-used](#least-used-leastusedstrategy)
 4. [Usage Throttling](#usage-throttling)
@@ -17,7 +18,7 @@ This document explains how better-ccflare picks an account for each proxied requ
 
 ## Overview: Three Orthogonal Axes
 
-Account routing is controlled by three independent settings that can each be changed at runtime without restarting the server: the **load-balancing strategy** (`lb_strategy` — which of the four strategies below picks the candidate order), **usage-throttling** (`usage_throttling_five_hour_enabled` / `usage_throttling_weekly_enabled` — an optional pacing gate applied after strategy selection), and **model-scoped capacity routing** (`model_scoped_capacity_routing` — `off` or `exhausted`, an optional per-model-family exclusion filter). Any runtime "combination" you observe (e.g. `least-used` with weekly throttling and capacity routing both on) is not a special combined mode — it is simply the master pipeline below with the configured strategy plugged into the `Strategy.select` step, and the two optional gates turned on or off. Understanding the pipeline once is enough to reason about every valid combination of the three settings.
+Account routing is controlled by three independent settings that can each be changed at runtime without restarting the server: the **load-balancing strategy** (`lb_strategy` — which of the strategies below picks the candidate order), **usage-throttling** (`usage_throttling_five_hour_enabled` / `usage_throttling_weekly_enabled` — an optional pacing gate applied after strategy selection), and **model-scoped capacity routing** (`model_scoped_capacity_routing` — `off` or `exhausted`, an optional per-model-family exclusion filter). Any runtime "combination" you observe (e.g. `least-used` with weekly throttling and capacity routing both on) is not a special combined mode — it is simply the master pipeline below with the configured strategy plugged into the `Strategy.select` step, and the two optional gates turned on or off. Understanding the pipeline once is enough to reason about every valid combination of the three settings.
 
 ## Master Pipeline
 
@@ -66,9 +67,9 @@ window.
 
 *Source: `packages/proxy/src/proxy.ts` (`handleProxy`, `applyUsageThrottling`), `packages/proxy/src/handlers/account-selector.ts` (`selectAccountsForRequest`), `packages/proxy/src/handlers/proxy-operations.ts` + `packages/proxy/src/handlers/retryable-429.ts` (the three no-bench 429 classes).*
 
-## The Four Load-Balancing Strategies
+## The Load-Balancing Strategies
 
-`lb_strategy` selects one of four implementations (`packages/load-balancer/src/strategies/`), all constructed in `apps/server/src/server.ts`. All four return an ordered list of candidate accounts; the first entry is tried first, the rest are failover order.
+`lb_strategy` selects one of the implementations in `packages/load-balancer/src/strategies/` (all constructed in `apps/server/src/server.ts`; the two drain-soonest entries share one class in different modes). All of them return an ordered list of candidate accounts; the first entry is tried first, the rest are failover order.
 
 ### session (SessionStrategy)
 
@@ -106,6 +107,26 @@ flowchart TD
 ```
 
 *Source: `packages/load-balancer/src/strategies/session-drain-soonest.ts`.*
+
+Caveat of the default ("sticky") mode: with several concurrently active
+sessions — the production-normal state, since served requests, keepalive
+probes, and the usage-poller rollover callback all open sessions — the
+"active session" check resolves to the account with the MOST RECENT
+`session_start`, and that account holds all traffic until another account
+receives a fresher write. The drain ranking then only orders the failover
+tail.
+
+### session-drain-soonest-strict (SessionDrainSoonestStrategy in strict mode)
+
+The same strategy class constructed in `"strict"` mode (`StrategyName.SessionDrainSoonestStrict`). Instead of the active-session pre-filter, one canonical comparator ranks every *available* account:
+
+1. earliest future `weekly_all` reset (unknown or past reset sorts last),
+2. active-session status — an active 5h session breaks reset ties but never pins an account,
+3. priority ASC,
+4. utilization ASC,
+5. account id (determinism anchor, so equal candidates never depend on input order).
+
+Consequences: the drain-earliest account keeps winning even after its own 5h window ages out (it gets a fresh session on selection — no lock-out), and in the cold-cache case (all weekly resets unknown, e.g. right after a restart) the incumbent active account keeps the traffic instead of utilization-ranked spraying. The auto-fallback exception and the bypass header behave identically in both modes; behind a forced fallback the tail follows the strict comparator, so the failover loop always walks one consistent order.
 
 ### session-affinity (SessionAffinityStrategy)
 
