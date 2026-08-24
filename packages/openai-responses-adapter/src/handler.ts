@@ -7,6 +7,47 @@ import type { HandleProxyFn, ResponseItem, ResponsesRequest } from "./types";
 
 const log = new Logger("openai-responses-adapter");
 
+const TERMINAL_RESPONSE_EVENT_TYPES = new Set([
+	"response.completed",
+	"response.incomplete",
+	"response.failed",
+]);
+
+function extractTerminalNativeResponse(
+	sseText: string,
+): Record<string, unknown> | null {
+	const rawEvents = sseText.split("\n\n");
+	for (let i = rawEvents.length - 1; i >= 0; i--) {
+		const rawEvent = rawEvents[i];
+		if (!rawEvent.trim()) continue;
+
+		let eventType = "";
+		let dataStr = "";
+		for (const line of rawEvent.split("\n")) {
+			if (line.startsWith("event:")) {
+				eventType = line.slice("event:".length).trim();
+			} else if (line.startsWith("data:")) {
+				dataStr = line.slice("data:".length).trim();
+			}
+		}
+		if (!dataStr) continue;
+
+		try {
+			const data = JSON.parse(dataStr) as {
+				type?: string;
+				response?: Record<string, unknown>;
+			};
+			const type = data.type ?? eventType;
+			if (type && TERMINAL_RESPONSE_EVENT_TYPES.has(type) && data.response) {
+				return data.response;
+			}
+		} catch {
+			// Malformed event — keep scanning earlier events.
+		}
+	}
+	return null;
+}
+
 export async function handleResponsesRequest(
 	req: Request,
 	url: URL,
@@ -230,13 +271,13 @@ export async function handleResponsesRequest(
 		});
 	}
 
-	// 8. Stream path
-	if (body.stream) {
-		// Preserve native Responses SSE.
-		const responseFormat = anthropicResp.headers.get(
-			"x-better-ccflare-codex-response-format",
-		);
-		if (responseFormat === "responses-api") {
+	// Set regardless of whether the original request streamed, so this check
+	// must run before the body.stream branch below.
+	const responseFormat = anthropicResp.headers.get(
+		"x-better-ccflare-codex-response-format",
+	);
+	if (responseFormat === "responses-api") {
+		if (body.stream) {
 			const headers = new Headers(anthropicResp.headers);
 			headers.delete("x-better-ccflare-codex-response-format");
 			return new Response(anthropicResp.body, {
@@ -244,6 +285,29 @@ export async function handleResponsesRequest(
 				headers,
 			});
 		}
+		// Client expects a JSON body, not SSE framing.
+		const sseText = await anthropicResp.text();
+		const nativeResponse = extractTerminalNativeResponse(sseText);
+		if (!nativeResponse) {
+			return new Response(
+				JSON.stringify({
+					error: {
+						message: "Failed to parse upstream response",
+						type: "api_error",
+						code: "api_error",
+					},
+				}),
+				{ status: 502, headers: { "Content-Type": "application/json" } },
+			);
+		}
+		return new Response(JSON.stringify(nativeResponse), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
+	}
+
+	// 8. Stream path
+	if (body.stream) {
 		return translateAnthropicStreamToResponses(
 			anthropicResp,
 			responseId,

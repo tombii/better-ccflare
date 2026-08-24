@@ -242,4 +242,118 @@ describe("handleResponsesRequest", () => {
 		expect(rawBody).toContain("response.created");
 		expect(rawBody).toContain("response.completed");
 	});
+
+	test("streaming custom-tool-call response passes native Responses SSE through unchanged", async () => {
+		const nativeSseBody =
+			"event: response.custom_tool_call\ndata: " +
+			JSON.stringify({
+				type: "response.custom_tool_call",
+				call_id: "call_1",
+				name: "shell",
+			}) +
+			"\n\n" +
+			"event: response.completed\ndata: " +
+			JSON.stringify({
+				type: "response.completed",
+				response: { id: "resp_native", model: "gpt-5.6-sol", output: [] },
+			}) +
+			"\n\n";
+
+		const mockHandleProxy: HandleProxyFn = async () =>
+			new Response(nativeSseBody, {
+				status: 200,
+				headers: {
+					"Content-Type": "text/event-stream",
+					"x-better-ccflare-codex-response-format": "responses-api",
+				},
+			});
+
+		const req = new Request("http://localhost/v1/responses", {
+			method: "POST",
+			body: JSON.stringify({
+				model: "gpt-5.6-sol",
+				input: [
+					{
+						type: "message",
+						role: "user",
+						content: [{ type: "input_text", text: "Hi" }],
+					},
+				],
+				stream: true,
+			}),
+			headers: { "Content-Type": "application/json" },
+		});
+
+		const resp = await handleResponsesRequest(
+			req,
+			new URL(req.url),
+			mockHandleProxy,
+			{},
+		);
+
+		expect(resp.headers.get("content-type")).toContain("text/event-stream");
+		expect(
+			resp.headers.get("x-better-ccflare-codex-response-format"),
+		).toBeNull();
+		const rawBody = await resp.text();
+		expect(rawBody).toBe(nativeSseBody);
+	});
+
+	test("non-streaming custom-tool-call response returns the native Responses JSON instead of a 502", async () => {
+		const nativeSseBody =
+			"event: response.custom_tool_call\ndata: " +
+			JSON.stringify({
+				type: "response.custom_tool_call",
+				call_id: "call_1",
+				name: "shell",
+			}) +
+			"\n\n" +
+			"event: response.completed\ndata: " +
+			JSON.stringify({
+				type: "response.completed",
+				response: { id: "resp_native", model: "gpt-5.6-sol", output: [] },
+			}) +
+			"\n\n";
+
+		const mockHandleProxy: HandleProxyFn = async () =>
+			new Response(nativeSseBody, {
+				status: 200,
+				headers: {
+					"Content-Type": "text/event-stream",
+					"x-better-ccflare-codex-response-format": "responses-api",
+				},
+			});
+
+		const req = new Request("http://localhost/v1/responses", {
+			method: "POST",
+			body: JSON.stringify({
+				model: "gpt-5.6-sol",
+				input: [
+					{
+						type: "message",
+						role: "user",
+						content: [{ type: "input_text", text: "Hi" }],
+					},
+				],
+				stream: false,
+			}),
+			headers: { "Content-Type": "application/json" },
+		});
+
+		const resp = await handleResponsesRequest(
+			req,
+			new URL(req.url),
+			mockHandleProxy,
+			{},
+		);
+
+		expect(resp.status).toBe(200);
+		expect(resp.headers.get("content-type")).toContain("application/json");
+		const body = await resp.json();
+		expect(body).toEqual({
+			id: "resp_native",
+			model: "gpt-5.6-sol",
+			output: [],
+		});
+	});
 });
