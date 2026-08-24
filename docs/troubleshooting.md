@@ -209,6 +209,16 @@ export NO_PROXY=localhost,127.0.0.1
 
 **Symptom**: Process consuming excessive memory
 
+If RSS grows into multiple GB while `process.memoryUsage().heapUsed` stays
+flat at tens of MB, this is native (off-heap) memory retention, not a JS
+object leak — clearing history or caches will not help. This was tracked as
+issue [#382](https://github.com/tombii/better-ccflare/issues/382): stream
+reader locks were never released on normal stream completion, and a few
+response paths cloned bodies whose tee branches were never consumed. Fixed
+upstream — upgrade to the latest version. If it still reproduces on a recent
+release, report your provider mix and an idle-vs-traffic RSS comparison on
+the issue.
+
 **Solutions**:
 1. Check log file size (auto-rotates at 10MB):
    ```bash
