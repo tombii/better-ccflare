@@ -339,9 +339,10 @@ export function useRequestStream(limit = 200) {
 
 				// Close connection immediately if no more references
 				if (pooled.refCount <= 0) {
-					console.log(
-						`No more references for ${connectionKey}, scheduling cleanup`,
-					);
+					console.log(`No more references for ${connectionKey}, closing`);
+					pooled.connection.close();
+					clearInterval(pooled.heartbeat);
+					CONNECTION_POOL.delete(connectionKey);
 				}
 			} else if (es) {
 				es.close();
