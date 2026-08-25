@@ -63,6 +63,14 @@ export function teeStream(
 		},
 
 		cancel() {
+			// A client-initiated cancel (Esc, tab close, network drop) must
+			// finalize the same way a clean `done` does — otherwise the
+			// caller's onClose (and whatever it drives, e.g. usage-collector's
+			// per-request state) never fires and the entry only gets reclaimed
+			// by the collector's periodic stale-request sweep, up to
+			// CF_STREAM_TIMEOUT_MS later.
+			onClose?.(buffered);
+
 			// reader.cancel() is a no-op on Bun (oven-sh/bun#35093) and leaks
 			// the upstream's native buffer; drain to `done` instead — see
 			// handlers/discard-body-cancel.ts for the full rationale (#382).
