@@ -46,8 +46,8 @@ import { AnthropicCompatibleProvider } from "./providers/anthropic-compatible/pr
 import { BedrockProvider } from "./providers/bedrock/provider";
 import { CodexProvider } from "./providers/codex/provider";
 import { KiloProvider } from "./providers/kilo/provider";
+import { MetaProvider } from "./providers/meta/provider";
 import { MinimaxProvider } from "./providers/minimax/provider";
-import { MuseSparkProvider } from "./providers/muse-spark/provider";
 import { NanoGPTProvider } from "./providers/nanogpt/provider";
 import { OllamaCloudProvider } from "./providers/ollama/ollama-cloud-provider";
 import { OllamaProvider } from "./providers/ollama/provider";
@@ -76,4 +76,4 @@ registry.registerProvider(new OpenAICompatibleProvider());
 registry.registerProvider(new OllamaProvider());
 registry.registerProvider(new OllamaCloudProvider());
 registry.registerProvider(new AnthropicCompatibleProvider());
-registry.registerProvider(new MuseSparkProvider());
+registry.registerProvider(new MetaProvider());

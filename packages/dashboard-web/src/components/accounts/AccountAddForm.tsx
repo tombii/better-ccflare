@@ -114,7 +114,7 @@ interface AccountAddFormProps {
 		priority: number;
 		modelMappings?: { [key: string]: string };
 	}) => Promise<void>;
-	onAddMuseSparkAccount: (params: {
+	onAddMetaAccount: (params: {
 		name: string;
 		apiKey: string;
 		priority: number;
@@ -141,7 +141,7 @@ export function AccountAddForm({
 	onAddOpenRouterAccount,
 	onAddOllamaAccount,
 	onAddOllamaCloudAccount,
-	onAddMuseSparkAccount,
+	onAddMetaAccount,
 	onCancel,
 	onSuccess,
 	onError,
@@ -168,7 +168,7 @@ export function AccountAddForm({
 			| "qwen"
 			| "ollama"
 			| "ollama-cloud"
-			| "muse-spark",
+			| "meta",
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
@@ -910,9 +910,9 @@ export function AccountAddForm({
 			return;
 		}
 
-		if (newAccount.mode === "muse-spark") {
+		if (newAccount.mode === "meta") {
 			if (!newAccount.apiKey) {
-				onError("API key is required for Muse Spark");
+				onError("API key is required for Meta Model API");
 				return;
 			}
 			const modelMappings: { [key: string]: string } = {};
@@ -920,7 +920,7 @@ export function AccountAddForm({
 			if (newAccount.sonnetModel) modelMappings.sonnet = newAccount.sonnetModel;
 			if (newAccount.haikuModel) modelMappings.haiku = newAccount.haikuModel;
 
-			await onAddMuseSparkAccount({
+			await onAddMetaAccount({
 				name: newAccount.name,
 				apiKey: newAccount.apiKey,
 				priority: newAccount.priority,
@@ -1069,7 +1069,7 @@ export function AccountAddForm({
 									| "qwen"
 									| "ollama"
 									| "ollama-cloud"
-									| "muse-spark",
+									| "meta",
 							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
@@ -1104,9 +1104,7 @@ export function AccountAddForm({
 								<SelectItem value="ollama-cloud">
 									Ollama Cloud (ollama.com)
 								</SelectItem>
-								<SelectItem value="muse-spark">
-									Muse Spark / Meta Model API (API Key)
-								</SelectItem>
+								<SelectItem value="meta">Meta Model API (API Key)</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>
@@ -1977,10 +1975,10 @@ export function AccountAddForm({
 							</div>
 						</>
 					)}
-					{newAccount.mode === "muse-spark" && (
+					{newAccount.mode === "meta" && (
 						<>
 							<div className="space-y-2">
-								<Label htmlFor="apiKey">Muse Spark API Key</Label>
+								<Label htmlFor="apiKey">Meta Model API Key</Label>
 								<Input
 									id="apiKey"
 									type="password"
@@ -1991,7 +1989,7 @@ export function AccountAddForm({
 											apiKey: (e.target as HTMLInputElement).value,
 										})
 									}
-									placeholder="Enter your Meta Model API (Muse Spark) key"
+									placeholder="Enter your Meta Model API key"
 								/>
 							</div>
 							<div className="space-y-2">
@@ -2014,8 +2012,8 @@ export function AccountAddForm({
 							<div className="space-y-2">
 								<Label>Model Mappings (Optional)</Label>
 								<p className="text-xs text-muted-foreground mb-2">
-									Map Anthropic model names to Muse Spark models. Leave empty to
-									use defaults.
+									Map Anthropic model names to Meta models. Leave empty to use
+									defaults.
 								</p>
 								<div className="space-y-2 pl-4">
 									<div>

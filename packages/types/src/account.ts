@@ -362,7 +362,7 @@ export interface AccountListItem {
 		| "xai"
 		| "ollama"
 		| "ollama-cloud"
-		| "muse-spark";
+		| "meta";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;

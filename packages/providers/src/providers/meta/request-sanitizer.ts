@@ -1,5 +1,5 @@
 /**
- * Meta Model API (Muse Spark) request sanitization.
+ * Meta Model API request sanitization.
  *
  * `POST https://api.meta.ai/v1/messages` is a thin wire-format adapter over
  * Meta's Responses pipeline, not a full Anthropic implementation. It validates
@@ -11,7 +11,7 @@
  * Documented constraints (https://dev.meta.ai/docs/features/messages):
  *  - `stop_sequences`, `top_k`, `container`, `inference_geo` -> 400
  *  - unknown top-level fields -> 400
- *  - `thinking: {type: "disabled"}` -> 400 (Muse Spark always reasons)
+ *  - `thinking: {type: "disabled"}` -> 400 (Meta always reasons)
  *  - `thinking: {type: "enabled"}` needs `1024 <= budget_tokens < max_tokens`
  *  - named `tool_choice` (`{type: "tool"}`) -> 400
  *  - `web_search` carrying `allowed_domains` / `blocked_domains` / `max_uses` -> 400
@@ -20,14 +20,14 @@
  *  - `temperature` is enforced to Anthropic's 0-1 range
  */
 
-/** Maximum output tokens Muse Spark will generate in one response. */
-export const MUSE_SPARK_MAX_OUTPUT_TOKENS = 131_072;
+/** Maximum output tokens Meta will generate in one response. */
+export const META_MAX_OUTPUT_TOKENS = 131_072;
 
-/** Muse Spark context window, in tokens. */
-export const MUSE_SPARK_CONTEXT_WINDOW = 1_048_576;
+/** Meta context window, in tokens. */
+export const META_CONTEXT_WINDOW = 1_048_576;
 
 /** Minimum `thinking.budget_tokens` the Messages adapter accepts. */
-export const MUSE_SPARK_MIN_THINKING_BUDGET_TOKENS = 1_024;
+export const META_MIN_THINKING_BUDGET_TOKENS = 1_024;
 
 /**
  * Top-level fields the Messages adapter accepts. Anything else is dropped
@@ -71,7 +71,7 @@ const WEB_SEARCH_UNSUPPORTED_FIELDS = [
 	"max_uses",
 ] as const;
 
-export interface MuseSparkSanitizeResult {
+export interface MetaSanitizeResult {
 	/** A new body object safe to send to the Messages adapter. */
 	body: Record<string, unknown>;
 	/** Stable, non-secret descriptions of each edit, for debug logging. */
@@ -83,7 +83,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Translate an Anthropic thinking budget into a Muse Spark reasoning effort.
+ * Translate an Anthropic thinking budget into a Meta reasoning effort.
  *
  * Meta accepts `thinking.budget_tokens` "for compatibility" but never
  * translates it into reasoning depth — only `output_config.effort` moves that
@@ -135,7 +135,7 @@ function sanitizeThinking(
 
 	const type = thinking.type;
 
-	// Muse Spark cannot disable reasoning; forwarding this is a guaranteed 400.
+	// Meta cannot disable reasoning; forwarding this is a guaranteed 400.
 	if (type === "disabled") {
 		changes.push("dropped_thinking:disabled_unsupported");
 		return {};
@@ -156,13 +156,13 @@ function sanitizeThinking(
 			typeof maxTokens === "number" && Number.isFinite(maxTokens)
 				? maxTokens - 1
 				: Number.POSITIVE_INFINITY;
-		if (upperBound < MUSE_SPARK_MIN_THINKING_BUDGET_TOKENS) {
+		if (upperBound < META_MIN_THINKING_BUDGET_TOKENS) {
 			changes.push("dropped_thinking:max_tokens_too_small");
 			return {};
 		}
 
 		const budget = Math.min(
-			Math.max(Math.floor(rawBudget), MUSE_SPARK_MIN_THINKING_BUDGET_TOKENS),
+			Math.max(Math.floor(rawBudget), META_MIN_THINKING_BUDGET_TOKENS),
 			upperBound,
 		);
 		if (budget !== rawBudget) {
@@ -321,9 +321,7 @@ function resolveToolAuthorization(
  * Pure: `body` is never mutated. Fields Meta accepts pass through untouched so
  * this stays a compatibility shim rather than a request rewriter.
  */
-export function sanitizeMuseSparkRequestBody(
-	body: unknown,
-): MuseSparkSanitizeResult {
+export function sanitizeMetaRequestBody(body: unknown): MetaSanitizeResult {
 	if (!isPlainObject(body)) {
 		return { body: {}, changes: [] };
 	}
@@ -341,12 +339,12 @@ export function sanitizeMuseSparkRequestBody(
 		}
 	}
 
-	// 2. max_tokens: Muse Spark caps output at 131,072 tokens.
+	// 2. max_tokens: Meta caps output at 131,072 tokens.
 	if (typeof sanitized.max_tokens === "number") {
 		const requested = sanitized.max_tokens;
 		const clamped = Math.min(
 			Math.max(Math.floor(requested), 1),
-			MUSE_SPARK_MAX_OUTPUT_TOKENS,
+			META_MAX_OUTPUT_TOKENS,
 		);
 		if (clamped !== requested) {
 			changes.push(`clamped_max_tokens:${requested}->${clamped}`);

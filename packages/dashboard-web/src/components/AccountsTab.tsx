@@ -352,7 +352,7 @@ export function AccountsTab() {
 		}
 	};
 
-	const handleAddMuseSparkAccount = async (params: {
+	const handleAddMetaAccount = async (params: {
 		name: string;
 		apiKey: string;
 		priority: number;
@@ -360,7 +360,7 @@ export function AccountsTab() {
 		modelMappings?: { [key: string]: string };
 	}) => {
 		try {
-			await api.addMuseSparkAccount(params);
+			await api.addMetaAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -646,7 +646,7 @@ export function AccountsTab() {
 							onAddOpenAIAccount={handleAddOpenAIAccount}
 							onAddOllamaAccount={handleAddOllamaAccount}
 							onAddOllamaCloudAccount={handleAddOllamaCloudAccount}
-							onAddMuseSparkAccount={handleAddMuseSparkAccount}
+							onAddMetaAccount={handleAddMetaAccount}
 							onCancel={() => {
 								setAdding(false);
 								setActionError(null);

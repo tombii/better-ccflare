@@ -693,7 +693,7 @@ class API extends HttpClient {
 		}
 	}
 
-	async addMuseSparkAccount(data: {
+	async addMetaAccount(data: {
 		name: string;
 		apiKey: string;
 		priority: number;
@@ -701,7 +701,7 @@ class API extends HttpClient {
 		modelMappings?: { [key: string]: string };
 	}): Promise<{ message: string; account: Account }> {
 		const startTime = Date.now();
-		const url = "/api/accounts/muse-spark";
+		const url = "/api/accounts/meta";
 
 		this.logger.debug(`→ POST ${url}`, { data });
 

@@ -4,18 +4,18 @@ import type { Account } from "@better-ccflare/types";
 import type { RateLimitInfo } from "../../types";
 import { transformRequestBodyModel } from "../../utils/model-mapping";
 import { BaseAnthropicCompatibleProvider } from "../base-anthropic-compatible";
-import { sanitizeMuseSparkRequestBody } from "./request-sanitizer";
+import { sanitizeMetaRequestBody } from "./request-sanitizer";
 
-const log = new Logger("MuseSparkProvider");
+const log = new Logger("MetaProvider");
 
 /** Meta Model API base for the Anthropic-compatible Messages surface. */
-export const MUSE_SPARK_DEFAULT_ENDPOINT = "https://api.meta.ai";
+export const META_DEFAULT_ENDPOINT = "https://api.meta.ai";
 
 /** Current standard-tier checkpoint. */
-export const MUSE_SPARK_DEFAULT_MODEL = "muse-spark-1.2";
+export const META_DEFAULT_MODEL = "muse-spark-1.2";
 
 /** Model IDs the Meta Model API publishes. */
-export const MUSE_SPARK_MODEL_IDS = {
+export const META_MODEL_IDS = {
 	MUSE_SPARK_1_1: "muse-spark-1.1",
 	MUSE_SPARK_1_2: "muse-spark-1.2",
 	MUSE_SPARK_1_2_CONTRIBUTOR: "muse-spark-1.2-contributor",
@@ -27,14 +27,14 @@ export const MUSE_SPARK_MODEL_IDS = {
  * shape as Meta's own Claude Code setup, which points OPUS, SONNET and HAIKU
  * at a single model ID.
  */
-export const MUSE_SPARK_MODEL_MAPPINGS: Record<string, string> = {
-	opus: MUSE_SPARK_DEFAULT_MODEL,
-	sonnet: MUSE_SPARK_DEFAULT_MODEL,
-	haiku: MUSE_SPARK_DEFAULT_MODEL,
+export const META_MODEL_MAPPINGS: Record<string, string> = {
+	opus: META_DEFAULT_MODEL,
+	sonnet: META_DEFAULT_MODEL,
+	haiku: META_DEFAULT_MODEL,
 };
 
-/** Whether a model ID already names a Muse Spark checkpoint. */
-export function isMuseSparkModel(model: string): boolean {
+/** Whether a model ID already names a Meta checkpoint. */
+export function isMetaModel(model: string): boolean {
 	return model.trim().toLowerCase().startsWith("muse-spark");
 }
 
@@ -48,7 +48,7 @@ export function isMuseSparkModel(model: string): boolean {
  * gateway this sees `/proxy/v1/messages`. An exact match would silently skip
  * sanitization for exactly the accounts that still need it.
  */
-export function isMuseSparkMessagesPath(url: string): boolean {
+export function isMetaMessagesPath(url: string): boolean {
 	let pathname: string;
 	try {
 		pathname = new URL(url).pathname;
@@ -71,7 +71,7 @@ export function isMuseSparkMessagesPath(url: string): boolean {
  * that, producing `/proxy/v1/v1/messages` and routing a valid configuration to
  * an endpoint that does not exist.
  */
-export function joinMuseSparkPath(basePath: string, pathname: string): string {
+export function joinMetaPath(basePath: string, pathname: string): string {
 	const baseSegments = basePath.split("/").filter(Boolean);
 	const pathSegments = pathname.split("/").filter(Boolean);
 
@@ -93,21 +93,21 @@ export function joinMuseSparkPath(basePath: string, pathname: string): string {
 	return joined.length > 0 ? `/${joined.join("/")}` : "/";
 }
 
-export class MuseSparkProvider extends BaseAnthropicCompatibleProvider {
+export class MetaProvider extends BaseAnthropicCompatibleProvider {
 	constructor() {
 		super({
-			name: "muse-spark",
-			baseUrl: MUSE_SPARK_DEFAULT_ENDPOINT,
+			name: "meta",
+			baseUrl: META_DEFAULT_ENDPOINT,
 			// Meta authenticates with a bearer token, not Anthropic's x-api-key.
 			authHeader: "authorization",
 			authType: "bearer",
 			supportsStreaming: true,
-			defaultModel: MUSE_SPARK_DEFAULT_MODEL,
+			defaultModel: META_DEFAULT_MODEL,
 		});
 	}
 
 	getEndpoint(): string {
-		return this.config.baseUrl || MUSE_SPARK_DEFAULT_ENDPOINT;
+		return this.config.baseUrl || META_DEFAULT_ENDPOINT;
 	}
 
 	/**
@@ -128,7 +128,7 @@ export class MuseSparkProvider extends BaseAnthropicCompatibleProvider {
 
 		try {
 			const target = new URL(cleanBaseUrl);
-			target.pathname = joinMuseSparkPath(
+			target.pathname = joinMetaPath(
 				target.pathname.replace(/\/$/, ""),
 				pathname,
 			);
@@ -177,7 +177,7 @@ export class MuseSparkProvider extends BaseAnthropicCompatibleProvider {
 	 * Resolve the outbound model ID.
 	 *
 	 * An explicit account mapping always wins. Otherwise a Claude model name is
-	 * routed to the default Muse Spark checkpoint, because forwarding
+	 * routed to the default Meta checkpoint, because forwarding
 	 * `claude-*` unchanged is a guaranteed `model_not_found`.
 	 */
 	resolveModel(model: string, account?: Account): string {
@@ -188,9 +188,9 @@ export class MuseSparkProvider extends BaseAnthropicCompatibleProvider {
 			if (mapped && mapped !== model) return mapped;
 		}
 
-		if (isMuseSparkModel(model)) return model;
+		if (isMetaModel(model)) return model;
 
-		return this.config.defaultModel || MUSE_SPARK_DEFAULT_MODEL;
+		return this.config.defaultModel || META_DEFAULT_MODEL;
 	}
 
 	/**
@@ -212,7 +212,7 @@ export class MuseSparkProvider extends BaseAnthropicCompatibleProvider {
 		}
 
 		// Other JSON endpoints retain their own schema.
-		if (!isMuseSparkMessagesPath(request.url)) {
+		if (!isMetaMessagesPath(request.url)) {
 			return transformRequestBodyModel(request);
 		}
 
@@ -234,7 +234,7 @@ export class MuseSparkProvider extends BaseAnthropicCompatibleProvider {
 		try {
 			bytes = await request.arrayBuffer();
 		} catch (error) {
-			log.debug("Failed to read request body for Muse Spark:", error);
+			log.debug("Failed to read request body for Meta:", error);
 			return request;
 		}
 
@@ -254,7 +254,7 @@ export class MuseSparkProvider extends BaseAnthropicCompatibleProvider {
 				}
 			}
 
-			const { body: sanitized, changes } = sanitizeMuseSparkRequestBody(body);
+			const { body: sanitized, changes } = sanitizeMetaRequestBody(body);
 			if (changes.length > 0) {
 				log.debug(
 					`Sanitized request for Meta Model API: ${changes.join(", ")}`,
@@ -263,7 +263,7 @@ export class MuseSparkProvider extends BaseAnthropicCompatibleProvider {
 
 			return rebuild(JSON.stringify(sanitized));
 		} catch (error) {
-			log.debug("Failed to transform Muse Spark request body:", error);
+			log.debug("Failed to transform Meta request body:", error);
 			return rebuild(bytes);
 		}
 	}

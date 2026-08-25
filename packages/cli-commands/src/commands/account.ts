@@ -53,7 +53,7 @@ export interface AddAccountOptionsWithAdapter {
 		| "xai"
 		| "ollama"
 		| "ollama-cloud"
-		| "muse-spark";
+		| "meta";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string | string[] };
@@ -87,7 +87,7 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "xai"
 		| "ollama"
 		| "ollama-cloud"
-		| "muse-spark";
+		| "meta";
 }
 
 /**
@@ -1202,8 +1202,8 @@ export async function addAccount(
 				value: "ollama-cloud",
 			},
 			{
-				label: "Meta Model API / Muse Spark (API key)",
-				value: "muse-spark",
+				label: "Meta Model API (API key)",
+				value: "meta",
 			},
 		]));
 
@@ -1712,13 +1712,11 @@ export async function addAccount(
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: Ollama Cloud");
 		console.log(`Endpoint: https://ollama.com/api/chat`);
-	} else if (mode === "muse-spark") {
-		const apiKey = await adapter.input(
-			"\nEnter your Meta Model API (Muse Spark) API key: ",
-		);
+	} else if (mode === "meta") {
+		const apiKey = await adapter.input("\nEnter your Meta Model API key: ");
 
 		if (!apiKey) {
-			throw new Error("API key is required for Muse Spark");
+			throw new Error("API key is required for Meta Model API");
 		}
 
 		// Get custom endpoint (optional — defaults to the official Meta API)
@@ -1750,10 +1748,10 @@ export async function addAccount(
 			endpoint,
 			finalModelMappings,
 			undefined,
-			"muse-spark",
+			"meta",
 		);
 		console.log(`\nAccount '${name}' added successfully!`);
-		console.log("Type: Muse Spark (Meta Model API)");
+		console.log("Type: Meta Model API");
 		console.log(`Endpoint: ${endpoint || "https://api.meta.ai"}`);
 	} else {
 		// Handle OAuth accounts (Anthropic)
@@ -1864,7 +1862,7 @@ export async function getAccountsList(
 					account.provider === "openrouter" ||
 					account.provider === "codex" ||
 					account.provider === "xai" ||
-					account.provider === "muse-spark"
+					account.provider === "meta"
 				) {
 					return account.provider;
 				}

@@ -1550,5 +1550,14 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		);
 	}
 
+	// Migrate existing Muse Spark accounts to the corrected 'meta' provider key
+	try {
+		await adapter.unsafe(
+			`UPDATE accounts SET provider = 'meta' WHERE provider = 'muse-spark'`,
+		);
+	} catch (_error) {
+		// Ignore if fails
+	}
+
 	log.info("PostgreSQL migrations completed");
 }

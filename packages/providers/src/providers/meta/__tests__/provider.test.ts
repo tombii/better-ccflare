@@ -1,16 +1,16 @@
 import type { Account } from "@better-ccflare/types";
 import {
-	isMuseSparkMessagesPath,
-	isMuseSparkModel,
-	MUSE_SPARK_DEFAULT_MODEL,
-	MuseSparkProvider,
+	isMetaMessagesPath,
+	isMetaModel,
+	META_DEFAULT_MODEL,
+	MetaProvider,
 } from "../provider";
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
 		id: "test-id",
-		name: "test-muse-spark-account",
-		provider: "muse-spark",
+		name: "test-meta-account",
+		provider: "meta",
 		refresh_token: "",
 		access_token: null,
 		expires_at: null,
@@ -58,18 +58,18 @@ function jsonRequest(body: unknown): Request {
 	});
 }
 
-describe("MuseSparkProvider", () => {
-	let provider: MuseSparkProvider;
+describe("MetaProvider", () => {
+	let provider: MetaProvider;
 	let account: Account;
 
 	beforeEach(() => {
-		provider = new MuseSparkProvider();
+		provider = new MetaProvider();
 		account = makeAccount();
 	});
 
 	describe("name", () => {
 		it("should have the correct provider name", () => {
-			expect(provider.name).toBe("muse-spark");
+			expect(provider.name).toBe("meta");
 		});
 	});
 
@@ -228,16 +228,16 @@ describe("MuseSparkProvider", () => {
 	});
 
 	describe("resolveModel", () => {
-		it("routes a Claude model to the default Muse Spark checkpoint", () => {
+		it("routes a Claude model to the default Meta checkpoint", () => {
 			expect(provider.resolveModel("claude-opus-4-6-20260115", account)).toBe(
-				MUSE_SPARK_DEFAULT_MODEL,
+				META_DEFAULT_MODEL,
 			);
 			expect(provider.resolveModel("claude-haiku-4-5-20251001", account)).toBe(
-				MUSE_SPARK_DEFAULT_MODEL,
+				META_DEFAULT_MODEL,
 			);
 		});
 
-		it("passes an explicit Muse Spark model through", () => {
+		it("passes an explicit Meta model through", () => {
 			expect(provider.resolveModel("muse-spark-1.1", account)).toBe(
 				"muse-spark-1.1",
 			);
@@ -256,9 +256,7 @@ describe("MuseSparkProvider", () => {
 		});
 
 		it("routes an unknown model to the default rather than forwarding it", () => {
-			expect(provider.resolveModel("gpt-4o", account)).toBe(
-				MUSE_SPARK_DEFAULT_MODEL,
-			);
+			expect(provider.resolveModel("gpt-4o", account)).toBe(META_DEFAULT_MODEL);
 		});
 	});
 
@@ -276,7 +274,7 @@ describe("MuseSparkProvider", () => {
 				await provider.transformRequestBody(request, account),
 			);
 
-			expect(body.model).toBe(MUSE_SPARK_DEFAULT_MODEL);
+			expect(body.model).toBe(META_DEFAULT_MODEL);
 			expect(body).not.toHaveProperty("stop_sequences");
 			expect(body).not.toHaveProperty("top_k");
 			expect(body.messages).toEqual([{ role: "user", content: "hi" }]);
@@ -358,7 +356,7 @@ describe("MuseSparkProvider", () => {
 			const body = await bodyOf(
 				await provider.transformRequestBody(request, account),
 			);
-			expect(body.model).toBe(MUSE_SPARK_DEFAULT_MODEL);
+			expect(body.model).toBe(META_DEFAULT_MODEL);
 			expect(body).not.toHaveProperty("top_k");
 		});
 
@@ -377,26 +375,22 @@ describe("MuseSparkProvider", () => {
 		});
 	});
 
-	describe("isMuseSparkMessagesPath", () => {
+	describe("isMetaMessagesPath", () => {
 		it("matches the Messages surface only", () => {
-			expect(isMuseSparkMessagesPath("https://api.meta.ai/v1/messages")).toBe(
-				true,
-			);
+			expect(isMetaMessagesPath("https://api.meta.ai/v1/messages")).toBe(true);
 			expect(
-				isMuseSparkMessagesPath("https://api.meta.ai/v1/messages/count_tokens"),
+				isMetaMessagesPath("https://api.meta.ai/v1/messages/count_tokens"),
 			).toBe(true);
-			expect(isMuseSparkMessagesPath("https://api.meta.ai/v1/files")).toBe(
-				false,
-			);
-			expect(isMuseSparkMessagesPath("https://api.meta.ai/v1/responses")).toBe(
+			expect(isMetaMessagesPath("https://api.meta.ai/v1/files")).toBe(false);
+			expect(isMetaMessagesPath("https://api.meta.ai/v1/responses")).toBe(
 				false,
 			);
 		});
 
 		it("ignores the query string", () => {
-			expect(
-				isMuseSparkMessagesPath("https://api.meta.ai/v1/messages?beta=1"),
-			).toBe(true);
+			expect(isMetaMessagesPath("https://api.meta.ai/v1/messages?beta=1")).toBe(
+				true,
+			);
 		});
 
 		// The proxy hands transformRequestBody the already-rewritten target URL,
@@ -404,16 +398,16 @@ describe("MuseSparkProvider", () => {
 		// for exactly the accounts that need it.
 		it("matches both Messages routes behind a gateway path prefix", () => {
 			expect(
-				isMuseSparkMessagesPath("https://gateway.example/proxy/v1/messages"),
+				isMetaMessagesPath("https://gateway.example/proxy/v1/messages"),
 			).toBe(true);
 			expect(
-				isMuseSparkMessagesPath(
+				isMetaMessagesPath(
 					"https://gateway.example/proxy/v1/messages/count_tokens",
 				),
 			).toBe(true);
-			expect(
-				isMuseSparkMessagesPath("https://gateway.example/proxy/v1/files"),
-			).toBe(false);
+			expect(isMetaMessagesPath("https://gateway.example/proxy/v1/files")).toBe(
+				false,
+			);
 		});
 	});
 
@@ -510,11 +504,11 @@ describe("MuseSparkProvider", () => {
 		});
 	});
 
-	describe("isMuseSparkModel", () => {
-		it("recognises Muse Spark model IDs", () => {
-			expect(isMuseSparkModel("muse-spark-1.2")).toBe(true);
-			expect(isMuseSparkModel("MUSE-SPARK-1.1")).toBe(true);
-			expect(isMuseSparkModel("claude-opus-4-6")).toBe(false);
+	describe("isMetaModel", () => {
+		it("recognises Meta model IDs", () => {
+			expect(isMetaModel("muse-spark-1.2")).toBe(true);
+			expect(isMetaModel("MUSE-SPARK-1.1")).toBe(true);
+			expect(isMetaModel("claude-opus-4-6")).toBe(false);
 		});
 	});
 });
