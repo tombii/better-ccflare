@@ -6,6 +6,7 @@ export const PROVIDER_NAMES = {
 	CLAUDE_CONSOLE_API: "claude-console-api", // Claude API console accounts
 	ZAI: "zai",
 	MINIMAX: "minimax",
+	DEEPSEEK: "deepseek",
 	ANTHROPIC_COMPATIBLE: "anthropic-compatible",
 	OPENAI_COMPATIBLE: "openai-compatible",
 	NANOGPT: "nanogpt",
@@ -72,6 +73,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: true, // Minimax exposes Token Plan remains via /v1/token_plan/remains (polling only; request forwarding still goes through the generic anthropic-compatible path)
 		supportsOAuth: false, // Minimax uses API key authentication
 		defaultEndpoint: "https://api.minimax.io/anthropic",
+	},
+	[PROVIDER_NAMES.DEEPSEEK]: {
+		requiresSessionTracking: false, // DeepSeek is pay-as-you-go
+		supportsUsageTracking: false, // No known usage/quota polling API
+		supportsOAuth: false, // DeepSeek uses API key authentication
+		defaultEndpoint: "https://api.deepseek.com/anthropic",
 	},
 	[PROVIDER_NAMES.ANTHROPIC_COMPATIBLE]: {
 		requiresSessionTracking: false, // Anthropic-compatible is pay-as-you-go

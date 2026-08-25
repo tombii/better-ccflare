@@ -40,6 +40,7 @@ export interface AddAccountOptionsWithAdapter {
 		| "console"
 		| "zai"
 		| "minimax"
+		| "deepseek"
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
@@ -74,6 +75,7 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "console"
 		| "zai"
 		| "minimax"
+		| "deepseek"
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
@@ -156,6 +158,39 @@ async function createMinimaxAccount(
 			now,
 			validatedPriority,
 			null, // No custom endpoint for minimax
+		],
+	);
+}
+
+/**
+ * Create a DeepSeek account in the database
+ */
+async function createDeepseekAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+
+	// Validate inputs
+	const validatedApiKey = validateApiKey(apiKey, "DeepSeek API key");
+	const validatedPriority = validatePriority(priority, "priority");
+
+	await dbOps.getAdapter().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)`,
+		[
+			accountId,
+			name,
+			"deepseek",
+			validatedApiKey,
+			now,
+			validatedPriority,
+			null, // No custom endpoint for deepseek
 		],
 	);
 }
@@ -1179,6 +1214,7 @@ export async function addAccount(
 			{ label: "AWS Bedrock (AWS profile credentials)", value: "bedrock" },
 			{ label: "z.ai account (API key)", value: "zai" },
 			{ label: "Minimax account (API key)", value: "minimax" },
+			{ label: "DeepSeek account (API key)", value: "deepseek" },
 			{ label: "Kilo Gateway (API key)", value: "kilo" },
 			{ label: "OpenRouter (API key)", value: "openrouter" },
 			{
@@ -1406,6 +1442,13 @@ export async function addAccount(
 		await createMinimaxAccount(dbOps, name, apiKey, providedPriority || 0);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: Minimax (API key)");
+	} else if (mode === "deepseek") {
+		// Handle DeepSeek accounts with API keys
+		const apiKey = await adapter.input("\nEnter your DeepSeek API key: ");
+
+		await createDeepseekAccount(dbOps, name, apiKey, providedPriority || 0);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: DeepSeek (API key)");
 	} else if (mode === "nanogpt") {
 		// Handle NanoGPT accounts with API keys
 		const apiKey = await adapter.input("\nEnter your NanoGPT API key: ");
@@ -1857,6 +1900,7 @@ export async function getAccountsList(
 				if (
 					account.provider === "zai" ||
 					account.provider === "minimax" ||
+					account.provider === "deepseek" ||
 					account.provider === "anthropic-compatible" ||
 					account.provider === "bedrock" ||
 					account.provider === "openrouter" ||

@@ -1856,6 +1856,171 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 }
 
 /**
+ * Create a DeepSeek account add handler
+ */
+export function createDeepseekAccountAddHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Validate account name
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
+				transform: sanitizers.trim,
+			});
+
+			if (!name) {
+				return errorResponse(BadRequest("Account name is required"));
+			}
+
+			// Validate API key
+			const apiKey = validateString(body.apiKey, "apiKey", {
+				required: true,
+				minLength: 1,
+			});
+
+			if (!apiKey) {
+				return errorResponse(BadRequest("API key is required"));
+			}
+
+			// Validate priority
+			const priority =
+				validateNumber(body.priority, "priority", {
+					min: 0,
+					max: 100,
+					integer: true,
+				}) || 0;
+
+			let validatedModelMappings = null;
+			if (body.modelMappings && typeof body.modelMappings === "object") {
+				try {
+					const sanitized = validateAndSanitizeModelMappings(
+						body.modelMappings,
+					);
+					if (sanitized && Object.keys(sanitized).length > 0) {
+						validatedModelMappings = JSON.stringify(sanitized);
+					}
+				} catch (err) {
+					return errorResponse(
+						BadRequest(
+							`Invalid model mappings: ${err instanceof Error ? err.message : String(err)}`,
+						),
+					);
+				}
+			}
+
+			// Create DeepSeek account directly in database
+			const accountId = crypto.randomUUID();
+			const now = Date.now();
+			const db = dbOps.getAdapter();
+
+			const conflict = await assertAccountNameAvailable(
+				dbOps,
+				name,
+				"deepseek",
+				null,
+			);
+			if (conflict) return conflict;
+
+			await db.run(
+				`INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[
+					accountId,
+					name,
+					"deepseek",
+					apiKey,
+					apiKey, // Use API key as refresh token for consistency with CLI
+					apiKey, // Use API key as access token
+					now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
+					now,
+					0,
+					0,
+					priority,
+					null, // No custom endpoint for DeepSeek
+					validatedModelMappings,
+				],
+			);
+
+			log.info(
+				`Successfully added DeepSeek account: ${name} (Priority ${priority})`,
+			);
+
+			// Get the created account for response
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(
+					InternalServerError("Failed to retrieve created account"),
+				);
+			}
+
+			return jsonResponse({
+				message: `DeepSeek account '${name}' added successfully`,
+				account: {
+					id: account.id,
+					name: account.name,
+					provider: account.provider,
+					requestCount: account.request_count,
+					totalRequests: account.total_requests,
+					lastUsed: account.last_used
+						? new Date(account.last_used).toISOString()
+						: null,
+					created: new Date(account.created_at).toISOString(),
+					paused: account.paused === 1,
+					priority: priority,
+					tokenStatus: "valid" as const,
+					tokenExpiresAt: new Date(account.expires_at).toISOString(),
+					rateLimitStatus: "OK",
+					rateLimitReset: null,
+					rateLimitRemaining: null,
+					rateLimitedUntil: null,
+					sessionInfo: "No active session",
+					hasRefreshToken: false,
+				},
+			});
+		} catch (error) {
+			log.error("DeepSeek account creation error:", error);
+			if (isUniqueConstraintError(error)) {
+				return errorResponse(
+					BadRequest(`Account name '${name}' is already taken`),
+				);
+			}
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to create DeepSeek account"),
+			);
+		}
+	};
+}
+
+/**
  * Create a NanoGPT account add handler
  */
 export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {

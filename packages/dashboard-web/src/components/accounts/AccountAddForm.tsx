@@ -19,6 +19,7 @@ interface AccountAddFormProps {
 			| "console"
 			| "zai"
 			| "minimax"
+			| "deepseek"
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
@@ -48,6 +49,12 @@ interface AccountAddFormProps {
 		name: string;
 		apiKey: string;
 		priority: number;
+	}) => Promise<void>;
+	onAddDeepseekAccount: (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
 	}) => Promise<void>;
 	onAddAnthropicCompatibleAccount: (params: {
 		name: string;
@@ -131,6 +138,7 @@ export function AccountAddForm({
 	onCompleteAccount,
 	onAddZaiAccount,
 	onAddMinimaxAccount,
+	onAddDeepseekAccount,
 	onAddAnthropicCompatibleAccount,
 	onAddNanoGPTAccount,
 	onAddOpenAIAccount,
@@ -156,6 +164,7 @@ export function AccountAddForm({
 			| "console"
 			| "zai"
 			| "minimax"
+			| "deepseek"
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
@@ -181,6 +190,7 @@ export function AccountAddForm({
 		opusModel: "",
 		sonnetModel: "",
 		haikuModel: "",
+		fableModel: "",
 	});
 
 	// Qwen device flow state
@@ -320,6 +330,7 @@ export function AccountAddForm({
 								opusModel: "",
 								sonnetModel: "",
 								haikuModel: "",
+								fableModel: "",
 							});
 							onSuccess();
 						}, 1500);
@@ -389,6 +400,7 @@ export function AccountAddForm({
 								opusModel: "",
 								sonnetModel: "",
 								haikuModel: "",
+								fableModel: "",
 							});
 							onSuccess();
 						}, 1500);
@@ -473,6 +485,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -514,6 +527,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -557,6 +571,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -589,6 +604,58 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
+		if (newAccount.mode === "deepseek") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for DeepSeek accounts");
+				return;
+			}
+			// Build model mappings from form fields
+			const deepseekModelMappings: { [key: string]: string } = {};
+			if (newAccount.fableModel) {
+				deepseekModelMappings.fable = newAccount.fableModel;
+			}
+			if (newAccount.opusModel) {
+				deepseekModelMappings.opus = newAccount.opusModel;
+			}
+			if (newAccount.sonnetModel) {
+				deepseekModelMappings.sonnet = newAccount.sonnetModel;
+			}
+			if (newAccount.haikuModel) {
+				deepseekModelMappings.haiku = newAccount.haikuModel;
+			}
+			// For DeepSeek accounts, we don't need OAuth flow and use default tier
+			await onAddDeepseekAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				priority: newAccount.priority,
+				modelMappings:
+					Object.keys(deepseekModelMappings).length > 0
+						? deepseekModelMappings
+						: undefined,
+			});
+			// Reset form and signal success
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
+				crossRegionMode: "geographic",
+				customBedrockModel: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -635,6 +702,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -675,6 +743,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -711,6 +780,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -747,6 +817,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -788,6 +859,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -835,6 +907,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -868,6 +941,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -905,6 +979,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -943,6 +1018,7 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				fableModel: "",
 			});
 			onSuccess();
 			return;
@@ -992,6 +1068,7 @@ export function AccountAddForm({
 			opusModel: "",
 			sonnetModel: "",
 			haikuModel: "",
+			fableModel: "",
 		});
 		onSuccess();
 	};
@@ -1025,6 +1102,7 @@ export function AccountAddForm({
 			opusModel: "",
 			sonnetModel: "",
 			haikuModel: "",
+			fableModel: "",
 		});
 		onCancel();
 	};
@@ -1060,6 +1138,7 @@ export function AccountAddForm({
 									| "console"
 									| "zai"
 									| "minimax"
+									| "deepseek"
 									| "anthropic-compatible"
 									| "openai-compatible"
 									| "bedrock"
@@ -1088,6 +1167,7 @@ export function AccountAddForm({
 								<SelectItem value="bedrock">AWS Bedrock</SelectItem>
 								<SelectItem value="zai">z.ai (API Key)</SelectItem>
 								<SelectItem value="minimax">Minimax (API Key)</SelectItem>
+								<SelectItem value="deepseek">DeepSeek (API Key)</SelectItem>
 								<SelectItem value="nanogpt">NanoGPT (API Key)</SelectItem>
 								<SelectItem value="anthropic-compatible">
 									Anthropic-Compatible (API Key)
@@ -1528,6 +1608,104 @@ export function AccountAddForm({
 								placeholder="Enter your Minimax API key"
 							/>
 						</div>
+					)}
+					{newAccount.mode === "deepseek" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="apiKey">DeepSeek API Key</Label>
+								<Input
+									id="apiKey"
+									type="password"
+									value={newAccount.apiKey}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											apiKey: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter your DeepSeek API key"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label className="text-sm font-medium">
+									Model Mappings (Optional)
+								</Label>
+								<p className="text-xs text-muted-foreground">
+									Map Anthropic model names to DeepSeek-specific models. Leave
+									empty to use DeepSeek's automatic mapping.
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="deepseekFableModel" className="text-sm">
+											Fable Model
+										</Label>
+										<Input
+											id="deepseekFableModel"
+											value={newAccount.fableModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													fableModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="Custom fable model"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="deepseekOpusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="deepseekOpusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="Custom opus model"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="deepseekSonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="deepseekSonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="Custom sonnet model"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="deepseekHaikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="deepseekHaikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="Custom haiku model"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
+						</>
 					)}
 					{newAccount.mode === "nanogpt" && (
 						<>

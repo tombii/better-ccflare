@@ -23,6 +23,7 @@ import {
 	createAnthropicCompatibleAccountAddHandler,
 	createAwsProfilesListHandler,
 	createBedrockAccountAddHandler,
+	createDeepseekAccountAddHandler,
 	createKiloAccountAddHandler,
 	createMetaAccountAddHandler,
 	createMinimaxAccountAddHandler,
@@ -188,6 +189,7 @@ export class APIRouter {
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
 		const minimaxAccountAddHandler = createMinimaxAccountAddHandler(dbOps);
+		const deepseekAccountAddHandler = createDeepseekAccountAddHandler(dbOps);
 		const vertexAIAccountAddHandler = createVertexAIAccountAddHandler(dbOps);
 		const bedrockAccountAddHandler = createBedrockAccountAddHandler(dbOps);
 		const awsProfilesListHandler = createAwsProfilesListHandler();
@@ -269,6 +271,9 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/accounts/minimax", (req) =>
 			minimaxAccountAddHandler(req),
+		);
+		this.handlers.set("POST:/api/accounts/deepseek", (req) =>
+			deepseekAccountAddHandler(req),
 		);
 		this.handlers.set("POST:/api/accounts/vertex-ai", (req) =>
 			vertexAIAccountAddHandler(req),
