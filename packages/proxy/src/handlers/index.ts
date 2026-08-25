@@ -88,6 +88,8 @@ export {
 	registerRefreshClearer,
 	restartUsagePollingForAccount,
 	unregisterCodexUsageRefresher,
+	unregisterPollingRestarter,
+	unregisterRefreshClearer,
 } from "./token-manager";
 export {
 	createUsageThrottledResponse,

@@ -1028,10 +1028,11 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound(result.message));
 			}
 
-			// Clear usage cache for removed account to prevent memory leaks.
-			// The cache is keyed by id, and we already have the id from the
-			// URL — no extra lookup needed.
-			usageCache.delete(accountId);
+			// Stop usage polling and clear all cached state for the removed
+			// account to prevent memory leaks. `delete()` only clears the cache
+			// entry — `stopPolling()` also clears the timer and tracking maps,
+			// otherwise the poll loop keeps rescheduling itself forever.
+			usageCache.stopPolling(accountId);
 
 			return jsonResponse({
 				success: true,

@@ -768,6 +768,13 @@ export function registerPollingRestarter(
 }
 
 /**
+ * Unregister a previously registered polling restarter.
+ */
+export function unregisterPollingRestarter(serverId: string): void {
+	pollingRestarters.delete(serverId);
+}
+
+/**
  * Restart usage polling for an account across all registered servers.
  * Returns true if at least one server successfully restarted polling.
  */
@@ -883,6 +890,13 @@ export function registerRefreshClearer(
 	clearer: (accountId: string) => void,
 ): void {
 	refreshClearers.set(serverId, clearer);
+}
+
+/**
+ * Unregister a previously registered refresh clearer.
+ */
+export function unregisterRefreshClearer(serverId: string): void {
+	refreshClearers.delete(serverId);
 }
 
 /**

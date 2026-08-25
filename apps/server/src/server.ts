@@ -75,6 +75,8 @@ import {
 	startIntegrityScheduler,
 	stopGlobalTokenHealthChecks,
 	unregisterCodexUsageRefresher,
+	unregisterPollingRestarter,
+	unregisterRefreshClearer,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
 import {
@@ -2152,11 +2154,14 @@ async function handleGracefulShutdown(signal: string) {
 		// Stop token health monitoring
 		stopGlobalTokenHealthChecks();
 
-		// Unregister this server's Codex on-demand usage refresher so the
-		// module-level registry doesn't keep a stale callback after restart.
-		// Mirrors the cleanup pattern used by the schedulers above.
+		// Unregister this server's Codex usage refresher, polling restarter,
+		// and refresh clearer so the module-level registries don't keep stale
+		// callbacks after restart. Mirrors the cleanup pattern used by the
+		// schedulers above.
 		if (registeredServerId) {
 			unregisterCodexUsageRefresher(registeredServerId);
+			unregisterPollingRestarter(registeredServerId);
+			unregisterRefreshClearer(registeredServerId);
 			registeredServerId = null;
 		}
 

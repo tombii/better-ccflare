@@ -61,6 +61,8 @@ export {
 	type TokenHealthReport,
 	type TokenHealthStatus,
 	unregisterCodexUsageRefresher,
+	unregisterPollingRestarter,
+	unregisterRefreshClearer,
 } from "./handlers";
 export {
 	runIntegrityCheckOnDemand,
