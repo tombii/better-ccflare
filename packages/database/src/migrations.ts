@@ -1668,6 +1668,24 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		log.info(
 			`Populated ${insertedCount} default Claude model translations for Bedrock`,
 		);
+
+		// Migrate existing Muse Spark accounts to the corrected 'meta' provider key
+		try {
+			const updateCount = db
+				.prepare(
+					`UPDATE accounts SET provider = 'meta' WHERE provider = 'muse-spark'`,
+				)
+				.run().changes;
+			if (updateCount > 0) {
+				log.info(
+					`Updated ${updateCount} accounts from 'muse-spark' to 'meta' provider`,
+				);
+			}
+		} catch (error) {
+			log.warn(
+				`Error updating muse-spark provider values: ${(error as Error).message}`,
+			);
+		}
 	});
 
 	// Execute the migration transaction

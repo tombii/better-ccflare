@@ -2193,9 +2193,9 @@ export function createAnthropicCompatibleAccountAddHandler(
 }
 
 /**
- * Create a Muse Spark (Meta Model API) account add handler
+ * Create a Meta Model API account add handler
  */
-export function createMuseSparkAccountAddHandler(dbOps: DatabaseOperations) {
+export function createMetaAccountAddHandler(dbOps: DatabaseOperations) {
 	return async (req: Request): Promise<Response> => {
 		try {
 			const body = await req.json();
@@ -2222,7 +2222,9 @@ export function createMuseSparkAccountAddHandler(dbOps: DatabaseOperations) {
 			});
 
 			if (!apiKey) {
-				return errorResponse(BadRequest("API key is required for Muse Spark"));
+				return errorResponse(
+					BadRequest("API key is required for Meta Model API"),
+				);
 			}
 
 			// Validate priority
@@ -2262,7 +2264,7 @@ export function createMuseSparkAccountAddHandler(dbOps: DatabaseOperations) {
 				modelMappings = JSON.stringify(validatedMappings);
 			}
 
-			// Create Muse Spark account directly in database
+			// Create Meta account directly in database
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
 			const db = dbOps.getAdapter();
@@ -2270,7 +2272,7 @@ export function createMuseSparkAccountAddHandler(dbOps: DatabaseOperations) {
 			const conflict = await assertAccountNameAvailable(
 				dbOps,
 				name,
-				"muse-spark",
+				"meta",
 				customEndpoint || null,
 			);
 			if (conflict) return conflict;
@@ -2283,7 +2285,7 @@ export function createMuseSparkAccountAddHandler(dbOps: DatabaseOperations) {
 				[
 					accountId,
 					name,
-					"muse-spark",
+					"meta",
 					apiKey,
 					null,
 					null,
@@ -2298,7 +2300,7 @@ export function createMuseSparkAccountAddHandler(dbOps: DatabaseOperations) {
 			);
 
 			log.info(
-				`Successfully added Muse Spark account: ${name} (Priority ${priority})`,
+				`Successfully added Meta account: ${name} (Priority ${priority})`,
 			);
 
 			// Get the created account for response
@@ -2329,7 +2331,7 @@ export function createMuseSparkAccountAddHandler(dbOps: DatabaseOperations) {
 			}
 
 			return jsonResponse({
-				message: `Muse Spark account '${name}' added successfully`,
+				message: `Meta account '${name}' added successfully`,
 				account: {
 					id: account.id,
 					name: account.name,
@@ -2353,7 +2355,7 @@ export function createMuseSparkAccountAddHandler(dbOps: DatabaseOperations) {
 				},
 			});
 		} catch (error) {
-			log.error("Muse Spark account creation error:", error);
+			log.error("Meta account creation error:", error);
 			if (isUniqueConstraintError(error)) {
 				return errorResponse(
 					BadRequest(`Account name '${name}' is already taken`),
@@ -2362,7 +2364,7 @@ export function createMuseSparkAccountAddHandler(dbOps: DatabaseOperations) {
 			return errorResponse(
 				error instanceof Error
 					? error
-					: new Error("Failed to create Muse Spark account"),
+					: new Error("Failed to create Meta account"),
 			);
 		}
 	};

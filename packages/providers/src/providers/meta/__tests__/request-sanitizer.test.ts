@@ -1,7 +1,7 @@
 import {
 	effortForThinkingBudget,
-	MUSE_SPARK_MAX_OUTPUT_TOKENS,
-	sanitizeMuseSparkRequestBody,
+	META_MAX_OUTPUT_TOKENS,
+	sanitizeMetaRequestBody,
 } from "../request-sanitizer";
 
 /** Minimal valid body; individual tests layer their case on top. */
@@ -16,7 +16,7 @@ function baseBody(
 	};
 }
 
-describe("sanitizeMuseSparkRequestBody", () => {
+describe("sanitizeMetaRequestBody", () => {
 	describe("top-level allowlist", () => {
 		it("passes a already-valid body through unchanged", () => {
 			const body = baseBody({
@@ -27,13 +27,13 @@ describe("sanitizeMuseSparkRequestBody", () => {
 				metadata: { user_id: "abc" },
 				service_tier: "auto",
 			});
-			const result = sanitizeMuseSparkRequestBody(body);
+			const result = sanitizeMetaRequestBody(body);
 			expect(result.body).toEqual(body);
 			expect(result.changes).toEqual([]);
 		});
 
 		it("drops the documented unsupported top-level fields", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					stop_sequences: ["\n\n"],
 					top_k: 40,
@@ -52,7 +52,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		});
 
 		it("drops unknown top-level fields, which Meta rejects outright", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({ some_future_field: 1, mcp_servers: [] }),
 			);
 			expect(result.body).not.toHaveProperty("some_future_field");
@@ -64,32 +64,28 @@ describe("sanitizeMuseSparkRequestBody", () => {
 
 		it("never mutates the caller's object", () => {
 			const body = baseBody({ top_k: 40 });
-			sanitizeMuseSparkRequestBody(body);
+			sanitizeMetaRequestBody(body);
 			expect(body).toHaveProperty("top_k", 40);
 		});
 
 		it("returns an empty body for a non-object input", () => {
-			expect(sanitizeMuseSparkRequestBody(null).body).toEqual({});
-			expect(sanitizeMuseSparkRequestBody("nope").body).toEqual({});
-			expect(sanitizeMuseSparkRequestBody([1, 2]).body).toEqual({});
+			expect(sanitizeMetaRequestBody(null).body).toEqual({});
+			expect(sanitizeMetaRequestBody("nope").body).toEqual({});
+			expect(sanitizeMetaRequestBody([1, 2]).body).toEqual({});
 		});
 	});
 
 	describe("max_tokens", () => {
-		it("clamps above the Muse Spark output ceiling", () => {
-			const result = sanitizeMuseSparkRequestBody(
-				baseBody({ max_tokens: 200_000 }),
-			);
-			expect(result.body.max_tokens).toBe(MUSE_SPARK_MAX_OUTPUT_TOKENS);
+		it("clamps above the Meta output ceiling", () => {
+			const result = sanitizeMetaRequestBody(baseBody({ max_tokens: 200_000 }));
+			expect(result.body.max_tokens).toBe(META_MAX_OUTPUT_TOKENS);
 			expect(result.changes).toContain(
-				`clamped_max_tokens:200000->${MUSE_SPARK_MAX_OUTPUT_TOKENS}`,
+				`clamped_max_tokens:200000->${META_MAX_OUTPUT_TOKENS}`,
 			);
 		});
 
 		it("leaves an in-range value alone", () => {
-			const result = sanitizeMuseSparkRequestBody(
-				baseBody({ max_tokens: 8192 }),
-			);
+			const result = sanitizeMetaRequestBody(baseBody({ max_tokens: 8192 }));
 			expect(result.body.max_tokens).toBe(8192);
 			expect(result.changes).toEqual([]);
 		});
@@ -98,11 +94,11 @@ describe("sanitizeMuseSparkRequestBody", () => {
 	describe("temperature", () => {
 		it("clamps to Anthropic's enforced 0-1 range", () => {
 			expect(
-				sanitizeMuseSparkRequestBody(baseBody({ temperature: 1.8 })).body
+				sanitizeMetaRequestBody(baseBody({ temperature: 1.8 })).body
 					.temperature,
 			).toBe(1);
 			expect(
-				sanitizeMuseSparkRequestBody(baseBody({ temperature: -0.5 })).body
+				sanitizeMetaRequestBody(baseBody({ temperature: -0.5 })).body
 					.temperature,
 			).toBe(0);
 		});
@@ -110,14 +106,12 @@ describe("sanitizeMuseSparkRequestBody", () => {
 
 	describe("system", () => {
 		it("keeps a plain string", () => {
-			const result = sanitizeMuseSparkRequestBody(
-				baseBody({ system: "be terse" }),
-			);
+			const result = sanitizeMetaRequestBody(baseBody({ system: "be terse" }));
 			expect(result.body.system).toBe("be terse");
 		});
 
 		it("keeps text blocks and drops every other block type", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					system: [
 						{ type: "text", text: "a" },
@@ -139,14 +133,12 @@ describe("sanitizeMuseSparkRequestBody", () => {
 				text: "a",
 				cache_control: { type: "ephemeral" },
 			};
-			const result = sanitizeMuseSparkRequestBody(
-				baseBody({ system: [block] }),
-			);
+			const result = sanitizeMetaRequestBody(baseBody({ system: [block] }));
 			expect(result.body.system).toEqual([block]);
 		});
 
 		it("removes system entirely when no text block survives", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({ system: [{ type: "image", source: {} }] }),
 			);
 			expect(result.body).not.toHaveProperty("system");
@@ -156,18 +148,17 @@ describe("sanitizeMuseSparkRequestBody", () => {
 	describe("service_tier", () => {
 		it("keeps the accepted values", () => {
 			expect(
-				sanitizeMuseSparkRequestBody(baseBody({ service_tier: "auto" })).body
+				sanitizeMetaRequestBody(baseBody({ service_tier: "auto" })).body
 					.service_tier,
 			).toBe("auto");
 			expect(
-				sanitizeMuseSparkRequestBody(
-					baseBody({ service_tier: "standard_only" }),
-				).body.service_tier,
+				sanitizeMetaRequestBody(baseBody({ service_tier: "standard_only" }))
+					.body.service_tier,
 			).toBe("standard_only");
 		});
 
 		it("drops any other value", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({ service_tier: "batch" }),
 			);
 			expect(result.body).not.toHaveProperty("service_tier");
@@ -176,8 +167,8 @@ describe("sanitizeMuseSparkRequestBody", () => {
 	});
 
 	describe("thinking", () => {
-		it("drops type:disabled, which Muse Spark rejects", () => {
-			const result = sanitizeMuseSparkRequestBody(
+		it("drops type:disabled, which Meta rejects", () => {
+			const result = sanitizeMetaRequestBody(
 				baseBody({ thinking: { type: "disabled" } }),
 			);
 			expect(result.body).not.toHaveProperty("thinking");
@@ -186,12 +177,12 @@ describe("sanitizeMuseSparkRequestBody", () => {
 
 		it("keeps type:adaptive untouched", () => {
 			const thinking = { type: "adaptive" };
-			const result = sanitizeMuseSparkRequestBody(baseBody({ thinking }));
+			const result = sanitizeMetaRequestBody(baseBody({ thinking }));
 			expect(result.body.thinking).toEqual(thinking);
 		});
 
 		it("keeps a valid enabled budget and derives a reasoning effort", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					max_tokens: 32_000,
 					thinking: { type: "enabled", budget_tokens: 10_000 },
@@ -205,7 +196,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		});
 
 		it("raises a budget below Meta's 1024 minimum", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					max_tokens: 8192,
 					thinking: { type: "enabled", budget_tokens: 500 },
@@ -218,7 +209,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		});
 
 		it("clamps a budget that is not strictly below max_tokens", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					max_tokens: 4096,
 					thinking: { type: "enabled", budget_tokens: 4096 },
@@ -230,7 +221,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		});
 
 		it("drops thinking when max_tokens leaves no room for the minimum budget", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					max_tokens: 512,
 					thinking: { type: "enabled", budget_tokens: 4096 },
@@ -241,7 +232,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		});
 
 		it("does not override an explicit output_config.effort", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					max_tokens: 32_000,
 					thinking: { type: "enabled", budget_tokens: 10_000 },
@@ -252,7 +243,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		});
 
 		it("drops an unrecognised thinking type", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({ thinking: { type: "turbo" } }),
 			);
 			expect(result.body).not.toHaveProperty("thinking");
@@ -271,7 +262,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 
 	describe("output_config", () => {
 		it("drops an invalid effort but keeps the rest of the config", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					output_config: {
 						effort: "extreme",
@@ -286,7 +277,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		});
 
 		it("removes output_config entirely when nothing valid remains", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({ output_config: { effort: "extreme" } }),
 			);
 			expect(result.body).not.toHaveProperty("output_config");
@@ -309,7 +300,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		// leave every declared tool callable — the model could invoke a tool the
 		// caller never authorized, including one with side effects.
 		it("narrows the tool list to the named tool, not just the choice", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					tools: [weather, wire],
 					tool_choice: { type: "tool", name: "get_weather" },
@@ -323,7 +314,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		});
 
 		it("never leaves an unauthorized tool callable", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					tools: [weather, wire],
 					tool_choice: { type: "tool", name: "get_weather" },
@@ -339,7 +330,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		// the list makes the upstream reject it instead of the proxy quietly
 		// authorizing every other tool.
 		it("fails closed when the named tool is not declared", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					tools: [wire],
 					tool_choice: { type: "tool", name: "missing_tool" },
@@ -350,7 +341,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		});
 
 		it("preserves disable_parallel_tool_use through the rewrite", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					tools: [{ name: "x", description: "x", input_schema: {} }],
 					tool_choice: {
@@ -368,7 +359,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 
 		it("keeps auto, any and none untouched", () => {
 			for (const type of ["auto", "any", "none"]) {
-				const result = sanitizeMuseSparkRequestBody(
+				const result = sanitizeMetaRequestBody(
 					baseBody({ tool_choice: { type } }),
 				);
 				expect(result.body.tool_choice).toEqual({ type });
@@ -381,7 +372,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 		// Stripping just those fields would leave search enabled but UNBOUNDED,
 		// silently widening the caller's security, compliance and cost boundary.
 		it("drops a constrained web_search tool entirely rather than unbounding it", () => {
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					tools: [
 						{
@@ -403,7 +394,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 
 		it("keeps other tools when a constrained web_search is dropped", () => {
 			const calc = { name: "calc", description: "c", input_schema: {} };
-			const result = sanitizeMuseSparkRequestBody(
+			const result = sanitizeMetaRequestBody(
 				baseBody({
 					tools: [
 						calc,
@@ -424,9 +415,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 				name: "web_search",
 				user_location: { type: "approximate" },
 			};
-			const result = sanitizeMuseSparkRequestBody(
-				baseBody({ tools: [search] }),
-			);
+			const result = sanitizeMetaRequestBody(baseBody({ tools: [search] }));
 			expect(result.body.tools).toEqual([search]);
 			expect(result.changes).toEqual([]);
 		});
@@ -437,7 +426,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 				description: "Get weather",
 				input_schema: { type: "object", properties: {} },
 			};
-			const result = sanitizeMuseSparkRequestBody(baseBody({ tools: [tool] }));
+			const result = sanitizeMetaRequestBody(baseBody({ tools: [tool] }));
 			expect(result.body.tools).toEqual([tool]);
 			expect(result.changes).toEqual([]);
 		});
@@ -445,7 +434,7 @@ describe("sanitizeMuseSparkRequestBody", () => {
 
 	describe("realistic Claude Code request", () => {
 		it("produces a body containing only fields Meta accepts", () => {
-			const result = sanitizeMuseSparkRequestBody({
+			const result = sanitizeMetaRequestBody({
 				model: "claude-opus-4-6-20260115",
 				max_tokens: 32_000,
 				messages: [{ role: "user", content: "refactor this" }],
