@@ -1034,6 +1034,11 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 			// otherwise the poll loop keeps rescheduling itself forever.
 			usageCache.stopPolling(accountId);
 
+			// Also clear token-manager state (in-flight refresh, failure/backoff
+			// counters) for the removed account — otherwise it lingers until the
+			// 5-minute TTL sweep or the 1000-entry cap evicts it.
+			clearAccountRefreshCache(accountId);
+
 			return jsonResponse({
 				success: true,
 				message: result.message,
