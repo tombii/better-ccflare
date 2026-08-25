@@ -14,6 +14,10 @@ export type LogFormat = "pretty" | "json";
 // Event emitter for log streaming
 export const logBus = new EventEmitter();
 
+// Set a more generous max listeners limit for SSE connections
+// This allows for more concurrent SSE connections while still providing protection
+logBus.setMaxListeners(200);
+
 // Error's name/message/stack are non-enumerable, so JSON.stringify(err) returns "{}".
 // Convert Errors to plain objects before they flow into formatMessage / LogEvent /
 // the file writer, which all use JSON.stringify downstream.
