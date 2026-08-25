@@ -34,6 +34,7 @@ import {
 } from "@better-ccflare/providers";
 import {
 	clearAccountRefreshCache,
+	clearAutoRefreshTrackingForAccount,
 	getUsageThrottleStatus,
 	refreshCodexUsageForAccount,
 	restartUsagePollingForAccount,
@@ -1038,6 +1039,11 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 			// counters) for the removed account — otherwise it lingers until the
 			// 5-minute TTL sweep or the 1000-entry cap evicts it.
 			clearAccountRefreshCache(accountId);
+
+			// And clear auto-refresh-scheduler tracking state — otherwise it
+			// lingers until the scheduler's next periodic cleanup sweep (up to
+			// 60s later) or server shutdown.
+			clearAutoRefreshTrackingForAccount(accountId);
 
 			return jsonResponse({
 				success: true,

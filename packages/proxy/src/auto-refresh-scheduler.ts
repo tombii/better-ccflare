@@ -1319,6 +1319,20 @@ export class AutoRefreshScheduler {
 	}
 
 	/**
+	 * Remove all tracking state for a single account. Used when an account is
+	 * deleted so its entries don't linger until the next `cleanupTracking()`
+	 * sweep (up to 60s later) or server shutdown.
+	 */
+	clearAccountTracking(accountId: string): void {
+		this.lastRefreshResetTime.delete(accountId);
+		this.consecutiveFailures.delete(accountId);
+		this.lastFailureProbeAt.delete(accountId);
+		if (this.uncountedProbeFailures.delete(accountId)) {
+			clearProbeBackoff(accountId);
+		}
+	}
+
+	/**
 	 * Clean up the tracking map by removing entries for accounts that no longer exist
 	 * or have auto-refresh disabled
 	 */

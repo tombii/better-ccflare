@@ -735,6 +735,10 @@ export async function refreshAccessTokenSafe(
 // Global registry for account refresh clearing functions
 const refreshClearers: Map<string, (accountId: string) => void> = new Map();
 
+// Global registry for auto-refresh-scheduler tracking clearing functions
+const autoRefreshTrackingClearers: Map<string, (accountId: string) => void> =
+	new Map();
+
 // Global registry for usage polling restart functions
 const pollingRestarters: Map<string, (accountId: string) => Promise<boolean>> =
 	new Map();
@@ -912,6 +916,46 @@ export function clearAccountRefreshCache(accountId: string): void {
 		} catch (error) {
 			log.error(
 				`Failed to clear refresh cache for account ${accountId} on server ${serverId}:`,
+				error,
+			);
+		}
+	}
+}
+
+/**
+ * Register a function to clear auto-refresh-scheduler tracking state for a
+ * specific account. Used by the server to expose its scheduler's per-account
+ * cleanup so account removal doesn't have to wait for the scheduler's next
+ * periodic sweep.
+ */
+export function registerAutoRefreshTrackingClearer(
+	serverId: string,
+	clearer: (accountId: string) => void,
+): void {
+	autoRefreshTrackingClearers.set(serverId, clearer);
+}
+
+/**
+ * Unregister a previously registered auto-refresh tracking clearer.
+ */
+export function unregisterAutoRefreshTrackingClearer(serverId: string): void {
+	autoRefreshTrackingClearers.delete(serverId);
+}
+
+/**
+ * Clear auto-refresh-scheduler tracking state for an account across all
+ * registered servers.
+ */
+export function clearAutoRefreshTrackingForAccount(accountId: string): void {
+	for (const [serverId, clearer] of autoRefreshTrackingClearers) {
+		try {
+			clearer(accountId);
+			log.info(
+				`Cleared auto-refresh tracking for account ${accountId} on ${serverId}`,
+			);
+		} catch (error) {
+			log.error(
+				`Failed to clear auto-refresh tracking for account ${accountId} on ${serverId}:`,
 				error,
 			);
 		}

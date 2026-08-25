@@ -68,12 +68,14 @@ import {
 	type ProxyContext,
 	recordCodexUsageSnapshot,
 	refreshModelCatalog,
+	registerAutoRefreshTrackingClearer,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
 	registerRefreshClearer,
 	startGlobalTokenHealthChecks,
 	startIntegrityScheduler,
 	stopGlobalTokenHealthChecks,
+	unregisterAutoRefreshTrackingClearer,
 	unregisterCodexUsageRefresher,
 	unregisterPollingRestarter,
 	unregisterRefreshClearer,
@@ -1371,6 +1373,9 @@ export default async function startServer(options?: {
 	// Initialize auto-refresh scheduler (now that proxyContext is available)
 	autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);
 	autoRefreshScheduler.start();
+	registerAutoRefreshTrackingClearer(serverId, (accountId: string) => {
+		autoRefreshScheduler?.clearAccountTracking(accountId);
+	});
 
 	// Initialize cache keepalive scheduler
 	cacheKeepaliveScheduler = new CacheKeepaliveScheduler(proxyContext, config);
@@ -2162,6 +2167,7 @@ async function handleGracefulShutdown(signal: string) {
 			unregisterCodexUsageRefresher(registeredServerId);
 			unregisterPollingRestarter(registeredServerId);
 			unregisterRefreshClearer(registeredServerId);
+			unregisterAutoRefreshTrackingClearer(registeredServerId);
 			registeredServerId = null;
 		}
 
