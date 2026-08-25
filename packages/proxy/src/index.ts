@@ -29,6 +29,7 @@ export type {
 	CodexModelListing,
 } from "./codex-model-catalog";
 export {
+	clearCodexModelCacheForAccount,
 	getCodexModels,
 	lowestTierCodexModel,
 } from "./codex-model-catalog";
@@ -42,6 +43,8 @@ export {
 	checkRefreshTokenHealth,
 	clearAccountRefreshCache,
 	clearAutoRefreshTrackingForAccount,
+	clearFamilyExhaustionForAccount,
+	clearPendingRotation,
 	createUsageThrottledResponse,
 	formatTokenHealthReport,
 	getAccountsNeedingReauth,

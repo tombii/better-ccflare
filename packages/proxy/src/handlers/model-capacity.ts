@@ -259,6 +259,19 @@ export function clearFamilyExhaustionCache(): void {
 	negativeCache.clear();
 }
 
+/**
+ * Drops every negative-cache entry for a removed account. Entries self-expire
+ * via `until`, but a removed account's keys otherwise sit until that TTL
+ * fires — this makes the clear proactive instead of waiting it out. Keyed as
+ * `accountId:family`, so removal is a prefix scan rather than a single delete.
+ */
+export function clearFamilyExhaustionForAccount(accountId: string): void {
+	const prefix = `${accountId}:`;
+	for (const key of negativeCache.keys()) {
+		if (key.startsWith(prefix)) negativeCache.delete(key);
+	}
+}
+
 // ── model_family_exhausted response ─────────────────────────────────────────
 
 export interface ModelFamilyExhaustionInfo {

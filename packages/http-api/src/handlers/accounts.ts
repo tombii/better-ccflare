@@ -35,6 +35,9 @@ import {
 import {
 	clearAccountRefreshCache,
 	clearAutoRefreshTrackingForAccount,
+	clearCodexModelCacheForAccount,
+	clearFamilyExhaustionForAccount,
+	clearPendingRotation,
 	getUsageThrottleStatus,
 	refreshCodexUsageForAccount,
 	restartUsagePollingForAccount,
@@ -1044,6 +1047,14 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 			// lingers until the scheduler's next periodic cleanup sweep (up to
 			// 60s later) or server shutdown.
 			clearAutoRefreshTrackingForAccount(accountId);
+
+			// Clear the remaining account-keyed in-memory caches that have no
+			// TTL/periodic sweep of their own: a pending refresh-token rotation
+			// still waiting to be persisted, this account's cached Codex model
+			// listing, and any negative-cache exhaustion marks for it.
+			clearPendingRotation(accountId);
+			clearCodexModelCacheForAccount(accountId);
+			clearFamilyExhaustionForAccount(accountId);
 
 			return jsonResponse({
 				success: true,
