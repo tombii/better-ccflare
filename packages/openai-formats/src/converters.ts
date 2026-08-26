@@ -335,6 +335,15 @@ export function convertOpenAIResponseToAnthropic(
 	// Build content array with text and tool calls
 	const content: AnthropicContentBlock[] = [];
 
+	// Add thinking content first (Anthropic ordering) — DeepSeek/reasoning
+	// providers return reasoning_content on the message in non-streaming responses.
+	if (choice.message?.reasoning_content) {
+		content.push({
+			type: "thinking",
+			thinking: choice.message.reasoning_content,
+		});
+	}
+
 	// Add text content if present
 	if (choice.message?.content) {
 		content.push({
