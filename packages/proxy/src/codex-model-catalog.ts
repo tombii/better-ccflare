@@ -105,6 +105,16 @@ export function clearCodexModelCacheForTests(): void {
 	providerWide = null;
 }
 
+/**
+ * Drops a removed account's own listing so it doesn't linger in `lastGood`
+ * forever (no TTL — see the comment above `lastGood`). `providerWide` is left
+ * alone: it may still be a live account's listing, or this account's own
+ * listing that another live account can keep borrowing until it's replaced.
+ */
+export function clearCodexModelCacheForAccount(accountId: string): void {
+	lastGood.delete(accountId);
+}
+
 function readCache(accountId: string): CodexModelListing | null {
 	const own = lastGood.get(accountId);
 	if (own) return { ...own, source: "cached" };

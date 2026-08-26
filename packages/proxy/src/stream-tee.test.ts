@@ -153,6 +153,38 @@ describe("teeStream", () => {
 		expect(tracked.wasCancelCalled()).toBe(false);
 	});
 
+	it("fires onClose with the buffered-so-far chunks on cancel (client disconnect)", async () => {
+		const chunks = [
+			textChunk("chunk1"),
+			textChunk("chunk2"),
+			textChunk("chunk3"),
+		];
+		const tracked = makeTrackedUpstream(chunks);
+
+		let closedWith: Uint8Array[] | undefined;
+		let closeCallCount = 0;
+		const out = teeStream(tracked.stream, {
+			onClose: (buffered) => {
+				closeCallCount++;
+				closedWith = buffered;
+			},
+		});
+
+		const reader = out.getReader();
+		// Consume nothing — cancel immediately, before any pull() has run,
+		// matching a client disconnecting before the first byte streams back.
+		await reader.cancel("client disconnected");
+
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		// onClose must fire on cancel too, not only on a clean `done` — this
+		// is what lets a caller (e.g. usage-collector) finalize per-request
+		// state immediately on disconnect instead of relying solely on a
+		// periodic stale-request sweep.
+		expect(closeCallCount).toBe(1);
+		expect(closedWith).toBeDefined();
+	});
+
 	it("swallows drain errors instead of throwing during cancel teardown", async () => {
 		const erroringStream = new ReadableStream<Uint8Array>({
 			pull(controller) {

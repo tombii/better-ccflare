@@ -22,6 +22,7 @@ export {
 	isRewriteTargetServable,
 } from "./agent-interceptor";
 export {
+	clearFamilyExhaustionForAccount,
 	createModelFamilyExhaustedResponse,
 	type FamilyExhaustionOrigin,
 	getFamilyExhaustionOrigin,
@@ -34,6 +35,14 @@ export {
 	type OverageStatus,
 	resolveOverageStatus,
 } from "./model-capacity";
+export {
+	clearPendingRotation,
+	flushPendingRotation,
+	getPendingRotation,
+	type PendingRotation,
+	type PendingRotationDbOps,
+	recordPendingRotation,
+} from "./pending-rotation-registry";
 export {
 	createPoolExhaustedResponse,
 	type PoolExhaustionAccountReason,

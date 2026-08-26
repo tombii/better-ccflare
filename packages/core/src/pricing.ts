@@ -264,6 +264,31 @@ BUNDLED_PRICING.meta = {
 	},
 };
 
+// Pricing for DeepSeek models (dollars per 1M tokens)
+// DeepSeek moved to peak/off-peak pricing on 2026-08-16 (off-peak rates used
+// here as a conservative flat-rate approximation; peak rates are roughly 2x).
+// This pricing engine has no time-varying rate support yet.
+BUNDLED_PRICING.deepseek = {
+	models: {
+		"deepseek-v4-pro": {
+			id: "deepseek-v4-pro",
+			name: "DeepSeek V4 Pro",
+			cost: {
+				input: 0.66,
+				output: 1.98,
+			},
+		},
+		"deepseek-v4-flash": {
+			id: "deepseek-v4-flash",
+			name: "DeepSeek V4 Flash",
+			cost: {
+				input: 0.22,
+				output: 0.66,
+			},
+		},
+	},
+};
+
 interface Logger {
 	warn(message: string, ...args: unknown[]): void;
 	debug(message: string, ...args: unknown[]): void;

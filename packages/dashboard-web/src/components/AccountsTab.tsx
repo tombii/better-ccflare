@@ -104,6 +104,7 @@ export function AccountsTab() {
 			| "console"
 			| "zai"
 			| "minimax"
+			| "deepseek"
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
@@ -222,6 +223,23 @@ export function AccountsTab() {
 	}) => {
 		try {
 			await api.addMinimaxAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddDeepseekAccount = async (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}) => {
+		try {
+			await api.addDeepseekAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -636,6 +654,7 @@ export function AccountsTab() {
 							onAddBedrockAccount={handleAddBedrockAccount}
 							onAddZaiAccount={handleAddZaiAccount}
 							onAddMinimaxAccount={handleAddMinimaxAccount}
+							onAddDeepseekAccount={handleAddDeepseekAccount}
 							onAddNanoGPTAccount={handleAddNanoGPTAccount}
 							onAddAlibabaCodingPlanAccount={handleAddAlibabaCodingPlanAccount}
 							onAddKiloAccount={handleAddKiloAccount}

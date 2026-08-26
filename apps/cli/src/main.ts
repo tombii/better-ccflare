@@ -81,6 +81,7 @@ interface ParsedArgs {
 		| "console"
 		| "zai"
 		| "minimax"
+		| "deepseek"
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
@@ -545,6 +546,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "console"
 					| "zai"
 					| "minimax"
+					| "deepseek"
 					| "anthropic-compatible"
 					| "openai-compatible"
 					| "nanogpt"
@@ -569,6 +571,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "console"
 					| "zai"
 					| "minimax"
+					| "deepseek"
 					| "nanogpt"
 					| "anthropic-compatible"
 					| "openai-compatible"
@@ -583,6 +586,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "console"
 					| "zai"
 					| "minimax"
+					| "deepseek"
 					| "nanogpt"
 					| "anthropic-compatible"
 					| "openai-compatible"
@@ -597,6 +601,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					"console",
 					"zai",
 					"minimax",
+					"deepseek",
 					"nanogpt",
 					"anthropic-compatible",
 					"openai-compatible",
@@ -629,6 +634,9 @@ function parseArgs(args: string[]): ParsedArgs {
 					);
 					console.error(
 						"  bun run cli --add-account minimax-account --mode minimax --priority 30",
+					);
+					console.error(
+						"  bun run cli --add-account deepseek-account --mode deepseek --priority 35",
 					);
 					console.error(
 						"  bun run cli --add-account openai-account --mode openai-compatible --priority 40",
@@ -856,11 +864,12 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|xai|ollama>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|deepseek|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|xai|ollama>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
       minimax: Minimax account (API key)
+      deepseek: DeepSeek account (API key)
       nanogpt: NanoGPT provider (API key)
       anthropic-compatible: Anthropic-compatible provider (API key)
       openai-compatible: OpenAI-compatible provider (API key)
@@ -1022,6 +1031,7 @@ Examples:
 			console.error("  --mode console         Claude API account (OAuth)");
 			console.error("  --mode zai             z.ai account (API key)");
 			console.error("  --mode minimax         Minimax account (API key)");
+			console.error("  --mode deepseek        DeepSeek account (API key)");
 			console.error("  --mode nanogpt         NanoGPT account (API key)");
 			console.error(
 				"  --mode anthropic-compatible  Anthropic-compatible provider",

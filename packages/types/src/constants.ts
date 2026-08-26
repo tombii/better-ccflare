@@ -31,6 +31,7 @@ export const ACCOUNT_MODES = {
 	CONSOLE: "console", // Claude API account
 	ZAI: "zai", // z.ai account (API key)
 	MINIMAX: "minimax", // Minimax account (API key)
+	DEEPSEEK: "deepseek", // DeepSeek account (API key)
 	ANTHROPIC_COMPATIBLE: "anthropic-compatible", // Anthropic-compatible provider (API key)
 	OPENAI_COMPATIBLE: "openai-compatible", // OpenAI-compatible provider (API key)
 	NANOGPT: "nanogpt", // NanoGPT provider (API key)
@@ -64,6 +65,8 @@ export function getProviderFromMode(mode: AccountMode): ProviderName {
 			return PROVIDER_NAMES.ZAI;
 		case ACCOUNT_MODES.MINIMAX:
 			return PROVIDER_NAMES.MINIMAX;
+		case ACCOUNT_MODES.DEEPSEEK:
+			return PROVIDER_NAMES.DEEPSEEK;
 		case ACCOUNT_MODES.ANTHROPIC_COMPATIBLE:
 			return PROVIDER_NAMES.ANTHROPIC_COMPATIBLE;
 		case ACCOUNT_MODES.OPENAI_COMPATIBLE:
