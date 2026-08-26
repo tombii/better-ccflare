@@ -771,6 +771,36 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 		expect(content.some((c) => c.type === "text")).toBe(true);
 		expect(content.some((c) => c.type === "tool_use")).toBe(true);
 	});
+
+	it("converts reasoning_content to a leading thinking block (e.g. DeepSeek non-streaming)", () => {
+		const result = convertOpenAIResponseToAnthropic(
+			openaiTextResponse({
+				choices: [
+					{
+						index: 0,
+						message: {
+							role: "assistant",
+							content: "The answer is 4.",
+							reasoning_content: "2 + 2 = 4, so the answer is 4.",
+						},
+						finish_reason: "stop",
+					},
+				],
+			}),
+		);
+		const content = result.content ?? [];
+		expect(content[0]).toEqual({
+			type: "thinking",
+			thinking: "2 + 2 = 4, so the answer is 4.",
+		});
+		expect(content[1]).toEqual({ type: "text", text: "The answer is 4." });
+	});
+
+	it("omits thinking block when reasoning_content is absent", () => {
+		const result = convertOpenAIResponseToAnthropic(openaiTextResponse());
+		const content = result.content ?? [];
+		expect(content.some((c) => c.type === "thinking")).toBe(false);
+	});
 });
 
 describe("convertOpenAIResponseToAnthropic — error cases", () => {
