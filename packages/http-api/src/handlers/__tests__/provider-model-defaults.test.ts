@@ -238,6 +238,44 @@ describe("provider model defaults", () => {
 		expect(resolveProviderModelDefault("xai", "sonnet")).toBe("grok-4.3");
 	});
 
+	it("shareAcrossAccounts: false keeps a derived map private to its own account", () => {
+		clearDerivedProviderModelDefaults();
+		setDerivedProviderModelDefaults(
+			"openai-compatible",
+			"acc-1",
+			{ opus: "local-model-a" },
+			{ shareAcrossAccounts: false },
+		);
+
+		expect(
+			resolveProviderModelDefault("openai-compatible", "opus", "acc-1"),
+		).toBe("local-model-a");
+		// A second account of the same provider must not inherit acc-1's map —
+		// each openai-compatible endpoint is arbitrary and operator-chosen.
+		expect(
+			resolveProviderModelDefault("openai-compatible", "opus", "acc-2"),
+		).toBeUndefined();
+		expect(
+			resolveProviderModelDefault("openai-compatible", "opus"),
+		).toBeUndefined();
+	});
+
+	it("shareAcrossAccounts defaults to true, unchanged for codex's sharing behavior", () => {
+		clearDerivedProviderModelDefaults();
+		setDerivedProviderModelDefaults("codex", "acc-1", {
+			opus: "gpt-shared",
+		});
+
+		expect(resolveProviderModelDefault("codex", "opus", "acc-1")).toBe(
+			"gpt-shared",
+		);
+		// No listing of its own: falls back to the provider-wide map that
+		// acc-1's read populated.
+		expect(resolveProviderModelDefault("codex", "opus", "acc-2")).toBe(
+			"gpt-shared",
+		);
+	});
+
 	it("codex keeps translating even when left out of CCFLARE_MODEL_DEFAULTS_PROVIDERS", async () => {
 		process.env.CCFLARE_MODEL_DEFAULTS_PROVIDERS = "xai";
 		const handlers = createConfigHandlers(makeConfig());

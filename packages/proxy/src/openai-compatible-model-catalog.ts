@@ -1,9 +1,6 @@
 import { getEndpointUrl, validateEndpointUrl } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
-import {
-	hasDerivedProviderModelDefaults,
-	setDerivedProviderModelDefaults,
-} from "@better-ccflare/providers";
+import { setDerivedProviderModelDefaults } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers/proxy-types";
 
@@ -121,28 +118,6 @@ export function deriveFamilyDefaults(
 }
 
 /**
- * Make sure this account has a derived default map before anything tries to
- * map a Claude family onto one of the provider's models.
- *
- * A no-op for every other provider, and for an openai-compatible account that
- * already has one — which, after the first request, is all of them.
- */
-export async function ensureOpenAICompatibleModelDefaults(
-	account: Account | null | undefined,
-	ctx: ProxyContext,
-): Promise<void> {
-	if (account?.provider !== "openai-compatible") return;
-	if (hasDerivedProviderModelDefaults("openai-compatible", account.id)) return;
-	try {
-		await getOpenAICompatibleModels(account.id, ctx);
-	} catch (err) {
-		// Never blocks the request: without a map the family falls through and
-		// the provider gets to say what it thinks, which the record then learns.
-		log.debug(`Could not load the model list for ${account.name}: ${err}`);
-	}
-}
-
-/**
  * The model list for one openai-compatible account: live when the account's
  * endpoint answers, otherwise the last list it gave us. Returns null only
  * when both are unavailable — a brand new account whose first fetch failed.
@@ -166,10 +141,14 @@ export async function getOpenAICompatibleModels(
 			source: "live",
 		};
 		lastGood.set(accountId, listing);
+		// shareAcrossAccounts: false — see the module doc comment above: this
+		// account's endpoint is arbitrary and operator-chosen, so its listing
+		// must never become another account's fallback.
 		setDerivedProviderModelDefaults(
 			"openai-compatible",
 			accountId,
 			deriveFamilyDefaults(models),
+			{ shareAcrossAccounts: false },
 		);
 		return listing;
 	} catch (error) {
@@ -179,6 +158,7 @@ export async function getOpenAICompatibleModels(
 				"openai-compatible",
 				accountId,
 				deriveFamilyDefaults(cached.models),
+				{ shareAcrossAccounts: false },
 			);
 		}
 		log.warn(

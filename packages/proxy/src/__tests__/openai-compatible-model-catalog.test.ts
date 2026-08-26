@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { clearDerivedProviderModelDefaults } from "@better-ccflare/providers";
+import {
+	clearDerivedProviderModelDefaults,
+	resolveProviderModelDefault,
+} from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers/proxy-types";
 import {
@@ -169,6 +172,36 @@ describe("getOpenAICompatibleModels", () => {
 		);
 
 		expect(listing).toBeNull();
+	});
+
+	// Regression for the leak Fix 1 closes: setDerivedProviderModelDefaults used
+	// to always also write the provider-wide fallback, so a second account with
+	// no listing of its own could resolve to the first account's private
+	// endpoint's model ids. openai-compatible must opt out of that sharing.
+	it("does not let one account's derived defaults resolve for another account", async () => {
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify(LIVE_BODY), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			})) as typeof globalThis.fetch;
+
+		await getOpenAICompatibleModels("acc-oai", makeCtx(makeAccount()));
+
+		expect(
+			resolveProviderModelDefault("openai-compatible", "opus", "acc-oai"),
+		).toBe("gpt-oss-120b");
+		expect(
+			resolveProviderModelDefault(
+				"openai-compatible",
+				"opus",
+				"acc-other-account",
+			),
+		).toBeUndefined();
+		// No accountId at all resolves through the (now never-populated)
+		// provider-wide map — must also stay empty.
+		expect(
+			resolveProviderModelDefault("openai-compatible", "opus"),
+		).toBeUndefined();
 	});
 
 	it("treats a listing with no usable models as a failure", async () => {

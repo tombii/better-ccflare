@@ -57,13 +57,24 @@ function derivedKey(provider: string, accountId: string): string {
  * Record the family -> model map that an account's own listing implies. Called
  * whenever that listing is read, which is what keeps the defaults current
  * without anyone maintaining a table.
+ *
+ * `shareAcrossAccounts` (default true) also refreshes `derivedByProvider`: the
+ * provider-wide fallback described below. Default true because it is safe for
+ * a provider whose accounts share one real upstream — Codex being the case
+ * that motivated it. It is NOT safe for a provider whose accounts each point
+ * at an arbitrary, operator-chosen endpoint (openai-compatible): there, one
+ * account's listing says nothing about what another account's endpoint can
+ * serve, so a caller for that kind of provider must pass `false` to keep the
+ * per-account map as the only thing this call writes.
  */
 export function setDerivedProviderModelDefaults(
 	provider: string,
 	accountId: string,
 	families: Record<string, string>,
+	{ shareAcrossAccounts = true }: { shareAcrossAccounts?: boolean } = {},
 ): void {
 	derivedByAccount.set(derivedKey(provider, accountId), { ...families });
+	if (!shareAcrossAccounts) return;
 	// The same listing also refreshes the provider-wide default: what the
 	// settings screen shows, and what an account without its own listing falls
 	// back to. Safe because the models this resolves to — the provider's top
