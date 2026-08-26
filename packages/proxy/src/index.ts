@@ -84,6 +84,14 @@ export {
 	type ModelCatalogRefreshResult,
 	refreshModelCatalog,
 } from "./model-catalog";
+export type {
+	OpenAICompatibleModelEntry,
+	OpenAICompatibleModelListing,
+} from "./openai-compatible-model-catalog";
+export {
+	clearOpenAICompatibleModelCacheForAccount,
+	getOpenAICompatibleModels,
+} from "./openai-compatible-model-catalog";
 export {
 	drainUsageCollector,
 	getUsageCollectorHealth,

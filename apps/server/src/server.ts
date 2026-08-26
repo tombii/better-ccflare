@@ -59,6 +59,7 @@ import {
 	forceCloseCircuit,
 	getCodexModels,
 	getModelCatalog,
+	getOpenAICompatibleModels,
 	getUsageCollectorHealth,
 	getValidAccessToken,
 	handleProxy,
@@ -1010,6 +1011,10 @@ export default async function startServer(options?: {
 			codexModels: async (accountId: string) => {
 				if (!modelCatalogProxyContext) return null;
 				return getCodexModels(accountId, modelCatalogProxyContext);
+			},
+			openaiCompatibleModels: async (accountId: string) => {
+				if (!modelCatalogProxyContext) return null;
+				return getOpenAICompatibleModels(accountId, modelCatalogProxyContext);
 			},
 			refresh: async () => {
 				if (!modelCatalogProxyContext) {

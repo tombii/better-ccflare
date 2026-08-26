@@ -91,6 +91,18 @@ export interface APIContext {
 			source: "live" | "cached" | "shared";
 			borrowedFrom?: string;
 		} | null>;
+		/**
+		 * Models one openai-compatible account can actually call, read from that
+		 * account's own endpoint. Null when the account is unknown, is not an
+		 * openai-compatible account, or none has ever been read. Unlike
+		 * `codexModels`, never borrowed between accounts — each points at an
+		 * arbitrary, operator-chosen endpoint.
+		 */
+		openaiCompatibleModels?: (accountId: string) => Promise<{
+			models: Array<{ id: string; displayName: string }>;
+			fetchedAt: number;
+			source: "live" | "cached";
+		} | null>;
 	};
 	/**
 	 * Process-local secret gating internal-probe requests (auto-refresh /

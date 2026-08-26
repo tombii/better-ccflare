@@ -112,6 +112,23 @@ export function createModelsHandler(context: APIContext) {
 			}
 		}
 
+		if (accountId && context.modelCatalog?.openaiCompatibleModels) {
+			const listing =
+				await context.modelCatalog.openaiCompatibleModels(accountId);
+			if (listing) {
+				return jsonResponse({
+					provider: requested,
+					models: listing.models.map((model) => ({
+						id: model.id,
+						displayName: model.displayName,
+						source: "account" as const,
+					})),
+					fetchedAt: listing.fetchedAt,
+					source: listing.source,
+				});
+			}
+		}
+
 		if (requested === "" || isAnthropicProvider(requested)) {
 			if (!context.modelCatalog) {
 				return errorResponse("Model catalog is not available");

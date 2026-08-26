@@ -26,6 +26,7 @@ import type {
 } from "@better-ccflare/types";
 import { cacheBodyStore } from "../cache-body-store";
 import { ensureCodexModelDefaults } from "../codex-model-catalog";
+import { ensureOpenAICompatibleModelDefaults } from "../openai-compatible-model-catalog";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
@@ -740,6 +741,7 @@ export async function proxyWithAccount(
 		// here costs one await on the account's first request in this process;
 		// after that it is memory.
 		await ensureCodexModelDefaults(account, ctx);
+		await ensureOpenAICompatibleModelDefaults(account, ctx);
 
 		let transformedRequest = provider.transformRequestBody
 			? await provider.transformRequestBody(providerRequest, account)
