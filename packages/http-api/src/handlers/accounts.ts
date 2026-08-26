@@ -37,6 +37,7 @@ import {
 	clearAutoRefreshTrackingForAccount,
 	clearCodexModelCacheForAccount,
 	clearFamilyExhaustionForAccount,
+	clearOpenAICompatibleModelCacheForAccount,
 	clearPendingRotation,
 	getUsageThrottleStatus,
 	refreshCodexUsageForAccount,
@@ -1050,10 +1051,12 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 
 			// Clear the remaining account-keyed in-memory caches that have no
 			// TTL/periodic sweep of their own: a pending refresh-token rotation
-			// still waiting to be persisted, this account's cached Codex model
-			// listing, and any negative-cache exhaustion marks for it.
+			// still waiting to be persisted, this account's cached Codex/
+			// openai-compatible model listing, and any negative-cache exhaustion
+			// marks for it.
 			clearPendingRotation(accountId);
 			clearCodexModelCacheForAccount(accountId);
+			clearOpenAICompatibleModelCacheForAccount(accountId);
 			clearFamilyExhaustionForAccount(accountId);
 
 			return jsonResponse({

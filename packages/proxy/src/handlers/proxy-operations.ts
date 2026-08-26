@@ -738,7 +738,10 @@ export async function proxyWithAccount(
 		// The provider is about to translate the Claude family into one of its
 		// own models, and only this account's listing knows which. Loading it
 		// here costs one await on the account's first request in this process;
-		// after that it is memory.
+		// after that it is memory. Codex only: an openai-compatible account's
+		// derived defaults are never consumed for family mapping (each endpoint
+		// is arbitrary, so guessing sonnet/haiku from list position is not a
+		// call this proxy makes), so warming them here would only add latency.
 		await ensureCodexModelDefaults(account, ctx);
 
 		let transformedRequest = provider.transformRequestBody
