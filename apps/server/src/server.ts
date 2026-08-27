@@ -1450,11 +1450,14 @@ export default async function startServer(options?: {
 					// Client-side routing: serve index.html for SPA navigations.
 					// Limited to GET/HEAD and to non-API, non-proxy, non-/health
 					// paths so it never shadows an API route, the health endpoint,
-					// or a proxy request (which must stay authenticated).
+					// or a proxy request (which must stay authenticated). Prefixes
+					// mirror AuthService's own /v1, /messages classification
+					// (auth-service.ts) exactly — no trailing slash required on
+					// either — so this SPA-serving check and the auth-layer
+					// classification never drift apart.
 					const isApiOrProxyPath =
-						url.pathname.startsWith("/api/") ||
-						url.pathname === "/api" ||
-						url.pathname.startsWith("/v1/") ||
+						url.pathname.startsWith("/api") ||
+						url.pathname.startsWith("/v1") ||
 						url.pathname.startsWith("/messages") ||
 						url.pathname === "/health";
 					if (
