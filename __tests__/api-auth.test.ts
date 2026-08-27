@@ -182,11 +182,100 @@ describe("API Authentication", () => {
 			expect(extractedKey).toBe("btr-bearer-key-456");
 		});
 
-		test("should exempt dashboard paths from authentication", async () => {
-			expect(await authService.isPathExempt("/", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/dashboard", "GET")).toBe(true);
+		test("should not exempt dashboard/SPA paths at the auth-service layer", async () => {
+			// The dashboard SPA + static assets are served directly by the
+			// server (apps/server/src/server.ts) BEFORE authentication is
+			// consulted, so they never reach AuthService#isPathExempt. Any
+			// request that does reach this layer is an API or proxy request,
+			// so "/" and "/dashboard" must NOT be exempt here — exempting them
+			// in this SHARED path (also used by the proxy fallback) would
+			// let arbitrary unauthenticated paths reach the proxy whenever the
+			// dashboard is disabled or its assets are unavailable.
+			expect(await authService.isPathExempt("/", "GET")).toBe(false);
+			expect(await authService.isPathExempt("/dashboard", "GET")).toBe(false);
 			expect(await authService.isPathExempt("/health", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/api/oauth/init", "POST")).toBe(true);
+		});
+
+		test("should NOT exempt token-mutating OAuth endpoints from authentication", async () => {
+			// isStaticPathExempt() used to blanket-exempt every /api/oauth*
+			// path, which let an unauthenticated caller overwrite stored
+			// account OAuth tokens whenever dashboard auth was enabled. Only
+			// read-only status polling stays exempt; init/reauth/callback now
+			// require an API key like any other /api/* route once auth is on.
+			await generateApiKey(dbOps, "oauth-guard-test", "admin");
+			expect(await authService.isAuthenticationEnabled()).toBe(true);
+
+			expect(await authService.isPathExempt("/api/oauth/init", "POST")).toBe(false);
+			expect(await authService.isPathExempt("/api/oauth/callback", "POST")).toBe(false);
+			expect(await authService.isPathExempt("/api/oauth/qwen/reauth", "POST")).toBe(false);
+			expect(await authService.isPathExempt("/api/oauth/codex/reauth", "POST")).toBe(false);
+			expect(
+				await authService.isPathExempt(
+					"/api/oauth/anthropic/reauth/callback",
+					"POST",
+				),
+			).toBe(false);
+
+			// Read-only status polling remains exempt.
+			expect(
+				await authService.isPathExempt("/api/oauth/qwen/status/acct-1", "GET"),
+			).toBe(true);
+			expect(
+				await authService.isPathExempt("/api/oauth/codex/status/acct-1", "GET"),
+			).toBe(true);
+		});
+
+		test("should still allow OAuth init/reauth for initial account setup (no keys configured)", async () => {
+			// When no API keys exist yet, authenticateRequest() allows any
+			// request through its isAuthenticationEnabled() fallback — so
+			// OAuth setup during initial install is unaffected by removing
+			// the blanket static exemption.
+			expect(await authService.isAuthenticationEnabled()).toBe(false);
+
+			const request = new Request("http://localhost:8080/api/oauth/init", {
+				method: "POST",
+			});
+			const result = await authService.authenticateRequest(
+				request,
+				"/api/oauth/init",
+				"POST",
+			);
+			expect(result.isAuthenticated).toBe(true);
+		});
+
+		test("should reject unauthenticated OAuth token mutation once auth is enabled", async () => {
+			await generateApiKey(dbOps, "oauth-enabled-test", "admin");
+			expect(await authService.isAuthenticationEnabled()).toBe(true);
+
+			const request = new Request("http://localhost:8080/api/oauth/callback", {
+				method: "POST",
+			});
+			const result = await authService.authenticateRequest(
+				request,
+				"/api/oauth/callback",
+				"POST",
+			);
+			expect(result.isAuthenticated).toBe(false);
+		});
+
+		test("should reject an arbitrary non-API proxy-fallback path once auth is enabled", async () => {
+			// isStaticPathExempt() used to treat any path not starting with
+			// /api, /v1, or /messages as exempt — intended to let the
+			// dashboard serve its SPA/static assets. But this shared path is
+			// also consulted by the proxy fallback in apps/server/src/server.ts
+			// when the dashboard is disabled/unavailable, so the broad rule
+			// let arbitrary paths (e.g. POST /foo) reach the proxy without an
+			// API key. The dashboard is now served before auth is consulted
+			// (server.ts), so nothing legitimate should reach this layer for
+			// a non-API path.
+			await generateApiKey(dbOps, "arbitrary-path-test", "admin");
+			expect(await authService.isAuthenticationEnabled()).toBe(true);
+
+			const request = new Request("http://localhost:8080/foo", {
+				method: "POST",
+			});
+			const result = await authService.authenticateRequest(request, "/foo", "POST");
+			expect(result.isAuthenticated).toBe(false);
 		});
 
 		test("should exempt /api/version/check from authentication", async () => {
@@ -215,13 +304,19 @@ describe("API Authentication", () => {
 			expect(result.error).toBeUndefined();
 		});
 
-		test("should exempt static assets from authentication", async () => {
-			expect(await authService.isPathExempt("/chunk-abc123.js", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/chunk-abc123.css", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/favicon-abc123.svg", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/chunk-abc123.js.map", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/static/logo.png", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/assets/font.woff2", "GET")).toBe(true);
+		test("should not exempt static-asset-looking paths at the auth-service layer", async () => {
+			// Static assets are served directly by the server from the
+			// dashboard manifest before authentication is consulted (see
+			// apps/server/src/server.ts), so they never reach this layer.
+			// A path that merely *looks* like a static asset must still be
+			// treated as an authenticated proxy request here — this is what
+			// closes the arbitrary-path proxy bypass.
+			expect(await authService.isPathExempt("/chunk-abc123.js", "GET")).toBe(false);
+			expect(await authService.isPathExempt("/chunk-abc123.css", "GET")).toBe(false);
+			expect(await authService.isPathExempt("/favicon-abc123.svg", "GET")).toBe(false);
+			expect(await authService.isPathExempt("/chunk-abc123.js.map", "GET")).toBe(false);
+			expect(await authService.isPathExempt("/static/logo.png", "GET")).toBe(false);
+			expect(await authService.isPathExempt("/assets/font.woff2", "GET")).toBe(false);
 		});
 
 		test("should require authentication for API paths", async () => {
