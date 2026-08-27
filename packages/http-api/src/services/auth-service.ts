@@ -333,10 +333,12 @@ export class AuthService {
 			return true;
 		}
 
-		// OAuth endpoints are exempt (needed for account setup)
-		if (path.startsWith("/api/oauth")) {
-			return true;
-		}
+		// NOTE: OAuth endpoints are intentionally NOT blanket-exempt here.
+		// Token-mutating endpoints (/api/oauth/**/init|reauth|callback) must
+		// require an admin API key once authentication is enabled — see the
+		// method-aware gating in isPathExempt(). A blanket static exemption
+		// allowed any unauthenticated caller to overwrite stored account
+		// OAuth tokens whenever dashboard auth was configured.
 
 		// Version check returns only the latest npm-published version. The
 		// dashboard's sidebar tile fires this on load with no API key in
@@ -353,17 +355,15 @@ export class AuthService {
 			return true;
 		}
 
-		// All other paths are dashboard routes (client-side routing) or static assets
-		// These should be exempt to allow serving the dashboard HTML and assets
-		// This matches the server logic that serves index.html for non-API routes
-		if (
-			!path.startsWith("/api") &&
-			!path.startsWith("/v1") &&
-			!path.startsWith("/messages")
-		) {
-			return true;
-		}
-
+		// IMPORTANT: do NOT blanket-exempt "any non-/api, non-/v1, non-/messages
+		// path". The dashboard SPA and its static assets are served directly by
+		// the server (apps/server/src/server.ts) *before* authentication is
+		// consulted, so they never reach this code path. Every request that
+		// actually reaches authenticateRequest() is an API or proxy request. A
+		// broad "not an API path => exempt" rule here let arbitrary proxy paths
+		// (e.g. POST /foo) through without an API key whenever the dashboard was
+		// disabled or its assets were unavailable, since upstream providers
+		// accept arbitrary paths.
 		return false;
 	}
 
@@ -388,6 +388,25 @@ export class AuthService {
 		// Static exemptions first (no DB hit)
 		if (this.isStaticPathExempt(path, method)) {
 			return true;
+		}
+
+		// OAuth endpoints.
+		// Read-only status polling (GET /api/oauth/{qwen,codex}/status/*) stays
+		// exempt — it returns transient setup progress only, no secrets or
+		// mutation, and the setup UI polls it before an API key may exist.
+		// Token-mutating endpoints (init / reauth / callback) are NOT exempt:
+		// when no API keys exist authenticateRequest() still allows them
+		// (initial account setup, via the isAuthenticationEnabled() check
+		// below); once authentication is enabled they fall through to
+		// API-key validation and authorizeEndpoint(), which only grants admin
+		// keys access to non-proxy paths. This closes the unauthenticated
+		// token-overwrite vector.
+		if (path.startsWith("/api/oauth")) {
+			const isReadOnlyStatus =
+				method === "GET" &&
+				(path.startsWith("/api/oauth/qwen/status/") ||
+					path.startsWith("/api/oauth/codex/status/"));
+			return isReadOnlyStatus;
 		}
 
 		// API key management: Only allow initial key creation without auth if no keys exist
