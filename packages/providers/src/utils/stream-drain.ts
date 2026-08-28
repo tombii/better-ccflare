@@ -83,9 +83,24 @@ export async function drainReaderWithDeadline(
 		}
 
 		while (true) {
-			const outcome = await Promise.race([reader.read(), deadline]);
+			const pendingRead = reader.read();
+			const outcome = await Promise.race([pendingRead, deadline]);
 			if (outcome === "deadline") {
+				// `pendingRead` is still outstanding here. Releasing the lock
+				// while a read is in flight only rejects that promise
+				// (WHATWG Streams §4.5) — it does not tell the underlying
+				// source the stream is abandoned, which is exactly the
+				// "touched then abandoned" shape Bun's native fetch can
+				// buffer without bound (oven-sh/bun#39590, #382). Abort
+				// first so the losing read has a chance to actually settle
+				// (reject) via the torn-down connection, then give it a
+				// bounded grace window before releasing the lock regardless
+				// — a stuck-but-unabortable source must not hang the drain.
 				drainAbort?.abort(new Error("Drain deadline exceeded"));
+				await Promise.race([
+					pendingRead.catch(() => undefined),
+					new Promise((resolve) => setTimeout(resolve, deadlineMs)),
+				]);
 				return;
 			}
 			if (outcome.done) return;
