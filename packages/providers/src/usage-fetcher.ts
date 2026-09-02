@@ -719,6 +719,10 @@ class UsageCache {
 		string,
 		(accountId: string) => void
 	>();
+	private staleWeeklyResetCallbacks = new Map<
+		string,
+		(accountId: string) => void
+	>();
 	private snapshotCallbacks = new Map<
 		string,
 		(accountId: string, data: UsageData) => void
@@ -804,6 +808,7 @@ class UsageCache {
 		customEndpoint?: string | null,
 		onWindowReset?: (accountId: string) => void,
 		onCapacityRestored?: (accountId: string) => void,
+		onStaleWeeklyReset?: (accountId: string) => void,
 		onSnapshot?: (accountId: string, data: UsageData) => void,
 	) {
 		// Check if provider supports usage tracking
@@ -849,6 +854,11 @@ class UsageCache {
 			this.capacityRestoredCallbacks.set(accountId, onCapacityRestored);
 		} else {
 			this.capacityRestoredCallbacks.delete(accountId);
+		}
+		if (onStaleWeeklyReset) {
+			this.staleWeeklyResetCallbacks.set(accountId, onStaleWeeklyReset);
+		} else {
+			this.staleWeeklyResetCallbacks.delete(accountId);
 		}
 		if (onSnapshot) {
 			this.snapshotCallbacks.set(accountId, onSnapshot);
@@ -918,6 +928,7 @@ class UsageCache {
 			this.failureCounts.delete(accountId);
 			this.windowResetCallbacks.delete(accountId);
 			this.capacityRestoredCallbacks.delete(accountId);
+			this.staleWeeklyResetCallbacks.delete(accountId);
 			this.snapshotCallbacks.delete(accountId);
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
@@ -1145,6 +1156,19 @@ class UsageCache {
 						const capacityCallback =
 							this.capacityRestoredCallbacks.get(accountId);
 						if (capacityCallback) capacityCallback(accountId);
+					}
+					// Detect an out-of-band weekly reset: usage shows a fresh window
+					// (0% utilization, resets_at unknown) while the DB's rate_limit_reset
+					// may still hold a stale future timestamp from an earlier 429. That
+					// stale value defeats AutoRefreshScheduler's probe gate and pins the
+					// account last in strict drain-soonest ranking indefinitely (#443).
+					const weeklyResetAt = extractWeeklyResetTime(
+						result.data as UsageData,
+						"anthropic",
+					);
+					if (utilization === 0 && weeklyResetAt === null) {
+						const staleCb = this.staleWeeklyResetCallbacks.get(accountId);
+						if (staleCb) staleCb(accountId);
 					}
 					const window = getRepresentativeWindow(result.data as UsageData);
 					log.debug(

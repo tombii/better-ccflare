@@ -570,6 +570,34 @@ function startUsagePollingWithRefresh(
 							),
 						);
 				},
+				(accountId) => {
+					// Usage API shows a fresh weekly window (0% utilization, resets_at
+					// unknown) but rate_limit_reset is still a stale future timestamp from
+					// an earlier 429 — this blocks AutoRefreshScheduler's probe gate and
+					// pins the account last in strict drain-soonest ranking forever (#443).
+					// Clear it so the account gets probed on the next scheduler tick.
+					proxyContext.dbOps
+						.getAccount(accountId)
+						.then((acc) => {
+							if (
+								acc?.rate_limit_reset &&
+								Number(acc.rate_limit_reset) > Date.now()
+							) {
+								return proxyContext.dbOps
+									.updateAccountRateLimitMeta(accountId, "allowed", null)
+									.then(() => {
+										logger.info(
+											`Cleared stale rate_limit_reset for account ${acc.name} (${accountId}): usage polling shows fresh weekly window (out-of-band reset)`,
+										);
+									});
+							}
+						})
+						.catch((err) =>
+							logger.warn(
+								`Failed to check/clear rate_limit_reset for account ${accountId} on weekly reset detection: ${err}`,
+							),
+						);
+				},
 				(accountId, data) => {
 					proxyContext.dbOps
 						.recordUsageSnapshot(accountId, data, Date.now())
