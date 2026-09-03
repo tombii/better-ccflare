@@ -41,6 +41,10 @@ The auto-refresh feature automatically starts new usage windows by:
 6. **Window Update**: The NEW `rate_limit_reset` from the API is stored (typically 5 hours in the future)
 7. **Repeat**: Next refresh happens when that stored timestamp expires
 
+#### Out-of-Band Reset Detection
+
+The probe gate above (`rate_limit_reset <= now`) can deadlock if Anthropic resets an account's *weekly* window externally while the account still holds a stale, future `rate_limit_reset` from an earlier 429 — the scheduler never sees the window as expired, so it never probes the account to learn the real reset time. To break this, the usage poller separately watches for the contradiction (`seven_day` utilization reporting 0% with `resets_at` unknown, while `rate_limit_reset` is still in the future) and clears the stale `rate_limit_reset` so the account becomes eligible again on the next scheduler tick. The clear is a compare-and-swap guarded by the `rate_limit_reset_at` write-time column (see [database.md](database.md#accounts-table)), so a genuinely new rate limit recorded concurrently is never clobbered.
+
 ### Algorithm Flow
 
 ```

@@ -49,6 +49,7 @@ erDiagram
         INTEGER session_request_count "Requests in current session"
         INTEGER paused "Account pause status (0 or 1)"
         INTEGER rate_limit_reset "Next rate limit reset timestamp"
+        INTEGER rate_limit_reset_at "Write time of rate_limit_reset (CAS guard)"
         TEXT rate_limit_status "Current rate limit status"
         INTEGER rate_limit_remaining "Remaining requests before limit"
     }
@@ -127,6 +128,7 @@ The `accounts` table stores OAuth account information and usage statistics for l
 | `session_request_count` | INTEGER | DEFAULT 0* | Requests in current session |
 | `paused` | INTEGER | DEFAULT 0* | 1 if account is paused, 0 if active |
 | `rate_limit_reset` | INTEGER | NULL* | Next rate limit window reset time |
+| `rate_limit_reset_at` | INTEGER | NULL* | Unix timestamp when `rate_limit_reset` was last written; used as a compare-and-swap guard so an out-of-band weekly-reset detection only clears a genuinely stale `rate_limit_reset`, never a concurrent real one |
 | `rate_limit_status` | TEXT | NULL* | Current rate limit status message |
 | `rate_limit_remaining` | INTEGER | NULL* | Remaining requests in current window |
 
