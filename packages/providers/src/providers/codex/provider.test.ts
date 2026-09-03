@@ -10,6 +10,7 @@ import {
 	CODEX_DEFAULT_ENDPOINT,
 	CODEX_PING_MODEL,
 	CODEX_PROMPT_CACHE_KEY_ENV,
+	CODEX_SYNTHETIC_COUNT_TOKENS_ENV,
 	CODEX_VERSION,
 	CodexProvider,
 } from "./provider";
@@ -2292,6 +2293,86 @@ describe("CodexProvider.transformRequestBody", () => {
 
 		expect(body.input_tokens).toBeGreaterThan(0);
 		expect(body.input_tokens).toBeLessThan(10);
+	});
+
+	describe("CCFLARE_CODEX_SYNTHETIC_COUNT_TOKENS gate (issue #444)", () => {
+		afterEach(() => {
+			delete process.env[CODEX_SYNTHETIC_COUNT_TOKENS_ENV];
+		});
+
+		const countTokensRequest = () => {
+			const provider = new CodexProvider();
+			const url = provider.buildUrl("/v1/messages/count_tokens", "");
+			const request = new Request(url, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "claude-3-7-sonnet",
+					messages: [{ role: "user", content: "hello world" }],
+				}),
+			});
+			return { provider, request };
+		};
+
+		it("returns the character-based estimate when the env var is unset (default behavior)", async () => {
+			delete process.env[CODEX_SYNTHETIC_COUNT_TOKENS_ENV];
+			const { provider, request } = countTokensRequest();
+
+			const transformed = await provider.transformRequestBody(
+				request,
+				undefined,
+			);
+			const body = await transformed.json();
+
+			expect(transformed.headers.get("x-better-ccflare-synthetic-status")).toBe(
+				"200",
+			);
+			expect(body.input_tokens).toBeNumber();
+			expect(body.input_tokens).toBeGreaterThan(0);
+		});
+
+		it('returns a 501 not_implemented_error when set to "0"', async () => {
+			process.env[CODEX_SYNTHETIC_COUNT_TOKENS_ENV] = "0";
+			const { provider, request } = countTokensRequest();
+
+			const transformed = await provider.transformRequestBody(
+				request,
+				undefined,
+			);
+			const body = await transformed.json();
+
+			expect(
+				transformed.headers.get("x-better-ccflare-synthetic-response"),
+			).toBe("true");
+			expect(transformed.headers.get("x-better-ccflare-synthetic-status")).toBe(
+				"501",
+			);
+			expect(body).toEqual({
+				type: "error",
+				error: {
+					type: "not_implemented_error",
+					message:
+						"Codex does not support count_tokens; synthetic estimates are disabled (CCFLARE_CODEX_SYNTHETIC_COUNT_TOKENS=0).",
+				},
+			});
+		});
+
+		it('falls back to the estimate for any non-"0" value (regression guard)', async () => {
+			process.env[CODEX_SYNTHETIC_COUNT_TOKENS_ENV] = "1";
+			const { provider, request } = countTokensRequest();
+
+			const transformed = await provider.transformRequestBody(
+				request,
+				undefined,
+			);
+			const body = await transformed.json();
+
+			expect(transformed.headers.get("x-better-ccflare-synthetic-status")).toBe(
+				"200",
+			);
+			expect(body.input_tokens).toBeNumber();
+			expect(body.input_tokens).toBeGreaterThan(0);
+		});
 	});
 
 	it("returns a synthetic error for malformed count_tokens requests", async () => {

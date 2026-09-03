@@ -103,15 +103,26 @@ function makeMessagesRequest(
 	});
 }
 
+const CODEX_SYNTHETIC_COUNT_TOKENS_ENV = "CCFLARE_CODEX_SYNTHETIC_COUNT_TOKENS";
+
 describe("proxyWithAccount — Codex count_tokens", () => {
 	let originalFetch: typeof globalThis.fetch;
+	let originalSyntheticCountTokensEnv: string | undefined;
 
 	beforeEach(() => {
 		originalFetch = globalThis.fetch;
+		originalSyntheticCountTokensEnv =
+			process.env[CODEX_SYNTHETIC_COUNT_TOKENS_ENV];
 	});
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
+		if (originalSyntheticCountTokensEnv === undefined) {
+			delete process.env[CODEX_SYNTHETIC_COUNT_TOKENS_ENV];
+		} else {
+			process.env[CODEX_SYNTHETIC_COUNT_TOKENS_ENV] =
+				originalSyntheticCountTokensEnv;
+		}
 	});
 
 	it("returns a synthetic token count without fetching or refreshing Codex", async () => {
@@ -142,6 +153,11 @@ describe("proxyWithAccount — Codex count_tokens", () => {
 		expect(ctx.asyncWriter.enqueue).toHaveBeenCalledTimes(0);
 		expect(result).toBeInstanceOf(Response);
 		expect(result?.status).toBe(200);
+		// Issue #444: the synthetic marker must survive materializeSyntheticResponse
+		// so downstream consumers can tell this response didn't come from upstream.
+		expect(result?.headers.get("x-better-ccflare-synthetic-response")).toBe(
+			"true",
+		);
 		const payload = await result?.json();
 		expect(payload.input_tokens).toBeNumber();
 		expect(payload.input_tokens).toBeGreaterThan(0);
@@ -170,10 +186,57 @@ describe("proxyWithAccount — Codex count_tokens", () => {
 		expect(ctx.asyncWriter.enqueue).toHaveBeenCalledTimes(0);
 		expect(result).toBeInstanceOf(Response);
 		expect(result?.status).toBe(400);
+		expect(result?.headers.get("x-better-ccflare-synthetic-response")).toBe(
+			"true",
+		);
 		const payload = await result?.json();
 		expect(payload.error.message).toBe(
 			"Codex count_tokens requires a valid JSON request body.",
 		);
+	});
+
+	it("returns a 501 not_implemented_error with the synthetic marker when CCFLARE_CODEX_SYNTHETIC_COUNT_TOKENS=0", async () => {
+		process.env[CODEX_SYNTHETIC_COUNT_TOKENS_ENV] = "0";
+		const fetchMock = mock(async () => {
+			throw new Error(
+				"count_tokens should not call upstream even when synthetic estimates are disabled",
+			);
+		});
+		globalThis.fetch = fetchMock;
+
+		const bodyBuffer = new TextEncoder().encode(
+			JSON.stringify({
+				model: "claude-sonnet-4-5",
+				messages: [{ role: "user", content: "hello world" }],
+			}),
+		).buffer;
+		const ctx = makeProxyContext();
+		const result = await proxyWithAccount(
+			makeCountTokensRequest(bodyBuffer),
+			new URL("https://proxy.local/v1/messages/count_tokens"),
+			makeCodexAccount(),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		expect(fetchMock).toHaveBeenCalledTimes(0);
+		expect(result).toBeInstanceOf(Response);
+		expect(result?.status).toBe(501);
+		expect(result?.headers.get("x-better-ccflare-synthetic-response")).toBe(
+			"true",
+		);
+		const payload = await result?.json();
+		expect(payload).toEqual({
+			type: "error",
+			error: {
+				type: "not_implemented_error",
+				message:
+					"Codex does not support count_tokens; synthetic estimates are disabled (CCFLARE_CODEX_SYNTHETIC_COUNT_TOKENS=0).",
+			},
+		});
 	});
 
 	it("does not trust client-supplied synthetic response markers", async () => {
@@ -227,6 +290,14 @@ describe("proxyWithAccount — Codex count_tokens", () => {
 
 			expect(result).toBeInstanceOf(Response);
 			expect(result?.status).toBe(200);
+			// Issue #444 regression guard: a real (non-synthetic) upstream response
+			// must never carry the synthetic marker, even if the client tried to
+			// forge one on the inbound request — materializeSyntheticResponse only
+			// runs for genuinely synthetic provider Requests, and its header copy
+			// must stay conditional rather than unconditional.
+			expect(
+				result?.headers.get("x-better-ccflare-synthetic-response"),
+			).toBeNull();
 			await result?.text();
 		} finally {
 			collectorSpy.mockRestore();
