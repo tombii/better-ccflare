@@ -42,6 +42,7 @@ import { handleProxyError, processProxyResponse } from "./response-processor";
 import { isRetryable429 } from "./retryable-429";
 import { getValidAccessToken } from "./token-manager";
 import { collectWindows } from "./usage-throttling";
+import { hasZai1305Error } from "./zai-1305";
 
 const log = new Logger("ProxyOperations");
 
@@ -473,6 +474,122 @@ export async function isModelUnavailableError(
 	}
 
 	return false;
+}
+
+/**
+ * Detects ZAI error 1305 ("service overloaded") inside an SSE stream.
+ * ZAI returns HTTP 200 with content-type: text/event-stream, but the SSE body
+ * contains an error event with code 1305. This function:
+ *   1. Peeks at the first chunk of the SSE stream (via clone, original preserved)
+ *   2. If 1305 + "overloaded" found - retries the request with backoff (up to 2 attempts)
+ *   3. If retries also return 1305 - converts to a synthetic 429 so isModelUnavailableError
+ *      triggers model fallback (e.g. glm-5.2 -> glm-4.7)
+ *   4. If no 1305 - returns the original response unchanged
+ */
+async function checkZai1305(
+	response: Response,
+	account: Account,
+	requestClone: Request,
+	log: Logger,
+): Promise<Response> {
+	if (
+		response.status !== 200 ||
+		account.provider !== "zai" ||
+		!response.headers.get("content-type")?.includes("text/event-stream")
+	) {
+		return response;
+	}
+
+	// Peek at first chunk of SSE stream
+	let has1305 = false;
+	try {
+		const peek = response.clone();
+		const reader = peek.body?.getReader();
+		if (reader) {
+			const { value } = await reader.read();
+			reader.releaseLock();
+			const text = value ? new TextDecoder().decode(value) : "";
+			if (hasZai1305Error(text)) {
+				has1305 = true;
+			}
+		}
+	} catch {
+		// If we can't read the stream, pass through
+	}
+
+	if (!has1305) {
+		return response;
+	}
+
+	log.warn(
+		`Account ${account.name}: detected 1305 overloaded in SSE stream, retrying`,
+	);
+
+	// Retry with backoff (same config as 529 retry)
+	const retryCfg = getOverloadRetryConfig();
+	if (retryCfg.enabled && retryCfg.maxAttempts > 1) {
+		for (let attempt = 1; attempt < retryCfg.maxAttempts; attempt++) {
+			const cap = Math.min(retryCfg.baseMs * 2 ** attempt, retryCfg.maxMs);
+			const delayMs = Math.random() * cap;
+			await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+
+			log.info(
+				`Account ${account.name}: 1305 retry ${attempt}/${retryCfg.maxAttempts - 1} after ${Math.round(delayMs)}ms`,
+			);
+
+			const retryRaw = await makeProxyRequest(requestClone.clone());
+			const retryHeaders = new Headers(retryRaw.headers);
+			retryHeaders.set(
+				"x-better-ccflare-request-id",
+				response.headers.get("x-better-ccflare-request-id") || "",
+			);
+
+			const retryResponse = new Response(retryRaw.body, {
+				status: retryRaw.status,
+				statusText: retryRaw.statusText,
+				headers: retryHeaders,
+			});
+
+			// Check if retry succeeded (no 1305 in stream)
+			try {
+				const retryPeek = retryResponse.clone();
+				const retryReader = retryPeek.body?.getReader();
+				if (retryReader) {
+					const { value: retryValue } = await retryReader.read();
+					retryReader.releaseLock();
+					const retryText = retryValue
+						? new TextDecoder().decode(retryValue)
+						: "";
+					if (!hasZai1305Error(retryText)) {
+						log.info(
+							`Account ${account.name}: 1305 resolved on retry ${attempt}`,
+						);
+						return retryResponse;
+					}
+				} else {
+					return retryResponse;
+				}
+			} catch {
+				return retryResponse;
+			}
+		}
+	}
+
+	log.warn(
+		`Account ${account.name}: all 1305 retries exhausted, converting to 429 for model fallback`,
+	);
+
+	// Convert to synthetic 429 so isModelUnavailableError triggers model cycling
+	return new Response(
+		JSON.stringify({
+			error: { type: "overloaded", message: "ZAI service overloaded (1305)" },
+		}),
+		{
+			status: 429,
+			statusText: "Too Many Requests",
+			headers: { "content-type": "application/json" },
+		},
+	);
 }
 
 /**
@@ -934,6 +1051,14 @@ export async function proxyWithAccount(
 			return withSanitizedProxyHeaders(rawResponse);
 		}
 
+		// Check for ZAI 1305 overloaded error in SSE stream and retry/fallback
+		rawResponse = await checkZai1305(
+			rawResponse,
+			account,
+			transformedRequest,
+			log,
+		);
+
 		// On model unavailable / rate-limited: cycle through the model list for
 		// this account. getModelList returns [primary, ...fallbacks] merged from
 		// model_mappings arrays and legacy model_fallbacks. We already tried index 0
@@ -1266,6 +1391,12 @@ export async function proxyWithAccount(
 						? materializeSyntheticResponse(retryTransformedRequest)
 						: await forwardUpstream(retryTransformedRequest);
 
+					rawResponse = await checkZai1305(
+						rawResponse,
+						account,
+						retryTransformedRequest,
+						log,
+					);
 					if (!(await isModelUnavailableError(rawResponse.clone()))) {
 						break; // Success — stop cycling
 					}
@@ -1275,6 +1406,12 @@ export async function proxyWithAccount(
 			// If still unavailable/rate-limited after exhausting the model list,
 			// failover to the next account. OpenAI-compatible providers never set
 			// isRateLimited:true in parseRateLimit, so we must handle it here.
+			rawResponse = await checkZai1305(
+				rawResponse,
+				account,
+				transformedRequest,
+				log,
+			);
 			if (await isModelUnavailableError(rawResponse)) {
 				log.warn(
 					`All models exhausted on account ${account.name}, failing over to next account`,
