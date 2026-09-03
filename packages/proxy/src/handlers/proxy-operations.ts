@@ -1404,7 +1404,12 @@ export async function proxyWithAccount(
 			// disposed of — one orphan per 529, plus one per in-place retry
 			// below. See issue #354.
 			const rlInfo = provider.parseRateLimit(response);
-			if (rlInfo.isRateLimited && !rlInfo.resetTime) {
+			// Do NOT gate on rlInfo.isRateLimited: ZaiProvider.parseRateLimit
+			// returns isRateLimited only for 429, so on a 529 it always answers
+			// false and this whole branch was dead for zai accounts — the very
+			// overload case it exists for. We are already inside `status === 529`;
+			// resetTime alone decides in-place retry vs. cooldown.
+			if (!rlInfo.resetTime) {
 				const retryCfg = getOverloadRetryConfig();
 				if (retryCfg.enabled && retryCfg.maxAttempts > 1) {
 					for (let attempt = 1; attempt < retryCfg.maxAttempts; attempt++) {
@@ -1498,7 +1503,11 @@ export async function proxyWithAccount(
 						// Header-only read, see the note on the first parseRateLimit
 						// call above — the retry response must not be teed either.
 						const retryRlInfo = provider.parseRateLimit(retryResponse);
-						if (!retryRlInfo.isRateLimited || retryRlInfo.resetTime) {
+						// Same reason as the entry guard above: isRateLimited is
+						// always false here for zai, so this broke out after a
+						// single retry and silently capped the budget at 1.
+						// Status is known to be 529 here — only a reset hint stops us.
+						if (retryRlInfo.resetTime) {
 							// Got a reset hint on retry — stop; let processProxyResponse apply cooldown
 							break;
 						}
