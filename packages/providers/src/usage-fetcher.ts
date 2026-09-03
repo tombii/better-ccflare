@@ -742,7 +742,7 @@ class UsageCache {
 	>();
 	private staleWeeklyResetCallbacks = new Map<
 		string,
-		(accountId: string) => void
+		(accountId: string, observedAt: number) => void
 	>();
 	private snapshotCallbacks = new Map<
 		string,
@@ -829,7 +829,7 @@ class UsageCache {
 		customEndpoint?: string | null,
 		onWindowReset?: (accountId: string) => void,
 		onCapacityRestored?: (accountId: string) => void,
-		onStaleWeeklyReset?: (accountId: string) => void,
+		onStaleWeeklyReset?: (accountId: string, observedAt: number) => void,
 		onSnapshot?: (accountId: string, data: UsageData) => void,
 	) {
 		// Check if provider supports usage tracking
@@ -1196,7 +1196,7 @@ class UsageCache {
 					);
 					if (weeklyUtilization === 0 && weeklyResetAt === null) {
 						const staleCb = this.staleWeeklyResetCallbacks.get(accountId);
-						if (staleCb) staleCb(accountId);
+						if (staleCb) staleCb(accountId, Date.now());
 					}
 					const window = getRepresentativeWindow(result.data as UsageData);
 					log.debug(
