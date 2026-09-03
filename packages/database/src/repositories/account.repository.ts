@@ -352,13 +352,14 @@ export class AccountRepository extends BaseRepository<Account> {
 	 *   - value match: protects the read→write gap (a concurrent write
 	 *     between our read and this write changes the value, so the WHERE
 	 *     clause simply misses).
-	 *   - write-time ≤ observation-time: protects the poll-observation→read
-	 *     gap. A genuine 429 landing *after* observedAt but *before* our
+	 *   - write-time < observation-time: protects the poll-observation→read
+	 *     gap. A genuine 429 landing at or after observedAt but before our
 	 *     read would otherwise be read back and "matched" by the CAS above,
 	 *     even though it's a brand new legitimate rate limit rather than the
 	 *     stale one the poll observed. Stamping rate_limit_reset_at at write
-	 *     time lets us tell those apart: a legitimate post-observation write
-	 *     always has rate_limit_reset_at > observedAt, so the guard rejects it.
+	 *     time lets us tell those apart: a legitimate write at/after the
+	 *     observation instant always has rate_limit_reset_at >= observedAt,
+	 *     so the guard uses a strict "<" to reject same-millisecond writes too.
 	 * rate_limit_reset_at IS NULL is treated as eligible to clear (legacy
 	 * rows written before this column existed, or by paths that predate the
 	 * stamping) so pre-migration data doesn't regress.
@@ -372,7 +373,7 @@ export class AccountRepository extends BaseRepository<Account> {
 	): Promise<boolean> {
 		const changes = await this.runWithChanges(
 			`UPDATE accounts SET rate_limit_status = 'allowed', rate_limit_reset = NULL, rate_limit_reset_at = NULL
-			 WHERE id = ? AND rate_limit_reset = ? AND (rate_limit_reset_at IS NULL OR rate_limit_reset_at <= ?)`,
+			 WHERE id = ? AND rate_limit_reset = ? AND (rate_limit_reset_at IS NULL OR rate_limit_reset_at < ?)`,
 			[accountId, expectedReset, observedAt],
 		);
 		return changes > 0;

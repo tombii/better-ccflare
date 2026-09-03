@@ -92,7 +92,7 @@ describe("AccountRepository.clearStaleRateLimitReset — write-time CAS guard (#
 			.get(id) as RawRateLimitRow;
 	}
 
-	it("clears when rate_limit_reset_at <= observedAt", async () => {
+	it("clears when rate_limit_reset_at < observedAt", async () => {
 		const futureReset = Date.now() + 60_000;
 		const writtenAt = 1_000_000;
 		const observedAt = 2_000_000; // observed strictly after the stale write
@@ -128,6 +128,24 @@ describe("AccountRepository.clearStaleRateLimitReset — write-time CAS guard (#
 		expect(row.rate_limit_status).toBe("rate_limited");
 		expect(row.rate_limit_reset).toBe(futureReset);
 		expect(row.rate_limit_reset_at).toBe(writtenAt);
+	});
+
+	it("does NOT clear when rate_limit_reset_at === observedAt (same-millisecond write, strict guard)", async () => {
+		const futureReset = Date.now() + 60_000;
+		const sameInstant = 1_500_000;
+		insertAccount("acct-same-ms", futureReset, sameInstant);
+
+		const cleared = await repository.clearStaleRateLimitReset(
+			"acct-same-ms",
+			futureReset,
+			sameInstant,
+		);
+
+		expect(cleared).toBe(false);
+		const row = getRaw("acct-same-ms");
+		expect(row.rate_limit_status).toBe("rate_limited");
+		expect(row.rate_limit_reset).toBe(futureReset);
+		expect(row.rate_limit_reset_at).toBe(sameInstant);
 	});
 
 	it("still clears when rate_limit_reset_at IS NULL (legacy rows predating the column)", async () => {
