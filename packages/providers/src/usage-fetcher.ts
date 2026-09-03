@@ -473,6 +473,7 @@ function utilizationForProvider(
 			const candidates = [
 				zai.time_limit?.percentage ?? null,
 				zai.tokens_limit?.percentage ?? null,
+				zai.tokens_limit_weekly?.percentage ?? null,
 			].filter((v): v is number => v !== null);
 			return candidates.length > 0 ? Math.max(...candidates) : null;
 		}
@@ -688,7 +689,11 @@ export function getRepresentativeUsageSnapshotForProvider(
 ): { utilization: number; resetMs: number | null } | null {
 	if (provider === "zai") {
 		const zai = data as ZaiUsageData;
-		const candidates = [zai.time_limit, zai.tokens_limit].filter(
+		const candidates = [
+			zai.time_limit,
+			zai.tokens_limit,
+			zai.tokens_limit_weekly,
+		].filter(
 			(window): window is NonNullable<typeof window> => window !== null,
 		);
 		if (candidates.length === 0) return null;

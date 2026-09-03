@@ -111,7 +111,10 @@ export interface ZaiUsageWindow {
 
 export interface ZaiUsageData {
 	time_limit: ZaiUsageWindow | null;
+	/** Short token window (5-hour on current plans) — the nearest reset. */
 	tokens_limit: ZaiUsageWindow | null;
+	/** Long token window (weekly on current plans), null on single-window plans. */
+	tokens_limit_weekly: ZaiUsageWindow | null;
 }
 
 // Usage data types for Kilo accounts

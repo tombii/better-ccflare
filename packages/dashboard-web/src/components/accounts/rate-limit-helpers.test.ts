@@ -225,11 +225,16 @@ describe("isUsageWindow / isWeeklyWindow / formatWindowName (legacy helpers)", (
 		expect(isWeeklyWindow("seven_day")).toBe(true);
 		expect(isWeeklyWindow("seven_day_fable")).toBe(true);
 		expect(isWeeklyWindow("five_hour")).toBe(false);
+		// Zai's long token window is weekly too; its short one is not.
+		expect(isWeeklyWindow("tokens_limit_weekly")).toBe(true);
+		expect(isWeeklyWindow("tokens_limit")).toBe(false);
 	});
 	it("formatWindowName maps generic tiers", () => {
 		expect(formatWindowName("seven_day_fable")).toBe("Fable (Weekly)");
 		expect(formatWindowName("five_hour")).toBe("5-hour");
 		expect(formatWindowName("seven_day")).toBe("Weekly");
+		expect(formatWindowName("tokens_limit")).toBe("5-hour");
+		expect(formatWindowName("tokens_limit_weekly")).toBe("Weekly");
 	});
 });
 

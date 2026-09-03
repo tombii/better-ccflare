@@ -367,6 +367,7 @@ export function RateLimitProgress({
 		const zaiData = usageData as {
 			time_limit?: { percentage: number; resetAt: number } | null;
 			tokens_limit?: { percentage: number; resetAt: number } | null;
+			tokens_limit_weekly?: { percentage: number; resetAt: number } | null;
 		};
 
 		// Tokens limit usage (5-hour token quota)
@@ -376,6 +377,17 @@ export function RateLimitProgress({
 				window: "tokens_limit",
 				resetTime: zaiData.tokens_limit.resetAt
 					? new Date(zaiData.tokens_limit.resetAt).toISOString()
+					: null,
+			});
+		}
+
+		// Weekly token quota (absent on single-window plans)
+		if (zaiData.tokens_limit_weekly) {
+			usages.push({
+				utilization: zaiData.tokens_limit_weekly.percentage,
+				window: "tokens_limit_weekly",
+				resetTime: zaiData.tokens_limit_weekly.resetAt
+					? new Date(zaiData.tokens_limit_weekly.resetAt).toISOString()
 					: null,
 			});
 		}

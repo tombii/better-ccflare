@@ -12,7 +12,10 @@ export interface ZaiUsageWindow {
 
 export interface ZaiUsageData {
 	time_limit: ZaiUsageWindow | null;
+	/** Short token window (5-hour on current plans) — the nearest reset. */
 	tokens_limit: ZaiUsageWindow | null;
+	/** Long token window (weekly on current plans), null on single-window plans. */
+	tokens_limit_weekly: ZaiUsageWindow | null;
 }
 
 /**
@@ -77,7 +80,16 @@ export async function fetchZaiUsageData(
 		const result: ZaiUsageData = {
 			time_limit: null,
 			tokens_limit: null,
+			tokens_limit_weekly: null,
 		};
+
+		// Zai sends MULTIPLE TOKENS_LIMIT entries (a 5-hour and a weekly cap on
+		// current plans), distinguished only by unit/number — an undocumented
+		// encoding. Ordering by reset time is the durable signal: the nearest
+		// reset is the short window, the next one the long window. Assigning
+		// them in loop order would let the weekly entry overwrite the 5-hour
+		// one, which is what made the dashboard label a weekly cap "5-hour".
+		const tokenWindows: ZaiUsageWindow[] = [];
 
 		// Parse each limit type
 		for (const limit of limits) {
@@ -90,15 +102,25 @@ export async function fetchZaiUsageData(
 					type: "time_limit",
 				};
 			} else if (limit.type === "TOKENS_LIMIT") {
-				result.tokens_limit = {
+				tokenWindows.push({
 					used: limit.currentValue ?? 0,
 					remaining: limit.remaining ?? 0,
 					percentage: limit.percentage ?? 0,
 					resetAt: limit.nextResetTime ?? null,
 					type: "tokens_limit",
-				};
+				});
 			}
 		}
+
+		tokenWindows.sort(
+			(a, b) =>
+				(a.resetAt ?? Number.POSITIVE_INFINITY) -
+				(b.resetAt ?? Number.POSITIVE_INFINITY),
+		);
+		result.tokens_limit = tokenWindows[0] ?? null;
+		result.tokens_limit_weekly = tokenWindows[1]
+			? { ...tokenWindows[1], type: "tokens_limit_weekly" }
+			: null;
 
 		return result;
 	} catch (error) {
@@ -108,43 +130,55 @@ export async function fetchZaiUsageData(
 }
 
 /**
+ * Both token windows, named in Claude terminology so the shared window helpers
+ * (throttle pacing, weekly formatting) can size them without a zai special case.
+ * time_limit is excluded: it caps the web tools, not model traffic.
+ */
+function tokenWindows(
+	usage: ZaiUsageData,
+): Array<{ name: string; percentage: number }> {
+	const windows: Array<{ name: string; percentage: number }> = [];
+	if (usage.tokens_limit && usage.tokens_limit.percentage !== undefined) {
+		windows.push({ name: "five_hour", percentage: usage.tokens_limit.percentage });
+	}
+	if (
+		usage.tokens_limit_weekly &&
+		usage.tokens_limit_weekly.percentage !== undefined
+	) {
+		windows.push({
+			name: "seven_day",
+			percentage: usage.tokens_limit_weekly.percentage,
+		});
+	}
+	return windows;
+}
+
+/**
  * Get the representative utilization percentage (0-100)
- * Returns the tokens_limit utilization (5-hour token quota)
+ * Returns the most exhausted token window — an account capped weekly is just as
+ * unavailable as one capped for the hour.
  */
 export function getRepresentativeZaiUtilization(
 	usage: ZaiUsageData | null,
 ): number | null {
 	if (!usage) return null;
 
-	// Only consider tokens_limit (5-hour token quota)
-	// time_limit is not displayed to users
-	if (usage.tokens_limit && usage.tokens_limit.percentage !== undefined) {
-		return usage.tokens_limit.percentage;
-	}
+	const windows = tokenWindows(usage);
+	if (windows.length === 0) return null;
 
-	return null;
+	return Math.max(...windows.map((w) => w.percentage));
 }
 
 /**
  * Determine which limit is the most restrictive (highest utilization)
- * Returns "five_hour" (for tokens_limit) to match Claude terminology
+ * Returns "five_hour" or "seven_day" to match Claude terminology
  */
 export function getRepresentativeZaiWindow(
 	usage: ZaiUsageData | null,
 ): string | null {
 	if (!usage) return null;
 
-	const windows: Array<{ name: string; percentage: number }> = [];
-
-	// Only consider tokens_limit (5-hour token quota)
-	// time_limit is not displayed to users
-	if (usage.tokens_limit && usage.tokens_limit.percentage !== undefined) {
-		windows.push({
-			name: "five_hour", // Map to "5-hour" to match Claude terminology
-			percentage: usage.tokens_limit.percentage,
-		});
-	}
-
+	const windows = tokenWindows(usage);
 	if (windows.length === 0) return null;
 
 	const max = windows.reduce((prev, current) =>

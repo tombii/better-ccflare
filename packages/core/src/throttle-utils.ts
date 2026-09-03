@@ -11,7 +11,8 @@ export type SupportedWindow =
 	| "weekly"
 	| "daily"
 	| "monthly"
-	| "tokens_limit";
+	| "tokens_limit"
+	| "tokens_limit_weekly";
 
 /**
  * Fixed window durations in milliseconds.
@@ -26,6 +27,7 @@ export const FIXED_WINDOW_DURATION_MS: Record<string, number> = {
 	daily: 24 * 60 * 60 * 1000,
 	// time_limit intentionally omitted — ZAI's TIME_LIMIT window duration is unknown
 	tokens_limit: 5 * 60 * 60 * 1000,
+	tokens_limit_weekly: 7 * 24 * 60 * 60 * 1000,
 };
 
 /**
