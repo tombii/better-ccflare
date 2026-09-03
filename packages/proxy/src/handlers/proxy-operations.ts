@@ -168,6 +168,9 @@ function materializeSyntheticResponse(request: Request): Response {
 	const cacheControl = request.headers.get("cache-control");
 	if (contentType) headers.set("content-type", contentType);
 	if (cacheControl) headers.set("cache-control", cacheControl);
+	if (request.headers.get(SYNTHETIC_RESPONSE_HEADER) === "true") {
+		headers.set(SYNTHETIC_RESPONSE_HEADER, "true");
+	}
 
 	return new Response(request.body, {
 		status: parseSyntheticStatus(request),

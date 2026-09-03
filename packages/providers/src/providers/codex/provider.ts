@@ -39,6 +39,16 @@ const log = new Logger("CodexProvider");
 export const CODEX_PROMPT_CACHE_KEY_ENV = "CCFLARE_CODEX_PROMPT_CACHE_KEY";
 /** "conversation" (default) or "session"; see derivePromptCacheKey. */
 export const CODEX_CACHE_KEY_MODE_ENV = "CCFLARE_CODEX_CACHE_KEY_MODE";
+/**
+ * Set to "0" to make Codex's synthetic count_tokens endpoint return a typed
+ * Anthropic-shaped error instead of a character-based estimate. Anthropic-
+ * compatible clients (e.g. Claude Code) already degrade gracefully to a local
+ * estimate on a count_tokens error, so this costs them nothing and lets an
+ * operator fail the route closed on purpose instead of exposing an estimate
+ * that downstream consumers may treat as authoritative.
+ */
+export const CODEX_SYNTHETIC_COUNT_TOKENS_ENV =
+	"CCFLARE_CODEX_SYNTHETIC_COUNT_TOKENS";
 
 const INTERNAL_HEADERS = [
 	"x-better-ccflare-request-id",
@@ -642,6 +652,14 @@ export class CodexProvider extends BaseProvider {
 			this.sweepRequestStreamById();
 			const body = (await request.json()) as AnthropicRequest;
 			if (isSyntheticCountTokens) {
+				if (process.env[CODEX_SYNTHETIC_COUNT_TOKENS_ENV] === "0") {
+					return this.createSyntheticErrorResponse(
+						request,
+						501,
+						"not_implemented_error",
+						"Codex does not support count_tokens; synthetic estimates are disabled (CCFLARE_CODEX_SYNTHETIC_COUNT_TOKENS=0).",
+					);
+				}
 				return this.createSyntheticCountTokensResponse(request, body);
 			}
 			const isSubscriptionEndpoint = isCodexSubscriptionEndpoint(account);
