@@ -576,19 +576,25 @@ function startUsagePollingWithRefresh(
 					// an earlier 429 — this blocks AutoRefreshScheduler's probe gate and
 					// pins the account last in strict drain-soonest ranking forever (#443).
 					// Clear it so the account gets probed on the next scheduler tick.
+					//
+					// clearStaleRateLimitReset is a compare-and-swap: it only clears the
+					// field if it still matches the value we just read, so a genuinely
+					// newer rate_limit_reset recorded by a concurrent proxy response
+					// (e.g. a fresh 429) between the read and write below is preserved
+					// instead of being clobbered.
 					proxyContext.dbOps
 						.getAccount(accountId)
 						.then((acc) => {
-							if (
-								acc?.rate_limit_reset &&
-								Number(acc.rate_limit_reset) > Date.now()
-							) {
+							const staleReset = Number(acc?.rate_limit_reset);
+							if (acc?.rate_limit_reset && staleReset > Date.now()) {
 								return proxyContext.dbOps
-									.updateAccountRateLimitMeta(accountId, "allowed", null)
-									.then(() => {
-										logger.info(
-											`Cleared stale rate_limit_reset for account ${acc.name} (${accountId}): usage polling shows fresh weekly window (out-of-band reset)`,
-										);
+									.clearStaleRateLimitReset(accountId, staleReset)
+									.then((cleared) => {
+										if (cleared) {
+											logger.info(
+												`Cleared stale rate_limit_reset for account ${acc.name} (${accountId}): usage polling shows fresh weekly window (out-of-band reset)`,
+											);
+										}
 									});
 							}
 						})

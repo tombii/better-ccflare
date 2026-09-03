@@ -337,6 +337,24 @@ export class AccountRepository extends BaseRepository<Account> {
 		);
 	}
 
+	/**
+	 * Clear rate_limit_reset/rate_limit_status only if rate_limit_reset still
+	 * equals expectedReset — a compare-and-swap guard against a proxy response
+	 * recording a newer, legitimate rate limit between the caller's read and
+	 * this write (#443 fix's race window). Returns true if the row was
+	 * cleared, false if it had already changed (no-op).
+	 */
+	async clearStaleRateLimitReset(
+		accountId: string,
+		expectedReset: number,
+	): Promise<boolean> {
+		const changes = await this.runWithChanges(
+			`UPDATE accounts SET rate_limit_status = 'allowed', rate_limit_reset = NULL WHERE id = ? AND rate_limit_reset = ?`,
+			[accountId, expectedReset],
+		);
+		return changes > 0;
+	}
+
 	async clearRateLimitState(accountId: string): Promise<number> {
 		return this.runWithChanges(
 			`UPDATE accounts

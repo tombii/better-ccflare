@@ -189,6 +189,27 @@ export function extractWeeklyResetTime(
 }
 
 /**
+ * Extract the weekly_all (all-models weekly) window utilization percentage.
+ * Mirrors {@link extractWeeklyResetTime}'s field precedence so both read the
+ * same window — unlike {@link getRepresentativeUtilization}, which returns
+ * the max across ALL windows (five_hour included) and so cannot be used to
+ * detect a weekly-window-specific reset.
+ */
+export function extractWeeklyUtilization(
+	data: AnyUsageData,
+	provider: string,
+): number | null {
+	if (provider !== "anthropic" && provider !== "codex") return null;
+	const d = data as UsageData;
+	return (
+		d.seven_day?.utilization ??
+		(Array.isArray(d.limits)
+			? (d.limits.find((l) => l?.kind === "weekly_all")?.percent ?? null)
+			: null)
+	);
+}
+
+/**
  * Fetch usage data from Anthropic's OAuth usage endpoint
  */
 export interface UsageFetchResult {
@@ -1157,16 +1178,23 @@ class UsageCache {
 							this.capacityRestoredCallbacks.get(accountId);
 						if (capacityCallback) capacityCallback(accountId);
 					}
-					// Detect an out-of-band weekly reset: usage shows a fresh window
-					// (0% utilization, resets_at unknown) while the DB's rate_limit_reset
+					// Detect an out-of-band weekly reset: the seven_day window shows 0%
+					// utilization with resets_at unknown while the DB's rate_limit_reset
 					// may still hold a stale future timestamp from an earlier 429. That
 					// stale value defeats AutoRefreshScheduler's probe gate and pins the
 					// account last in strict drain-soonest ranking indefinitely (#443).
+					// Scoped to the weekly window specifically (not the account-wide max
+					// utilization) so a busy five_hour session window doesn't mask a
+					// reset seven_day window.
 					const weeklyResetAt = extractWeeklyResetTime(
 						result.data as UsageData,
 						"anthropic",
 					);
-					if (utilization === 0 && weeklyResetAt === null) {
+					const weeklyUtilization = extractWeeklyUtilization(
+						result.data as UsageData,
+						"anthropic",
+					);
+					if (weeklyUtilization === 0 && weeklyResetAt === null) {
 						const staleCb = this.staleWeeklyResetCallbacks.get(accountId);
 						if (staleCb) staleCb(accountId);
 					}

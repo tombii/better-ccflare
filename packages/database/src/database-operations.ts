@@ -934,6 +934,17 @@ OAuth tokens will need to be re-authenticated.
 		);
 	}
 
+	async clearStaleRateLimitReset(
+		accountId: string,
+		expectedReset: number,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.accounts.clearStaleRateLimitReset(accountId, expectedReset),
+			this.retryConfig,
+			"clearStaleRateLimitReset",
+		);
+	}
+
 	// Usage-history operations delegated to repository
 	getUsageHistoryRepository(): UsageHistoryRepository {
 		return this.usageHistory;
