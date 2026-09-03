@@ -484,6 +484,11 @@ Anthropic Client → better-ccflare Proxy → OpenAI Provider (OpenRouter, etc.)
 - **Streaming**: OpenAI SSE → Anthropic SSE via `TransformStream` + state machine
 - **Auth**: API keys (stored in `refresh_token`), no OAuth
 
+### Live Model Discovery
+- `packages/proxy/src/openai-compatible-model-catalog.ts`
+
+Each `openai-compatible` account's own endpoint is queried via the standard OpenAI `GET /v1/models` shape, lazily on that account's first proxied request and on-demand via `GET /api/models?provider=openai-compatible&accountId=<id>` (see [api-http.md](api-http.md#get-apimodels)). Since every account points at an operator-chosen, arbitrary endpoint (unlike Codex, which shares one upstream across accounts), a listing is never borrowed between accounts — each account's cache answers only for itself, and is dropped when the account is removed.
+
 ### Streaming Transformation (Key Innovation)
 Uses `TransformStream` with state tracking across chunks:
 

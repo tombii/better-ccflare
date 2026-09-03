@@ -1106,6 +1106,24 @@ Return the cached Anthropic model catalog used to populate model dropdowns (dash
 curl http://localhost:8080/api/models
 ```
 
+**Query params (per-provider model picker):**
+
+Pass `?provider=<name>` to list models for a non-Anthropic provider instead — this backs the combo slot and account-mapping model pickers in the dashboard. Each entry carries a `source` describing how ccflare knows about it:
+
+| `source` | Meaning |
+|----------|---------|
+| `builtin` | ccflare's own provider adapter knows this model id |
+| `catalog` | The live Anthropic `/v1/models` listing (Anthropic providers only) |
+| `reference` | Listed in the public [models.dev](https://models.dev) catalogue — proves the model exists at the vendor, **not** that the account's plan can call it |
+| `account` | Read live from this specific account's own model listing — the only source that reflects real entitlement |
+
+Add `&accountId=<id>` for providers that support per-account live discovery — currently **Codex** (`chatgpt.com/backend-api/codex/models`) and **openai-compatible** (the account's configured endpoint). When the account can't read its own listing, Codex falls back to another account of the same provider and marks the response `"source": "shared"` with a `warning` explaining the listing may not reflect this account's plan. For every other provider, the response is the union of ccflare's builtin model list and the models.dev reference catalogue (deduplicated by id, `builtin` winning), degrading to `source: "unavailable"` with a `warning` if the catalogue can't be reached — this endpoint never fails the request outright.
+
+**Example:**
+```bash
+curl "http://localhost:8080/api/models?provider=openai-compatible&accountId=acc_123"
+```
+
 #### POST /api/models/refresh
 
 Force an immediate live model catalog refresh, bypassing the scheduled interval. Prefers a console/API-key account but falls back to an OAuth account if `BETTER_CCFLARE_MODELS_OAUTH_REFRESH` (or the equivalent config toggle) is enabled. Never throws — always returns `200` with the outcome, even on failure (e.g. no eligible account, network error).
