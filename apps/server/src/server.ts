@@ -570,6 +570,48 @@ function startUsagePollingWithRefresh(
 							),
 						);
 				},
+				(accountId, observedAt) => {
+					// Usage API shows a fresh weekly window (0% utilization, resets_at
+					// unknown) but rate_limit_reset is still a stale future timestamp from
+					// an earlier 429 — this blocks AutoRefreshScheduler's probe gate and
+					// pins the account last in strict drain-soonest ranking forever (#443).
+					// Clear it so the account gets probed on the next scheduler tick.
+					//
+					// clearStaleRateLimitReset guards on two things:
+					//   1. value match — rate_limit_reset still equals the value we just
+					//      read, so a write that lands between our read and this write
+					//      simply misses the WHERE clause instead of being clobbered.
+					//   2. write-time ≤ observation-time — rate_limit_reset_at (stamped
+					//      whenever rate_limit_reset is written) must be no newer than
+					//      observedAt, the instant the poller saw this contradiction. This
+					//      closes a second race Greptile flagged in round 2: a *genuine*
+					//      429 can land after observedAt but before getAccount() below
+					//      resolves, so its value alone would satisfy guard #1 even though
+					//      it's a brand new legitimate rate limit, not the stale one we
+					//      observed. The write-time check rejects that case regardless of
+					//      read/write ordering.
+					proxyContext.dbOps
+						.getAccount(accountId)
+						.then((acc) => {
+							const staleReset = Number(acc?.rate_limit_reset);
+							if (acc?.rate_limit_reset && staleReset > Date.now()) {
+								return proxyContext.dbOps
+									.clearStaleRateLimitReset(accountId, staleReset, observedAt)
+									.then((cleared) => {
+										if (cleared) {
+											logger.info(
+												`Cleared stale rate_limit_reset for account ${acc.name} (${accountId}): usage polling shows fresh weekly window (out-of-band reset)`,
+											);
+										}
+									});
+							}
+						})
+						.catch((err) =>
+							logger.warn(
+								`Failed to check/clear rate_limit_reset for account ${accountId} on weekly reset detection: ${err}`,
+							),
+						);
+				},
 				(accountId, data) => {
 					proxyContext.dbOps
 						.recordUsageSnapshot(accountId, data, Date.now())

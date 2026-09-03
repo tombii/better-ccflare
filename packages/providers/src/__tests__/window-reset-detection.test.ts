@@ -2,6 +2,7 @@ import { describe, expect, it, mock } from "bun:test";
 import type { AnyUsageData, UsageData } from "../usage-fetcher";
 import {
 	extractWeeklyResetTime,
+	extractWeeklyUtilization,
 	extractWindowResetTime,
 	usageCache,
 } from "../usage-fetcher";
@@ -120,6 +121,50 @@ describe("extractWeeklyResetTime", () => {
 		expect(extractWeeklyResetTime({} as any, "zai")).toBeNull();
 		expect(extractWeeklyResetTime({} as any, "xai")).toBeNull();
 		expect(extractWeeklyResetTime({} as any, "nanogpt")).toBeNull();
+	});
+});
+
+// ── extractWeeklyUtilization ───────────────────────────────────────────────
+// Regression coverage for #443 review feedback: the out-of-band-reset
+// detector must read the seven_day window specifically, not the
+// account-wide max utilization (which a busy five_hour session window would
+// keep non-zero even while seven_day silently resets).
+
+describe("extractWeeklyUtilization", () => {
+	it("returns seven_day utilization for anthropic provider", () => {
+		const data: UsageData = {
+			five_hour: { utilization: 90, resets_at: "2030-01-01T12:00:00Z" },
+			seven_day: { utilization: 42, resets_at: "2030-01-08T12:00:00Z" },
+		};
+		expect(extractWeeklyUtilization(data, "anthropic")).toBe(42);
+	});
+
+	it("reads 0% seven_day utilization even when five_hour is busy", () => {
+		const data: UsageData = {
+			five_hour: { utilization: 88, resets_at: "2030-01-01T12:00:00Z" },
+			seven_day: { utilization: 0, resets_at: null },
+		};
+		expect(extractWeeklyUtilization(data, "anthropic")).toBe(0);
+	});
+
+	it("falls back to limits[] weekly_all percent for limits-only payloads", () => {
+		const data = {
+			limits: [
+				{ kind: "session", percent: 90, resets_at: null, scope: null },
+				{ kind: "weekly_all", percent: 0, resets_at: null, scope: null },
+			],
+		} as unknown as UsageData;
+		expect(extractWeeklyUtilization(data, "codex")).toBe(0);
+	});
+
+	it("returns null for providers without a weekly_all window (zai, xai, unsupported)", () => {
+		expect(extractWeeklyUtilization({} as any, "zai")).toBeNull();
+		expect(extractWeeklyUtilization({} as any, "xai")).toBeNull();
+		expect(extractWeeklyUtilization({} as any, "nanogpt")).toBeNull();
+	});
+
+	it("returns null when neither seven_day nor limits[] weekly_all is present", () => {
+		expect(extractWeeklyUtilization({} as UsageData, "anthropic")).toBeNull();
 	});
 });
 

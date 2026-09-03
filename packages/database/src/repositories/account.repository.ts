@@ -332,9 +332,51 @@ export class AccountRepository extends BaseRepository<Account> {
 		remaining?: number | null,
 	): Promise<void> {
 		await this.run(
-			`UPDATE accounts SET rate_limit_status = ?, rate_limit_reset = ?, rate_limit_remaining = ? WHERE id = ?`,
-			[status, reset, remaining ?? null, accountId],
+			`UPDATE accounts SET rate_limit_status = ?, rate_limit_reset = ?, rate_limit_reset_at = ?, rate_limit_remaining = ? WHERE id = ?`,
+			[
+				status,
+				reset,
+				reset !== null ? Date.now() : null,
+				remaining ?? null,
+				accountId,
+			],
 		);
+	}
+
+	/**
+	 * Clear rate_limit_reset/rate_limit_status only if rate_limit_reset still
+	 * equals expectedReset AND rate_limit_reset_at (the write-time of that
+	 * value) is no newer than observedAt (the moment the poller observed the
+	 * fresh-window contradiction that triggered this clear). This two-part
+	 * guard closes both race windows from the #443 fix:
+	 *   - value match: protects the read→write gap (a concurrent write
+	 *     between our read and this write changes the value, so the WHERE
+	 *     clause simply misses).
+	 *   - write-time < observation-time: protects the poll-observation→read
+	 *     gap. A genuine 429 landing at or after observedAt but before our
+	 *     read would otherwise be read back and "matched" by the CAS above,
+	 *     even though it's a brand new legitimate rate limit rather than the
+	 *     stale one the poll observed. Stamping rate_limit_reset_at at write
+	 *     time lets us tell those apart: a legitimate write at/after the
+	 *     observation instant always has rate_limit_reset_at >= observedAt,
+	 *     so the guard uses a strict "<" to reject same-millisecond writes too.
+	 * rate_limit_reset_at IS NULL is treated as eligible to clear (legacy
+	 * rows written before this column existed, or by paths that predate the
+	 * stamping) so pre-migration data doesn't regress.
+	 * Returns true if the row was cleared, false if it had already changed
+	 * or the write-time guard rejected the clear (no-op).
+	 */
+	async clearStaleRateLimitReset(
+		accountId: string,
+		expectedReset: number,
+		observedAt: number,
+	): Promise<boolean> {
+		const changes = await this.runWithChanges(
+			`UPDATE accounts SET rate_limit_status = 'allowed', rate_limit_reset = NULL, rate_limit_reset_at = NULL
+			 WHERE id = ? AND rate_limit_reset = ? AND (rate_limit_reset_at IS NULL OR rate_limit_reset_at < ?)`,
+			[accountId, expectedReset, observedAt],
+		);
+		return changes > 0;
 	}
 
 	async clearRateLimitState(accountId: string): Promise<number> {
@@ -345,6 +387,7 @@ export class AccountRepository extends BaseRepository<Account> {
 			 	rate_limited_reason = NULL,
 			 	rate_limited_at = NULL,
 			 	rate_limit_reset = NULL,
+			 	rate_limit_reset_at = NULL,
 			 	rate_limit_status = NULL,
 			 	rate_limit_remaining = NULL
 			 WHERE id = ?`,

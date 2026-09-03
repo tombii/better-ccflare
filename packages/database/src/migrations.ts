@@ -921,6 +921,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added rate_limit_reset column to accounts table");
 		}
 
+		// Add rate_limit_reset_at column if it doesn't exist
+		if (!initialAccountsColumnNames.includes("rate_limit_reset_at")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN rate_limit_reset_at INTEGER",
+			).run();
+			log.info("Added rate_limit_reset_at column to accounts table");
+		}
+
 		// Add rate_limit_status column if it doesn't exist
 		if (!initialAccountsColumnNames.includes("rate_limit_status")) {
 			db.prepare(
