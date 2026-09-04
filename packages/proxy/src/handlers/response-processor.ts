@@ -130,11 +130,16 @@ export function updateAccountMetadata(
 				} | null
 			)?.[windowSlot]?.resets_at;
 			const newResetAt = codexUsage[windowSlot]?.resets_at;
+			const observedAt = Date.now();
+			const prevResetAtMs =
+				prevResetAt != null ? new Date(prevResetAt).getTime() : Number.NaN;
+			const newResetAtMs =
+				newResetAt != null ? new Date(newResetAt).getTime() : Number.NaN;
 			const windowRolledOver =
-				prevResetAt != null &&
-				newResetAt != null &&
-				newResetAt !== prevResetAt &&
-				new Date(newResetAt).getTime() > new Date(prevResetAt).getTime();
+				Number.isFinite(prevResetAtMs) &&
+				Number.isFinite(newResetAtMs) &&
+				prevResetAtMs <= observedAt &&
+				newResetAtMs > prevResetAtMs;
 
 			usageCache.set(account.id, codexUsage);
 			log.debug(

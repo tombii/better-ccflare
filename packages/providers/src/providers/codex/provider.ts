@@ -54,6 +54,7 @@ const INTERNAL_HEADERS = [
 	"x-better-ccflare-request-id",
 	"x-better-ccflare-request-stream",
 	"x-better-ccflare-codex-custom-tools",
+	"x-better-ccflare-native-responses",
 ];
 
 function sanitizeResponseHeaders(headers: Headers): Headers {
@@ -267,7 +268,12 @@ interface CodexTool {
 
 interface CodexRequest {
 	model: string;
-	input: (CodexMessage | CodexFunctionCallItem | CodexFunctionCallOutputItem)[];
+	input: (
+		| CodexMessage
+		| CodexFunctionCallItem
+		| CodexFunctionCallOutputItem
+		| Record<string, unknown>
+	)[];
 	stream: boolean;
 	store: boolean;
 	max_output_tokens?: number;
@@ -275,12 +281,47 @@ interface CodexRequest {
 	instructions?: string;
 	tools?: CodexTool[];
 	prompt_cache_key?: string;
+	prompt_cache_options?: {
+		mode?: "explicit";
+		ttl?: "30m";
+		comparison_response_id?: string;
+	};
+	previous_response_id?: string;
 	tool_choice?:
 		| "auto"
 		| "required"
 		| "none"
 		| { type: "function"; name: string };
 	parallel_tool_calls?: boolean;
+}
+
+type ContinuationResult =
+	| "cold"
+	| "hit"
+	| "expired"
+	| "config_mismatch"
+	| "prefix_mismatch";
+
+interface ContinuationState {
+	responseId: string;
+	replayPrefixDigests: string[];
+	configDigest: string;
+	expiresAt: number;
+	generation: number;
+}
+
+interface PendingContinuation {
+	laneKey: string;
+	inputDigests: string[];
+	configDigest: string;
+	result: ContinuationResult;
+	inputItemCount: number;
+	suffixItemCount: number;
+	createdAt: number;
+	baseGeneration: number | null;
+	stablePrefixDigest: string;
+	sessionDigest: string;
+	previousResponsePresent: boolean;
 }
 
 // ── Anthropic request types ───────────────────────────────────────────────────
@@ -439,6 +480,9 @@ export interface CodexProviderOptionsForTests {
 	streamHeartbeatIntervalMs?: number;
 	streamRawSilenceTimeoutMs?: number;
 	streamDrainDeadlineMs?: number;
+	continuationTtlMs?: number;
+	continuationMaxLanes?: number;
+	now?: () => number;
 }
 
 /**
@@ -455,11 +499,22 @@ export interface CodexProviderOptionsForTests {
  * @better-ccflare/providers, so the reverse import would be circular.
  */
 export const CODEX_STREAM_DRAIN_DEADLINE_MS = 30_000;
+const CODEX_CONTINUATION_TTL_MS = 30 * 60 * 1000;
+const CODEX_CONTINUATION_MAX_LANES = 2_048;
 
 export class CodexProvider extends BaseProvider {
 	name = "codex";
 	private readonly streamLivenessOptions: CodexStreamLivenessOptions;
 	private readonly streamDrainDeadlineMs: number;
+	private readonly continuationTtlMs: number;
+	private readonly continuationMaxLanes: number;
+	private readonly now: () => number;
+	private readonly continuationByLane = new Map<string, ContinuationState>();
+	private continuationGeneration = 0;
+	private readonly pendingContinuationByRequest = new Map<
+		string,
+		PendingContinuation
+	>();
 
 	constructor(options: CodexProviderOptionsForTests = {}) {
 		super();
@@ -469,6 +524,11 @@ export class CodexProvider extends BaseProvider {
 		};
 		this.streamDrainDeadlineMs =
 			options.streamDrainDeadlineMs ?? CODEX_STREAM_DRAIN_DEADLINE_MS;
+		this.continuationTtlMs =
+			options.continuationTtlMs ?? CODEX_CONTINUATION_TTL_MS;
+		this.continuationMaxLanes =
+			options.continuationMaxLanes ?? CODEX_CONTINUATION_MAX_LANES;
+		this.now = options.now ?? Date.now;
 	}
 	// Fallback map: proxy-operations.ts injects x-better-ccflare-request-id and
 	// x-better-ccflare-request-stream into the upstream response before calling
@@ -477,7 +537,12 @@ export class CodexProvider extends BaseProvider {
 	// and the 529 in-place retry path (which doesn't re-tag those headers).
 	private requestStreamById = new Map<
 		string,
-		{ stream: boolean; hasCustomTools: boolean; ts: number }
+		{
+			stream: boolean;
+			hasCustomTools: boolean;
+			nativeResponses: boolean;
+			ts: number;
+		}
 	>();
 
 	private sweepRequestStreamById(): void {
@@ -677,11 +742,24 @@ export class CodexProvider extends BaseProvider {
 			}
 
 			const requestId = request.headers.get("x-better-ccflare-request-id");
+			const nativeResponses =
+				request.headers.get("x-better-ccflare-native-responses") === "true";
 			// Extract internal passthrough metadata.
 			const passthrough = body.__better_ccflare_codex_passthrough as
 				| Record<string, unknown>
 				| undefined;
 			delete body.__better_ccflare_codex_passthrough;
+			log.info("Codex native continuation admission diagnostics", {
+				nativeResponses,
+				requestIdPresent: typeof requestId === "string" && requestId.length > 0,
+				continuationRequested:
+					passthrough?.continuation_strategy === "previous_response_id",
+				authenticatedCallerPresent:
+					typeof passthrough?.caller_identity_digest === "string" &&
+					passthrough.caller_identity_digest.length > 0,
+				accountIdentityPresent:
+					typeof account?.id === "string" && account.id.length > 0,
+			});
 			const codexBody = this.convertToCodexFormat(
 				body,
 				account,
@@ -689,6 +767,24 @@ export class CodexProvider extends BaseProvider {
 				isSubscriptionEndpoint,
 				passthrough,
 			);
+			if (
+				nativeResponses &&
+				passthrough?.continuation_strategy === "previous_response_id"
+			) {
+				// Controlled continuation never trusts a caller-supplied response ID.
+				// prepareNativeContinuation will restore one only after every trusted
+				// identity and exact replay-prefix check succeeds.
+				delete codexBody.previous_response_id;
+				if (requestId) {
+					this.prepareNativeContinuation(
+						codexBody,
+						request.headers,
+						account,
+						requestId,
+						passthrough.caller_identity_digest,
+					);
+				}
+			}
 
 			// Only custom (non-function) tools can produce custom_tool_call output;
 			// let processResponse skip buffering when none were declared. Responses
@@ -707,11 +803,15 @@ export class CodexProvider extends BaseProvider {
 				this.requestStreamById.set(requestId, {
 					stream: body.stream === true,
 					hasCustomTools,
+					nativeResponses,
 					ts: Date.now(),
 				});
 			}
 
 			const newHeaders = new Headers(request.headers);
+			// Proxy-owned correlation is needed only while preparing the transformed
+			// request. Do not disclose it to the upstream Responses service.
+			newHeaders.delete("x-better-ccflare-request-id");
 			newHeaders.set("content-type", "application/json");
 			newHeaders.set(
 				"x-better-ccflare-request-stream",
@@ -720,6 +820,10 @@ export class CodexProvider extends BaseProvider {
 			newHeaders.set(
 				"x-better-ccflare-codex-custom-tools",
 				hasCustomTools ? "true" : "false",
+			);
+			newHeaders.set(
+				"x-better-ccflare-native-responses",
+				nativeResponses ? "true" : "false",
 			);
 			newHeaders.delete("content-length");
 
@@ -760,7 +864,7 @@ export class CodexProvider extends BaseProvider {
 			return this.transformModelsListResponse(response);
 		}
 
-		const contentType = response.headers.get("content-type");
+		const contentType = response.headers.get("content-type")?.toLowerCase();
 		const requestId = response.headers.get("x-better-ccflare-request-id");
 		const fallbackEntry = requestId
 			? this.requestStreamById.get(requestId)
@@ -791,10 +895,30 @@ export class CodexProvider extends BaseProvider {
 				: headerCustomTools === "false"
 					? false
 					: (fallbackEntry?.hasCustomTools ?? false);
+		const headerNativeResponses = response.headers.get(
+			"x-better-ccflare-native-responses",
+		);
+		const nativeResponses =
+			headerNativeResponses === "true"
+				? true
+				: headerNativeResponses === "false"
+					? false
+					: (fallbackEntry?.nativeResponses ?? false);
 		// Not deleted: an in-place 529 retry re-invokes processResponse and needs
 		// this entry too. sweepRequestStreamById reclaims it after 30s instead.
 		const isEventStream = contentType?.includes("text/event-stream") ?? false;
 		if (isEventStream) {
+			// Requests accepted on /v1/responses already speak the upstream wire
+			// format. Keep their response IDs, cache diagnostics, and continuation
+			// metadata intact instead of converting Responses -> Anthropic ->
+			// Responses a second time.
+			if (nativeResponses) {
+				return this.buildNativeResponsesPassthroughResponse(
+					response,
+					requestId,
+					response.ok,
+				);
+			}
 			// No custom tools declared, so no custom_tool_call is possible: skip
 			// buffering and stream straight through.
 			if (!mightHaveCustomToolCalls) {
@@ -834,6 +958,22 @@ export class CodexProvider extends BaseProvider {
 
 		if (response.ok && response.body !== null) {
 			const probeText = await response.text();
+			if (nativeResponses) {
+				const continuationResult = requestId
+					? this.pendingContinuationByRequest.get(requestId)
+					: undefined;
+				this.observeNativeJsonResponse(requestId, probeText);
+				return this.buildNativeResponsesPassthroughResponse(
+					new Response(probeText, {
+						status: response.status,
+						statusText: response.statusText,
+						headers: response.headers,
+					}),
+					requestId,
+					false,
+					continuationResult,
+				);
+			}
 			const trimmed = probeText.trimStart();
 			const isSseLike = trimmed.startsWith("event:");
 
@@ -888,6 +1028,413 @@ export class CodexProvider extends BaseProvider {
 		headers.set("content-type", "text/event-stream");
 		headers.set("x-better-ccflare-codex-response-format", "responses-api");
 		return new Response(body, {
+			status: response.status,
+			statusText: response.statusText,
+			headers,
+		});
+	}
+
+	private canonicalizeForDigest(value: unknown): unknown {
+		if (Array.isArray(value)) {
+			return value.map((item) => this.canonicalizeForDigest(item));
+		}
+		if (!value || typeof value !== "object") return value;
+		const source = value as Record<string, unknown>;
+		const canonical: Record<string, unknown> = {};
+		for (const key of Object.keys(source).sort()) {
+			canonical[key] = this.canonicalizeForDigest(source[key]);
+		}
+		return canonical;
+	}
+
+	private digest(value: unknown): string {
+		return createHash("sha256")
+			.update(JSON.stringify(this.canonicalizeForDigest(value)))
+			.digest("hex");
+	}
+
+	/**
+	 * Canonical replay shape produced by the pinned generic pi Responses adapter.
+	 * It cannot replay output-text annotations, preserves a reasoning item as its
+	 * opaque signed item, emits function calls without `status`, and coalesces an
+	 * assistant message's output/refusal text into one output_text block. Only
+	 * those known lossy fields are normalized; unknown item kinds stay exact and
+	 * therefore fail cold if the client does not replay them byte-equivalently.
+	 */
+	private normalizeReplayItemForDigest(value: unknown): unknown {
+		if (!value || typeof value !== "object" || Array.isArray(value))
+			return value;
+		const item = value as Record<string, unknown>;
+		if (item.type === "function_call") {
+			return {
+				type: "function_call",
+				id: item.id,
+				call_id: item.call_id,
+				name: item.name,
+				arguments: item.arguments,
+			};
+		}
+		if (item.type !== "message" || item.role !== "assistant") return value;
+		if (!Array.isArray(item.content)) return value;
+		let text = "";
+		for (const rawBlock of item.content) {
+			if (!rawBlock || typeof rawBlock !== "object") return value;
+			const block = rawBlock as Record<string, unknown>;
+			if (block.type === "output_text" && typeof block.text === "string") {
+				text += block.text;
+			} else if (
+				block.type === "refusal" &&
+				typeof block.refusal === "string"
+			) {
+				text += block.refusal;
+			} else {
+				return value;
+			}
+		}
+		return {
+			type: "message",
+			role: "assistant",
+			id: item.id,
+			status: item.status ?? "completed",
+			phase: item.phase,
+			content: [{ type: "output_text", text }],
+		};
+	}
+
+	private replayItemDigest(value: unknown): string {
+		return this.digest(this.normalizeReplayItemForDigest(value));
+	}
+
+	private orderedDigest(digests: string[], domain: string): string {
+		return this.digest({ domain, digests });
+	}
+
+	private continuationConfigDigest(body: CodexRequest): string {
+		const effectivePromptCacheOptions = body.prompt_cache_options
+			? {
+					...(body.prompt_cache_options.mode === undefined
+						? {}
+						: { mode: body.prompt_cache_options.mode }),
+					...(body.prompt_cache_options.ttl === undefined
+						? {}
+						: { ttl: body.prompt_cache_options.ttl }),
+				}
+			: {};
+		return this.digest({
+			instructions: body.instructions,
+			tools: body.tools,
+			tool_choice: body.tool_choice,
+			parallel_tool_calls: body.parallel_tool_calls,
+			reasoning: body.reasoning,
+			store: body.store,
+			prompt_cache_key: body.prompt_cache_key,
+			prompt_cache_options:
+				Object.keys(effectivePromptCacheOptions).length === 0
+					? undefined
+					: effectivePromptCacheOptions,
+		});
+	}
+
+	private normalizeContinuationSession(
+		headers: Headers,
+		body: CodexRequest,
+	): string | null {
+		const raw = headers.get("session-id") ?? body.prompt_cache_key;
+		if (typeof raw !== "string") return null;
+		const normalized = raw.trim();
+		if (normalized.length === 0) return null;
+		return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+			normalized,
+		)
+			? normalized.toLowerCase()
+			: normalized;
+	}
+
+	private sweepContinuationState(now: number): void {
+		for (const [key, state] of this.continuationByLane) {
+			if (state.expiresAt <= now) this.continuationByLane.delete(key);
+		}
+		for (const [requestId, pending] of this.pendingContinuationByRequest) {
+			if (pending.createdAt + this.continuationTtlMs <= now) {
+				this.pendingContinuationByRequest.delete(requestId);
+			}
+		}
+		while (this.continuationByLane.size > this.continuationMaxLanes) {
+			const oldest = this.continuationByLane.keys().next().value;
+			if (typeof oldest !== "string") break;
+			this.continuationByLane.delete(oldest);
+		}
+		while (
+			this.pendingContinuationByRequest.size >
+			this.continuationMaxLanes * 2
+		) {
+			const oldest = this.pendingContinuationByRequest.keys().next().value;
+			if (typeof oldest !== "string") break;
+			this.pendingContinuationByRequest.delete(oldest);
+		}
+	}
+
+	private prepareNativeContinuation(
+		body: CodexRequest,
+		headers: Headers,
+		account: Account | undefined,
+		requestId: string,
+		callerIdentityDigest: unknown,
+	): void {
+		// On a controlled request the gateway, not the caller, owns the chain.
+		// Never let a caller-provided response ID survive an inability to prepare
+		// the authenticated, exact-prefix continuation state.
+		delete body.previous_response_id;
+		if (
+			!account?.id ||
+			typeof callerIdentityDigest !== "string" ||
+			!/^[0-9a-f]{64}$/.test(callerIdentityDigest)
+		) {
+			return;
+		}
+		const session = this.normalizeContinuationSession(headers, body);
+		if (!session) return;
+		const now = this.now();
+		const sessionDigest = this.digest({
+			domain: "better-ccflare:codex-session:v1",
+			callerIdentityDigest,
+			session,
+		});
+		const laneKey = this.digest({
+			accountId: account.id,
+			model: body.model,
+			callerIdentityDigest,
+			sessionDigest,
+		});
+		const previousBeforeSweep = this.continuationByLane.get(laneKey);
+		const previousExpired =
+			previousBeforeSweep !== undefined && previousBeforeSweep.expiresAt <= now;
+		this.sweepContinuationState(now);
+		const inputDigests = body.input.map((item) => this.replayItemDigest(item));
+		const configDigest = this.continuationConfigDigest(body);
+		const previous = this.continuationByLane.get(laneKey);
+		let result: ContinuationResult = "cold";
+		let suffixStart = 0;
+		if (previousExpired) {
+			result = "expired";
+		} else if (previous) {
+			if (previous.configDigest !== configDigest) {
+				result = "config_mismatch";
+			} else {
+				const exactPrefix =
+					inputDigests.length > previous.replayPrefixDigests.length &&
+					previous.replayPrefixDigests.every(
+						(digest, index) => inputDigests[index] === digest,
+					);
+				if (exactPrefix) {
+					result = "hit";
+					suffixStart = previous.replayPrefixDigests.length;
+					body.input = body.input.slice(suffixStart);
+					body.previous_response_id = previous.responseId;
+					// Refresh LRU order only after a verified exact match.
+					this.continuationByLane.delete(laneKey);
+					this.continuationByLane.set(laneKey, previous);
+				} else {
+					result = "prefix_mismatch";
+				}
+			}
+		}
+		const stablePrefixDigests =
+			result === "hit" && previous
+				? previous.replayPrefixDigests
+				: inputDigests;
+		this.pendingContinuationByRequest.set(requestId, {
+			laneKey,
+			inputDigests,
+			configDigest,
+			result,
+			inputItemCount: inputDigests.length,
+			suffixItemCount: inputDigests.length - suffixStart,
+			createdAt: now,
+			baseGeneration: previous?.generation ?? null,
+			stablePrefixDigest: this.orderedDigest(
+				stablePrefixDigests,
+				"better-ccflare:codex-stable-prefix:v1",
+			),
+			sessionDigest,
+			previousResponsePresent: result === "hit",
+		});
+		this.sweepContinuationState(now);
+		log.info("Codex continuation diagnostics", {
+			result,
+			inputItemCount: inputDigests.length,
+			suffixItemCount: inputDigests.length - suffixStart,
+		});
+	}
+
+	private commitNativeContinuation(
+		requestId: string | null,
+		responseId: unknown,
+		responseOutput: unknown,
+	): void {
+		if (
+			!requestId ||
+			typeof responseId !== "string" ||
+			responseId.length === 0
+		) {
+			return;
+		}
+		const pending = this.pendingContinuationByRequest.get(requestId);
+		if (!pending) return;
+		this.pendingContinuationByRequest.delete(requestId);
+		if (!Array.isArray(responseOutput)) return;
+		const current = this.continuationByLane.get(pending.laneKey);
+		if ((current?.generation ?? null) !== pending.baseGeneration) {
+			// Another request advanced/replaced this lane after preparation. A late
+			// terminal event must not roll the chain back (last-completion-wins).
+			return;
+		}
+		const outputDigests = responseOutput.map((item) =>
+			this.replayItemDigest(item),
+		);
+		this.continuationByLane.delete(pending.laneKey);
+		this.continuationByLane.set(pending.laneKey, {
+			responseId,
+			replayPrefixDigests: [...pending.inputDigests, ...outputDigests],
+			configDigest: pending.configDigest,
+			expiresAt: this.now() + this.continuationTtlMs,
+			generation: ++this.continuationGeneration,
+		});
+		this.sweepContinuationState(this.now());
+	}
+
+	private observeNativeTerminalEvent(
+		requestId: string | null,
+		eventText: string,
+	): void {
+		let eventName = "";
+		let dataText = "";
+		for (const line of eventText.split("\n")) {
+			if (line.startsWith("event:")) {
+				eventName = line.slice("event:".length).trim();
+			} else if (line.startsWith("data:")) {
+				dataText += line.slice("data:".length).trim();
+			}
+		}
+		if (
+			eventName === "response.failed" ||
+			eventName === "response.incomplete"
+		) {
+			if (requestId) this.pendingContinuationByRequest.delete(requestId);
+			return;
+		}
+		if (eventName !== "response.completed" || !dataText) return;
+		try {
+			const data = JSON.parse(dataText) as {
+				response?: { id?: unknown; status?: unknown; output?: unknown };
+			};
+			if (
+				data.response?.status === undefined ||
+				data.response.status === "completed"
+			) {
+				this.commitNativeContinuation(
+					requestId,
+					data.response?.id,
+					data.response?.output,
+				);
+			}
+		} catch {
+			// Malformed diagnostics cannot create or advance continuation state.
+		}
+	}
+
+	private observeNativeJsonResponse(
+		requestId: string | null,
+		responseText: string,
+	): void {
+		try {
+			const response = JSON.parse(responseText) as {
+				id?: unknown;
+				status?: unknown;
+				output?: unknown;
+			};
+			if (response.status === undefined || response.status === "completed") {
+				this.commitNativeContinuation(requestId, response.id, response.output);
+			} else if (requestId) {
+				this.pendingContinuationByRequest.delete(requestId);
+			}
+		} catch {
+			// A malformed upstream body is not a successful continuation checkpoint.
+		}
+	}
+
+	private buildNativeResponsesPassthroughResponse(
+		response: Response,
+		requestId: string | null,
+		observeStream = true,
+		continuationSnapshot?: PendingContinuation,
+	): Response {
+		const pending = requestId
+			? this.pendingContinuationByRequest.get(requestId)
+			: undefined;
+		const diagnostics = continuationSnapshot ?? pending;
+		if (!response.ok && response.status !== 529 && requestId) {
+			this.pendingContinuationByRequest.delete(requestId);
+		}
+		const headers = sanitizeResponseHeaders(response.headers);
+		headers.set("x-better-ccflare-codex-response-format", "responses-api");
+		const transportUsed = response.headers
+			.get("content-type")
+			?.toLowerCase()
+			.includes("text/event-stream")
+			? "sse"
+			: "http";
+		headers.set("x-lanetally-transport-used", transportUsed);
+		if (diagnostics) {
+			headers.set("x-better-ccflare-codex-continuation", diagnostics.result);
+			headers.set(
+				"x-lanetally-continuation-used",
+				diagnostics.result === "hit" ? "true" : "false",
+			);
+			headers.set(
+				"x-lanetally-previous-response-present",
+				diagnostics.previousResponsePresent ? "true" : "false",
+			);
+			headers.set(
+				"x-lanetally-stable-prefix-digest",
+				diagnostics.stablePrefixDigest,
+			);
+			headers.set("x-lanetally-session-digest", diagnostics.sessionDigest);
+		}
+		log.info("Codex native response diagnostics", {
+			transportUsed,
+			continuationUsed: diagnostics?.result === "hit",
+			previousResponsePresent: diagnostics?.previousResponsePresent ?? false,
+			stablePrefixDigestPresent: diagnostics !== undefined,
+			sessionDigestPresent: diagnostics !== undefined,
+		});
+		if (!observeStream || !response.body) {
+			return new Response(response.body, {
+				status: response.status,
+				statusText: response.statusText,
+				headers,
+			});
+		}
+		const decoder = new TextDecoder();
+		let buffer = "";
+		const observed = response.body.pipeThrough(
+			new TransformStream<Uint8Array, Uint8Array>({
+				transform: (chunk, controller) => {
+					controller.enqueue(chunk);
+					buffer += decoder.decode(chunk, { stream: true });
+					const events = buffer.split(/\r?\n\r?\n/);
+					buffer = events.pop() ?? "";
+					for (const event of events) {
+						this.observeNativeTerminalEvent(requestId, event);
+					}
+				},
+				flush: () => {
+					buffer += decoder.decode();
+					if (buffer) this.observeNativeTerminalEvent(requestId, buffer);
+				},
+			}),
+		);
+		return new Response(observed, {
 			status: response.status,
 			statusText: response.statusText,
 			headers,
@@ -1502,10 +2049,18 @@ export class CodexProvider extends BaseProvider {
 		const instructions = this.extractSystemPrompt(body.system);
 
 		// Convert messages
-		const input: CodexRequest["input"] = [];
+		const nativeInput = Array.isArray(passthrough?.native_input)
+			? structuredClone(passthrough.native_input)
+			: null;
+		const input: CodexRequest["input"] = nativeInput
+			? (nativeInput as CodexRequest["input"])
+			: [];
 		const skillCallIds = new Set<string>();
 		let skillCompletedInFinalMessage = false;
-		for (const [msgIndex, msg] of body.messages.entries()) {
+		for (const [msgIndex, msg] of (nativeInput
+			? []
+			: body.messages
+		).entries()) {
 			for (const item of this.convertMessage(msg)) {
 				input.push(item);
 				if ("type" in item && item.type === "function_call") {
@@ -1529,7 +2084,7 @@ export class CodexProvider extends BaseProvider {
 		// nudge. Tail placement keeps the cached prefix stable, and firing on
 		// any final-turn Skill result (not only a trailing one) covers parallel
 		// fan-out turns that mix Skill and other tool results.
-		if (skillCompletedInFinalMessage) {
+		if (!nativeInput && skillCompletedInFinalMessage) {
 			input.push({
 				role: "user",
 				content: [
@@ -1613,7 +2168,10 @@ export class CodexProvider extends BaseProvider {
 			}
 		}
 
-		codexRequest.instructions = instructions || "You are a helpful assistant.";
+		codexRequest.instructions =
+			typeof passthrough?.native_instructions === "string"
+				? passthrough.native_instructions
+				: instructions || "You are a helpful assistant.";
 		// Prefer the original cache key, then use the derived key.
 		const originalCacheKey =
 			typeof passthrough?.prompt_cache_key === "string"
@@ -1628,6 +2186,18 @@ export class CodexProvider extends BaseProvider {
 		const promptCacheKey = originalCacheKey ?? derivedCacheKey;
 		if (promptCacheKey) {
 			codexRequest.prompt_cache_key = promptCacheKey;
+		}
+		const promptCacheOptions = passthrough?.prompt_cache_options;
+		if (promptCacheOptions && typeof promptCacheOptions === "object") {
+			codexRequest.prompt_cache_options = promptCacheOptions as NonNullable<
+				CodexRequest["prompt_cache_options"]
+			>;
+		}
+		if (
+			typeof passthrough?.previous_response_id === "string" &&
+			passthrough.previous_response_id.length > 0
+		) {
+			codexRequest.previous_response_id = passthrough.previous_response_id;
 		}
 		const explicitToolChoice = this.convertToolChoice(
 			body.tool_choice,

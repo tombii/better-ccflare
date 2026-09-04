@@ -16,6 +16,12 @@ export interface ResponsesRequest {
 	store?: boolean;
 	/** Codex CLI's stable conversation identity for prompt-cache routing. */
 	prompt_cache_key?: string;
+	/** GPT-5.6+ cache controls. Implicit mode is represented by omitting mode. */
+	prompt_cache_options?: {
+		mode?: "explicit";
+		ttl?: "30m";
+		comparison_response_id?: string;
+	};
 }
 
 // ResponseItem union — all item types codex can send
@@ -42,11 +48,13 @@ export type ResponseContent =
 export interface InputTextContent {
 	type: "input_text";
 	text: string;
+	prompt_cache_breakpoint?: { mode: "explicit" };
 }
 
 export interface OutputTextContent {
 	type: "output_text";
 	text: string;
+	prompt_cache_breakpoint?: { mode: "explicit" };
 }
 
 export interface RefusalContent {
@@ -283,4 +291,5 @@ export type HandleProxyFn = (
 	ctx: unknown,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
+	options?: { trustedNativeResponses?: boolean },
 ) => Promise<Response>;

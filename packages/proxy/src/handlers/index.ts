@@ -54,6 +54,7 @@ export {
 	ERROR_MESSAGES,
 	INTERNAL_PROBE_SECRET_HEADER,
 	isInternalProbe,
+	markTrustedNativeResponses,
 	type ProxyContext,
 	TIMING,
 } from "./proxy-types";

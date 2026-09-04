@@ -136,6 +136,54 @@ afterEach(() => {
 });
 
 describe("Codex usage-window session rollover", () => {
+	it("does not reset affinity when a future sliding deadline advances", async () => {
+		const account = makeAccount();
+		const futureReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+		const laterFutureReset = new Date(
+			Date.now() + 2 * 60 * 60 * 1000,
+		).toISOString();
+		seedUsage(account.id, {
+			five_hour: { utilization: 20, resets_at: futureReset },
+			seven_day: { utilization: 15, resets_at: NEXT_WEEKLY_RESET },
+		});
+		const { ctx, calls, flush } = makeCtx();
+
+		updateAccountMetadata(
+			account,
+			makeCodexResponse({
+				fiveHourReset: laterFutureReset,
+				weeklyReset: NEXT_WEEKLY_RESET,
+			}),
+			ctx,
+		);
+		await flush();
+
+		expect(calls.resetAccountSession).toHaveLength(0);
+	});
+
+	it("resets affinity after the previous deadline actually elapsed", async () => {
+		const account = makeAccount();
+		const elapsedReset = new Date(Date.now() - 60_000).toISOString();
+		const nextReset = new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString();
+		seedUsage(account.id, {
+			five_hour: { utilization: 20, resets_at: elapsedReset },
+			seven_day: { utilization: 15, resets_at: NEXT_WEEKLY_RESET },
+		});
+		const { ctx, calls, flush } = makeCtx();
+
+		updateAccountMetadata(
+			account,
+			makeCodexResponse({
+				fiveHourReset: nextReset,
+				weeklyReset: NEXT_WEEKLY_RESET,
+			}),
+			ctx,
+		);
+		await flush();
+
+		expect(calls.resetAccountSession).toHaveLength(1);
+	});
+
 	it("resets the session from the weekly window when the default flag is false and no 5-hour window is reported", async () => {
 		const account = makeAccount();
 		seedUsage(account.id, {

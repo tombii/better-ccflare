@@ -15,6 +15,7 @@ function stripInternalControlHeaders(headers: Headers): void {
 	headers.delete(INTERNAL_PROBE_SECRET_HEADER);
 	headers.delete("x-better-ccflare-auto-refresh");
 	headers.delete("x-better-ccflare-keepalive");
+	headers.delete("x-better-ccflare-native-responses");
 }
 
 /**

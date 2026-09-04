@@ -29,6 +29,7 @@ import {
 	isForceAccountModelEnabled,
 	isInternalProbe,
 	isRefreshTokenLikelyExpired,
+	markTrustedNativeResponses,
 	type ProxyContext,
 	prepareRequestBody,
 	proxyUnauthenticated,
@@ -178,13 +179,14 @@ export function handleProxy(
 	ctx: ProxyContext,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
+	options?: { trustedNativeResponses?: boolean },
 ): Promise<Response> {
 	if (isInternalProbe(req.headers, ctx)) {
 		return runForceAccountModelExempt(() =>
-			handleProxyRequest(req, url, ctx, apiKeyId, apiKeyName),
+			handleProxyRequest(req, url, ctx, apiKeyId, apiKeyName, options),
 		);
 	}
-	return handleProxyRequest(req, url, ctx, apiKeyId, apiKeyName);
+	return handleProxyRequest(req, url, ctx, apiKeyId, apiKeyName, options);
 }
 
 async function handleProxyRequest(
@@ -193,6 +195,7 @@ async function handleProxyRequest(
 	ctx: ProxyContext,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
+	options?: { trustedNativeResponses?: boolean },
 ): Promise<Response> {
 	// 0. Silently ignore Claude Code internal endpoints (non-critical, not supported by all providers)
 	if (
@@ -294,6 +297,9 @@ async function handleProxyRequest(
 
 	// 5. Create request metadata with agent info
 	const requestMeta = createRequestMetadata(req, url);
+	if (options?.trustedNativeResponses === true) {
+		markTrustedNativeResponses(requestMeta);
+	}
 	requestMeta.agentUsed = agentUsed;
 	requestMeta.agentAttributionSource = agentAttributionSource;
 	requestMeta.project = project;

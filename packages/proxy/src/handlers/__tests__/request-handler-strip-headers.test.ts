@@ -32,6 +32,7 @@ describe("makeProxyRequest strips internal control headers before provider forwa
 			"x-better-ccflare-internal-probe-secret": "s3cr3t",
 			"x-better-ccflare-auto-refresh": "true",
 			"x-better-ccflare-keepalive": "true",
+			"x-better-ccflare-native-responses": "true",
 			authorization: "Bearer token",
 			"content-type": "application/json",
 		});
@@ -47,6 +48,7 @@ describe("makeProxyRequest strips internal control headers before provider forwa
 		).toBeNull();
 		expect(sentHeaders?.get("x-better-ccflare-auto-refresh")).toBeNull();
 		expect(sentHeaders?.get("x-better-ccflare-keepalive")).toBeNull();
+		expect(sentHeaders?.get("x-better-ccflare-native-responses")).toBeNull();
 		// unrelated headers still forwarded
 		expect(sentHeaders?.get("authorization")).toBe("Bearer token");
 		expect(sentHeaders?.get("content-type")).toBe("application/json");
@@ -58,6 +60,7 @@ describe("makeProxyRequest strips internal control headers before provider forwa
 			headers: {
 				"x-better-ccflare-internal-probe-secret": "s3cr3t",
 				"x-better-ccflare-keepalive": "true",
+				"x-better-ccflare-native-responses": "true",
 				authorization: "Bearer token",
 			},
 		});
@@ -66,6 +69,7 @@ describe("makeProxyRequest strips internal control headers before provider forwa
 			sentHeaders?.get("x-better-ccflare-internal-probe-secret"),
 		).toBeNull();
 		expect(sentHeaders?.get("x-better-ccflare-keepalive")).toBeNull();
+		expect(sentHeaders?.get("x-better-ccflare-native-responses")).toBeNull();
 		expect(sentHeaders?.get("authorization")).toBe("Bearer token");
 	});
 });
