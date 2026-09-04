@@ -138,8 +138,9 @@ Codex CLI (and other OpenAI Responses API clients) can target better-ccflare dir
 Note: this is distinct from the `codex` *provider*, which routes requests outbound to OpenAI's Codex endpoint.
 
 **Known Limitations (`/v1/responses`):**
-- `previous_response_id` is accepted but ignored — better-ccflare is stateless and does not store prior responses. Codex uses this field only over WebSocket (which better-ccflare does not implement); for regular HTTP requests Codex always sends the full conversation history in `input`, so this field has no effect.
-- Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are silently skipped; only `type: "function"` tools are forwarded to Anthropic.
+- Regular HTTP does not trust an arbitrary caller-supplied `previous_response_id`. On the authenticated, native outbound Codex route, an operator-controlled LaneTally request can enable gateway-managed continuation. The gateway retains only the last upstream response ID and cryptographic input/configuration digests; it sends a suffix with that server-owned ID only after an exact ordered-prefix and configuration match. Mismatch, expiry, or process restart safely sends the full input without a response ID. WebSocket transport is not implemented.
+- Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are preserved on the native outbound Codex route. Routes translated to Anthropic skip built-in tools and forward only `type: "function"` tools.
+- Unknown top-level `/v1/responses` request fields fail closed with `400 invalid_request_error`; they are never silently discarded. An explicit `max_output_tokens` also returns 400 when the selected outbound route is the canonical ChatGPT Codex subscription endpoint. Omit it for that route; custom OpenAI-compatible endpoints may support it.
 
 **Note:** `GET /v1/models` is proxied through to Claude like any other `/v1/*` request. A successful response (from a console/API-key account) is also passively captured into better-ccflare's own model catalog cache — see [Model Catalog](#model-catalog) below for the read endpoint (`GET /api/models`) and how the catalog is kept up to date.
 
@@ -1335,4 +1336,3 @@ The following strategy is available:
 8. **Provider Filtering**: Accounts are automatically filtered by provider when selecting for requests, ensuring compatibility.
 
 ---
-

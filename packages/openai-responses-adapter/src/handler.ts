@@ -19,6 +19,47 @@ const LANETALLY_CACHE_MODE_HEADER = "x-lanetally-prompt-cache-mode";
 const LANETALLY_CACHE_TTL_HEADER = "x-lanetally-prompt-cache-ttl";
 const LANETALLY_CACHE_BREAKPOINT_HEADER = "x-lanetally-prompt-cache-breakpoint";
 const MAX_PROMPT_CACHE_BREAKPOINTS = 4;
+const CACHE_DIAGNOSTIC_TYPES = new Set(["cache_hit", "cache_miss"]);
+const CACHE_DIAGNOSTIC_REASONS = new Set([
+	"prefix_changed",
+	"cache_expired",
+	"cache_disabled",
+	"not_cacheable",
+]);
+const SUPPORTED_RESPONSES_REQUEST_FIELDS = new Set([
+	"model",
+	"input",
+	"instructions",
+	"tools",
+	"tool_choice",
+	"parallel_tool_calls",
+	"stream",
+	"reasoning",
+	"previous_response_id",
+	"max_output_tokens",
+	"store",
+	"prompt_cache_key",
+	"prompt_cache_options",
+	"text",
+	"temperature",
+	"top_p",
+	"truncation",
+	"include",
+	"metadata",
+	"service_tier",
+	"context_management",
+]);
+const NATIVE_GENERATION_FIELDS = [
+	"text",
+	"temperature",
+	"top_p",
+	"truncation",
+	"include",
+	"metadata",
+	"service_tier",
+	"context_management",
+	"max_output_tokens",
+] as const satisfies readonly (keyof ResponsesRequest)[];
 
 type CacheDiagnostic = {
 	type?: string;
@@ -43,6 +84,37 @@ function countPromptCacheBreakpoints(value: unknown): number {
 		}
 	}
 	return total;
+}
+
+function hasExactlyOneExplicitPromptCacheBreakpoint(value: unknown): boolean {
+	let count = 0;
+	let exact = true;
+	const inspect = (candidate: unknown): void => {
+		if (Array.isArray(candidate)) {
+			for (const item of candidate) inspect(item);
+			return;
+		}
+		if (!candidate || typeof candidate !== "object") return;
+		const record = candidate as Record<string, unknown>;
+		if (Object.hasOwn(record, "prompt_cache_breakpoint")) {
+			count++;
+			const breakpoint = record.prompt_cache_breakpoint;
+			if (
+				!breakpoint ||
+				typeof breakpoint !== "object" ||
+				Array.isArray(breakpoint) ||
+				Object.keys(breakpoint).length !== 1 ||
+				(breakpoint as Record<string, unknown>).mode !== "explicit"
+			) {
+				exact = false;
+			}
+		}
+		for (const [key, child] of Object.entries(record)) {
+			if (key !== "prompt_cache_breakpoint") inspect(child);
+		}
+	};
+	inspect(value);
+	return exact && count === 1;
 }
 
 function addDeveloperBreakpoint(body: ResponsesRequest): ResponsesRequest {
@@ -155,6 +227,8 @@ function applyLaneTallyCacheControls(
 }
 
 function logCacheRequestDiagnostics(body: ResponsesRequest, headers: Headers) {
+	const suppliedMode = body.prompt_cache_options?.mode as unknown;
+	const suppliedTtl = body.prompt_cache_options?.ttl as unknown;
 	log.info("Codex cache request diagnostics", {
 		transportRequested: body.stream === true ? "sse" : "http",
 		previousResponseRequested:
@@ -164,8 +238,18 @@ function logCacheRequestDiagnostics(body: ResponsesRequest, headers: Headers) {
 			headers.get(LANETALLY_CONTINUATION_HEADER) === "previous_response_id"
 				? "previous_response_id"
 				: "none",
-		cacheMode: body.prompt_cache_options?.mode ?? "implicit",
-		cacheTtl: body.prompt_cache_options?.ttl ?? "default",
+		cacheMode:
+			suppliedMode === undefined
+				? "implicit"
+				: suppliedMode === "explicit"
+					? "explicit"
+					: "invalid",
+		cacheTtl:
+			suppliedTtl === undefined
+				? "default"
+				: suppliedTtl === "30m"
+					? "30m"
+					: "invalid",
 		breakpointCount: countPromptCacheBreakpoints(body.input),
 		comparisonResponseIdPresent:
 			typeof body.prompt_cache_options?.comparison_response_id === "string" &&
@@ -185,10 +269,19 @@ function logCacheResponseDiagnostics(response: Record<string, unknown>): void {
 		| CacheDiagnostic
 		| undefined;
 	if (!diagnostics || typeof diagnostics !== "object") return;
+	const diagnosticType =
+		typeof diagnostics.type === "string" &&
+		CACHE_DIAGNOSTIC_TYPES.has(diagnostics.type)
+			? diagnostics.type
+			: "unknown";
+	const diagnosticReason =
+		typeof diagnostics.reason === "string" &&
+		CACHE_DIAGNOSTIC_REASONS.has(diagnostics.reason)
+			? diagnostics.reason
+			: "unknown";
 	log.info("Codex cache response diagnostics", {
-		type: typeof diagnostics.type === "string" ? diagnostics.type : "unknown",
-		reason:
-			typeof diagnostics.reason === "string" ? diagnostics.reason : "unknown",
+		type: diagnosticType,
+		reason: diagnosticReason,
 		cacheMissedTokens:
 			typeof diagnostics.cache_missed_tokens === "number"
 				? diagnostics.cache_missed_tokens
@@ -198,6 +291,27 @@ function logCacheResponseDiagnostics(response: Record<string, unknown>): void {
 				? diagnostics.comparison_reusable_tokens
 				: null,
 	});
+}
+
+function exactLaneTallyCacheControlsApplied(
+	body: ResponsesRequest,
+	headers: Headers,
+): boolean {
+	const options = body.prompt_cache_options as unknown;
+	const exactOptions =
+		options !== null &&
+		typeof options === "object" &&
+		!Array.isArray(options) &&
+		Object.keys(options).length === 1 &&
+		(options as Record<string, unknown>).ttl === "30m";
+	return (
+		headers.get(LANETALLY_CACHE_MODE_HEADER)?.toLowerCase() === "implicit" &&
+		headers.get(LANETALLY_CACHE_TTL_HEADER)?.toLowerCase() === "30m" &&
+		headers.get(LANETALLY_CACHE_BREAKPOINT_HEADER)?.toLowerCase() ===
+			"developer" &&
+		exactOptions &&
+		hasExactlyOneExplicitPromptCacheBreakpoint(body.input)
+	);
 }
 
 function inspectNativeResponsesStream(
@@ -309,9 +423,51 @@ export async function handleResponsesRequest(
 			{ status: 400, headers: { "Content-Type": "application/json" } },
 		);
 	}
+	if (!body || typeof body !== "object" || Array.isArray(body)) {
+		return new Response(
+			JSON.stringify({
+				type: "error",
+				error: {
+					type: "invalid_request_error",
+					message: "Request body must be a JSON object",
+				},
+			}),
+			{ status: 400, headers: { "Content-Type": "application/json" } },
+		);
+	}
+	const unsupportedFields = Object.keys(body).filter(
+		(field) => !SUPPORTED_RESPONSES_REQUEST_FIELDS.has(field),
+	);
+	if (unsupportedFields.length > 0) {
+		return new Response(
+			JSON.stringify({
+				type: "error",
+				error: {
+					type: "invalid_request_error",
+					message: `Unsupported Responses request field(s): ${unsupportedFields.sort().join(", ")}`,
+				},
+			}),
+			{ status: 400, headers: { "Content-Type": "application/json" } },
+		);
+	}
+	if (
+		body.max_output_tokens !== undefined &&
+		(!Number.isInteger(body.max_output_tokens) || body.max_output_tokens <= 0)
+	) {
+		return new Response(
+			JSON.stringify({
+				type: "error",
+				error: {
+					type: "invalid_request_error",
+					message: "max_output_tokens must be a positive integer",
+				},
+			}),
+			{ status: 400, headers: { "Content-Type": "application/json" } },
+		);
+	}
 
 	// 2. Validate & normalise `input` — OpenAI Responses API allows a plain string
-	if (!body || (typeof body.input !== "string" && !Array.isArray(body.input))) {
+	if (typeof body.input !== "string" && !Array.isArray(body.input)) {
 		return new Response(
 			JSON.stringify({
 				type: "error",
@@ -418,6 +574,9 @@ export async function handleResponsesRequest(
 			.update(apiKeyId)
 			.digest("hex");
 	}
+	if (exactLaneTallyCacheControlsApplied(body, req.headers)) {
+		codexPassthrough.cache_controls_applied = true;
+	}
 	if (body.model !== undefined) codexPassthrough.model = body.model;
 	if (body.reasoning !== undefined) codexPassthrough.reasoning = body.reasoning;
 	if (body.prompt_cache_key !== undefined)
@@ -440,9 +599,14 @@ export async function handleResponsesRequest(
 	if (body.instructions !== undefined)
 		codexPassthrough.native_instructions = body.instructions;
 	if (body.tools !== undefined) codexPassthrough.tools = body.tools;
+	if (body.tool_choice !== undefined)
+		codexPassthrough.tool_choice = body.tool_choice;
 	if (body.parallel_tool_calls !== undefined)
 		codexPassthrough.parallel_tool_calls = body.parallel_tool_calls;
 	if (body.store !== undefined) codexPassthrough.store = body.store;
+	for (const field of NATIVE_GENERATION_FIELDS) {
+		if (body[field] !== undefined) codexPassthrough[field] = body[field];
+	}
 	// Preserve Responses Lite tools.
 	const additionalToolsItems = Array.isArray(body.input)
 		? body.input.filter(

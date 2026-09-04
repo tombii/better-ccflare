@@ -15,7 +15,17 @@ function stripInternalControlHeaders(headers: Headers): void {
 	headers.delete(INTERNAL_PROBE_SECRET_HEADER);
 	headers.delete("x-better-ccflare-auto-refresh");
 	headers.delete("x-better-ccflare-keepalive");
+	headers.delete("x-better-ccflare-request-id");
+	headers.delete("x-better-ccflare-request-stream");
+	headers.delete("x-better-ccflare-codex-custom-tools");
 	headers.delete("x-better-ccflare-native-responses");
+	headers.delete("x-better-ccflare-exclude-providers");
+	headers.delete("x-lanetally-codex-continuation");
+	headers.delete("x-lanetally-prompt-cache-mode");
+	headers.delete("x-lanetally-prompt-cache-ttl");
+	headers.delete("x-lanetally-prompt-cache-breakpoint");
+	headers.delete("x-lanetally-codex-path");
+	headers.delete("x-lanetally-codex-transport");
 }
 
 /**

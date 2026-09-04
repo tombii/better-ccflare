@@ -31,9 +31,18 @@ interface CodexBody {
 }
 
 function makeRequest(body: unknown): Request {
+	const trustedNativeResponses =
+		body !== null &&
+		typeof body === "object" &&
+		"__better_ccflare_codex_passthrough" in body;
 	return new Request("https://example.com/v1/messages", {
 		method: "POST",
-		headers: { "content-type": "application/json" },
+		headers: {
+			"content-type": "application/json",
+			...(trustedNativeResponses
+				? { "x-better-ccflare-native-responses": "true" }
+				: {}),
+		},
 		body: JSON.stringify(body),
 	});
 }

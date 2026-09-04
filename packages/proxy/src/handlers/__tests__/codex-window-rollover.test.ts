@@ -161,12 +161,35 @@ describe("Codex usage-window session rollover", () => {
 		expect(calls.resetAccountSession).toHaveLength(0);
 	});
 
-	it("resets affinity after the previous deadline actually elapsed", async () => {
+	it("does not reset affinity after elapsed deadline when utilization keeps rising", async () => {
 		const account = makeAccount();
 		const elapsedReset = new Date(Date.now() - 60_000).toISOString();
 		const nextReset = new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString();
 		seedUsage(account.id, {
 			five_hour: { utilization: 20, resets_at: elapsedReset },
+			seven_day: { utilization: 15, resets_at: NEXT_WEEKLY_RESET },
+		});
+		const { ctx, calls, flush } = makeCtx();
+
+		updateAccountMetadata(
+			account,
+			makeCodexResponse({
+				fiveHourReset: nextReset,
+				weeklyReset: NEXT_WEEKLY_RESET,
+			}),
+			ctx,
+		);
+		await flush();
+
+		expect(calls.resetAccountSession).toHaveLength(0);
+	});
+
+	it("resets affinity after elapsed deadline and utilization wraps", async () => {
+		const account = makeAccount();
+		const elapsedReset = new Date(Date.now() - 60_000).toISOString();
+		const nextReset = new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString();
+		seedUsage(account.id, {
+			five_hour: { utilization: 90, resets_at: elapsedReset },
 			seven_day: { utilization: 15, resets_at: NEXT_WEEKLY_RESET },
 		});
 		const { ctx, calls, flush } = makeCtx();
@@ -187,7 +210,7 @@ describe("Codex usage-window session rollover", () => {
 	it("resets the session from the weekly window when the default flag is false and no 5-hour window is reported", async () => {
 		const account = makeAccount();
 		seedUsage(account.id, {
-			seven_day: { utilization: 20, resets_at: PREVIOUS_WEEKLY_RESET },
+			seven_day: { utilization: 90, resets_at: PREVIOUS_WEEKLY_RESET },
 		});
 		const { ctx, calls, flush } = makeCtx();
 		expect(ctx.config.getCodexFiveHourWindowEnabled()).toBe(false);
@@ -206,7 +229,7 @@ describe("Codex usage-window session rollover", () => {
 	it("resets the session from the reported 5-hour window when the default flag is false", async () => {
 		const account = makeAccount();
 		seedUsage(account.id, {
-			five_hour: { utilization: 20, resets_at: PREVIOUS_FIVE_HOUR_RESET },
+			five_hour: { utilization: 90, resets_at: PREVIOUS_FIVE_HOUR_RESET },
 			seven_day: { utilization: 15, resets_at: NEXT_WEEKLY_RESET },
 		});
 		const { ctx, calls, flush } = makeCtx();

@@ -130,6 +130,13 @@ export function updateAccountMetadata(
 				} | null
 			)?.[windowSlot]?.resets_at;
 			const newResetAt = codexUsage[windowSlot]?.resets_at;
+			const prevUtilization = (
+				prevUsage as {
+					five_hour?: { utilization: number };
+					seven_day?: { utilization: number };
+				} | null
+			)?.[windowSlot]?.utilization;
+			const newUtilization = codexUsage[windowSlot]?.utilization;
 			const observedAt = Date.now();
 			const prevResetAtMs =
 				prevResetAt != null ? new Date(prevResetAt).getTime() : Number.NaN;
@@ -139,7 +146,10 @@ export function updateAccountMetadata(
 				Number.isFinite(prevResetAtMs) &&
 				Number.isFinite(newResetAtMs) &&
 				prevResetAtMs <= observedAt &&
-				newResetAtMs > prevResetAtMs;
+				newResetAtMs > prevResetAtMs &&
+				typeof prevUtilization === "number" &&
+				typeof newUtilization === "number" &&
+				newUtilization < prevUtilization;
 
 			usageCache.set(account.id, codexUsage);
 			log.debug(

@@ -277,7 +277,7 @@ interface CodexRequest {
 	stream: boolean;
 	store: boolean;
 	max_output_tokens?: number;
-	reasoning?: { effort: string; context?: string };
+	reasoning?: { effort: string; summary?: unknown; context?: unknown };
 	instructions?: string;
 	tools?: CodexTool[];
 	prompt_cache_key?: string;
@@ -287,12 +287,16 @@ interface CodexRequest {
 		comparison_response_id?: string;
 	};
 	previous_response_id?: string;
-	tool_choice?:
-		| "auto"
-		| "required"
-		| "none"
-		| { type: "function"; name: string };
+	tool_choice?: string | Record<string, unknown>;
 	parallel_tool_calls?: boolean;
+	text?: unknown;
+	temperature?: unknown;
+	top_p?: unknown;
+	truncation?: unknown;
+	include?: unknown;
+	metadata?: unknown;
+	service_tier?: unknown;
+	context_management?: unknown;
 }
 
 type ContinuationResult =
@@ -322,6 +326,11 @@ interface PendingContinuation {
 	stablePrefixDigest: string;
 	sessionDigest: string;
 	previousResponsePresent: boolean;
+	cacheControlsApplied: boolean;
+	terminalCandidate?: {
+		responseId: string;
+		outputDigests: string[];
+	};
 }
 
 // ── Anthropic request types ───────────────────────────────────────────────────
@@ -728,6 +737,15 @@ export class CodexProvider extends BaseProvider {
 				return this.createSyntheticCountTokensResponse(request, body);
 			}
 			const isSubscriptionEndpoint = isCodexSubscriptionEndpoint(account);
+			const requestId = request.headers.get("x-better-ccflare-request-id");
+			const nativeResponses =
+				request.headers.get("x-better-ccflare-native-responses") === "true";
+			// Extract internal passthrough metadata. The object itself is untrusted
+			// unless the in-process Responses adapter marked this as a native request.
+			const suppliedPassthrough = body.__better_ccflare_codex_passthrough as
+				| Record<string, unknown>
+				| undefined;
+			const passthrough = nativeResponses ? suppliedPassthrough : undefined;
 			if (
 				isSubscriptionEndpoint &&
 				typeof body.max_tokens === "number" &&
@@ -740,15 +758,22 @@ export class CodexProvider extends BaseProvider {
 					`Codex subscription endpoint does not support max_tokens: ${body.max_tokens}.`,
 				);
 			}
-
-			const requestId = request.headers.get("x-better-ccflare-request-id");
-			const nativeResponses =
-				request.headers.get("x-better-ccflare-native-responses") === "true";
-			// Extract internal passthrough metadata.
-			const passthrough = body.__better_ccflare_codex_passthrough as
-				| Record<string, unknown>
-				| undefined;
+			if (
+				isSubscriptionEndpoint &&
+				passthrough &&
+				Object.hasOwn(passthrough, "max_output_tokens")
+			) {
+				return this.createSyntheticErrorResponse(
+					request,
+					400,
+					"invalid_request_error",
+					"Native Responses max_output_tokens is not supported by the canonical Codex subscription endpoint.",
+				);
+			}
 			delete body.__better_ccflare_codex_passthrough;
+			// The passthrough object is part of the public JSON body and is therefore
+			// attacker-controlled. Honor it only when the proxy's in-process trust bit
+			// admitted this request through the authenticated Responses adapter.
 			log.info("Codex native continuation admission diagnostics", {
 				nativeResponses,
 				requestIdPresent: typeof requestId === "string" && requestId.length > 0,
@@ -782,6 +807,7 @@ export class CodexProvider extends BaseProvider {
 						account,
 						requestId,
 						passthrough.caller_identity_digest,
+						passthrough.cache_controls_applied,
 					);
 				}
 			}
@@ -1109,17 +1135,53 @@ export class CodexProvider extends BaseProvider {
 		return this.digest({ domain, digests });
 	}
 
-	private continuationConfigDigest(body: CodexRequest): string {
-		const effectivePromptCacheOptions = body.prompt_cache_options
-			? {
-					...(body.prompt_cache_options.mode === undefined
-						? {}
-						: { mode: body.prompt_cache_options.mode }),
-					...(body.prompt_cache_options.ttl === undefined
-						? {}
-						: { ttl: body.prompt_cache_options.ttl }),
+	private hasExactlyOneExplicitPromptCacheBreakpoint(value: unknown): boolean {
+		let count = 0;
+		let exact = true;
+		const inspect = (candidate: unknown): void => {
+			if (Array.isArray(candidate)) {
+				for (const item of candidate) inspect(item);
+				return;
+			}
+			if (!candidate || typeof candidate !== "object") return;
+			const record = candidate as Record<string, unknown>;
+			if (Object.hasOwn(record, "prompt_cache_breakpoint")) {
+				count++;
+				const breakpoint = record.prompt_cache_breakpoint;
+				if (
+					!breakpoint ||
+					typeof breakpoint !== "object" ||
+					Array.isArray(breakpoint) ||
+					Object.keys(breakpoint).length !== 1 ||
+					(breakpoint as Record<string, unknown>).mode !== "explicit"
+				) {
+					exact = false;
 				}
-			: {};
+			}
+			for (const [key, child] of Object.entries(record)) {
+				if (key !== "prompt_cache_breakpoint") inspect(child);
+			}
+		};
+		inspect(value);
+		return exact && count === 1;
+	}
+
+	private hasExactLaneTallyPromptCacheOptions(value: unknown): boolean {
+		return (
+			value !== null &&
+			typeof value === "object" &&
+			!Array.isArray(value) &&
+			Object.keys(value).length === 1 &&
+			(value as Record<string, unknown>).ttl === "30m"
+		);
+	}
+
+	private continuationConfigDigest(body: CodexRequest): string {
+		const effectivePromptCacheOptions =
+			body.prompt_cache_options &&
+			Object.keys(body.prompt_cache_options).length > 0
+				? body.prompt_cache_options
+				: undefined;
 		return this.digest({
 			instructions: body.instructions,
 			tools: body.tools,
@@ -1128,10 +1190,16 @@ export class CodexProvider extends BaseProvider {
 			reasoning: body.reasoning,
 			store: body.store,
 			prompt_cache_key: body.prompt_cache_key,
-			prompt_cache_options:
-				Object.keys(effectivePromptCacheOptions).length === 0
-					? undefined
-					: effectivePromptCacheOptions,
+			prompt_cache_options: effectivePromptCacheOptions,
+			max_output_tokens: body.max_output_tokens,
+			text: body.text,
+			temperature: body.temperature,
+			top_p: body.top_p,
+			truncation: body.truncation,
+			include: body.include,
+			metadata: body.metadata,
+			service_tier: body.service_tier,
+			context_management: body.context_management,
 		});
 	}
 
@@ -1180,6 +1248,7 @@ export class CodexProvider extends BaseProvider {
 		account: Account | undefined,
 		requestId: string,
 		callerIdentityDigest: unknown,
+		cacheControlsApplied: unknown,
 	): void {
 		// On a controlled request the gateway, not the caller, owns the chain.
 		// Never let a caller-provided response ID survive an inability to prepare
@@ -1212,6 +1281,12 @@ export class CodexProvider extends BaseProvider {
 		this.sweepContinuationState(now);
 		const inputDigests = body.input.map((item) => this.replayItemDigest(item));
 		const configDigest = this.continuationConfigDigest(body);
+		// Cache-control attestation describes the logical full request admitted by
+		// the adapter. On a continuation hit the stable prefix (and therefore its
+		// developer breakpoint) is intentionally elided from the upstream suffix,
+		// so measure it before any continuation slicing occurs.
+		const originalBreakpointIsExact =
+			this.hasExactlyOneExplicitPromptCacheBreakpoint(body.input);
 		const previous = this.continuationByLane.get(laneKey);
 		let result: ContinuationResult = "cold";
 		let suffixStart = 0;
@@ -1258,6 +1333,10 @@ export class CodexProvider extends BaseProvider {
 			),
 			sessionDigest,
 			previousResponsePresent: result === "hit",
+			cacheControlsApplied:
+				cacheControlsApplied === true &&
+				this.hasExactLaneTallyPromptCacheOptions(body.prompt_cache_options) &&
+				originalBreakpointIsExact,
 		});
 		this.sweepContinuationState(now);
 		log.info("Codex continuation diagnostics", {
@@ -1279,19 +1358,31 @@ export class CodexProvider extends BaseProvider {
 		) {
 			return;
 		}
+		if (!Array.isArray(responseOutput)) {
+			this.pendingContinuationByRequest.delete(requestId);
+			return;
+		}
+		this.commitNativeContinuationDigests(
+			requestId,
+			responseId,
+			responseOutput.map((item) => this.replayItemDigest(item)),
+		);
+	}
+
+	private commitNativeContinuationDigests(
+		requestId: string,
+		responseId: string,
+		outputDigests: string[],
+	): void {
 		const pending = this.pendingContinuationByRequest.get(requestId);
 		if (!pending) return;
 		this.pendingContinuationByRequest.delete(requestId);
-		if (!Array.isArray(responseOutput)) return;
 		const current = this.continuationByLane.get(pending.laneKey);
 		if ((current?.generation ?? null) !== pending.baseGeneration) {
 			// Another request advanced/replaced this lane after preparation. A late
 			// terminal event must not roll the chain back (last-completion-wins).
 			return;
 		}
-		const outputDigests = responseOutput.map((item) =>
-			this.replayItemDigest(item),
-		);
 		this.continuationByLane.delete(pending.laneKey);
 		this.continuationByLane.set(pending.laneKey, {
 			responseId,
@@ -1321,31 +1412,91 @@ export class CodexProvider extends BaseProvider {
 		// Keeping that framing matters for standards-compliant emitters and also
 		// makes this parser agree with the adapter's buffered-response parser.
 		const dataText = dataLines.join("\n");
-		if (
-			eventName === "response.failed" ||
-			eventName === "response.incomplete"
-		) {
+		let data:
+			| {
+					type?: unknown;
+					response?: { id?: unknown; status?: unknown; output?: unknown };
+			  }
+			| undefined;
+		if (dataText) {
+			try {
+				data = JSON.parse(dataText) as typeof data;
+			} catch {
+				// A malformed event makes the stream ambiguous even if a completion
+				// candidate appeared earlier. Fail closed and never advance the chain.
+				if (requestId) this.pendingContinuationByRequest.delete(requestId);
+				return;
+			}
+		}
+		const dataType = typeof data?.type === "string" ? data.type : "";
+		if (eventName && dataType && eventName !== dataType) {
 			if (requestId) this.pendingContinuationByRequest.delete(requestId);
 			return;
 		}
-		if (eventName !== "response.completed" || !dataText) return;
-		try {
-			const data = JSON.parse(dataText) as {
-				response?: { id?: unknown; status?: unknown; output?: unknown };
-			};
-			if (
-				data.response?.status === undefined ||
-				data.response.status === "completed"
-			) {
-				this.commitNativeContinuation(
-					requestId,
-					data.response?.id,
-					data.response?.output,
-				);
-			}
-		} catch {
-			// Malformed diagnostics cannot create or advance continuation state.
+		if (
+			dataText &&
+			requestId &&
+			this.pendingContinuationByRequest.get(requestId)?.terminalCandidate
+		) {
+			// response.completed must be the final data-bearing event. Anything
+			// after it makes the terminal checkpoint ambiguous, even if that later
+			// event is otherwise a valid non-terminal lifecycle event.
+			this.pendingContinuationByRequest.delete(requestId);
+			return;
 		}
+		const isFailureTerminal = (type: string): boolean =>
+			type === "response.failed" || type === "response.incomplete";
+		if (isFailureTerminal(eventName) || isFailureTerminal(dataType)) {
+			if (requestId) this.pendingContinuationByRequest.delete(requestId);
+			return;
+		}
+		const claimsCompleted =
+			eventName === "response.completed" || dataType === "response.completed";
+		if (!claimsCompleted || !data) {
+			return;
+		}
+		if (data.response?.status !== "completed") {
+			if (requestId) this.pendingContinuationByRequest.delete(requestId);
+			return;
+		}
+		if (!requestId) return;
+		const pending = this.pendingContinuationByRequest.get(requestId);
+		if (!pending) return;
+		const responseId = data.response?.id;
+		const output = data.response?.output;
+		if (
+			pending.terminalCandidate ||
+			typeof responseId !== "string" ||
+			responseId.length === 0 ||
+			!Array.isArray(output)
+		) {
+			// Multiple terminal completions or malformed terminal state are
+			// ambiguous. Never choose one and advance a continuation chain.
+			this.pendingContinuationByRequest.delete(requestId);
+			return;
+		}
+		pending.terminalCandidate = {
+			responseId,
+			outputDigests: output.map((item) => this.replayItemDigest(item)),
+		};
+	}
+
+	private finalizeNativeContinuationStream(
+		requestId: string | null,
+		cleanEof: boolean,
+	): void {
+		if (!requestId) return;
+		const pending = this.pendingContinuationByRequest.get(requestId);
+		if (!pending) return;
+		if (!cleanEof || !pending.terminalCandidate) {
+			this.pendingContinuationByRequest.delete(requestId);
+			return;
+		}
+		this.commitNativeContinuationDigests(
+			requestId,
+			pending.terminalCandidate.responseId,
+			pending.terminalCandidate.outputDigests,
+		);
 	}
 
 	private observeNativeJsonResponse(
@@ -1358,13 +1509,14 @@ export class CodexProvider extends BaseProvider {
 				status?: unknown;
 				output?: unknown;
 			};
-			if (response.status === undefined || response.status === "completed") {
+			if (response.status === "completed") {
 				this.commitNativeContinuation(requestId, response.id, response.output);
 			} else if (requestId) {
 				this.pendingContinuationByRequest.delete(requestId);
 			}
 		} catch {
 			// A malformed upstream body is not a successful continuation checkpoint.
+			if (requestId) this.pendingContinuationByRequest.delete(requestId);
 		}
 	}
 
@@ -1382,6 +1534,18 @@ export class CodexProvider extends BaseProvider {
 			this.pendingContinuationByRequest.delete(requestId);
 		}
 		const headers = sanitizeResponseHeaders(response.headers);
+		for (const attestationHeader of [
+			"x-better-ccflare-codex-continuation",
+			"x-lanetally-transport-used",
+			"x-lanetally-continuation-used",
+			"x-lanetally-previous-response-present",
+			"x-lanetally-stable-prefix-digest",
+			"x-lanetally-session-digest",
+			"x-lanetally-continuation-result",
+			"x-lanetally-cache-controls-applied",
+		]) {
+			headers.delete(attestationHeader);
+		}
 		headers.set("x-better-ccflare-codex-response-format", "responses-api");
 		const transportUsed = response.headers
 			.get("content-type")
@@ -1392,6 +1556,7 @@ export class CodexProvider extends BaseProvider {
 		headers.set("x-lanetally-transport-used", transportUsed);
 		if (diagnostics) {
 			headers.set("x-better-ccflare-codex-continuation", diagnostics.result);
+			headers.set("x-lanetally-continuation-result", diagnostics.result);
 			headers.set(
 				"x-lanetally-continuation-used",
 				diagnostics.result === "hit" ? "true" : "false",
@@ -1405,6 +1570,10 @@ export class CodexProvider extends BaseProvider {
 				diagnostics.stablePrefixDigest,
 			);
 			headers.set("x-lanetally-session-digest", diagnostics.sessionDigest);
+			headers.set(
+				"x-lanetally-cache-controls-applied",
+				diagnostics.cacheControlsApplied ? "true" : "false",
+			);
 		}
 		log.info("Codex native response diagnostics", {
 			transportUsed,
@@ -1422,22 +1591,57 @@ export class CodexProvider extends BaseProvider {
 		}
 		const decoder = new TextDecoder();
 		let buffer = "";
-		const observed = response.body.pipeThrough(
-			new TransformStream<Uint8Array, Uint8Array>({
-				transform: (chunk, controller) => {
-					controller.enqueue(chunk);
-					buffer += decoder.decode(chunk, { stream: true });
-					const events = buffer.split(/\r?\n\r?\n/);
-					buffer = events.pop() ?? "";
-					for (const event of events) {
-						this.observeNativeTerminalEvent(requestId, event);
+		const observeDelimitedEvents = (): void => {
+			const events = buffer.split(/\r?\n\r?\n/);
+			buffer = events.pop() ?? "";
+			for (const event of events) {
+				this.observeNativeTerminalEvent(requestId, event);
+			}
+		};
+		const upstreamReader = response.body.getReader();
+		let settled = false;
+		const failClosed = (): void => {
+			if (settled) return;
+			settled = true;
+			this.finalizeNativeContinuationStream(requestId, false);
+		};
+		const observed = new ReadableStream<Uint8Array>(
+			{
+				pull: async (controller) => {
+					try {
+						const { done, value } = await upstreamReader.read();
+						if (done) {
+							buffer += decoder.decode();
+							observeDelimitedEvents();
+							// A partial final event is truncation, even if it resembles a completed
+							// response. Promote only when the downstream consumer observes a clean
+							// upstream EOF; cancellation and transport errors fail closed below.
+							settled = true;
+							this.finalizeNativeContinuationStream(
+								requestId,
+								buffer.trim().length === 0,
+							);
+							controller.close();
+							return;
+						}
+						buffer += decoder.decode(value, { stream: true });
+						observeDelimitedEvents();
+						controller.enqueue(value);
+					} catch (error) {
+						failClosed();
+						controller.error(error);
 					}
 				},
-				flush: () => {
-					buffer += decoder.decode();
-					if (buffer) this.observeNativeTerminalEvent(requestId, buffer);
+				cancel: async (reason) => {
+					failClosed();
+					try {
+						await upstreamReader.cancel(reason);
+					} catch {
+						// Continuation state is already removed; cancellation is best-effort.
+					}
 				},
-			}),
+			},
+			{ highWaterMark: 0 },
 		);
 		return new Response(observed, {
 			status: response.status,
@@ -2116,7 +2320,7 @@ export class CodexProvider extends BaseProvider {
 
 		// Preserve original reasoning settings.
 		const passthroughReasoning = passthrough?.reasoning as
-			| { effort?: string; context?: string }
+			| { effort?: string; summary?: unknown; context?: unknown }
 			| undefined;
 		const reasoningEffort =
 			passthroughReasoning?.effort ?? body.reasoning?.effort;
@@ -2142,14 +2346,21 @@ export class CodexProvider extends BaseProvider {
 			store:
 				typeof passthrough?.store === "boolean" ? passthrough.store : false,
 			reasoning: {
+				...(passthroughReasoning?.summary === undefined
+					? {}
+					: { summary: passthroughReasoning.summary }),
 				effort: reasoningResolution.effort ?? "medium",
-				context: "all_turns",
+				context:
+					passthroughReasoning && Object.hasOwn(passthroughReasoning, "context")
+						? passthroughReasoning.context
+						: "all_turns",
 			},
 		};
 
 		// Restore Responses Lite tools first.
 		const passthroughAdditionalTools = passthrough?.additional_tools;
 		if (
+			!nativeInput &&
 			Array.isArray(passthroughAdditionalTools) &&
 			passthroughAdditionalTools.length > 0
 		) {
@@ -2161,7 +2372,14 @@ export class CodexProvider extends BaseProvider {
 				)[]),
 			);
 		}
+		const nativeMaxOutputTokens = passthrough?.max_output_tokens;
 		if (
+			typeof nativeMaxOutputTokens === "number" &&
+			Number.isInteger(nativeMaxOutputTokens) &&
+			nativeMaxOutputTokens > 0
+		) {
+			codexRequest.max_output_tokens = nativeMaxOutputTokens;
+		} else if (
 			!isSubscriptionEndpoint &&
 			typeof body.max_tokens === "number" &&
 			Number.isFinite(body.max_tokens)
@@ -2198,17 +2416,35 @@ export class CodexProvider extends BaseProvider {
 				CodexRequest["prompt_cache_options"]
 			>;
 		}
+		for (const field of [
+			"text",
+			"temperature",
+			"top_p",
+			"truncation",
+			"include",
+			"metadata",
+			"service_tier",
+			"context_management",
+		] as const) {
+			if (passthrough?.[field] !== undefined) {
+				codexRequest[field] = passthrough[field];
+			}
+		}
 		if (
 			typeof passthrough?.previous_response_id === "string" &&
 			passthrough.previous_response_id.length > 0
 		) {
 			codexRequest.previous_response_id = passthrough.previous_response_id;
 		}
-		const explicitToolChoice = this.convertToolChoice(
-			body.tool_choice,
-			tools ?? [],
-		);
-		if (explicitToolChoice) {
+		const passthroughToolChoice = passthrough?.tool_choice;
+		const explicitToolChoice =
+			typeof passthroughToolChoice === "string" ||
+			(passthroughToolChoice !== null &&
+				typeof passthroughToolChoice === "object" &&
+				!Array.isArray(passthroughToolChoice))
+				? (passthroughToolChoice as string | Record<string, unknown>)
+				: this.convertToolChoice(body.tool_choice, tools ?? []);
+		if (explicitToolChoice !== undefined) {
 			codexRequest.tool_choice = explicitToolChoice;
 		} else if (tools?.some((t) => t.name === "StructuredOutput")) {
 			// Claude Code schema agents provide a StructuredOutput tool but do not set
@@ -2223,9 +2459,8 @@ export class CodexProvider extends BaseProvider {
 		if (body.tool_choice?.disable_parallel_tool_use === true) {
 			codexRequest.parallel_tool_calls = false;
 		}
-		// Responses Lite requires explicit false.
-		if (passthrough?.parallel_tool_calls === false) {
-			codexRequest.parallel_tool_calls = false;
+		if (typeof passthrough?.parallel_tool_calls === "boolean") {
+			codexRequest.parallel_tool_calls = passthrough.parallel_tool_calls;
 		}
 		// Preserve the original tool list.
 		const passthroughTools = passthrough?.tools;

@@ -180,7 +180,6 @@ describe("handleResponsesRequest", () => {
 				prompt_cache_key: "stable-cache-key",
 				prompt_cache_options: {
 					mode: "explicit",
-					comparison_response_id: "resp_compare",
 				},
 			}),
 			headers: {
@@ -209,9 +208,9 @@ describe("handleResponsesRequest", () => {
 		).__better_ccflare_codex_passthrough;
 		expect(passthrough.previous_response_id).toBe("resp_previous");
 		expect(passthrough.caller_identity_digest).toMatch(/^[0-9a-f]{64}$/);
+		expect(passthrough.cache_controls_applied).toBe(true);
 		expect(JSON.stringify(passthrough)).not.toContain("api-key-record-123");
 		expect(passthrough.prompt_cache_options).toEqual({
-			comparison_response_id: "resp_compare",
 			ttl: "30m",
 		});
 		expect(passthrough.native_input).toEqual([
@@ -238,6 +237,217 @@ describe("handleResponsesRequest", () => {
 			"true",
 		);
 		expect(forwardedOptions).toEqual({ trustedNativeResponses: true });
+	});
+
+	test("does not attest cache controls when the exact expected set was not applied", async () => {
+		let forwardedBody: Record<string, unknown> | null = null;
+		const req = new Request("http://localhost/v1/responses", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"x-lanetally-prompt-cache-mode": "implicit",
+				"x-lanetally-prompt-cache-ttl": "30m",
+			},
+			body: JSON.stringify({
+				model: "gpt-5.6-sol",
+				input: [{ role: "developer", content: "policy" }],
+			}),
+		});
+		await handleResponsesRequest(
+			req,
+			new URL(req.url),
+			async (forwarded) => {
+				forwardedBody = (await forwarded.json()) as Record<string, unknown>;
+				return new Response(ANTHROPIC_MESSAGE_BODY, {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			},
+			{},
+			"api-key-record-123",
+		);
+		const passthrough = (
+			forwardedBody as unknown as {
+				__better_ccflare_codex_passthrough: Record<string, unknown>;
+			}
+		).__better_ccflare_codex_passthrough;
+		expect(passthrough.cache_controls_applied).toBeUndefined();
+	});
+
+	test("does not attest cache controls with comparison, unknown options, or an inexact breakpoint", async () => {
+		for (const [name, promptCacheOptions, breakpoint] of [
+			[
+				"comparison",
+				{ comparison_response_id: "resp_compare" },
+				{ mode: "explicit" },
+			],
+			["unknown", { future_option: true }, { mode: "explicit" }],
+			["breakpoint-extra", {}, { mode: "explicit", future_option: true }],
+			["breakpoint-invalid", {}, { mode: "implicit" }],
+		] as const) {
+			let forwardedBody: Record<string, unknown> | null = null;
+			const req = new Request(`http://localhost/v1/responses?case=${name}`, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-lanetally-prompt-cache-mode": "implicit",
+					"x-lanetally-prompt-cache-ttl": "30m",
+					"x-lanetally-prompt-cache-breakpoint": "developer",
+				},
+				body: JSON.stringify({
+					model: "gpt-5.6-sol",
+					input: [
+						{
+							type: "message",
+							role: "developer",
+							content: [
+								{
+									type: "input_text",
+									text: "policy",
+									prompt_cache_breakpoint: breakpoint,
+								},
+							],
+						},
+					],
+					prompt_cache_options: promptCacheOptions,
+				}),
+			});
+			await handleResponsesRequest(
+				req,
+				new URL(req.url),
+				async (forwarded) => {
+					forwardedBody = (await forwarded.json()) as Record<string, unknown>;
+					return new Response(ANTHROPIC_MESSAGE_BODY, {
+						status: 200,
+						headers: { "content-type": "application/json" },
+					});
+				},
+				{},
+				"api-key-record-123",
+			);
+			const passthrough = (
+				forwardedBody as unknown as {
+					__better_ccflare_codex_passthrough: Record<string, unknown>;
+				}
+			).__better_ccflare_codex_passthrough;
+			expect(passthrough.cache_controls_applied).toBeUndefined();
+		}
+	});
+
+	test("preserves native built-in tools and cache-significant execution controls", async () => {
+		let forwardedBody: Record<string, unknown> | null = null;
+		const nativeTools = [
+			{ type: "web_search_preview", search_context_size: "high" },
+		];
+		const nativeToolChoice = { type: "web_search_preview" };
+		const nativeReasoning = {
+			effort: "high",
+			summary: "detailed",
+			context: "this_turn",
+		};
+		const nativeGenerationFields = {
+			text: { format: { type: "json_schema", name: "answer" } },
+			temperature: 0.25,
+			top_p: 0.8,
+			truncation: "auto",
+			include: ["reasoning.encrypted_content"],
+			metadata: { workflow: "cache-test" },
+			service_tier: "priority",
+			context_management: [{ type: "compaction", compact_threshold: 100_000 }],
+			max_output_tokens: 2048,
+		};
+		const req = new Request("http://localhost/v1/responses", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "gpt-5.6-sol",
+				input: "find it",
+				tools: nativeTools,
+				tool_choice: nativeToolChoice,
+				parallel_tool_calls: true,
+				reasoning: nativeReasoning,
+				...nativeGenerationFields,
+			}),
+		});
+		await handleResponsesRequest(
+			req,
+			new URL(req.url),
+			async (forwarded) => {
+				forwardedBody = (await forwarded.json()) as Record<string, unknown>;
+				return new Response(ANTHROPIC_MESSAGE_BODY, {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			},
+			{},
+		);
+		const passthrough = (
+			forwardedBody as unknown as {
+				__better_ccflare_codex_passthrough: Record<string, unknown>;
+			}
+		).__better_ccflare_codex_passthrough;
+		expect(passthrough.tools).toEqual(nativeTools);
+		expect(passthrough.tool_choice).toEqual(nativeToolChoice);
+		expect(passthrough.parallel_tool_calls).toBe(true);
+		expect(passthrough.reasoning).toEqual(nativeReasoning);
+		for (const [field, value] of Object.entries(nativeGenerationFields)) {
+			expect(passthrough[field]).toEqual(value);
+		}
+	});
+
+	test("rejects unsupported fields and non-positive native max output before proxying", async () => {
+		for (const extra of [{ background: true }, { max_output_tokens: 0 }]) {
+			let proxyCalls = 0;
+			const req = new Request("http://localhost/v1/responses", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "gpt-5.6-sol",
+					input: "hello",
+					...extra,
+				}),
+			});
+			const response = await handleResponsesRequest(
+				req,
+				new URL(req.url),
+				async () => {
+					proxyCalls++;
+					return new Response(ANTHROPIC_MESSAGE_BODY);
+				},
+				{},
+			);
+			expect(response.status).toBe(400);
+			expect(proxyCalls).toBe(0);
+			const error = await response.json();
+			expect(error.error.type).toBe("invalid_request_error");
+		}
+	});
+
+	test("rejects non-object JSON request bodies before field enumeration", async () => {
+		for (const body of [null, "hello", 42, []]) {
+			let proxyCalls = 0;
+			const req = new Request("http://localhost/v1/responses", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+			});
+			const response = await handleResponsesRequest(
+				req,
+				new URL(req.url),
+				async () => {
+					proxyCalls++;
+					return new Response(ANTHROPIC_MESSAGE_BODY);
+				},
+				{},
+			);
+			expect(response.status).toBe(400);
+			expect(proxyCalls).toBe(0);
+			const error = await response.json();
+			expect(error.error).toEqual({
+				type: "invalid_request_error",
+				message: "Request body must be a JSON object",
+			});
+		}
 	});
 
 	test("adds one developer breakpoint to the generic pi string-content shape", async () => {
@@ -369,6 +579,8 @@ describe("handleResponsesRequest", () => {
 					"x-lanetally-previous-response-present": "false",
 					"x-lanetally-stable-prefix-digest": "a".repeat(64),
 					"x-lanetally-session-digest": "b".repeat(64),
+					"x-lanetally-continuation-result": "hit",
+					"x-lanetally-cache-controls-applied": "true",
 				},
 			});
 
@@ -662,6 +874,8 @@ describe("handleResponsesRequest", () => {
 					"x-lanetally-previous-response-present": "false",
 					"x-lanetally-stable-prefix-digest": "a".repeat(64),
 					"x-lanetally-session-digest": "b".repeat(64),
+					"x-lanetally-continuation-result": "hit",
+					"x-lanetally-cache-controls-applied": "true",
 				},
 			});
 		const req = new Request("http://localhost/v1/responses", {
@@ -684,9 +898,76 @@ describe("handleResponsesRequest", () => {
 		expect(response.headers.get("x-lanetally-stable-prefix-digest")).toBe(
 			"a".repeat(64),
 		);
+		expect(response.headers.get("x-lanetally-continuation-result")).toBe("hit");
+		expect(response.headers.get("x-lanetally-cache-controls-applied")).toBe(
+			"true",
+		);
 		expect(
 			response.headers.get("x-better-ccflare-codex-response-format"),
 		).toBeNull();
+	});
+
+	test("normalizes untrusted diagnostic strings instead of logging payload material", async () => {
+		const secret = "private-prompt-in-diagnostic-field";
+		const events: Array<{ msg: string; data?: unknown }> = [];
+		const listener = (event: { msg: string; data?: unknown }) => {
+			if (event.msg.startsWith("Codex cache")) events.push(event);
+		};
+		logBus.on("log", listener);
+		try {
+			const req = new Request("http://localhost/v1/responses", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "gpt-5.6-sol",
+					input: "hello",
+					prompt_cache_options: { mode: secret, ttl: secret },
+				}),
+			});
+			const response = await handleResponsesRequest(
+				req,
+				new URL(req.url),
+				async () =>
+					new Response(
+						JSON.stringify({
+							id: "resp_diagnostic",
+							status: "completed",
+							output: [],
+							prompt_cache_diagnostics: {
+								type: secret,
+								reason: secret,
+							},
+						}),
+						{
+							status: 200,
+							headers: {
+								"content-type": "application/json",
+								"x-better-ccflare-codex-response-format": "responses-api",
+							},
+						},
+					),
+				{},
+			);
+			await response.text();
+		} finally {
+			logBus.off("log", listener);
+		}
+		expect(JSON.stringify(events)).not.toContain(secret);
+		const responseDiagnostic = events.find(
+			(event) => event.msg === "Codex cache response diagnostics",
+		);
+		expect(responseDiagnostic?.data).toEqual({
+			type: "unknown",
+			reason: "unknown",
+			cacheMissedTokens: null,
+			comparisonReusableTokens: null,
+		});
+		const requestDiagnostic = events.find(
+			(event) => event.msg === "Codex cache request diagnostics",
+		);
+		expect(requestDiagnostic?.data).toEqual(
+			expect.objectContaining({ cacheMode: "invalid", cacheTtl: "invalid" }),
+		);
 	});
 
 	test("parses CRLF-delimited native SSE for a non-streaming caller", async () => {

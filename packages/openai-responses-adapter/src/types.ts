@@ -14,6 +14,14 @@ export interface ResponsesRequest {
 	previous_response_id?: string | null;
 	max_output_tokens?: number;
 	store?: boolean;
+	text?: Record<string, unknown>;
+	temperature?: number;
+	top_p?: number;
+	truncation?: string;
+	include?: string[];
+	metadata?: Record<string, unknown>;
+	service_tier?: string;
+	context_management?: unknown;
 	/** Codex CLI's stable conversation identity for prompt-cache routing. */
 	prompt_cache_key?: string;
 	/** GPT-5.6+ cache controls. Implicit mode is represented by omitting mode. */
@@ -120,6 +128,7 @@ export interface ResponsesToolChoice {
 export interface ResponsesReasoning {
 	effort?: "low" | "medium" | "high";
 	summary?: string;
+	context?: string;
 }
 
 // ============================================================

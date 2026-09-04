@@ -151,6 +151,8 @@ function resetStore(): void {
 // ---------------------------------------------------------------------------
 
 describe("CacheKeepaliveScheduler", () => {
+	const originalFetch = globalThis.fetch;
+
 	beforeEach(() => {
 		resetMocks();
 		resetStore();
@@ -159,9 +161,10 @@ describe("CacheKeepaliveScheduler", () => {
 	});
 
 	afterEach(() => {
-		// Restore fetch to the real implementation.
-		// @ts-expect-error — resetting to undefined lets bun restore native fetch.
-		globalThis.fetch = undefined;
+		// Restore the captured native implementation. Assigning undefined does
+		// not make Bun recreate fetch between files in a monolithic `bun test`
+		// process and poisons every later transport suite.
+		globalThis.fetch = originalFetch;
 		resetStore();
 	});
 
