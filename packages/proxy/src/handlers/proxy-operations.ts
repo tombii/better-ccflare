@@ -16,6 +16,7 @@ import {
 	applyXaiConvIdHeader,
 	getProvider,
 	isAnthropicExtraUsageExhausted,
+	isAnthropicOrgPermissionDenied,
 	isAnthropicOutOfCredits,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -932,6 +933,95 @@ export async function proxyWithAccount(
 			// Do not bench the account or fail over — pass Anthropic's real error
 			// through to the client unchanged, same as any other 400 today.
 			return withSanitizedProxyHeaders(rawResponse);
+		}
+
+		// ── org_permission_denied: the ORGANIZATION forbids this account ──
+		// Anthropic answers 403 `permission_error` when an account's org has
+		// OAuth — or Claude Code specifically — turned off by an admin. Measured
+		// on a live pool: three accounts of one organization returned it 25 times
+		// within the hour, every one carrying `x-should-retry: false`, while the
+		// usage poller had independently racked up 49 consecutive failures per
+		// account. That signal existed in-process the whole time and never
+		// reached the router.
+		//
+		// Before this branch, a 403 matched none of the failover guards (401 /
+		// 429 / 529 / model-unavailable) and fell through to forwardToClient, so
+		// the client saw the error even with healthy accounts still in the pool.
+		// Worse, `processProxyResponse` classifies any non-429 as "not rate
+		// limited" and unconditionally clears `rate_limited_until`, so the
+		// offending account also lost any existing bench and stayed pinned at the
+		// front of the priority order for every following request. Returning null
+		// here short-circuits both halves of that.
+		//
+		// The account is benched exactly like an exhausted quota window: it
+		// cannot serve anything at all, so it must leave the rotation, and the
+		// exponential ramp plus the single-flight recovery probe (see
+		// rate-limit-cooldown.ts) means at most one request per cooldown expiry
+		// is spent rediscovering a block only an admin can lift.
+		if (
+			isClaudeProvider &&
+			rawResponse.status === 403 &&
+			// Passed un-cloned on purpose: the predicate clones internally and
+			// never consumes its argument, so wrapping it in another clone here
+			// would strand a tee branch for every non-matching 403 (issue #356).
+			(await isAnthropicOrgPermissionDenied(rawResponse))
+		) {
+			let requestedModel: string | null = null;
+			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
+
+			const reason: RateLimitReason = "org_permission_denied";
+			log.warn(
+				`Account ${account.name} org_permission_denied (403${requestedModel ? `, model=${requestedModel}` : ""}) — ` +
+					`organization forbids OAuth/Claude Code access for this account; ` +
+					`benching account and failing over to next account`,
+			);
+
+			// Benched even for synthetic probes. Unlike a 429 — where a keepalive
+			// burst can trip Anthropic's per-IP limit and produce a cooldown no
+			// real user earned — a 403 from the organization is authoritative
+			// regardless of who asked, so learning it from a probe is genuine
+			// information and throwing it away would only delay the bench until a
+			// real request pays for it.
+			applyRateLimitCooldown(account, { reason }, ctx);
+
+			// The audit row, however, stays real-traffic-only: a synthetic probe's
+			// rejection was never a client-visible request, and recording it would
+			// just be history noise. Same rationale as the out_of_credits path.
+			if (!isSyntheticInternal) {
+				const responseTime = Date.now() - requestMeta.timestamp;
+				const modelRewrite = isModelRewrite(
+					requestMeta.originalModel,
+					requestMeta.appliedModel,
+				);
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.saveRequest(
+						crypto.randomUUID(),
+						req.method,
+						url.pathname,
+						account.id,
+						403,
+						false,
+						reason,
+						responseTime,
+						failoverAttempts,
+						requestedModel ? { model: requestedModel } : undefined,
+						requestMeta.agentUsed ?? undefined,
+						apiKeyId ?? undefined,
+						apiKeyName ?? undefined,
+						requestMeta.project ?? null,
+						undefined,
+						requestMeta.comboName ?? null,
+						modelRewrite ? (requestMeta.originalModel ?? null) : null,
+						modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+						requestMeta.projectAttributionSource ?? null,
+						requestMeta.agentAttributionSource ?? null,
+						null,
+						requestMeta.clientSessionId ?? null,
+					),
+				);
+			}
+			cancelDiscardedResponseBody(rawResponse);
+			return null;
 		}
 
 		// On model unavailable / rate-limited: cycle through the model list for

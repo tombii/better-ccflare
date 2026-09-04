@@ -103,6 +103,22 @@ const KNOWN_ERROR_META: Record<
 			"stays in rotation and the request is passed through unchanged.",
 		severity: "error",
 	},
+	org_permission_denied: {
+		title: "Organization forbids this account",
+		description:
+			"Anthropic returned 403 `permission_error`: this account's " +
+			"organization does not allow the request — OAuth disabled org-wide, " +
+			"or Claude Code subscription access turned off by an admin. Nothing " +
+			"is wrong with the account's quota, but it cannot serve any request, " +
+			"so it was benched and the request failed over to the next account.",
+		suggestion:
+			"Ask the organization's admin to enable Claude Code access, or remove " +
+			"this account from the pool. The bench is not time-bounded upstream: " +
+			"it will expire and a single recovery probe will rediscover the same " +
+			"403 until the org setting actually changes, so a steady trickle of " +
+			"these is expected while the account stays configured.",
+		severity: "error",
+	},
 };
 
 function getModelFallbackMeta(context?: ErrorContext): ErrorMeta {
