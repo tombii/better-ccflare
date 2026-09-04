@@ -14,8 +14,22 @@ export interface ResponsesRequest {
 	previous_response_id?: string | null;
 	max_output_tokens?: number;
 	store?: boolean;
+	text?: Record<string, unknown>;
+	temperature?: number;
+	top_p?: number;
+	truncation?: string;
+	include?: string[];
+	metadata?: Record<string, unknown>;
+	service_tier?: string;
+	context_management?: unknown;
 	/** Codex CLI's stable conversation identity for prompt-cache routing. */
 	prompt_cache_key?: string;
+	/** GPT-5.6+ cache controls. Implicit mode is represented by omitting mode. */
+	prompt_cache_options?: {
+		mode?: "explicit";
+		ttl?: "30m";
+		comparison_response_id?: string;
+	};
 }
 
 // ResponseItem union — all item types codex can send
@@ -42,11 +56,13 @@ export type ResponseContent =
 export interface InputTextContent {
 	type: "input_text";
 	text: string;
+	prompt_cache_breakpoint?: { mode: "explicit" };
 }
 
 export interface OutputTextContent {
 	type: "output_text";
 	text: string;
+	prompt_cache_breakpoint?: { mode: "explicit" };
 }
 
 export interface RefusalContent {
@@ -112,6 +128,7 @@ export interface ResponsesToolChoice {
 export interface ResponsesReasoning {
 	effort?: "low" | "medium" | "high";
 	summary?: string;
+	context?: string;
 }
 
 // ============================================================
@@ -283,4 +300,5 @@ export type HandleProxyFn = (
 	ctx: unknown,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
+	options?: { trustedNativeResponses?: boolean },
 ) => Promise<Response>;

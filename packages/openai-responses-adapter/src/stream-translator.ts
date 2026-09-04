@@ -401,9 +401,9 @@ function parseAndProcessChunk(
 			const data = JSON.parse(dataStr) as Record<string, unknown>;
 			processEvent(eventType, data, controller, state);
 		} catch {
-			log.warn(
-				`Failed to parse SSE data for event ${eventType}: ${dataStr.slice(0, 200)}`,
-			);
+			// Upstream SSE data can contain prompt or tool payloads. Keep parse
+			// diagnostics deliberately payload-blind, including the event field.
+			log.warn("Failed to parse upstream SSE event data");
 		}
 	}
 }

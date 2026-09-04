@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { logBus } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import {
 	clearDerivedProviderModelDefaults,
@@ -2724,7 +2725,10 @@ describe("CodexProvider.transformRequestBody", () => {
 		} as Parameters<typeof provider.transformRequestBody>[1];
 		const request = new Request("https://example.com/v1/messages", {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: {
+				"content-type": "application/json",
+				"x-better-ccflare-native-responses": "true",
+			},
 			body: JSON.stringify({
 				model: "claude-3-7-sonnet",
 				max_tokens: 10,
@@ -2752,7 +2756,10 @@ describe("CodexProvider.transformRequestBody", () => {
 		} as Parameters<typeof provider.transformRequestBody>[1];
 		const request = new Request("https://example.com/v1/messages", {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: {
+				"content-type": "application/json",
+				"x-better-ccflare-native-responses": "true",
+			},
 			body: JSON.stringify({
 				model: "claude-3-7-sonnet",
 				max_tokens: 10,
@@ -2771,7 +2778,10 @@ describe("CodexProvider.transformRequestBody", () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: {
+				"content-type": "application/json",
+				"x-better-ccflare-native-responses": "true",
+			},
 			body: JSON.stringify({
 				model: "claude-3-7-sonnet",
 				max_tokens: 10,
@@ -2794,7 +2804,10 @@ describe("CodexProvider.transformRequestBody", () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: {
+				"content-type": "application/json",
+				"x-better-ccflare-native-responses": "true",
+			},
 			body: JSON.stringify({
 				model: "gpt-5.4-mini",
 				max_tokens: 10,
@@ -3145,6 +3158,1547 @@ describe("CodexProvider prompt_cache_key derivation", () => {
 			metadata: { user_id: JSON.stringify({ session_id: "not-a-uuid" }) },
 		});
 		expect(badUuid.prompt_cache_key).toBeUndefined();
+	});
+});
+
+describe("CodexProvider native Responses preservation", () => {
+	const inputItem = (text: string) => ({
+		type: "message",
+		role: "user",
+		content: [{ type: "input_text", text }],
+	});
+
+	const transformContinuationTurn = async (
+		provider: CodexProvider,
+		options: {
+			requestId: string;
+			input: unknown[];
+			account?: Account;
+			model?: string;
+			sessionId?: string;
+			instructions?: string;
+			continuation?: boolean;
+			callerIdentityDigest?: string;
+			promptCacheOptions?: Record<string, unknown>;
+			cacheControlsApplied?: boolean;
+			tools?: unknown[];
+			toolChoice?: unknown;
+			parallelToolCalls?: boolean;
+			reasoning?: Record<string, unknown>;
+			additionalTools?: unknown[];
+			nativeFields?: Record<string, unknown>;
+		},
+	) => {
+		const model = options.model ?? "gpt-5.6-sol";
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"x-better-ccflare-request-id": options.requestId,
+				"x-better-ccflare-native-responses": "true",
+				"session-id": options.sessionId ?? "session-stable",
+			},
+			body: JSON.stringify({
+				model: "claude-sonnet-4-5",
+				max_tokens: 4096,
+				messages: [{ role: "user", content: "fallback" }],
+				__better_ccflare_codex_passthrough: {
+					model,
+					native_input: options.input,
+					native_instructions: options.instructions ?? "stable instructions",
+					prompt_cache_key: "stable-cache-key",
+					...(options.promptCacheOptions === undefined
+						? {}
+						: { prompt_cache_options: options.promptCacheOptions }),
+					caller_identity_digest:
+						options.callerIdentityDigest ?? "a".repeat(64),
+					...(options.cacheControlsApplied
+						? { cache_controls_applied: true }
+						: {}),
+					...(options.tools === undefined ? {} : { tools: options.tools }),
+					...(options.toolChoice === undefined
+						? {}
+						: { tool_choice: options.toolChoice }),
+					...(options.parallelToolCalls === undefined
+						? {}
+						: { parallel_tool_calls: options.parallelToolCalls }),
+					...(options.reasoning === undefined
+						? {}
+						: { reasoning: options.reasoning }),
+					...(options.additionalTools === undefined
+						? {}
+						: { additional_tools: options.additionalTools }),
+					...(options.nativeFields ?? {}),
+					...(options.continuation === false
+						? {}
+						: { continuation_strategy: "previous_response_id" }),
+				},
+			}),
+		});
+		const transformed = await provider.transformRequestBody(
+			request,
+			options.account ?? codexAccount(),
+		);
+		expect(transformed.headers.has("x-better-ccflare-request-id")).toBeFalse();
+		return transformed.json();
+	};
+
+	const completeContinuationTurn = async (
+		provider: CodexProvider,
+		requestId: string,
+		responseId: string,
+		output: unknown[] = [],
+	) => {
+		const nativeSse = sseBody(
+			eventLine("response.completed", {
+				type: "response.completed",
+				response: { id: responseId, status: "completed", output },
+			}),
+		);
+		const response = await provider.processResponse(
+			new Response(nativeSse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-native-responses": "true",
+					"x-better-ccflare-request-id": requestId,
+				},
+			}),
+			null,
+		);
+		const continuation = response.headers.get(
+			"x-better-ccflare-codex-continuation",
+		);
+		await response.text();
+		return continuation;
+	};
+
+	it("forwards native input, continuation, cache options, and identity headers", async () => {
+		const provider = new CodexProvider();
+		const nativeInput = [
+			{
+				type: "message",
+				role: "developer",
+				content: [
+					{
+						type: "input_text",
+						text: "stable",
+						prompt_cache_breakpoint: { mode: "explicit" },
+					},
+				],
+			},
+			{
+				type: "function_call_output",
+				call_id: "call_1",
+				output: "done",
+			},
+		];
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"session-id": "session-123",
+				"x-client-request-id": "request-123",
+				"x-better-ccflare-native-responses": "true",
+			},
+			body: JSON.stringify({
+				model: "claude-sonnet-4-5",
+				max_tokens: 4096,
+				messages: [{ role: "user", content: "translated fallback" }],
+				__better_ccflare_codex_passthrough: {
+					model: "gpt-5.6-sol",
+					native_input: nativeInput,
+					native_instructions: "native instructions",
+					previous_response_id: "resp_previous",
+					prompt_cache_key: "cache-key",
+					prompt_cache_options: {
+						ttl: "30m",
+						comparison_response_id: "resp_compare",
+					},
+				},
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.clone().json();
+		expect(body.input).toEqual(nativeInput);
+		expect(body.instructions).toBe("native instructions");
+		expect(body.previous_response_id).toBe("resp_previous");
+		expect(body.prompt_cache_key).toBe("cache-key");
+		expect(body.prompt_cache_options).toEqual({
+			ttl: "30m",
+			comparison_response_id: "resp_compare",
+		});
+
+		const prepared = provider.prepareHeaders(
+			transformed.headers,
+			"access-token",
+		);
+		expect(prepared.get("session-id")).toBe("session-123");
+		expect(prepared.get("x-client-request-id")).toBe("request-123");
+		expect(prepared.get("x-better-ccflare-native-responses")).toBeNull();
+	});
+
+	it("restores native built-in tools, exact tool choice, reasoning fields, and parallel true", async () => {
+		const provider = new CodexProvider();
+		const customAccount = codexAccount({
+			custom_endpoint: "https://codex.example.com/v1/responses",
+		});
+		const nativeTools = [
+			{ type: "web_search_preview", search_context_size: "high" },
+		];
+		const nativeToolChoice = { type: "web_search_preview" };
+		const nativeReasoning = {
+			effort: "high",
+			summary: "detailed",
+			context: "this_turn",
+		};
+		const additionalTools = [
+			{ type: "additional_tools", tools: [{ type: "custom", name: "shell" }] },
+		];
+		const nativeGenerationFields = {
+			text: { format: { type: "json_schema", name: "answer" } },
+			temperature: 0.25,
+			top_p: 0.8,
+			truncation: "auto",
+			include: ["reasoning.encrypted_content"],
+			metadata: { workflow: "cache-test" },
+			service_tier: "priority",
+			context_management: [{ type: "compaction", compact_threshold: 100_000 }],
+			max_output_tokens: 2048,
+		};
+		const body = await transformContinuationTurn(provider, {
+			requestId: "request-native-controls",
+			input: [...additionalTools, inputItem("find it")],
+			account: customAccount,
+			continuation: false,
+			tools: nativeTools,
+			toolChoice: nativeToolChoice,
+			parallelToolCalls: true,
+			reasoning: nativeReasoning,
+			additionalTools,
+			nativeFields: nativeGenerationFields,
+		});
+		expect(body.tools).toEqual(nativeTools);
+		expect(body.tool_choice).toEqual(nativeToolChoice);
+		expect(body.parallel_tool_calls).toBe(true);
+		expect(body.reasoning).toEqual(nativeReasoning);
+		for (const [field, value] of Object.entries(nativeGenerationFields)) {
+			expect(body[field]).toEqual(value);
+		}
+		expect(
+			body.input.filter(
+				(item: { type?: string }) => item.type === "additional_tools",
+			),
+		).toHaveLength(1);
+	});
+
+	it("rejects native max_output_tokens on the canonical subscription endpoint", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"x-better-ccflare-native-responses": "true",
+			},
+			body: JSON.stringify({
+				model: "claude-sonnet-4-5",
+				max_tokens: 2048,
+				messages: [{ role: "user", content: "fallback" }],
+				__better_ccflare_codex_passthrough: {
+					model: "gpt-5.6-sol",
+					native_input: [inputItem("hello")],
+					max_output_tokens: 2048,
+				},
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(
+			request,
+			codexAccount(),
+		);
+		expect(transformed.headers.get("x-better-ccflare-synthetic-response")).toBe(
+			"true",
+		);
+		expect(transformed.headers.get("x-better-ccflare-synthetic-status")).toBe(
+			"400",
+		);
+		expect(await transformed.json()).toEqual({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message:
+					"Native Responses max_output_tokens is not supported by the canonical Codex subscription endpoint.",
+			},
+		});
+	});
+
+	it("ignores a caller-supplied private passthrough outside the trusted native route", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "gpt-5.6-sol",
+				max_tokens: 10,
+				system: "trusted instructions",
+				messages: [{ role: "user", content: "trusted input" }],
+				__better_ccflare_codex_passthrough: {
+					model: "attacker-model",
+					native_input: [inputItem("attacker native input")],
+					native_instructions: "attacker instructions",
+					previous_response_id: "resp_cross_tenant",
+					prompt_cache_options: { ttl: "30m" },
+					tools: [{ type: "custom", name: "attacker-tool" }],
+					store: true,
+				},
+			}),
+		});
+		const transformed = await provider.transformRequestBody(
+			request,
+			codexAccount(),
+		);
+		const body = await transformed.json();
+		expect(body.model).toBe("gpt-5.6-sol");
+		expect(body.input).toEqual([
+			{
+				role: "user",
+				content: [{ type: "input_text", text: "trusted input" }],
+			},
+		]);
+		expect(body.instructions).toBe("trusted instructions");
+		expect(body.previous_response_id).toBeUndefined();
+		expect(body.prompt_cache_options).toBeUndefined();
+		expect(body.tools).toBeUndefined();
+		expect(body.store).toBe(false);
+	});
+
+	it("passes native Responses SSE through with response IDs and diagnostics intact", async () => {
+		const provider = new CodexProvider();
+		const nativeSse = sseBody(
+			eventLine("response.completed", {
+				type: "response.completed",
+				response: {
+					id: "resp_native",
+					prompt_cache_diagnostics: {
+						type: "cache_miss",
+						reason: "prefix_changed",
+						cache_missed_tokens: 1024,
+					},
+				},
+			}),
+		);
+		const response = await provider.processResponse(
+			new Response(nativeSse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-native-responses": "true",
+				},
+			}),
+			null,
+		);
+
+		expect(response.headers.get("x-better-ccflare-codex-response-format")).toBe(
+			"responses-api",
+		);
+		expect(await response.text()).toBe(nativeSse);
+	});
+
+	it("commits continuation from a terminal SSE event with repeated data fields", async () => {
+		const provider = new CodexProvider();
+		const firstInput = [inputItem("first")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-multiline-sse",
+			input: firstInput,
+		});
+
+		const terminal = JSON.stringify({
+			type: "response.completed",
+			response: {
+				id: "resp_multiline_sse",
+				status: "completed",
+				output: [],
+			},
+		});
+		const splitAt = terminal.indexOf('"response"');
+		const nativeSse = [
+			"event: response.completed\n",
+			`data: ${terminal.slice(0, splitAt)}\n`,
+			`data: ${terminal.slice(splitAt)}\n\n`,
+		].join("");
+		const response = await provider.processResponse(
+			new Response(nativeSse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-native-responses": "true",
+					"x-better-ccflare-request-id": "request-multiline-sse",
+				},
+			}),
+			null,
+		);
+		expect(await response.text()).toBe(nativeSse);
+
+		const next = await transformContinuationTurn(provider, {
+			requestId: "request-after-multiline-sse",
+			input: [...firstInput, inputItem("second")],
+		});
+		expect(next.previous_response_id).toBe("resp_multiline_sse");
+		expect(next.input).toEqual([inputItem("second")]);
+	});
+
+	it("commits continuation when terminal type is carried only in SSE data", async () => {
+		const provider = new CodexProvider();
+		const firstInput = [inputItem("first data-only")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-data-only-sse",
+			input: firstInput,
+		});
+		const terminal = JSON.stringify({
+			type: "response.completed",
+			response: {
+				id: "resp_data_only_sse",
+				status: "completed",
+				output: [],
+			},
+		});
+		const response = await provider.processResponse(
+			new Response(`data: ${terminal}\n\n`, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-native-responses": "true",
+					"x-better-ccflare-request-id": "request-data-only-sse",
+				},
+			}),
+			null,
+		);
+		await response.text();
+		const next = await transformContinuationTurn(provider, {
+			requestId: "request-after-data-only-sse",
+			input: [...firstInput, inputItem("second")],
+		});
+		expect(next.previous_response_id).toBe("resp_data_only_sse");
+		expect(next.input).toEqual([inputItem("second")]);
+	});
+
+	it("invalidates continuation when SSE event and data terminal types conflict", async () => {
+		for (const [eventName, dataType, status] of [
+			["response.failed", "response.completed", "completed"],
+			["response.completed", "response.failed", "failed"],
+			["response.completed", "response.created", "completed"],
+		] as const) {
+			const provider = new CodexProvider();
+			const base = [inputItem(`${eventName}:${dataType}`)];
+			const requestId = `request-conflict-${eventName}-${dataType}`;
+			await transformContinuationTurn(provider, {
+				requestId,
+				input: base,
+			});
+			const response = await provider.processResponse(
+				new Response(
+					eventLine(eventName, {
+						type: dataType,
+						response: { id: "resp_conflict", status, output: [] },
+					}),
+					{
+						status: 200,
+						headers: {
+							"content-type": "text/event-stream",
+							"x-better-ccflare-native-responses": "true",
+							"x-better-ccflare-request-id": requestId,
+						},
+					},
+				),
+				null,
+			);
+			await response.text();
+			const next = await transformContinuationTurn(provider, {
+				requestId: `${requestId}-next`,
+				input: [...base, inputItem("tail")],
+			});
+			expect(next.previous_response_id).toBeUndefined();
+			expect(next.input).toHaveLength(2);
+		}
+	});
+
+	it("advances only after a realistic native lifecycle reaches clean EOF", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("realistic lifecycle")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-realistic-lifecycle",
+			input: base,
+		});
+		const nativeSse = sseBody([
+			...eventLine("response.created", {
+				type: "response.created",
+				response: { id: "resp_lifecycle", status: "in_progress" },
+			}),
+			...eventLine("response.output_item.added", {
+				type: "response.output_item.added",
+				output_index: 0,
+				item: { type: "message", role: "assistant", content: [] },
+			}),
+			...eventLine("response.completed", {
+				type: "response.completed",
+				response: {
+					id: "resp_lifecycle",
+					status: "completed",
+					output: [],
+				},
+			}),
+		]);
+		const response = await provider.processResponse(
+			new Response(nativeSse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-native-responses": "true",
+					"x-better-ccflare-request-id": "request-realistic-lifecycle",
+				},
+			}),
+			null,
+		);
+		await response.text();
+		const next = await transformContinuationTurn(provider, {
+			requestId: "request-after-realistic-lifecycle",
+			input: [...base, inputItem("tail")],
+		});
+		expect(next.previous_response_id).toBe("resp_lifecycle");
+		expect(next.input).toEqual([inputItem("tail")]);
+	});
+
+	it("does not advance on a later failure, duplicate completion, truncation, or stream error", async () => {
+		const completed = eventLine("response.completed", {
+			type: "response.completed",
+			response: {
+				id: "resp_must_not_commit",
+				status: "completed",
+				output: [],
+			},
+		});
+		const corruptions: Array<{
+			name: string;
+			body: string | ReadableStream<Uint8Array>;
+			rejects?: boolean;
+		}> = [
+			{
+				name: "completed-then-failed",
+				body: sseBody([
+					...completed,
+					...eventLine("response.failed", {
+						type: "response.failed",
+						response: { status: "failed" },
+					}),
+				]),
+			},
+			{
+				name: "completed-then-incomplete",
+				body: sseBody([
+					...completed,
+					...eventLine("response.incomplete", {
+						type: "response.incomplete",
+						response: { status: "incomplete" },
+					}),
+				]),
+			},
+			{
+				name: "duplicate-completed",
+				body: sseBody([...completed, ...completed]),
+			},
+			{
+				name: "valid-nonterminal-after-completed",
+				body: sseBody([
+					...completed,
+					...eventLine("response.output_item.done", {
+						type: "response.output_item.done",
+						output_index: 0,
+						item: { type: "message", status: "completed" },
+					}),
+				]),
+			},
+			{
+				name: "malformed-after-completed",
+				body: `${sseBody(completed)}event: response.output_item.done\ndata: {not-json}\n\n`,
+			},
+			{
+				name: "truncated-completed",
+				body: completed.slice(0, -1).join("\n"),
+			},
+			{
+				name: "stream-error-after-completed",
+				body: new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(new TextEncoder().encode(sseBody(completed)));
+						controller.error(new Error("upstream stream failure"));
+					},
+				}),
+				rejects: true,
+			},
+		];
+		for (const corruption of corruptions) {
+			const provider = new CodexProvider();
+			const retained = provider as unknown as {
+				pendingContinuationByRequest: Map<string, unknown>;
+			};
+			const base = [inputItem(corruption.name)];
+			const requestId = `request-${corruption.name}`;
+			await transformContinuationTurn(provider, { requestId, input: base });
+			expect(retained.pendingContinuationByRequest.has(requestId)).toBe(true);
+			const response = await provider.processResponse(
+				new Response(corruption.body, {
+					status: 200,
+					headers: {
+						"content-type": "text/event-stream",
+						"x-better-ccflare-native-responses": "true",
+						"x-better-ccflare-request-id": requestId,
+					},
+				}),
+				null,
+			);
+			if (corruption.rejects) {
+				await expect(response.text()).rejects.toThrow(
+					"upstream stream failure",
+				);
+			} else {
+				await response.text();
+			}
+			expect(retained.pendingContinuationByRequest.has(requestId)).toBe(false);
+			const next = await transformContinuationTurn(provider, {
+				requestId: `${requestId}-next`,
+				input: [...base, inputItem("tail")],
+			});
+			expect(next.previous_response_id).toBeUndefined();
+			expect(next.input).toHaveLength(2);
+		}
+	});
+
+	it("deletes pending continuation state when the downstream cancels before EOF", async () => {
+		const provider = new CodexProvider();
+		const requestId = "request-downstream-cancel";
+		await transformContinuationTurn(provider, {
+			requestId,
+			input: [inputItem("base")],
+		});
+		const retained = provider as unknown as {
+			pendingContinuationByRequest: Map<string, unknown>;
+		};
+		expect(retained.pendingContinuationByRequest.has(requestId)).toBe(true);
+
+		const completed = sseBody(
+			eventLine("response.completed", {
+				type: "response.completed",
+				response: {
+					id: "resp_must_not_commit_after_cancel",
+					status: "completed",
+					output: [],
+				},
+			}),
+		);
+		const upstream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode(completed));
+				controller.close();
+			},
+		});
+		const response = await provider.processResponse(
+			new Response(upstream, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-native-responses": "true",
+					"x-better-ccflare-request-id": requestId,
+				},
+			}),
+			null,
+		);
+		const reader = response.body?.getReader();
+		expect(reader).toBeDefined();
+		await reader?.read();
+		await reader?.cancel("client disconnected");
+		expect(retained.pendingContinuationByRequest.has(requestId)).toBe(false);
+
+		const next = await transformContinuationTurn(provider, {
+			requestId: "request-after-downstream-cancel",
+			input: [inputItem("base"), inputItem("tail")],
+		});
+		expect(next.previous_response_id).toBeUndefined();
+		expect(next.input).toHaveLength(2);
+	});
+
+	it("cold-starts with full input, then sends only exact ordered growth", async () => {
+		const provider = new CodexProvider();
+		const firstInput = [inputItem("first")];
+		const upstreamAssistant = {
+			type: "message",
+			id: "msg_first",
+			role: "assistant",
+			status: "completed",
+			phase: "final_answer",
+			content: [
+				{
+					type: "output_text",
+					text: "first answer",
+					annotations: [{ type: "url_citation", url: "https://example.com" }],
+				},
+			],
+		};
+		const replayedAssistant = {
+			...upstreamAssistant,
+			content: [{ type: "output_text", text: "first answer", annotations: [] }],
+		};
+		const first = await transformContinuationTurn(provider, {
+			requestId: "request-first",
+			input: firstInput,
+		});
+		expect(first.input).toEqual(firstInput);
+		expect(first.previous_response_id).toBeUndefined();
+		expect(
+			await completeContinuationTurn(provider, "request-first", "resp_first", [
+				upstreamAssistant,
+			]),
+		).toBe("cold");
+
+		const suffix = inputItem("second");
+		const second = await transformContinuationTurn(provider, {
+			requestId: "request-second",
+			input: [...firstInput, replayedAssistant, suffix],
+		});
+		expect(second.input).toEqual([suffix]);
+		expect(second.previous_response_id).toBe("resp_first");
+		expect(
+			await completeContinuationTurn(provider, "request-second", "resp_second"),
+		).toBe("hit");
+	});
+
+	it("matches replayed reasoning and function calls but refuses missing or tampered assistant replay", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("use a tool")];
+		const reasoning = {
+			type: "reasoning",
+			id: "rs_1",
+			summary: [{ type: "summary_text", text: "checking" }],
+			encrypted_content: "opaque-signed-reasoning",
+		};
+		const upstreamCall = {
+			type: "function_call",
+			id: "fc_1",
+			call_id: "call_1",
+			name: "Read",
+			arguments: '{"path":"README.md"}',
+			status: "completed",
+		};
+		await transformContinuationTurn(provider, {
+			requestId: "request-tool-seed",
+			input: base,
+		});
+		await completeContinuationTurn(
+			provider,
+			"request-tool-seed",
+			"resp_tool_seed",
+			[reasoning, upstreamCall],
+		);
+
+		const replayedCall = { ...upstreamCall } as Record<string, unknown>;
+		delete replayedCall.status;
+		const toolResult = {
+			type: "function_call_output",
+			call_id: "call_1",
+			output: "contents",
+		};
+		const exact = await transformContinuationTurn(provider, {
+			requestId: "request-tool-exact",
+			input: [...base, reasoning, replayedCall, toolResult],
+		});
+		expect(exact.input).toEqual([toolResult]);
+		expect(exact.previous_response_id).toBe("resp_tool_seed");
+
+		const missing = await transformContinuationTurn(provider, {
+			requestId: "request-tool-missing",
+			input: [...base, toolResult],
+		});
+		expect(missing.previous_response_id).toBeUndefined();
+		expect(missing.input).toHaveLength(2);
+
+		const tampered = await transformContinuationTurn(provider, {
+			requestId: "request-tool-tampered",
+			input: [
+				...base,
+				{ ...reasoning, encrypted_content: "tampered" },
+				replayedCall,
+				toolResult,
+			],
+		});
+		expect(tampered.previous_response_id).toBeUndefined();
+		expect(tampered.input).toHaveLength(4);
+	});
+
+	it("never applies server continuation without the exact control", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("base")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-controlled-seed",
+			input: base,
+		});
+		await completeContinuationTurn(
+			provider,
+			"request-controlled-seed",
+			"resp_controlled_seed",
+		);
+
+		const uncontrolled = await transformContinuationTurn(provider, {
+			requestId: "request-uncontrolled",
+			input: [...base, inputItem("tail")],
+			continuation: false,
+		});
+		expect(uncontrolled.input).toHaveLength(2);
+		expect(uncontrolled.previous_response_id).toBeUndefined();
+	});
+
+	it("strips a caller response id when controlled continuation lacks trusted identity", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"x-better-ccflare-request-id": "request-untrusted",
+				"x-better-ccflare-native-responses": "true",
+				"session-id": "shared-session",
+			},
+			body: JSON.stringify({
+				model: "claude-sonnet-4-5",
+				max_tokens: 4096,
+				messages: [{ role: "user", content: "fallback" }],
+				__better_ccflare_codex_passthrough: {
+					model: "gpt-5.6-sol",
+					native_input: [inputItem("full request")],
+					previous_response_id: "resp_attacker_supplied",
+					continuation_strategy: "previous_response_id",
+				},
+			}),
+		});
+		const transformed = await provider.transformRequestBody(
+			request,
+			codexAccount(),
+		);
+		const body = await transformed.json();
+		expect(body.input).toEqual([inputItem("full request")]);
+		expect(body.previous_response_id).toBeUndefined();
+	});
+
+	it("commits JSON terminal responses but never advances on failed SSE", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("base")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-json-seed",
+			input: base,
+		});
+		const jsonResponse = await provider.processResponse(
+			new Response(
+				JSON.stringify({
+					id: "resp_json_seed",
+					status: "completed",
+					output: [],
+				}),
+				{
+					status: 200,
+					headers: {
+						"content-type": "application/json",
+						"x-better-ccflare-native-responses": "true",
+						"x-better-ccflare-request-id": "request-json-seed",
+					},
+				},
+			),
+			null,
+		);
+		expect(
+			jsonResponse.headers.get("x-better-ccflare-codex-response-format"),
+		).toBe("responses-api");
+		await jsonResponse.text();
+		const afterJson = await transformContinuationTurn(provider, {
+			requestId: "request-after-json",
+			input: [...base, inputItem("tail")],
+		});
+		expect(afterJson.previous_response_id).toBe("resp_json_seed");
+
+		const failedProvider = new CodexProvider();
+		await transformContinuationTurn(failedProvider, {
+			requestId: "request-failed-seed",
+			input: base,
+		});
+		const failed = await failedProvider.processResponse(
+			new Response(
+				sseBody(
+					eventLine("response.failed", {
+						type: "response.failed",
+						response: { id: "resp_failed", status: "failed" },
+					}),
+				),
+				{
+					status: 200,
+					headers: {
+						"content-type": "text/event-stream",
+						"x-better-ccflare-native-responses": "true",
+						"x-better-ccflare-request-id": "request-failed-seed",
+					},
+				},
+			),
+			null,
+		);
+		await failed.text();
+		const afterFailure = await transformContinuationTurn(failedProvider, {
+			requestId: "request-after-failure",
+			input: [...base, inputItem("tail")],
+		});
+		expect(afterFailure.input).toHaveLength(2);
+		expect(afterFailure.previous_response_id).toBeUndefined();
+	});
+
+	it("does not commit JSON or SSE completions with a missing response status", async () => {
+		const base = [inputItem("base")];
+		for (const format of ["json", "sse"] as const) {
+			const provider = new CodexProvider();
+			const requestId = `request-missing-status-${format}`;
+			await transformContinuationTurn(provider, { requestId, input: base });
+			const upstreamBody =
+				format === "json"
+					? JSON.stringify({ id: `resp_${format}`, output: [] })
+					: sseBody(
+							eventLine("response.completed", {
+								type: "response.completed",
+								response: { id: `resp_${format}`, output: [] },
+							}),
+						);
+			const response = await provider.processResponse(
+				new Response(upstreamBody, {
+					status: 200,
+					headers: {
+						"content-type":
+							format === "json" ? "application/json" : "text/event-stream",
+						"x-better-ccflare-native-responses": "true",
+						"x-better-ccflare-request-id": requestId,
+					},
+				}),
+				null,
+			);
+			await response.text();
+			const next = await transformContinuationTurn(provider, {
+				requestId: `${requestId}-next`,
+				input: [...base, inputItem("tail")],
+			});
+			expect(next.previous_response_id).toBeUndefined();
+			expect(next.input).toHaveLength(2);
+		}
+	});
+
+	it("deletes pending continuation state after malformed native JSON", async () => {
+		const provider = new CodexProvider();
+		const requestId = "request-malformed-json";
+		await transformContinuationTurn(provider, {
+			requestId,
+			input: [inputItem("base")],
+		});
+		const retained = provider as unknown as {
+			pendingContinuationByRequest: Map<string, unknown>;
+		};
+		expect(retained.pendingContinuationByRequest.has(requestId)).toBe(true);
+		const response = await provider.processResponse(
+			new Response("{malformed", {
+				status: 200,
+				headers: {
+					"content-type": "application/json",
+					"x-better-ccflare-native-responses": "true",
+					"x-better-ccflare-request-id": requestId,
+				},
+			}),
+			null,
+		);
+		await response.text();
+		expect(retained.pendingContinuationByRequest.has(requestId)).toBe(false);
+	});
+
+	it("fails closed to full input on prefix or configuration mismatch", async () => {
+		const provider = new CodexProvider();
+		const original = [inputItem("first")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-seed",
+			input: original,
+		});
+		await completeContinuationTurn(provider, "request-seed", "resp_seed");
+
+		const prefixMismatch = await transformContinuationTurn(provider, {
+			requestId: "request-prefix-mismatch",
+			input: [inputItem("changed"), inputItem("tail")],
+		});
+		expect(prefixMismatch.input).toEqual([
+			inputItem("changed"),
+			inputItem("tail"),
+		]);
+		expect(prefixMismatch.previous_response_id).toBeUndefined();
+
+		const configMismatch = await transformContinuationTurn(provider, {
+			requestId: "request-config-mismatch",
+			input: [...original, inputItem("tail")],
+			instructions: "changed instructions",
+		});
+		expect(configMismatch.input).toEqual([...original, inputItem("tail")]);
+		expect(configMismatch.previous_response_id).toBeUndefined();
+	});
+
+	it("binds continuation to native cache and execution semantics", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("base")];
+		const nativeConfig = {
+			account: codexAccount({
+				custom_endpoint: "https://codex.example.com/v1/responses",
+			}),
+			tools: [{ type: "web_search_preview", search_context_size: "high" }],
+			toolChoice: { type: "web_search_preview" },
+			parallelToolCalls: true,
+			reasoning: {
+				effort: "high",
+				summary: "detailed",
+				context: "this_turn",
+			},
+			promptCacheOptions: {
+				comparison_response_id: "resp_comparison_a",
+			},
+			nativeFields: {
+				text: { format: { type: "text" } },
+				temperature: 0.25,
+				top_p: 0.8,
+				truncation: "auto",
+				include: ["reasoning.encrypted_content"],
+				metadata: { workflow: "cache-test" },
+				service_tier: "priority",
+				context_management: [{ type: "compaction" }],
+				max_output_tokens: 2048,
+			},
+		};
+		await transformContinuationTurn(provider, {
+			requestId: "request-config-seed",
+			input: base,
+			...nativeConfig,
+		});
+		await completeContinuationTurn(
+			provider,
+			"request-config-seed",
+			"resp_config_seed",
+		);
+
+		const exact = await transformContinuationTurn(provider, {
+			requestId: "request-config-exact",
+			input: [...base, inputItem("tail")],
+			...nativeConfig,
+		});
+		expect(exact.previous_response_id).toBe("resp_config_seed");
+		expect(exact.input).toEqual([inputItem("tail")]);
+
+		for (const changed of [
+			{ ...nativeConfig, toolChoice: "none" },
+			{ ...nativeConfig, parallelToolCalls: false },
+			{
+				...nativeConfig,
+				reasoning: { ...nativeConfig.reasoning, summary: "concise" },
+			},
+			{
+				...nativeConfig,
+				promptCacheOptions: {
+					comparison_response_id: "resp_comparison_b",
+				},
+			},
+			{
+				...nativeConfig,
+				nativeFields: {
+					...nativeConfig.nativeFields,
+					temperature: 0.5,
+				},
+			},
+		]) {
+			const mismatch = await transformContinuationTurn(provider, {
+				requestId: `request-config-mismatch-${JSON.stringify(changed)}`,
+				input: [...base, inputItem("tail")],
+				...changed,
+			});
+			expect(mismatch.previous_response_id).toBeUndefined();
+			expect(mismatch.input).toHaveLength(2);
+		}
+	});
+
+	it("treats absent and empty prompt cache options as the same configuration", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("base")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-empty-options-seed",
+			input: base,
+		});
+		await completeContinuationTurn(
+			provider,
+			"request-empty-options-seed",
+			"resp_empty_options",
+		);
+		const next = await transformContinuationTurn(provider, {
+			requestId: "request-empty-options-next",
+			input: [...base, inputItem("tail")],
+			promptCacheOptions: {},
+		});
+		expect(next.previous_response_id).toBe("resp_empty_options");
+	});
+
+	it("isolates continuation by selected account and resolved model", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("base")];
+		const accountA = codexAccount({ id: "account-a" });
+		await transformContinuationTurn(provider, {
+			requestId: "request-account-a",
+			input: base,
+			account: accountA,
+		});
+		await completeContinuationTurn(
+			provider,
+			"request-account-a",
+			"resp_account_a",
+		);
+
+		const otherAccount = await transformContinuationTurn(provider, {
+			requestId: "request-account-b",
+			input: [...base, inputItem("tail")],
+			account: codexAccount({ id: "account-b" }),
+		});
+		expect(otherAccount.input).toHaveLength(2);
+		expect(otherAccount.previous_response_id).toBeUndefined();
+
+		const otherModel = await transformContinuationTurn(provider, {
+			requestId: "request-other-model",
+			input: [...base, inputItem("tail")],
+			account: accountA,
+			model: "gpt-5.6-terra",
+		});
+		expect(otherModel.input).toHaveLength(2);
+		expect(otherModel.previous_response_id).toBeUndefined();
+	});
+
+	it("isolates the same session by authenticated front-door key digest", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("base")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-key-a",
+			input: base,
+			callerIdentityDigest: "a".repeat(64),
+		});
+		await completeContinuationTurn(provider, "request-key-a", "resp_key_a");
+
+		const keyB = await transformContinuationTurn(provider, {
+			requestId: "request-key-b",
+			input: [...base, inputItem("tail")],
+			callerIdentityDigest: "b".repeat(64),
+		});
+		expect(keyB.input).toHaveLength(2);
+		expect(keyB.previous_response_id).toBeUndefined();
+	});
+
+	it("uses generation compare-and-swap so a late completion cannot replace a newer chain", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("base")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-race-a",
+			input: base,
+		});
+		await transformContinuationTurn(provider, {
+			requestId: "request-race-b",
+			input: base,
+		});
+		await completeContinuationTurn(provider, "request-race-b", "resp_newer");
+		await completeContinuationTurn(provider, "request-race-a", "resp_late");
+
+		const next = await transformContinuationTurn(provider, {
+			requestId: "request-race-next",
+			input: [...base, inputItem("tail")],
+		});
+		expect(next.previous_response_id).toBe("resp_newer");
+	});
+
+	it("emits payload-blind response attestations before streaming", async () => {
+		const provider = new CodexProvider();
+		const base = [
+			{
+				type: "message",
+				role: "developer",
+				content: [
+					{
+						type: "input_text",
+						text: "private policy",
+						prompt_cache_breakpoint: { mode: "explicit" },
+					},
+				],
+			},
+			inputItem("private base"),
+		];
+		await transformContinuationTurn(provider, {
+			requestId: "request-attest-seed",
+			input: base,
+			sessionId: "private-session",
+			cacheControlsApplied: true,
+			promptCacheOptions: { ttl: "30m" },
+		});
+		const nativeSse = sseBody(
+			eventLine("response.completed", {
+				type: "response.completed",
+				response: { id: "resp_attest", status: "completed", output: [] },
+			}),
+		);
+		const response = await provider.processResponse(
+			new Response(nativeSse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-native-responses": "true",
+					"x-better-ccflare-request-id": "request-attest-seed",
+				},
+			}),
+			null,
+		);
+		expect(response.headers.get("x-lanetally-transport-used")).toBe("sse");
+		expect(response.headers.get("x-lanetally-continuation-used")).toBe("false");
+		expect(response.headers.get("x-lanetally-continuation-result")).toBe(
+			"cold",
+		);
+		expect(response.headers.get("x-lanetally-cache-controls-applied")).toBe(
+			"true",
+		);
+		expect(response.headers.get("x-lanetally-previous-response-present")).toBe(
+			"false",
+		);
+		expect(response.headers.get("x-lanetally-stable-prefix-digest")).toMatch(
+			/^[0-9a-f]{64}$/,
+		);
+		expect(response.headers.get("x-lanetally-session-digest")).toMatch(
+			/^[0-9a-f]{64}$/,
+		);
+		expect(JSON.stringify(Object.fromEntries(response.headers))).not.toContain(
+			"private",
+		);
+		await response.text();
+	});
+
+	it("attests exact cache controls on both cold and suffix-only hit turns", async () => {
+		const provider = new CodexProvider();
+		const base = [
+			{
+				type: "message",
+				role: "developer",
+				content: [
+					{
+						type: "input_text",
+						text: "stable policy",
+						prompt_cache_breakpoint: { mode: "explicit" },
+					},
+				],
+			},
+			inputItem("first turn"),
+		];
+		const controls = {
+			cacheControlsApplied: true,
+			promptCacheOptions: { ttl: "30m" },
+		};
+		const firstBody = await transformContinuationTurn(provider, {
+			requestId: "request-cache-attest-cold",
+			input: base,
+			...controls,
+		});
+		expect(firstBody.input).toEqual(base);
+
+		const cold = await provider.processResponse(
+			new Response(
+				sseBody(
+					eventLine("response.completed", {
+						type: "response.completed",
+						response: {
+							id: "resp_cache_attest_cold",
+							status: "completed",
+							output: [],
+						},
+					}),
+				),
+				{
+					status: 200,
+					headers: {
+						"content-type": "text/event-stream",
+						"x-better-ccflare-native-responses": "true",
+						"x-better-ccflare-request-id": "request-cache-attest-cold",
+					},
+				},
+			),
+			null,
+		);
+		expect(cold.headers.get("x-lanetally-continuation-result")).toBe("cold");
+		expect(cold.headers.get("x-lanetally-cache-controls-applied")).toBe("true");
+		await cold.text();
+
+		const suffix = inputItem("second turn");
+		const secondBody = await transformContinuationTurn(provider, {
+			requestId: "request-cache-attest-hit",
+			input: [...base, suffix],
+			...controls,
+		});
+		expect(secondBody.previous_response_id).toBe("resp_cache_attest_cold");
+		expect(secondBody.input).toEqual([suffix]);
+		expect(JSON.stringify(secondBody.input)).not.toContain(
+			"prompt_cache_breakpoint",
+		);
+
+		const hit = await provider.processResponse(
+			new Response(
+				sseBody(
+					eventLine("response.completed", {
+						type: "response.completed",
+						response: {
+							id: "resp_cache_attest_hit",
+							status: "completed",
+							output: [],
+						},
+					}),
+				),
+				{
+					status: 200,
+					headers: {
+						"content-type": "text/event-stream",
+						"x-better-ccflare-native-responses": "true",
+						"x-better-ccflare-request-id": "request-cache-attest-hit",
+					},
+				},
+			),
+			null,
+		);
+		expect(hit.headers.get("x-lanetally-continuation-result")).toBe("hit");
+		expect(hit.headers.get("x-lanetally-cache-controls-applied")).toBe("true");
+		await hit.text();
+	});
+
+	it("attests cache controls false for extra options or inexact breakpoint shapes", async () => {
+		for (const [name, promptCacheOptions, breakpoint] of [
+			[
+				"comparison",
+				{ ttl: "30m", comparison_response_id: "resp_compare" },
+				{ mode: "explicit" },
+			],
+			["unknown-option", { ttl: "30m", future: true }, { mode: "explicit" }],
+			["extra-breakpoint", { ttl: "30m" }, { mode: "explicit", future: true }],
+			["invalid-breakpoint", { ttl: "30m" }, { mode: "implicit" }],
+		] as const) {
+			const provider = new CodexProvider();
+			const input = [
+				{
+					type: "message",
+					role: "developer",
+					content: [
+						{
+							type: "input_text",
+							text: "policy",
+							prompt_cache_breakpoint: breakpoint,
+						},
+					],
+				},
+				inputItem("turn"),
+			];
+			const requestId = `request-cache-inexact-${name}`;
+			await transformContinuationTurn(provider, {
+				requestId,
+				input,
+				cacheControlsApplied: true,
+				promptCacheOptions,
+			});
+			const response = await provider.processResponse(
+				new Response(
+					sseBody(
+						eventLine("response.completed", {
+							type: "response.completed",
+							response: {
+								id: `resp_${name}`,
+								status: "completed",
+								output: [],
+							},
+						}),
+					),
+					{
+						status: 200,
+						headers: {
+							"content-type": "text/event-stream",
+							"x-better-ccflare-native-responses": "true",
+							"x-better-ccflare-request-id": requestId,
+						},
+					},
+				),
+				null,
+			);
+			expect(response.headers.get("x-lanetally-cache-controls-applied")).toBe(
+				"false",
+			);
+			await response.text();
+		}
+	});
+
+	it("attests a continuation hit before streaming the continued response", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("base")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-attest-hit-seed",
+			input: base,
+		});
+		await completeContinuationTurn(
+			provider,
+			"request-attest-hit-seed",
+			"resp_attest_hit_seed",
+		);
+		await transformContinuationTurn(provider, {
+			requestId: "request-attest-hit-next",
+			input: [...base, inputItem("tail")],
+		});
+		const response = await provider.processResponse(
+			new Response(
+				sseBody(
+					eventLine("response.completed", {
+						type: "response.completed",
+						response: {
+							id: "resp_attest_hit_next",
+							status: "completed",
+							output: [],
+						},
+					}),
+				),
+				{
+					status: 200,
+					headers: {
+						"content-type": "Text/Event-Stream; charset=utf-8",
+						"x-better-ccflare-native-responses": "true",
+						"x-better-ccflare-request-id": "request-attest-hit-next",
+						"x-lanetally-continuation-result": "attacker-value",
+						"x-lanetally-cache-controls-applied": "true",
+					},
+				},
+			),
+			null,
+		);
+		expect(response.headers.get("x-lanetally-transport-used")).toBe("sse");
+		expect(response.headers.get("x-lanetally-continuation-used")).toBe("true");
+		expect(response.headers.get("x-lanetally-continuation-result")).toBe("hit");
+		expect(response.headers.get("x-lanetally-cache-controls-applied")).toBe(
+			"false",
+		);
+		expect(response.headers.get("x-lanetally-previous-response-present")).toBe(
+			"true",
+		);
+		await response.text();
+	});
+
+	it("keeps pending continuation through a retryable 529 and commits the successful retry", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("base")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-529",
+			input: base,
+		});
+		const overloaded = await provider.processResponse(
+			new Response("event: error\ndata: {}\n\n", {
+				status: 529,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-native-responses": "true",
+					"x-better-ccflare-request-id": "request-529",
+				},
+			}),
+			null,
+		);
+		expect(overloaded.status).toBe(529);
+		await overloaded.text();
+		await completeContinuationTurn(provider, "request-529", "resp_after_529");
+		const next = await transformContinuationTurn(provider, {
+			requestId: "request-after-529",
+			input: [...base, inputItem("tail")],
+		});
+		expect(next.previous_response_id).toBe("resp_after_529");
+	});
+
+	it("cold-starts after expiry and after a provider restart", async () => {
+		let now = 1_000;
+		const provider = new CodexProvider({
+			continuationTtlMs: 100,
+			now: () => now,
+		});
+		const base = [inputItem("base")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-expiry-seed",
+			input: base,
+		});
+		await completeContinuationTurn(
+			provider,
+			"request-expiry-seed",
+			"resp_expiry_seed",
+		);
+		now += 101;
+		const expired = await transformContinuationTurn(provider, {
+			requestId: "request-expired",
+			input: [...base, inputItem("tail")],
+		});
+		expect(expired.input).toHaveLength(2);
+		expect(expired.previous_response_id).toBeUndefined();
+
+		const restarted = await transformContinuationTurn(new CodexProvider(), {
+			requestId: "request-restarted",
+			input: [...base, inputItem("tail")],
+		});
+		expect(restarted.input).toHaveLength(2);
+		expect(restarted.previous_response_id).toBeUndefined();
+	});
+
+	it("retains and logs only payload-blind continuation metadata", async () => {
+		const events: Array<{ msg: string; data?: unknown }> = [];
+		const listener = (event: { msg: string; data?: unknown }) => {
+			if (event.msg.startsWith("Codex ")) events.push(event);
+		};
+		logBus.on("log", listener);
+		const provider = new CodexProvider();
+		try {
+			await transformContinuationTurn(provider, {
+				requestId: "request-private",
+				input: [inputItem("private-prompt-material")],
+				sessionId: "private-session-name",
+			});
+			await completeContinuationTurn(
+				provider,
+				"request-private",
+				"resp_private_identifier",
+				[
+					{
+						type: "message",
+						id: "msg_private",
+						role: "assistant",
+						status: "completed",
+						content: [
+							{ type: "output_text", text: "private-response-material" },
+						],
+					},
+				],
+			);
+		} finally {
+			logBus.off("log", listener);
+		}
+		const retained = provider as unknown as {
+			continuationByLane: Map<string, unknown>;
+			pendingContinuationByRequest: Map<string, unknown>;
+		};
+		const serializedState = JSON.stringify([
+			...retained.continuationByLane.entries(),
+			...retained.pendingContinuationByRequest.entries(),
+		]);
+		expect(serializedState).not.toContain("private-prompt-material");
+		expect(serializedState).not.toContain("private-session-name");
+		expect(serializedState).not.toContain("private-response-material");
+		const serializedEvents = JSON.stringify(events);
+		expect(serializedEvents).not.toContain("private-prompt-material");
+		expect(serializedEvents).not.toContain("private-session-name");
+		expect(serializedEvents).not.toContain("resp_private_identifier");
 	});
 });
 

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { logBus } from "@better-ccflare/logger";
 import { translateAnthropicStreamToResponses } from "../stream-translator";
 
 async function collectSseEvents(
@@ -348,5 +349,29 @@ describe("translateAnthropicStreamToResponses", () => {
 		expect(resp.id).toBe("resp_004");
 		expect(resp.model).toBe("test-model");
 		expect(resp.status).toBe("completed");
+	});
+
+	test("malformed upstream SSE diagnostics never log payload content", async () => {
+		const payloadMarker = "PRIVATE_PROMPT_MARKER_MUST_NOT_BE_LOGGED";
+		const logs: unknown[] = [];
+		const listener = (event: unknown) => logs.push(event);
+		logBus.on("log", listener);
+		try {
+			const upstream = new Response(
+				`event: content_block_delta\ndata: {"secret":"${payloadMarker}"\n\n`,
+				{ headers: { "content-type": "text/event-stream" } },
+			);
+			await translateAnthropicStreamToResponses(
+				upstream,
+				"resp_malformed",
+				"gpt-5.6-sol",
+			).text();
+		} finally {
+			logBus.off("log", listener);
+		}
+		expect(JSON.stringify(logs)).toContain(
+			"Failed to parse upstream SSE event data",
+		);
+		expect(JSON.stringify(logs)).not.toContain(payloadMarker);
 	});
 });

@@ -5,6 +5,8 @@ import type { ProxyContext } from "../handlers";
 import { handleProxy } from "../proxy";
 import * as usageCollectorModule from "../usage-collector";
 
+const originalFetch = globalThis.fetch;
+
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
 		id: "acc-1",
@@ -69,6 +71,7 @@ function makeContext(
 
 afterEach(() => {
 	usageCache.delete("acc-1");
+	globalThis.fetch = originalFetch;
 });
 
 describe("handleProxy model-scoped capacity routing", () => {

@@ -34,6 +34,7 @@ import { markFamilyExhausted } from "./model-capacity";
 import {
 	ERROR_MESSAGES,
 	isInternalProbe,
+	isTrustedNativeResponses,
 	type ProxyContext,
 } from "./proxy-types";
 import { applyRateLimitCooldown } from "./rate-limit-cooldown";
@@ -702,6 +703,16 @@ export async function proxyWithAccount(
 			accessToken,
 			account.api_key || undefined,
 		);
+		// Codex continuation is prepared while transformRequestBody still has the
+		// native input. Make the proxy-owned correlation ID available at that seam;
+		// the provider consumes and strips it before the request leaves ccflare.
+		// Never trust or reuse a caller-supplied copy.
+		if (provider.name === "codex") {
+			headers.set("x-better-ccflare-request-id", requestMeta.id);
+			if (isTrustedNativeResponses(requestMeta)) {
+				headers.set("x-better-ccflare-native-responses", "true");
+			}
+		}
 		// Synthetic-response markers are internal provider-to-proxy signals. Strip
 		// client-supplied copies before providers transform the outbound request.
 		headers.delete(SYNTHETIC_RESPONSE_HEADER);
@@ -1366,6 +1377,18 @@ export async function proxyWithAccount(
 				internalCustomTools,
 			);
 		}
+		const internalNativeResponses = transformedRequest.headers.get(
+			"x-better-ccflare-native-responses",
+		);
+		if (
+			internalNativeResponses === "true" ||
+			internalNativeResponses === "false"
+		) {
+			responseHeaders.set(
+				"x-better-ccflare-native-responses",
+				internalNativeResponses,
+			);
+		}
 		// Inject the original request path so providers can identify the
 		// response type (e.g. /v1/models vs /v1/messages) in processResponse
 		// without needing the original request object.
@@ -1466,6 +1489,18 @@ export async function proxyWithAccount(
 							retryTaggedHeaders.set(
 								"x-better-ccflare-codex-custom-tools",
 								retryCustomTools,
+							);
+						}
+						const retryNativeResponses = transformedRequest.headers.get(
+							"x-better-ccflare-native-responses",
+						);
+						if (
+							retryNativeResponses === "true" ||
+							retryNativeResponses === "false"
+						) {
+							retryTaggedHeaders.set(
+								"x-better-ccflare-native-responses",
+								retryNativeResponses,
 							);
 						}
 						retryTaggedHeaders.set(

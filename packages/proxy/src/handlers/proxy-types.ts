@@ -4,7 +4,22 @@ import type {
 	DatabaseOperations,
 } from "@better-ccflare/database";
 import type { Provider } from "@better-ccflare/providers";
-import type { LoadBalancingStrategy } from "@better-ccflare/types";
+import type { LoadBalancingStrategy, RequestMeta } from "@better-ccflare/types";
+
+const trustedNativeResponsesRequests = new WeakSet<RequestMeta>();
+
+/**
+ * Mark a request created by the authenticated /v1/responses adapter. A
+ * WeakSet keeps this trust bit in-process: no client header can forge it and
+ * no request metadata field can accidentally be serialized or persisted.
+ */
+export function markTrustedNativeResponses(requestMeta: RequestMeta): void {
+	trustedNativeResponsesRequests.add(requestMeta);
+}
+
+export function isTrustedNativeResponses(requestMeta: RequestMeta): boolean {
+	return trustedNativeResponsesRequests.has(requestMeta);
+}
 
 export interface ProxyContext {
 	strategy: LoadBalancingStrategy;
