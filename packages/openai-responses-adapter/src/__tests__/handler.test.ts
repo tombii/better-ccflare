@@ -727,4 +727,48 @@ describe("handleResponsesRequest", () => {
 		);
 		expect(await response.json()).toMatchObject({ id: "resp_crlf" });
 	});
+
+	test("joins repeated native SSE data fields for a non-streaming caller", async () => {
+		const terminal = JSON.stringify({
+			type: "response.completed",
+			response: {
+				id: "resp_multiline",
+				status: "completed",
+				model: "gpt-5.6-sol",
+				output: [],
+			},
+		});
+		const splitAt = terminal.indexOf('"response"');
+		const nativeSse = [
+			"event: response.completed\n",
+			`data: ${terminal.slice(0, splitAt)}\n`,
+			`data: ${terminal.slice(splitAt)}\n\n`,
+		].join("");
+		const mockHandleProxy: HandleProxyFn = async () =>
+			new Response(nativeSse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-codex-response-format": "responses-api",
+				},
+			});
+		const req = new Request("http://localhost/v1/responses", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "gpt-5.6-sol",
+				input: "hello",
+				stream: false,
+			}),
+		});
+
+		const response = await handleResponsesRequest(
+			req,
+			new URL(req.url),
+			mockHandleProxy,
+			{},
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ id: "resp_multiline" });
+	});
 });

@@ -3335,6 +3335,49 @@ describe("CodexProvider native Responses preservation", () => {
 		expect(await response.text()).toBe(nativeSse);
 	});
 
+	it("commits continuation from a terminal SSE event with repeated data fields", async () => {
+		const provider = new CodexProvider();
+		const firstInput = [inputItem("first")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-multiline-sse",
+			input: firstInput,
+		});
+
+		const terminal = JSON.stringify({
+			type: "response.completed",
+			response: {
+				id: "resp_multiline_sse",
+				status: "completed",
+				output: [],
+			},
+		});
+		const splitAt = terminal.indexOf('"response"');
+		const nativeSse = [
+			"event: response.completed\n",
+			`data: ${terminal.slice(0, splitAt)}\n`,
+			`data: ${terminal.slice(splitAt)}\n\n`,
+		].join("");
+		const response = await provider.processResponse(
+			new Response(nativeSse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-native-responses": "true",
+					"x-better-ccflare-request-id": "request-multiline-sse",
+				},
+			}),
+			null,
+		);
+		expect(await response.text()).toBe(nativeSse);
+
+		const next = await transformContinuationTurn(provider, {
+			requestId: "request-after-multiline-sse",
+			input: [...firstInput, inputItem("second")],
+		});
+		expect(next.previous_response_id).toBe("resp_multiline_sse");
+		expect(next.input).toEqual([inputItem("second")]);
+	});
+
 	it("cold-starts with full input, then sends only exact ordered growth", async () => {
 		const provider = new CodexProvider();
 		const firstInput = [inputItem("first")];

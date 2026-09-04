@@ -1308,14 +1308,19 @@ export class CodexProvider extends BaseProvider {
 		eventText: string,
 	): void {
 		let eventName = "";
-		let dataText = "";
-		for (const line of eventText.split("\n")) {
+		const dataLines: string[] = [];
+		for (const line of eventText.split(/\r?\n/)) {
 			if (line.startsWith("event:")) {
 				eventName = line.slice("event:".length).trim();
 			} else if (line.startsWith("data:")) {
-				dataText += line.slice("data:".length).trim();
+				const value = line.slice("data:".length);
+				dataLines.push(value.startsWith(" ") ? value.slice(1) : value);
 			}
 		}
+		// The SSE algorithm joins repeated data fields with a literal newline.
+		// Keeping that framing matters for standards-compliant emitters and also
+		// makes this parser agree with the adapter's buffered-response parser.
+		const dataText = dataLines.join("\n");
 		if (
 			eventName === "response.failed" ||
 			eventName === "response.incomplete"
