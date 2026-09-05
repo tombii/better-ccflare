@@ -26,9 +26,6 @@
  * numbers are allocator noise and do not grow with N.
  */
 
-const MODE = (process.argv[2] ?? "json") as "json" | "text" | "none";
-const N = Number(process.argv[3] ?? 300);
-const BODY_KIB = Number(process.argv[4] ?? 800);
 const CONCURRENCY = 4;
 const WARMUP = 20;
 
@@ -40,6 +37,21 @@ if (process.argv[2] === "--client") {
 	);
 	process.exit(0);
 }
+
+// Reject unknown modes instead of silently measuring the no-read baseline: a
+// typo such as "jsno" would otherwise print a plausible non-leaking result.
+const MODES = ["json", "text", "none"] as const;
+type Mode = (typeof MODES)[number];
+const modeArg = process.argv[2] ?? "json";
+if (!(MODES as readonly string[]).includes(modeArg)) {
+	console.error(
+		`Unknown mode "${modeArg}". Usage: bun run bench/request-clone-json-leak.ts [json|text|none] [N] [bodyKiB]`,
+	);
+	process.exit(2);
+}
+const MODE = modeArg as Mode;
+const N = Number(process.argv[3] ?? 300);
+const BODY_KIB = Number(process.argv[4] ?? 800);
 
 const encoder = new TextEncoder();
 
