@@ -33,6 +33,8 @@ export {
 export * from "./types";
 // Export usage fetcher
 export * from "./usage-fetcher";
+// Export shared request-body helper (Bun 1.3.x clone().json() leak, #382)
+export * from "./utils/request-json";
 // Export shared stream-drain helpers
 export * from "./utils/stream-drain";
 // Export xAI usage fetcher

@@ -5,6 +5,7 @@ import {
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
+import { readRequestJson } from "./request-json";
 
 const log = new Logger("ModelMappingUtils");
 
@@ -112,8 +113,9 @@ export async function transformRequestBodyModel<T extends TransformRequestBody>(
 	providerSpecificMapping?: (model: string, account?: Account) => string,
 ): Promise<Request> {
 	try {
-		const clonedRequest = request.clone();
-		const body: T = await clonedRequest.json();
+		// Not `request.clone().json()` — that leaks the whole body on Bun 1.3.x
+		// (#382); see readRequestJson.
+		const body = await readRequestJson<T>(request);
 		let bodyChanged = false;
 
 		// Codex-only passthrough metadata; strip it in case failover ever
@@ -185,8 +187,8 @@ export async function transformRequestBodyModelForce(
 	targetModel: string,
 ): Promise<Request> {
 	try {
-		const clonedRequest = request.clone();
-		const body = await clonedRequest.json();
+		// Not `request.clone().json()` — see readRequestJson (#382).
+		const body = await readRequestJson<Record<string, unknown> | null>(request);
 
 		// Direct body mutation for performance - avoids object spreading overhead
 		if (body && typeof body === "object" && body.model) {

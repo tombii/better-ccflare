@@ -212,12 +212,19 @@ export NO_PROXY=localhost,127.0.0.1
 If RSS grows into multiple GB while `process.memoryUsage().heapUsed` stays
 flat at tens of MB, this is native (off-heap) memory retention, not a JS
 object leak — clearing history or caches will not help. This was tracked as
-issue [#382](https://github.com/tombii/better-ccflare/issues/382): stream
-reader locks were never released on normal stream completion, and a few
-response paths cloned bodies whose tee branches were never consumed. Fixed
-upstream — upgrade to the latest version. If it still reproduces on a recent
-release, report your provider mix and an idle-vs-traffic RSS comparison on
-the issue.
+issue [#382](https://github.com/tombii/better-ccflare/issues/382). Three
+causes were fixed in turn: stream reader locks were never released on normal
+stream completion, a few response paths cloned bodies whose tee branches were
+never consumed, and — the dominant one — the model-mapping transform read the
+client request through `request.clone().json()`, which on Bun 1.3.x never
+frees the clone's native body buffer. That last one leaked about 1x the
+request body (~1 MiB per Claude Code request, roughly 0.5 GB/hour under normal
+load) on every proxied request for every provider, and only the request side,
+so it survived the response-side fixes. The clone is now read as text
+(`readRequestJson` in `packages/providers`); Bun 1.4.0+ also fixes it at the
+runtime level. `bench/request-clone-json-leak.ts` reproduces the measurement.
+If it still reproduces on a recent release, report your provider mix and an
+idle-vs-traffic RSS comparison on the issue.
 
 **Solutions**:
 1. Check log file size (auto-rotates at 10MB):
