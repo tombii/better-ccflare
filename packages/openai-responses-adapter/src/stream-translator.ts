@@ -373,14 +373,10 @@ function processEvent(
 }
 
 function parseAndProcessChunk(
-	chunk: string,
+	rawEvents: string[],
 	controller: TransformStreamDefaultController,
 	state: State,
 ): void {
-	// Split on double newline to get complete SSE events. Accept CRLF framing:
-	// an upstream that terminates frames with \r\n\r\n has no literal "\n\n".
-	const rawEvents = chunk.split(/\r?\n\r?\n/);
-
 	for (const rawEvent of rawEvents) {
 		if (!rawEvent.trim()) continue;
 
@@ -445,20 +441,22 @@ export function translateAnthropicStreamToResponses(
 				try {
 					state.lineBuffer += decoder.decode(chunk, { stream: true });
 
-					// Process complete events (delimited by \r?\n\r?\n), keep the
-					// remainder in the buffer. The delimiter is two or four bytes
-					// depending on framing, so consume its matched length instead of
-					// assuming 2 — otherwise a CRLF stream leaks "\r\n" into the
-					// next event.
-					const boundaries = [...state.lineBuffer.matchAll(/\r?\n\r?\n/g)];
-					const last = boundaries[boundaries.length - 1];
-					if (!last || last.index === undefined) return;
+					// Split into frames (delimited by \r?\n\r?\n), keep the trailing
+					// partial frame buffered. The delimiter is two or four bytes
+					// depending on framing, so track each match's own length rather
+					// than assuming 2 — otherwise a CRLF stream leaks "\r\n" into the
+					// next frame. Reuses this single scan for both boundary discovery
+					// and frame extraction instead of re-splitting the same text.
+					const rawEvents: string[] = [];
+					let cursor = 0;
+					for (const match of state.lineBuffer.matchAll(/\r?\n\r?\n/g)) {
+						rawEvents.push(state.lineBuffer.slice(cursor, match.index));
+						cursor = match.index + match[0].length;
+					}
+					if (cursor === 0) return;
 
-					const cut = last.index + last[0].length;
-					const complete = state.lineBuffer.slice(0, cut);
-					state.lineBuffer = state.lineBuffer.slice(cut);
-
-					parseAndProcessChunk(complete, controller, state);
+					state.lineBuffer = state.lineBuffer.slice(cursor);
+					parseAndProcessChunk(rawEvents, controller, state);
 				} catch (err) {
 					log.warn(`Stream transform error: ${String(err)}`);
 				}
@@ -472,7 +470,7 @@ export function translateAnthropicStreamToResponses(
 
 					// Process any remaining buffered content
 					if (state.lineBuffer.trim()) {
-						parseAndProcessChunk(`${state.lineBuffer}\n\n`, controller, state);
+						parseAndProcessChunk([state.lineBuffer], controller, state);
 						state.lineBuffer = "";
 					}
 					// Ensure done event is always emitted
