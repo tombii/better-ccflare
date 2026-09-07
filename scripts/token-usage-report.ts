@@ -50,16 +50,46 @@ type Counters = {
 	cacheCreate: number;
 };
 
+type Dimension =
+	| "model"
+	| "project"
+	| "agent"
+	| "kind"
+	| "version"
+	| "context";
+
 type Options = {
 	dir: string;
 	since: Date;
 	group: "day" | "week";
-	by: "model" | "project" | "agent" | "kind" | null;
+	by: Dimension | null;
 	top: number;
 	json: boolean;
 };
 
+const DIMENSIONS: Dimension[] = [
+	"model",
+	"project",
+	"agent",
+	"kind",
+	"version",
+	"context",
+];
+
 const USAGE_MARKER = '"cache_read_input_tokens"';
+
+/**
+ * Context size of one call: everything the model had to read, output excluded.
+ * The buckets matter because anything above ~200k can only happen in an
+ * extended context window — the share of those calls is what makes a session
+ * expensive per turn.
+ */
+function contextBucket(tokens: number): string {
+	if (tokens > 500_000) return "ctx >500k";
+	if (tokens > 200_000) return "ctx 200-500k";
+	if (tokens > 50_000) return "ctx 50-200k";
+	return "ctx <50k";
+}
 
 function emptyCounters(): Counters {
 	return { calls: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
@@ -126,11 +156,11 @@ function parseArgs(argv: string[]): Options {
 			}
 			case "--by": {
 				const value = next();
-				if (!["model", "project", "agent", "kind"].includes(value)) {
-					console.error("--by must be model, project, agent or kind");
+				if (!DIMENSIONS.includes(value as Dimension)) {
+					console.error(`--by must be one of: ${DIMENSIONS.join(", ")}`);
 					process.exit(2);
 				}
-				opts.by = value as Options["by"];
+				opts.by = value as Dimension;
 				break;
 			}
 			case "--top":
@@ -148,7 +178,7 @@ function parseArgs(argv: string[]): Options {
 						"  --dir <path>      transcript root (default ~/.claude/projects)",
 						"  --since <date>    ignore entries before this date (default: 8 weeks ago)",
 						"  --group day|week  period length (default week, ISO Mon-Sun)",
-						"  --by <dimension>  breakdown per period: model | project | agent | kind",
+						`  --by <dimension>  breakdown per period: ${DIMENSIONS.join(" | ")}`,
 						"  --top <n>         breakdown rows per period (default 5)",
 						"  --json            machine-readable output",
 					].join("\n"),
@@ -269,6 +299,7 @@ async function main(): Promise<void> {
 			let record: {
 				timestamp?: string;
 				uuid?: string;
+				version?: string;
 				message?: {
 					id?: string;
 					model?: string;
@@ -300,14 +331,28 @@ async function main(): Promise<void> {
 			add(periods, period, counters);
 
 			if (opts.by) {
-				const dimension =
-					opts.by === "model"
-						? (record.message?.model ?? "?")
-						: opts.by === "project"
-							? where.project
-							: opts.by === "agent"
-								? where.agent
-								: where.kind;
+				let dimension: string;
+				switch (opts.by) {
+					case "model":
+						dimension = record.message?.model ?? "?";
+						break;
+					case "project":
+						dimension = where.project;
+						break;
+					case "agent":
+						dimension = where.agent;
+						break;
+					case "version":
+						dimension = record.version ?? "?";
+						break;
+					case "context":
+						dimension = contextBucket(
+							counters.input + counters.cacheRead + counters.cacheCreate,
+						);
+						break;
+					default:
+						dimension = where.kind;
+				}
 				let inner = breakdown.get(period);
 				if (!inner) {
 					inner = new Map();
@@ -367,8 +412,13 @@ async function main(): Promise<void> {
 				.slice(0, opts.top);
 			for (const [name, c2] of rows) {
 				const share = sum ? Math.round((total(c2) / sum) * 100) : 0;
+				// tokens per call per row: comparing rows WITHIN one period is what
+				// separates a real effect from a shifted mix.
+				const rowPerCall = c2.calls
+					? Math.round(total(c2) / c2.calls / 1000)
+					: 0;
 				console.log(
-					`             ${name.slice(0, 38).padEnd(38)} ${fmt(c2.calls).padStart(8)} calls ${(total(c2) / M).toFixed(0).padStart(7)}M ${`${share}%`.padStart(5)}`,
+					`             ${name.slice(0, 34).padEnd(34)} ${fmt(c2.calls).padStart(8)} calls ${(total(c2) / M).toFixed(0).padStart(7)}M ${`${share}%`.padStart(5)} ${`${rowPerCall}k/call`.padStart(11)}`,
 				);
 			}
 		}

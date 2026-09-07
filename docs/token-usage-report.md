@@ -74,12 +74,25 @@ All options:
 | `--dir <path>` | `~/.claude/projects` | transcript root |
 | `--since <date>` | 8 weeks ago | ignore entries before this date |
 | `--group day\|week` | `week` | period length (ISO week, Mon–Sun) |
-| `--by <dimension>` | none | breakdown per period: `model`, `project`, `agent`, `kind` |
+| `--by <dimension>` | none | breakdown per period (see below) |
 | `--top <n>` | `5` | breakdown rows per period |
 | `--json` | off | machine-readable output |
 
-`--by kind` splits main sessions from subagent runs — the fastest way to see
-whether fan-outs are driving the bill.
+The breakdown dimensions:
+
+| `--by` | Splits each period by | Answers |
+| --- | --- | --- |
+| `kind` | main session vs. subagent run | are fan-outs driving the bill? |
+| `agent` | subagent type (`agentType` from the meta file) | which fan-out, and since when? |
+| `project` | project directory | which work caused it |
+| `model` | model id | did the model mix shift? |
+| `version` | Claude Code CLI version | did an update change anything? |
+| `context` | context size per call (`<50k`, `50–200k`, `200–500k`, `>500k`) | how much of the bill comes from oversized contexts |
+
+Every breakdown row carries its own `k/call`, which is what makes the
+comparison honest: a period's overall `tok/call` can fall while every single
+row inside it rises, simply because cheap rows grew faster than expensive
+ones.
 
 ## Reading the output
 
@@ -109,15 +122,39 @@ week (Mon)     calls    in M   out M  cacheRd M  cacheCr M   total M  tok/call  
 
 ## Finding the cause
 
-A workflow that gets there in three commands:
+A rise in **calls** and a rise in **tokens per call** are different problems.
+Split them first, then follow the matching branch:
 
 1. `--by kind` — main sessions or subagents?
-2. `--by agent --top 5` — if subagents: which agent type, and since when?
-3. `--by project --group day --since <the day it started>` — which work
-   caused it.
+2. More calls → `--by agent --top 5` (which fan-out, since when), then
+   `--by project --group day --since <that day>` (which work caused it).
+   Fan-outs are the usual answer: one agent type running many parallel lanes
+   for a few days can outweigh every interactive session combined.
+3. More tokens per call → `--by context` (how much comes from oversized
+   contexts) and `--by model` (did the mix shift toward expensive models?).
 
-Fan-outs are the usual answer: one agent type running many parallel lanes for
-a few days can outweigh every interactive session combined.
+### Correlating with a CLI update
+
+`--by version` tags every call with the Claude Code version that produced it,
+so a suspected regression can be tested instead of assumed. **Compare versions
+*within* one day, never across days.** Across days the work itself changes —
+different projects, models and session lengths — and that variation dwarfs any
+version effect.
+
+The test is simple: on days when two versions ran side by side, do their
+`k/call` values differ consistently in the same direction? If the gap between
+versions on one day is smaller than the day-to-day swing, the version is not
+the cause, whatever the calendar suggests.
+
+Two independent records help date the updates themselves: the `version` field
+in the transcripts (what actually ran) and the history of
+`CLAUDE_CLI_VERSION` in `packages/core/src/version.ts`, which a pre-push hook
+keeps current:
+
+```bash
+git log --format='%h %ad %s' --date=short -p origin/main -- packages/core/src/version.ts \
+  | grep -E '^[0-9a-f]{8} |^\+export const CLAUDE_CLI_VERSION'
+```
 
 ## What it does not see
 
