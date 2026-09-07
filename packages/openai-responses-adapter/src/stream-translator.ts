@@ -377,13 +377,14 @@ function parseAndProcessChunk(
 	controller: TransformStreamDefaultController,
 	state: State,
 ): void {
-	// Split on double newline to get complete SSE events
-	const rawEvents = chunk.split("\n\n");
+	// Split on double newline to get complete SSE events. Accept CRLF framing:
+	// an upstream that terminates frames with \r\n\r\n has no literal "\n\n".
+	const rawEvents = chunk.split(/\r?\n\r?\n/);
 
 	for (const rawEvent of rawEvents) {
 		if (!rawEvent.trim()) continue;
 
-		const lines = rawEvent.split("\n");
+		const lines = rawEvent.split(/\r?\n/);
 		let eventType = "";
 		let dataStr = "";
 
@@ -444,12 +445,18 @@ export function translateAnthropicStreamToResponses(
 				try {
 					state.lineBuffer += decoder.decode(chunk, { stream: true });
 
-					// Process complete events (delimited by \n\n), keep remainder in buffer
-					const lastDoubleNewline = state.lineBuffer.lastIndexOf("\n\n");
-					if (lastDoubleNewline === -1) return;
+					// Process complete events (delimited by \r?\n\r?\n), keep the
+					// remainder in the buffer. The delimiter is two or four bytes
+					// depending on framing, so consume its matched length instead of
+					// assuming 2 — otherwise a CRLF stream leaks "\r\n" into the
+					// next event.
+					const boundaries = [...state.lineBuffer.matchAll(/\r?\n\r?\n/g)];
+					const last = boundaries[boundaries.length - 1];
+					if (!last || last.index === undefined) return;
 
-					const complete = state.lineBuffer.slice(0, lastDoubleNewline + 2);
-					state.lineBuffer = state.lineBuffer.slice(lastDoubleNewline + 2);
+					const cut = last.index + last[0].length;
+					const complete = state.lineBuffer.slice(0, cut);
+					state.lineBuffer = state.lineBuffer.slice(cut);
 
 					parseAndProcessChunk(complete, controller, state);
 				} catch (err) {
