@@ -43,6 +43,44 @@ describe("RateLimitProgress", () => {
 		expect(html).toContain("Usage (5-hour)");
 	});
 
+	it("renders both zai token windows, not just the last one parsed", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				usageUtilization={2}
+				usageWindow="seven_day"
+				usageData={{
+					tokens_limit: {
+						used: 1,
+						remaining: 99,
+						percentage: 1,
+						resetAt: Date.now() + 4 * 60 * 60 * 1000,
+						type: "tokens_limit",
+					},
+					tokens_limit_weekly: {
+						used: 2,
+						remaining: 98,
+						percentage: 2,
+						resetAt: Date.now() + 6 * 24 * 60 * 60 * 1000,
+						type: "tokens_limit_weekly",
+					},
+					time_limit: {
+						used: 0,
+						remaining: 1000,
+						percentage: 0,
+						resetAt: Date.now() + 26 * 24 * 60 * 60 * 1000,
+						type: "time_limit",
+					},
+				}}
+				provider="zai"
+				showWeekly
+			/>,
+		);
+
+		expect(html).toContain("Usage (5-hour)");
+		expect(html).toContain("Usage (Weekly)");
+		expect(html).toContain("Usage (Time Quota)");
+	});
+
 	it("renders a generic seven_day_fable tier as 'Fable (Weekly)' with a 0% bar", () => {
 		const reset = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
 		const html = renderToStaticMarkup(

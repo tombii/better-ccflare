@@ -45,7 +45,13 @@ export function isUsageWindow(
 
 /** True for the account-level weekly window and every model tier window. */
 export function isWeeklyWindow(window: string): boolean {
-	return window === "seven_day" || window.startsWith("seven_day_");
+	return (
+		window === "seven_day" ||
+		window.startsWith("seven_day_") ||
+		// Zai's long token window — weekly on current plans, so it wants the
+		// same date formatting and no-reset copy as the Anthropic ones.
+		window === "tokens_limit_weekly"
+	);
 }
 
 /**
@@ -69,6 +75,8 @@ export function formatWindowName(window: string | null): string {
 			return "Time Quota";
 		case "tokens_limit":
 			return "5-hour";
+		case "tokens_limit_weekly":
+			return "Weekly";
 		case "credits":
 			return "Grok credits";
 	}
