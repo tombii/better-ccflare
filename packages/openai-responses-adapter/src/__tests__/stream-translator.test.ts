@@ -7,10 +7,12 @@ async function collectSseEvents(
 ): Promise<Array<{ event: string; data: unknown }>> {
 	const text = await response.text();
 	const events: Array<{ event: string; data: unknown }> = [];
-	const rawEvents = text.split("\n\n").filter((s) => s.trim().length > 0);
+	const rawEvents = text
+		.split(/\r?\n\r?\n/)
+		.filter((s) => s.trim().length > 0);
 
 	for (const rawEvent of rawEvents) {
-		const lines = rawEvent.split("\n");
+		const lines = rawEvent.split(/\r?\n/);
 		let eventType = "message";
 		let dataStr = "";
 		for (const line of lines) {
@@ -373,5 +375,53 @@ describe("translateAnthropicStreamToResponses", () => {
 			"Failed to parse upstream SSE event data",
 		);
 		expect(JSON.stringify(logs)).not.toContain(payloadMarker);
+	});
+	test("translates a CRLF-framed upstream stream", async () => {
+		// An upstream that terminates SSE frames with \r\n\r\n contains no
+		// literal "\n\n", so a literal split finds no boundary: every event
+		// stays buffered until flush and only the last one survives.
+		const events = [
+			sseEvent("message_start", {
+				type: "message_start",
+				message: {
+					id: "msg_crlf",
+					model: "claude-3-5-sonnet",
+					usage: { input_tokens: 11, output_tokens: 0 },
+				},
+			}),
+			sseEvent("content_block_start", {
+				type: "content_block_start",
+				index: 0,
+				content_block: { type: "text", text: "" },
+			}),
+			sseEvent("content_block_delta", {
+				type: "content_block_delta",
+				index: 0,
+				delta: { type: "text_delta", text: "hello" },
+			}),
+			sseEvent("content_block_stop", { type: "content_block_stop", index: 0 }),
+			sseEvent("message_delta", {
+				type: "message_delta",
+				delta: { stop_reason: "end_turn" },
+				usage: { output_tokens: 3 },
+			}),
+			sseEvent("message_stop", { type: "message_stop" }),
+		].map((e) => e.replace(/\n/g, "\r\n"));
+
+		const body = `${events.join("\r\n\r\n")}\r\n\r\n`;
+		const upstream = new Response(body, {
+			headers: { "Content-Type": "text/event-stream" },
+		});
+
+		const translated = translateAnthropicStreamToResponses(upstream, "gpt-5");
+		const got = await collectSseEvents(translated);
+		const types = got.map((e) => e.event);
+
+		expect(types).toContain("response.created");
+		expect(types).toContain("response.output_text.delta");
+		expect(types).toContain("response.completed");
+
+		const delta = got.find((e) => e.event === "response.output_text.delta");
+		expect((delta?.data as { delta?: string })?.delta).toBe("hello");
 	});
 });
