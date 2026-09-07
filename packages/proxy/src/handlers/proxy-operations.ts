@@ -1113,6 +1113,17 @@ export async function proxyWithAccount(
 		// exponential ramp plus the single-flight recovery probe (see
 		// rate-limit-cooldown.ts) means at most one request per cooldown expiry
 		// is spent rediscovering a block only an admin can lift.
+		//
+		// POOL-WIDE DRAIN CAVEAT: if every account in the pool belongs to the
+		// same org and that org has disabled access, every account benches in
+		// turn and the pool goes fully dark — bench, cooldown expiry,
+		// single-flight probe, re-bench, repeat — until an admin changes the
+		// org setting. There is no pool-wide/provider-wide circuit here, only
+		// this per-account exponential cooldown, so nothing short-circuits
+		// that loop early. The warn log below fires on every account as it
+		// benches, so an "all accounts benched with org_permission_denied"
+		// pattern across the pool in a short window is the signal to look for
+		// when debugging a fully-dark pool.
 		if (
 			isClaudeProvider &&
 			rawResponse.status === 403 &&

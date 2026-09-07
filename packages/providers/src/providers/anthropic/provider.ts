@@ -108,8 +108,17 @@ export async function isAnthropicExtraUsageExhausted(
 export const ORG_PERMISSION_DENIED_REASON = "org_permission_denied";
 
 /**
+ * The only `details.error_code` value observed alongside `permission_error`
+ * for this condition. Not every observed body carries `details` at all (see
+ * below), so this is an allow-when-present check, not a required match.
+ */
+const ORG_PERMISSION_DENIED_ERROR_CODE = "oauth_not_allowed_for_organization";
+
+/**
  * Returns true iff the response is a 403 carrying Anthropic's
- * `error.type: "permission_error"`.
+ * `error.type: "permission_error"`, narrowed to the org-block condition this
+ * predicate exists to detect (see below) rather than every possible cause of
+ * a `permission_error` 403.
  *
  * KEYED ON `error.type`, DELIBERATELY NOT ON THE MESSAGE. Two different
  * wordings of the same condition were observed on one organization within the
@@ -117,14 +126,25 @@ export const ORG_PERMISSION_DENIED_REASON = "org_permission_denied";
  * not allowed for this organization." (with
  * `details.error_code: oauth_not_allowed_for_organization`), while
  * `/v1/messages` tells Claude Code "Your organization has disabled Claude
- * subscription access for Claude Code…". Anthropic owns that copy and can
- * reword it without notice; `error.type` is the machine-readable field and the
- * only part stable enough to route on. `x-should-retry: false` accompanied
- * every observed instance and corroborates the classification, but is not
- * required here: gating on it would fail closed — straight back to forwarding
- * the 403 to the client — the moment a variant omits it.
+ * subscription access for Claude Code…" with no `details` object at all.
+ * Anthropic owns that copy and can reword it without notice; `error.type` is
+ * the machine-readable field and the only part stable enough to route on.
+ * `x-should-retry: false` accompanied every observed instance and
+ * corroborates the classification, but is not required here: gating on it
+ * would fail closed — straight back to forwarding the 403 to the client —
+ * the moment a variant omits it.
  *
- * Narrow by construction in two ways:
+ * `details.error_code` is checked the same way: REQUIRED to equal
+ * `oauth_not_allowed_for_organization` when present, but not required to be
+ * present at all, since the Claude-Code-specific wording never included a
+ * `details` object in the observed sample. This means a `permission_error`
+ * 403 that carries a *different*, unrecognized `error_code` — e.g. a
+ * scoped/per-request permission rejection Anthropic hasn't been observed to
+ * send yet — does NOT match and falls through to the pre-existing
+ * pass-through behavior instead of benching the account on an unproven
+ * cause. Only a body with no error_code, or the one known code, benches.
+ *
+ * Narrow by construction in two more ways:
  *   - A non-JSON 403 (edge/WAF block page) does NOT match. Such a block
  *     usually rejects every account identically, and benching the pool one
  *     account per attempt is the pool-drain failure mode of issue #301.
@@ -141,7 +161,11 @@ export async function isAnthropicOrgPermissionDenied(
 		const contentType = response.headers.get("content-type");
 		if (!contentType?.includes("application/json")) return false;
 		const json = await response.clone().json();
-		return json?.error?.type === "permission_error";
+		if (json?.error?.type !== "permission_error") return false;
+		const errorCode = json?.error?.details?.error_code;
+		return (
+			errorCode === undefined || errorCode === ORG_PERMISSION_DENIED_ERROR_CODE
+		);
 	} catch {
 		return false;
 	}

@@ -102,6 +102,22 @@ describe("isAnthropicOrgPermissionDenied", () => {
 		expect(await isAnthropicOrgPermissionDenied(response)).toBe(false);
 	});
 
+	it("returns false for a permission_error 403 carrying an unrecognized error_code", async () => {
+		// A permission_error with a *different*, unproven error_code should not
+		// bench the account on an unrecognized cause — falls through to the
+		// pre-existing pass-through instead.
+		const response = jsonResponse(403, {
+			type: "error",
+			error: {
+				type: "permission_error",
+				message: "This request requires a beta feature not enabled.",
+				details: { error_code: "some_other_scoped_restriction" },
+			},
+		});
+
+		expect(await isAnthropicOrgPermissionDenied(response)).toBe(false);
+	});
+
 	it("returns false for a 403 with a non-JSON content-type (e.g. a Cloudflare block page)", async () => {
 		// Deliberately narrow: a non-JSON 403 can be an edge/network block that
 		// would reject every account identically, and benching the pool one
