@@ -8,7 +8,7 @@ Load balancer proxy for Claude distributing requests across multiple account pro
 
 ## ⚠️ CRITICAL: File Exclusions
 
-**README files** - Only modify `./README.md` (root). Do NOT modify `apps/cli/README.md`.
+**README files** - Only modify `./README.md` (root) and `docs/README.md` (docs index). Do NOT modify `apps/cli/README.md`.
 
 **NEVER TOUCH these auto-generated files** — must be excluded from all reads, edits, searches, and commits:
 - `packages/proxy/src/inline-worker.ts`
@@ -177,7 +177,7 @@ Fallback (only if the subagent is unavailable): call the tools inline but minimi
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (7828 symbols, 18278 relationships, 251 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (8858 symbols, 21052 relationships, 264 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
