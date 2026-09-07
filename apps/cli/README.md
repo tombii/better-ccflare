@@ -817,7 +817,7 @@ Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks f
 - [@aleksandrgrn](https://github.com/aleksandrgrn) — [#447](https://github.com/tombii/better-ccflare/pull/447), [#448](https://github.com/tombii/better-ccflare/pull/448), [#449](https://github.com/tombii/better-ccflare/pull/449)
 - [@CooLowbro](https://github.com/CooLowbro) — [#339](https://github.com/tombii/better-ccflare/pull/339), [#394](https://github.com/tombii/better-ccflare/pull/394), [#395](https://github.com/tombii/better-ccflare/pull/395), [#399](https://github.com/tombii/better-ccflare/pull/399), [#403](https://github.com/tombii/better-ccflare/pull/403), [#427](https://github.com/tombii/better-ccflare/pull/427), [#428](https://github.com/tombii/better-ccflare/pull/428), [#429](https://github.com/tombii/better-ccflare/pull/429), [#430](https://github.com/tombii/better-ccflare/pull/430)
 - [@vansh2408](https://github.com/vansh2408) — [#359](https://github.com/tombii/better-ccflare/pull/359)
-- [@aaapl](https://github.com/aaapl) — [#433](https://github.com/tombii/better-ccflare/pull/433)
+- [@aaapl](https://github.com/aaapl) — [#433](https://github.com/tombii/better-ccflare/pull/433), [#435](https://github.com/tombii/better-ccflare/pull/435)
 - [@mjonuschat](https://github.com/mjonuschat) — [#436](https://github.com/tombii/better-ccflare/pull/436)
 - [@anony253](https://github.com/anony253) — [#452](https://github.com/tombii/better-ccflare/pull/452)
 - [@valentinyanakiev](https://github.com/valentinyanakiev) — [#450](https://github.com/tombii/better-ccflare/pull/450), [#454](https://github.com/tombii/better-ccflare/pull/454)
