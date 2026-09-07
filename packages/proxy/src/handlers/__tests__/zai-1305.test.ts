@@ -47,6 +47,21 @@ describe("hasZai1305Error", () => {
 			'data: {"choices":[{"delta":{"content":"See error code 1305, service overloaded"}}]}\n\n';
 		expect(hasZai1305Error(chunk)).toBe(false);
 	});
+
+	it("detects the error regardless of JSON property order", () => {
+		const chunk =
+			'data: {"error":{"message":"service overloaded","code":1305}}\n\n';
+		expect(hasZai1305Error(chunk)).toBe(true);
+	});
+
+	it("skips incomplete/unparseable data lines without throwing", () => {
+		const chunk = 'data: {"error":{"code":1305,"mess';
+		expect(hasZai1305Error(chunk)).toBe(false);
+	});
+
+	it("ignores the [DONE] sentinel", () => {
+		expect(hasZai1305Error("data: [DONE]\n\n")).toBe(false);
+	});
 });
 
 /** Builds a Response whose body streams the given chunks with no delay. */

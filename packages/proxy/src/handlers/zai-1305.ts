@@ -11,27 +11,37 @@
 import { drainBody } from "./discard-body-cancel";
 
 /**
- * Matches an SSE `data:` line carrying a JSON error object with code 1305,
- * e.g. `data: {"error":{"code":1305,"message":"...overloaded..."}}`. Anchored
- * on the numeric `code` field rather than a bare substring match so genuine
- * model output that happens to mention "1305" and "overloaded" (a token
- * count, an id, a sentence in a response) doesn't get misclassified as the
- * provider error and discarded/retried.
- */
-const ZAI_1305_ERROR_PATTERN =
-	/"error"\s*:\s*\{[^}]*"code"\s*:\s*1305\b[^}]*overloaded/i;
-
-/**
  * True when an SSE chunk carries Zai's 1305 overload error.
  *
- * The error arrives as the very first chunk of the stream, before any model
- * output, and its exact envelope has changed across Zai releases — so this
- * matches loosely within a `"error": {...}` object rather than parsing a
- * fixed shape, while still requiring the numeric error code so ordinary model
- * text can't trip it.
+ * The error arrives as the very first event of the stream, before any model
+ * output, as a `data: {...}` line whose JSON has an `error.code` of 1305.
+ * Parses each `data:` line's JSON and checks the code field directly rather
+ * than matching text, so property order in the serialized object (Zai's
+ * envelope has changed across releases) can't hide a real error, and genuine
+ * model output that happens to mention "1305" or "overloaded" in prose can't
+ * be misclassified as the provider error and discarded/retried.
+ *
+ * `chunk` may hold multiple SSE lines or an as-yet-incomplete one (this is
+ * called against a growing buffer while a stream is still arriving); lines
+ * that aren't complete, parseable JSON are simply skipped rather than
+ * treated as a mismatch, since the next call gets a fuller buffer.
  */
 export function hasZai1305Error(chunk: string): boolean {
-	return ZAI_1305_ERROR_PATTERN.test(chunk);
+	for (const line of chunk.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed.startsWith("data:")) continue;
+		const payload = trimmed.slice("data:".length).trim();
+		if (!payload || payload === "[DONE]") continue;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(payload);
+		} catch {
+			continue;
+		}
+		const code = (parsed as { error?: { code?: unknown } } | null)?.error?.code;
+		if (code === 1305) return true;
+	}
+	return false;
 }
 
 /**
