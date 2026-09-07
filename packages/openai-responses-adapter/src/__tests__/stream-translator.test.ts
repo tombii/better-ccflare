@@ -424,4 +424,69 @@ describe("translateAnthropicStreamToResponses", () => {
 		const delta = got.find((e) => e.event === "response.output_text.delta");
 		expect((delta?.data as { delta?: string })?.delta).toBe("hello");
 	});
+
+	test("flushes a final frame with no trailing delimiter", async () => {
+		// Every other fixture's body ends with "\n\n", so the last frame is
+		// always drained by transform(). Omit it here so the last frame stays
+		// in lineBuffer until flush() and exercises the flush-only code path.
+		// End on message_delta (not message_stop): message_stop carries no
+		// data of its own, so a broken flush would still pass by falling back
+		// to emitDone()'s defaults. message_delta's output_tokens only reaches
+		// the final usage if this trailing, undelimited frame is actually
+		// parsed and processed rather than silently dropped.
+		const events = [
+			sseEvent("message_start", {
+				type: "message_start",
+				message: {
+					id: "msg_noeof",
+					usage: { input_tokens: 5, output_tokens: 0 },
+				},
+			}),
+			sseEvent("content_block_start", {
+				type: "content_block_start",
+				index: 0,
+				content_block: { type: "text", text: "" },
+			}),
+			sseEvent("content_block_delta", {
+				type: "content_block_delta",
+				index: 0,
+				delta: { type: "text_delta", text: "hi" },
+			}),
+			sseEvent("content_block_stop", { type: "content_block_stop", index: 0 }),
+			sseEvent("message_delta", {
+				type: "message_delta",
+				delta: { stop_reason: "end_turn" },
+				usage: { output_tokens: 7 },
+			}),
+		];
+
+		// No trailing "\n\n" after the last event.
+		const body = events.join("\n\n");
+		const upstream = new Response(body, {
+			headers: { "Content-Type": "text/event-stream" },
+		});
+
+		const translated = translateAnthropicStreamToResponses(upstream, "gpt-5");
+		const got = await collectSseEvents(translated);
+		const types = got.map((e) => e.event);
+
+		expect(types).toContain("response.created");
+		expect(types).toContain("response.output_text.delta");
+		expect(types).toContain("response.completed");
+
+		const delta = got.find((e) => e.event === "response.output_text.delta");
+		expect((delta?.data as { delta?: string })?.delta).toBe("hi");
+
+		// Proves the trailing, undelimited message_delta frame was actually
+		// parsed by flush() rather than dropped — output_tokens would be 0
+		// (emitDone()'s default) if that frame never reached processEvent().
+		const doneEvent = got.find((e) => e.event === "response.completed");
+		const usage = (
+			(doneEvent?.data as Record<string, unknown>).response as Record<
+				string,
+				unknown
+			>
+		).usage as Record<string, number>;
+		expect(usage.output_tokens).toBe(7);
+	});
 });
