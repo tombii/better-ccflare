@@ -31,7 +31,11 @@ import {
 	getRepresentativeXaiWindow,
 	type XaiUsageData,
 } from "./xai-usage-fetcher";
-import { fetchZaiUsageData, type ZaiUsageData } from "./zai-usage-fetcher";
+import {
+	fetchZaiUsageData,
+	type ZaiUsageData,
+	type ZaiUsageWindow,
+} from "./zai-usage-fetcher";
 
 const log = new Logger("UsageFetcher");
 
@@ -432,6 +436,31 @@ export function getRepresentativeWindow(
 	return representativeWindow(usage, true);
 }
 
+/**
+ * The zai token window (5-hour or weekly) with the highest utilization —
+ * shared by utilization, reset, and snapshot derivation so all three agree on
+ * which window is "the" representative one. Ties prefer the later reset: the
+ * account isn't actually available again until every exhausted window
+ * clears, so picking the earlier one would report recovery too soon.
+ */
+function getWinningZaiTokenWindow(
+	usage: ZaiUsageData,
+): ZaiUsageWindow | null {
+	const candidates = [usage.tokens_limit, usage.tokens_limit_weekly].filter(
+		(window): window is ZaiUsageWindow => window !== null,
+	);
+	if (candidates.length === 0) return null;
+	return candidates.reduce((prev, current) => {
+		if (current.percentage !== prev.percentage) {
+			return current.percentage > prev.percentage ? current : prev;
+		}
+		if (current.resetAt === null || prev.resetAt === null) {
+			return prev.resetAt === null ? prev : current;
+		}
+		return current.resetAt > prev.resetAt ? current : prev;
+	});
+}
+
 function utilizationForProvider(
 	data: AnyUsageData | null | undefined,
 	provider: string,
@@ -632,11 +661,15 @@ export function getRepresentativeUsageResetMs(
 				// resets_at so the staleness guard still has a real reset time.
 				return getRepresentativeLimitResetMs(data as UsageData, windowName);
 			}
-			case "zai":
-				return extractUsageResetMs(
-					data,
-					(data as ZaiUsageData).tokens_limit ? "tokens_limit" : null,
-				);
+			case "zai": {
+				// Must pick the SAME window utilizationForProvider's zai branch
+				// picked as the max, or a resetMs from a window that isn't the
+				// one driving `utilization` lets isUsageExhausted's staleness
+				// guard clear the account once the *wrong* window's reset
+				// passes, while the actually-exhausted window is still capped.
+				const winner = getWinningZaiTokenWindow(data as ZaiUsageData);
+				return winner?.resetAt ?? null;
+			}
 			case "nanogpt":
 				return extractUsageResetMs(
 					data,
