@@ -48,7 +48,7 @@ import { hasZai1305Error } from "./zai-1305";
 
 const log = new Logger("ProxyOperations");
 
-import { cancelDiscardedResponseBody } from "./discard-body-cancel";
+import { cancelDiscardedResponseBody, drainBody } from "./discard-body-cancel";
 
 const SYNTHETIC_RESPONSE_HEADER = "x-better-ccflare-synthetic-response";
 const SYNTHETIC_STATUS_HEADER = "x-better-ccflare-synthetic-status";
@@ -479,10 +479,77 @@ export async function isModelUnavailableError(
 }
 
 /**
+ * Bound on how many leading bytes of a peeked SSE stream we accumulate
+ * while scanning for the 1305 markers. The error event is tiny (well
+ * under 1 KiB); this cap just prevents an unbounded accumulation if a
+ * stream never produces a match.
+ */
+const SSE_PEEK_MAX_BYTES = 4096;
+
+/**
+ * Bound on how long we wait for the 1305 markers to appear before giving
+ * up and treating the stream as a normal (non-1305) response. Without
+ * this, a slow/low-throughput stream that never accumulates
+ * SSE_PEEK_MAX_BYTES nor a match would hold up first-token latency for as
+ * long as the upstream keeps trickling bytes.
+ */
+const SSE_PEEK_TIMEOUT_MS = 500;
+
+/**
+ * Peeks at the leading bytes of an SSE response body — via `clone()`, so
+ * the original stream is untouched — looking for Zai's 1305 overload
+ * markers, then always drains the rest of the clone so its native backing
+ * buffer is released (see `cancelDiscardedResponseBody` above for why an
+ * unread stream branch leaks — issue #382/#437). Reads multiple chunks
+ * rather than just the first one: the 1305 JSON event can be split across
+ * network/TLS chunk boundaries, and a single-chunk read would miss
+ * markers straddling that split. Bounded by both a byte cap and a time
+ * cap so a slow normal stream can't be held up waiting for a match that
+ * will never come.
+ */
+async function peekSseForZai1305(response: Response): Promise<boolean> {
+	const clone = response.clone();
+	const reader = clone.body?.getReader();
+	if (!reader) return false;
+
+	let matched = false;
+	let buffered = "";
+	const decoder = new TextDecoder();
+	const deadline = Date.now() + SSE_PEEK_TIMEOUT_MS;
+	try {
+		while (buffered.length < SSE_PEEK_MAX_BYTES) {
+			const remaining = deadline - Date.now();
+			if (remaining <= 0) break;
+			const result = await Promise.race([
+				reader.read(),
+				new Promise<"timeout">((resolve) =>
+					setTimeout(() => resolve("timeout"), remaining),
+				),
+			]);
+			if (result === "timeout") break;
+			const { value, done } = result;
+			if (done) break;
+			buffered += decoder.decode(value, { stream: true });
+			if (hasZai1305Error(buffered)) {
+				matched = true;
+				break;
+			}
+		}
+	} catch {
+		// If we can't read the stream, treat as no match.
+	} finally {
+		reader.releaseLock();
+		void drainBody(clone.body as ReadableStream<Uint8Array>).catch(() => {});
+	}
+
+	return matched;
+}
+
+/**
  * Detects ZAI error 1305 ("service overloaded") inside an SSE stream.
  * ZAI returns HTTP 200 with content-type: text/event-stream, but the SSE body
  * contains an error event with code 1305. This function:
- *   1. Peeks at the first chunk of the SSE stream (via clone, original preserved)
+ *   1. Peeks at the leading bytes of the SSE stream (via clone, original preserved)
  *   2. If 1305 + "overloaded" found - retries the request with backoff (up to 2 attempts)
  *   3. If retries also return 1305 - converts to a synthetic 429 so isModelUnavailableError
  *      triggers model fallback (e.g. glm-5.2 -> glm-4.7)
@@ -502,22 +569,7 @@ async function checkZai1305(
 		return response;
 	}
 
-	// Peek at first chunk of SSE stream
-	let has1305 = false;
-	try {
-		const peek = response.clone();
-		const reader = peek.body?.getReader();
-		if (reader) {
-			const { value } = await reader.read();
-			reader.releaseLock();
-			const text = value ? new TextDecoder().decode(value) : "";
-			if (hasZai1305Error(text)) {
-				has1305 = true;
-			}
-		}
-	} catch {
-		// If we can't read the stream, pass through
-	}
+	const has1305 = await peekSseForZai1305(response);
 
 	if (!has1305) {
 		return response;
@@ -526,6 +578,11 @@ async function checkZai1305(
 	log.warn(
 		`Account ${account.name}: detected 1305 overloaded in SSE stream, retrying`,
 	);
+
+	// The 1305 detection above only consumed a clone; drain the original
+	// now that we've decided not to forward it, so its native backing
+	// buffer is released instead of leaking (issue #382/#437).
+	cancelDiscardedResponseBody(response);
 
 	// Retry with backoff (same config as 529 retry)
 	const retryCfg = getOverloadRetryConfig();
@@ -553,27 +610,17 @@ async function checkZai1305(
 			});
 
 			// Check if retry succeeded (no 1305 in stream)
-			try {
-				const retryPeek = retryResponse.clone();
-				const retryReader = retryPeek.body?.getReader();
-				if (retryReader) {
-					const { value: retryValue } = await retryReader.read();
-					retryReader.releaseLock();
-					const retryText = retryValue
-						? new TextDecoder().decode(retryValue)
-						: "";
-					if (!hasZai1305Error(retryText)) {
-						log.info(
-							`Account ${account.name}: 1305 resolved on retry ${attempt}`,
-						);
-						return retryResponse;
-					}
-				} else {
-					return retryResponse;
-				}
-			} catch {
+			if (!retryResponse.body) {
 				return retryResponse;
 			}
+			if (!(await peekSseForZai1305(retryResponse))) {
+				log.info(`Account ${account.name}: 1305 resolved on retry ${attempt}`);
+				return retryResponse;
+			}
+			// Still 1305 — this retry response won't be forwarded (the loop
+			// either retries again or falls through to the synthetic 429
+			// below), so drain it now rather than abandoning it unread.
+			cancelDiscardedResponseBody(retryResponse);
 		}
 	}
 
