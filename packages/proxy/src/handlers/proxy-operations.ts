@@ -538,6 +538,15 @@ async function peekSseForZai1305(response: Response): Promise<boolean> {
 	} catch {
 		// If we can't read the stream, treat as no match.
 	} finally {
+		// A read left pending by the timeout race must be cancelled before the
+		// lock can be released — releaseLock() throws while a read is in
+		// flight, which would otherwise skip the drain below and leak the
+		// clone's native buffer (issue #382/#437).
+		try {
+			await reader.cancel();
+		} catch {
+			// Ignore — we're discarding this reader either way.
+		}
 		reader.releaseLock();
 		void drainBody(clone.body as ReadableStream<Uint8Array>).catch(() => {});
 	}
@@ -1075,6 +1084,11 @@ export async function proxyWithAccount(
 				rawResponse = isSyntheticProviderResponse(retryRequest)
 					? materializeSyntheticResponse(retryRequest)
 					: await forwardUpstream(retryRequest);
+				// rawResponse now belongs to retryRequest (cache_control stripped),
+				// not the original transformedRequest — anything downstream that
+				// retries based on rawResponse (e.g. checkZai1305) must replay this
+				// request, not the stale one still carrying the rejected field.
+				transformedRequest = retryRequest;
 			} catch (err) {
 				log.warn("Failed to retry without cache_control:", err);
 			}
@@ -1155,6 +1169,7 @@ export async function proxyWithAccount(
 		// this account. getModelList returns [primary, ...fallbacks] merged from
 		// model_mappings arrays and legacy model_fallbacks. We already tried index 0
 		// (the primary), so start at index 1.
+		let zai1305AlreadyChecked = false;
 		if (await isModelUnavailableError(rawResponse)) {
 			// Log 429 response headers for debugging upstream rate-limit info
 			if (rawResponse.status === 429) {
@@ -1489,6 +1504,7 @@ export async function proxyWithAccount(
 						retryTransformedRequest,
 						log,
 					);
+					zai1305AlreadyChecked = true;
 					if (!(await isModelUnavailableError(rawResponse.clone()))) {
 						break; // Success — stop cycling
 					}
@@ -1498,12 +1514,18 @@ export async function proxyWithAccount(
 			// If still unavailable/rate-limited after exhausting the model list,
 			// failover to the next account. OpenAI-compatible providers never set
 			// isRateLimited:true in parseRateLimit, so we must handle it here.
-			rawResponse = await checkZai1305(
-				rawResponse,
-				account,
-				transformedRequest,
-				log,
-			);
+			// Skip the peek if the model-cycling loop above already classified
+			// this exact rawResponse via its own checkZai1305 call — re-peeking
+			// would add up to another SSE_PEEK_TIMEOUT_MS of latency and drain
+			// an already-drained clone for nothing.
+			if (!zai1305AlreadyChecked) {
+				rawResponse = await checkZai1305(
+					rawResponse,
+					account,
+					transformedRequest,
+					log,
+				);
+			}
 			if (await isModelUnavailableError(rawResponse)) {
 				log.warn(
 					`All models exhausted on account ${account.name}, failing over to next account`,
