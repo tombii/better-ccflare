@@ -44,11 +44,11 @@ import { handleProxyError, processProxyResponse } from "./response-processor";
 import { isRetryable429 } from "./retryable-429";
 import { getValidAccessToken } from "./token-manager";
 import { collectWindows } from "./usage-throttling";
-import { hasZai1305Error } from "./zai-1305";
+import { peekSseForZai1305 } from "./zai-1305";
 
 const log = new Logger("ProxyOperations");
 
-import { cancelDiscardedResponseBody, drainBody } from "./discard-body-cancel";
+import { cancelDiscardedResponseBody } from "./discard-body-cancel";
 
 const SYNTHETIC_RESPONSE_HEADER = "x-better-ccflare-synthetic-response";
 const SYNTHETIC_STATUS_HEADER = "x-better-ccflare-synthetic-status";
@@ -476,82 +476,6 @@ export async function isModelUnavailableError(
 	}
 
 	return false;
-}
-
-/**
- * Bound on how many leading bytes of a peeked SSE stream we accumulate
- * while scanning for the 1305 markers. The error event is tiny (well
- * under 1 KiB); this cap just prevents an unbounded accumulation if a
- * stream never produces a match.
- */
-const SSE_PEEK_MAX_BYTES = 4096;
-
-/**
- * Bound on how long we wait for the 1305 markers to appear before giving
- * up and treating the stream as a normal (non-1305) response. Without
- * this, a slow/low-throughput stream that never accumulates
- * SSE_PEEK_MAX_BYTES nor a match would hold up first-token latency for as
- * long as the upstream keeps trickling bytes.
- */
-const SSE_PEEK_TIMEOUT_MS = 500;
-
-/**
- * Peeks at the leading bytes of an SSE response body — via `clone()`, so
- * the original stream is untouched — looking for Zai's 1305 overload
- * markers, then always drains the rest of the clone so its native backing
- * buffer is released (see `cancelDiscardedResponseBody` above for why an
- * unread stream branch leaks — issue #382/#437). Reads multiple chunks
- * rather than just the first one: the 1305 JSON event can be split across
- * network/TLS chunk boundaries, and a single-chunk read would miss
- * markers straddling that split. Bounded by both a byte cap and a time
- * cap so a slow normal stream can't be held up waiting for a match that
- * will never come.
- */
-async function peekSseForZai1305(response: Response): Promise<boolean> {
-	const clone = response.clone();
-	const reader = clone.body?.getReader();
-	if (!reader) return false;
-
-	let matched = false;
-	let buffered = "";
-	const decoder = new TextDecoder();
-	const deadline = Date.now() + SSE_PEEK_TIMEOUT_MS;
-	try {
-		while (buffered.length < SSE_PEEK_MAX_BYTES) {
-			const remaining = deadline - Date.now();
-			if (remaining <= 0) break;
-			const result = await Promise.race([
-				reader.read(),
-				new Promise<"timeout">((resolve) =>
-					setTimeout(() => resolve("timeout"), remaining),
-				),
-			]);
-			if (result === "timeout") break;
-			const { value, done } = result;
-			if (done) break;
-			buffered += decoder.decode(value, { stream: true });
-			if (hasZai1305Error(buffered)) {
-				matched = true;
-				break;
-			}
-		}
-	} catch {
-		// If we can't read the stream, treat as no match.
-	} finally {
-		// A read left pending by the timeout race must be cancelled before the
-		// lock can be released — releaseLock() throws while a read is in
-		// flight, which would otherwise skip the drain below and leak the
-		// clone's native buffer (issue #382/#437).
-		try {
-			await reader.cancel();
-		} catch {
-			// Ignore — we're discarding this reader either way.
-		}
-		reader.releaseLock();
-		void drainBody(clone.body as ReadableStream<Uint8Array>).catch(() => {});
-	}
-
-	return matched;
 }
 
 /**
