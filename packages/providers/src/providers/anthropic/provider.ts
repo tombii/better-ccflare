@@ -96,6 +96,57 @@ export async function isAnthropicExtraUsageExhausted(
 	}
 }
 
+/**
+ * Anthropic returns 403 `permission_error` when the account's ORGANIZATION —
+ * not the account's quota — forbids the request: OAuth disabled org-wide,
+ * Claude Code subscription access turned off by an admin, and the like. The
+ * account cannot serve ANY request until someone changes a setting upstream,
+ * so it must be benched and the request failed over, exactly like an exhausted
+ * quota window. Distinct from `out_of_credits` / `extra_usage_exhausted`,
+ * which are scoped to a model or surface and leave the account routable.
+ */
+export const ORG_PERMISSION_DENIED_REASON = "org_permission_denied";
+
+/**
+ * Returns true iff the response is a 403 carrying Anthropic's
+ * `error.type: "permission_error"`.
+ *
+ * KEYED ON `error.type`, DELIBERATELY NOT ON THE MESSAGE. Two different
+ * wordings of the same condition were observed on one organization within the
+ * same hour — `/api/oauth/usage` answers "OAuth authentication is currently
+ * not allowed for this organization." (with
+ * `details.error_code: oauth_not_allowed_for_organization`), while
+ * `/v1/messages` tells Claude Code "Your organization has disabled Claude
+ * subscription access for Claude Code…". Anthropic owns that copy and can
+ * reword it without notice; `error.type` is the machine-readable field and the
+ * only part stable enough to route on. `x-should-retry: false` accompanied
+ * every observed instance and corroborates the classification, but is not
+ * required here: gating on it would fail closed — straight back to forwarding
+ * the 403 to the client — the moment a variant omits it.
+ *
+ * Narrow by construction in two ways:
+ *   - A non-JSON 403 (edge/WAF block page) does NOT match. Such a block
+ *     usually rejects every account identically, and benching the pool one
+ *     account per attempt is the pool-drain failure mode of issue #301.
+ *   - The content-type gate runs BEFORE `.clone()`. Cloning first tees the
+ *     body and then returns early for every non-JSON 403, stranding that copy
+ *     unread while the tee keeps buffering for whoever consumes the original
+ *     (issue #356) — same ordering as `isAnthropicExtraUsageExhausted` above.
+ */
+export async function isAnthropicOrgPermissionDenied(
+	response: Response,
+): Promise<boolean> {
+	if (response.status !== 403) return false;
+	try {
+		const contentType = response.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return false;
+		const json = await response.clone().json();
+		return json?.error?.type === "permission_error";
+	} catch {
+		return false;
+	}
+}
+
 const log = new Logger("AnthropicProvider");
 
 export class AnthropicProvider extends BaseProvider {

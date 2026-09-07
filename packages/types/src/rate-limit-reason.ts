@@ -39,6 +39,11 @@
  * - `windowless_429` — 429 reporting no rate-limit window at all; measured
  *   as request-scoped, so the account is never benched. Does NOT trip the
  *   breaker.
+ * - `org_permission_denied` — 403 `permission_error`: the account's
+ *   organization forbids the request (OAuth disabled org-wide, Claude Code
+ *   subscription access turned off). Account-wide and not quota-related, but
+ *   the account cannot serve anything, so it is benched and DOES trip the
+ *   breaker.
  */
 import type { RateLimitReason } from "./account";
 
@@ -53,6 +58,7 @@ export const RATE_LIMIT_REASONS: readonly RateLimitReason[] = [
 	"out_of_credits",
 	"extra_usage_exhausted",
 	"windowless_429",
+	"org_permission_denied",
 ] as const;
 
 export function isRateLimitReason(value: string): value is RateLimitReason {

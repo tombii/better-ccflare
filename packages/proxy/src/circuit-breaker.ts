@@ -208,6 +208,21 @@ interface CircuitEntry {
  * in rotation — so counting it would open the breaker on an account that is
  * still serving traffic.
  *
+ * `org_permission_denied` (403 `permission_error` — the org forbids OAuth /
+ * Claude Code access) is the opposite of the scoped kinds above: the account
+ * cannot serve ANY request, and it stays that way until an admin changes a
+ * setting upstream. So it counts, on the same grounds as account-wide
+ * exhaustion.
+ *
+ * What counting it does NOT do is change routing. Nothing in the request path
+ * calls `shouldAllow` or `isProviderWideOpen` today — see the "Wiring is
+ * deferred" note at the top of this file — so what actually takes the account
+ * out of rotation is the cooldown bench `applyRateLimitCooldown` applies at the
+ * call site, not this predicate. Counting here keeps the breaker's failure
+ * accounting truthful for whenever admission is wired up; and because the
+ * breaker is keyed per `(provider, accountId)`, it can never take healthy
+ * accounts of the same provider down with it.
+ *
  * Every other `RateLimitReason` — account/provider-wide exhaustion,
  * 529 overload — counts as a circuit failure.
  *
@@ -245,6 +260,10 @@ export function shouldCountAsCircuitFailure(kind: FailureKind): boolean {
 		case "all_models_exhausted_429":
 		case "upstream_529_overloaded_with_reset":
 		case "upstream_529_overloaded_no_reset":
+		// Account-wide and admin-gated, so it belongs with account-wide
+		// exhaustion here. The cooldown bench, not this, is what removes the
+		// account from rotation.
+		case "org_permission_denied":
 			return true;
 		default:
 			return assertNever(kind);
