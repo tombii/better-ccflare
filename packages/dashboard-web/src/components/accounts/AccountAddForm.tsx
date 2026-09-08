@@ -230,10 +230,11 @@ export function AccountAddForm({
 		Array<{ id: string; displayName: string }>
 	>([]);
 	const [previewError, setPreviewError] = useState("");
-	// The apiKey/endpoint a successful preview was fetched for, so a later
-	// edit to either field can invalidate stale results instead of letting
-	// the user submit model ids that were never validated against the
-	// endpoint they're now pointing at.
+	// The apiKey/endpoint the current (in-flight or last-settled) preview
+	// request was started for, so a later edit to either field can invalidate
+	// it — including while it's still loading — instead of letting a stale
+	// response apply model ids that were never validated against the
+	// endpoint the user is now pointing at.
 	const previewSourceRef = useRef<{ apiKey: string; endpoint: string } | null>(
 		null,
 	);
@@ -321,6 +322,10 @@ export function AccountAddForm({
 	const handleFetchOpenAICompatibleModels = async () => {
 		const requestId = ++previewRequestIdRef.current;
 		const { apiKey, customEndpoint: endpoint } = newAccount;
+		// Recorded at request start, not just on success — so an edit made
+		// while this request is still loading is visible to the invalidation
+		// effect below immediately, not only after the response comes back.
+		previewSourceRef.current = { apiKey, endpoint };
 		setModelPreviewState("loading");
 		setPreviewError("");
 		try {
@@ -335,7 +340,6 @@ export function AccountAddForm({
 				throw new Error("No models returned by this endpoint");
 			}
 			setPreviewModels(result.models);
-			previewSourceRef.current = { apiKey, endpoint };
 			const defaults = deriveFamilyDefaults(result.models);
 			setNewAccount((prev) => ({
 				...prev,
