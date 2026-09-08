@@ -492,9 +492,11 @@ Monitor these key metrics:
 
 ## Important: Why Only Session-Based Strategy
 
-**⚠️ WARNING: Only the session-based load balancer strategy is available in better-ccflare.**
+**⚠️ WARNING: Only session-class strategies are recommended in better-ccflare.**
 
-Other strategies like round-robin, least-requests, or weighted distribution have been removed from the codebase as they can trigger Claude's anti-abuse systems and result in automatic account bans. Here's why they were removed:
+`session` (default), `session-drain-soonest`, `session-drain-soonest-strict`, and `session-affinity` all preserve session-length account stickiness. `session-affinity` differs from `session` in *what* it keys stickiness on (the client's own session id, not one shared global slot) — see [configuration.md](configuration.md#load-balancing-strategy) for the full comparison, including how it addresses cache-thrash across concurrent Claude Code projects ([#240](https://github.com/tombii/better-ccflare/issues/240)).
+
+Round-robin, least-requests, or weighted distribution have been removed from the codebase as they can trigger Claude's anti-abuse systems and result in automatic account bans. Here's why they were removed:
 
 ### Account Ban Risks
 

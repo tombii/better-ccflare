@@ -24,8 +24,9 @@ When working with Claude API at scale, rate limits can become a significant bott
 ## Key Features
 
 ### 🎯 Intelligent Load Balancing
-- **Session-based** (only supported strategy): Maintains conversation context with 5-hour sessions to avoid rate limits and account bans
-- **⚠️ WARNING**: Other strategies (round-robin, least-requests, weighted) have been removed as they can trigger Claude's anti-abuse systems
+- **Session-based** (default): Maintains conversation context with 5-hour sessions to avoid rate limits and account bans
+- **Session-affinity**: Per-client-session stickiness for running multiple concurrent Claude Code projects without cache-thrash — see [Load Balancing Strategy](configuration.md#load-balancing-strategy)
+- **⚠️ WARNING**: Strategies that spread individual requests across accounts (e.g. `least-used`) can trigger Claude's anti-abuse systems — stick to session-class strategies
 
 ### 📈 Real-Time Monitoring & Analytics
 - **Web Dashboard**: Interactive UI at `/dashboard` with live metrics

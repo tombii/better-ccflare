@@ -361,7 +361,7 @@ classDiagram
 ```
 
 **Session Strategy:**
-- **Session**: The only available strategy, maintains sticky sessions for a configured duration (default 5 hours)
+- **Session** (default): Maintains one global sticky session for a configured duration (default 5 hours). A `session-affinity` variant instead keys stickiness per client-session, avoiding cache-thrash when multiple Claude Code projects run concurrently — see [Load Balancing Strategy](configuration.md#load-balancing-strategy)
 - Minimizes account switching to avoid triggering Claude's anti-abuse systems
 - Automatically handles failover when the active session account becomes unavailable
 - Tracks session start time and request count per session

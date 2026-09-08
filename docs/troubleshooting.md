@@ -278,13 +278,27 @@ idle-vs-traffic RSS comparison on the issue.
 **Solutions**:
 1. Check current strategy:
    ```bash
-   # Session strategy is the default and only supported strategy
+   curl http://localhost:8080/api/config/strategy
    ```
 
 2. Session strategy behavior:
-   - `session`: Maintains 1-hour sessions with individual accounts (default: 3600000ms)
-   - This is the only supported strategy to avoid account bans
-   - Adjust session_duration_ms if needed
+   - `session` (default): Maintains sessions with individual accounts (default duration: 18000000ms / 5 hours)
+   - See [Load Balancing Strategy](configuration.md#load-balancing-strategy) for the full list of session-class strategies and their trade-offs
+   - Adjust `session_duration_ms` if needed
+
+### Parallel Sessions Causing Cache Misses
+
+**Symptom**: Running multiple Claude Code projects/sessions at the same time increases cache misses — a request for project A appears to follow project B's more-recent session and gets routed to a different account, forcing prompt-cache re-creation.
+
+**Cause**: The default `session` strategy tracks a single *global* "most recently active" session and pins ALL traffic to that one account, regardless of which client/project the request came from. With several concurrent sessions, whichever one made the most recent request "owns" the shared slot, and other sessions' requests get displaced onto it. See [#240](https://github.com/tombii/better-ccflare/issues/240).
+
+**Solution**: Switch to `session-affinity`, which pins each *client's own* session (keyed on Claude Code's `metadata.user_id`) to its own account instead of sharing one global slot:
+```bash
+export LB_STRATEGY=session-affinity
+# or in config.json:
+# "lb_strategy": "session-affinity"
+```
+This is not the current default and is not exposed in the dashboard's strategy selector — see [Load Balancing Strategy](configuration.md#load-balancing-strategy) for the trade-offs before opting in (in particular, it depends on the client reliably sending `metadata.user_id`).
 
 ## Configuration Problems
 
