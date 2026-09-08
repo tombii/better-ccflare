@@ -230,6 +230,14 @@ export function AccountAddForm({
 		Array<{ id: string; displayName: string }>
 	>([]);
 	const [previewError, setPreviewError] = useState("");
+	// The apiKey/endpoint a successful preview was fetched for, so a later
+	// edit to either field can invalidate stale results instead of letting
+	// the user submit model ids that were never validated against the
+	// endpoint they're now pointing at.
+	const previewSourceRef = useRef<{ apiKey: string; endpoint: string } | null>(
+		null,
+	);
+	const previewRequestIdRef = useRef(0);
 
 	// Cleanup Qwen polling on unmount
 	useEffect(() => {
@@ -268,6 +276,25 @@ export function AccountAddForm({
 		}
 	}, [newAccount.mode]);
 
+	// Invalidate a fetched model preview once its source apiKey/endpoint no
+	// longer matches what's in the form — otherwise editing either field
+	// after a successful fetch would silently submit model ids from a
+	// different endpoint than the one being saved.
+	useEffect(() => {
+		const source = previewSourceRef.current;
+		if (!source) return;
+		if (
+			source.apiKey !== newAccount.apiKey ||
+			source.endpoint !== newAccount.customEndpoint
+		) {
+			previewSourceRef.current = null;
+			previewRequestIdRef.current += 1;
+			setModelPreviewState("idle");
+			setPreviewModels([]);
+			setPreviewError("");
+		}
+	}, [newAccount.apiKey, newAccount.customEndpoint]);
+
 	const validateCustomEndpoint = (endpoint: string): boolean => {
 		if (!endpoint) return true; // Empty is fine (use default)
 		try {
@@ -292,17 +319,23 @@ export function AccountAddForm({
 	};
 
 	const handleFetchOpenAICompatibleModels = async () => {
+		const requestId = ++previewRequestIdRef.current;
+		const { apiKey, customEndpoint: endpoint } = newAccount;
 		setModelPreviewState("loading");
 		setPreviewError("");
 		try {
 			const result = await api.previewOpenAICompatibleModels({
-				apiKey: newAccount.apiKey,
-				endpoint: newAccount.customEndpoint,
+				apiKey,
+				endpoint,
 			});
+			// A newer fetch (or an edit that invalidated this one) landed first —
+			// applying this response now would overwrite it with stale results.
+			if (requestId !== previewRequestIdRef.current) return;
 			if (result.models.length === 0) {
 				throw new Error("No models returned by this endpoint");
 			}
 			setPreviewModels(result.models);
+			previewSourceRef.current = { apiKey, endpoint };
 			const defaults = deriveFamilyDefaults(result.models);
 			setNewAccount((prev) => ({
 				...prev,
@@ -312,6 +345,7 @@ export function AccountAddForm({
 			}));
 			setModelPreviewState("success");
 		} catch (err) {
+			if (requestId !== previewRequestIdRef.current) return;
 			setModelPreviewState("error");
 			setPreviewError(
 				err instanceof Error ? err.message : "Failed to fetch models",
@@ -959,6 +993,8 @@ export function AccountAddForm({
 				haikuModel: "",
 				fableModel: "",
 			});
+			previewSourceRef.current = null;
+			previewRequestIdRef.current += 1;
 			setModelPreviewState("idle");
 			setPreviewModels([]);
 			setPreviewError("");
@@ -1157,6 +1193,8 @@ export function AccountAddForm({
 			haikuModel: "",
 			fableModel: "",
 		});
+		previewSourceRef.current = null;
+		previewRequestIdRef.current += 1;
 		setModelPreviewState("idle");
 		setPreviewModels([]);
 		setPreviewError("");
