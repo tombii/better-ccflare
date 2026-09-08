@@ -65,14 +65,21 @@ function normalize(body: OpenAIModelsResponse): OpenAICompatibleModelEntry[] {
 	return entries;
 }
 
-async function fetchLive(
-	account: Account,
+/**
+ * The HTTP call shared by the account-backed path and the pre-save preview:
+ * GET `<endpoint>/v1/models` with a bearer token, normalized into entries.
+ * Takes raw strings rather than an `Account` so the wizard can call this
+ * before an account row exists to read `api_key`/`custom_endpoint` from.
+ */
+async function fetchLiveModels(
+	apiKey: string,
+	endpoint: string,
 ): Promise<OpenAICompatibleModelEntry[]> {
-	if (!account.api_key) {
+	if (!apiKey) {
 		throw new Error("no API key for this account");
 	}
-	const endpoint = validateEndpointUrl(getEndpointUrl(account), "endpoint");
-	const url = `${endpoint}${endpoint.endsWith("/v1") ? "" : "/v1"}/models`;
+	const validEndpoint = validateEndpointUrl(endpoint, "endpoint");
+	const url = `${validEndpoint}${validEndpoint.endsWith("/v1") ? "" : "/v1"}/models`;
 
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -80,7 +87,7 @@ async function fetchLive(
 		const response = await fetch(url, {
 			method: "GET",
 			headers: {
-				authorization: `Bearer ${account.api_key}`,
+				authorization: `Bearer ${apiKey}`,
 				accept: "application/json",
 			},
 			signal: controller.signal,
@@ -92,6 +99,10 @@ async function fetchLive(
 	} finally {
 		clearTimeout(timeout);
 	}
+}
+
+function fetchLive(account: Account): Promise<OpenAICompatibleModelEntry[]> {
+	return fetchLiveModels(account.api_key ?? "", getEndpointUrl(account));
 }
 
 /**
@@ -169,4 +180,30 @@ export async function getOpenAICompatibleModels(
 		);
 		return cached;
 	}
+}
+
+export interface OpenAICompatibleModelPreview {
+	models: OpenAICompatibleModelEntry[];
+	fetchedAt: number;
+	source: "preview";
+}
+
+/**
+ * Same live listing `getOpenAICompatibleModels` reads, but for the account
+ * wizard: before a row exists there is no `accountId` to look up, only the
+ * `apiKey`/`endpoint` the user just typed. No cache, no derived defaults —
+ * both of those are keyed by `accountId`, which does not exist yet — so a
+ * failure here has nothing to fall back to and must propagate to the caller
+ * rather than degrade to a cached listing the way the account-backed path
+ * does.
+ */
+export async function fetchOpenAICompatibleModelsPreview(
+	apiKey: string,
+	endpoint: string,
+): Promise<OpenAICompatibleModelPreview> {
+	const models = await fetchLiveModels(apiKey, endpoint);
+	if (models.length === 0) {
+		throw new Error("the listing came back with no usable models");
+	}
+	return { models, fetchedAt: Date.now(), source: "preview" };
 }

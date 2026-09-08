@@ -1,5 +1,14 @@
-import { listCatalogueModels } from "@better-ccflare/core";
-import { errorResponse, jsonResponse } from "@better-ccflare/http-common";
+import {
+	listCatalogueModels,
+	validateApiKey,
+	validateEndpointUrl,
+} from "@better-ccflare/core";
+import {
+	BadRequest,
+	errorResponse,
+	jsonResponse,
+} from "@better-ccflare/http-common";
+import { fetchOpenAICompatibleModelsPreview } from "@better-ccflare/proxy";
 import type { APIContext } from "../types";
 
 /**
@@ -206,6 +215,54 @@ export function createModelsHandler(context: APIContext) {
 						warning: `No reference models for "${section}" in the models.dev catalogue (unknown provider, catalogue offline, or fetch failed)`,
 					}),
 		});
+	};
+}
+
+/**
+ * POST /api/models/preview — live model discovery for the account wizard,
+ * before an account row exists to read api_key/custom_endpoint from. Takes
+ * the apiKey/endpoint the user just typed instead of an accountId.
+ *
+ * Same shape as the `accountId` branch above (`source: "account"` there
+ * becomes `source: "preview"` here — there is no account row yet to call it
+ * "account"). Errors propagate as 4xx/5xx rather than degrading to a cached
+ * listing: unlike the account-backed path, a preview has no cache to fall
+ * back to.
+ */
+export function createModelsPreviewHandler() {
+	return async (req: Request): Promise<Response> => {
+		let body: unknown;
+		try {
+			body = await req.json();
+		} catch {
+			return errorResponse(BadRequest("Request body must be valid JSON"));
+		}
+		const { apiKey, endpoint } = body as Record<string, unknown>;
+
+		try {
+			const validApiKey = validateApiKey(apiKey);
+			const validEndpoint = validateEndpointUrl(endpoint);
+			const preview = await fetchOpenAICompatibleModelsPreview(
+				validApiKey,
+				validEndpoint,
+			);
+			return jsonResponse({
+				provider: "openai-compatible",
+				models: preview.models.map((model) => ({
+					id: model.id,
+					displayName: model.displayName,
+					source: "preview" as const,
+				})),
+				fetchedAt: preview.fetchedAt,
+				source: preview.source,
+			});
+		} catch (error) {
+			// Never let the raw error surface the apiKey the caller sent — the
+			// thrown errors from fetchOpenAICompatibleModelsPreview never include
+			// it, but errorResponse's own request-body logging redaction (see
+			// http-common/responses.ts) is the backstop if that ever changes.
+			return errorResponse(error);
+		}
 	};
 }
 

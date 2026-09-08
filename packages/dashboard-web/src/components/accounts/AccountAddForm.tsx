@@ -222,6 +222,15 @@ export function AccountAddForm({
 	>([]);
 	const [loadingProfiles, setLoadingProfiles] = useState(false);
 
+	// openai-compatible "Fetch models" state
+	const [modelPreviewState, setModelPreviewState] = useState<
+		"idle" | "loading" | "success" | "error"
+	>("idle");
+	const [previewModels, setPreviewModels] = useState<
+		Array<{ id: string; displayName: string }>
+	>([]);
+	const [previewError, setPreviewError] = useState("");
+
 	// Cleanup Qwen polling on unmount
 	useEffect(() => {
 		return () => {
@@ -266,6 +275,47 @@ export function AccountAddForm({
 			return true;
 		} catch {
 			return false;
+		}
+	};
+
+	/**
+	 * Mirrors `deriveFamilyDefaults` in
+	 * packages/proxy/src/openai-compatible-model-catalog.ts: family defaults by
+	 * list position, since a preview fetch has no priority signal beyond the
+	 * order the endpoint returned models in.
+	 */
+	const deriveFamilyDefaults = (
+		models: Array<{ id: string; displayName: string }>,
+	): { opus: string; sonnet: string; haiku: string } => {
+		const at = (index: number) => models[Math.min(index, models.length - 1)].id;
+		return { opus: at(0), sonnet: at(1), haiku: at(2) };
+	};
+
+	const handleFetchOpenAICompatibleModels = async () => {
+		setModelPreviewState("loading");
+		setPreviewError("");
+		try {
+			const result = await api.previewOpenAICompatibleModels({
+				apiKey: newAccount.apiKey,
+				endpoint: newAccount.customEndpoint,
+			});
+			if (result.models.length === 0) {
+				throw new Error("No models returned by this endpoint");
+			}
+			setPreviewModels(result.models);
+			const defaults = deriveFamilyDefaults(result.models);
+			setNewAccount((prev) => ({
+				...prev,
+				opusModel: defaults.opus,
+				sonnetModel: defaults.sonnet,
+				haikuModel: defaults.haiku,
+			}));
+			setModelPreviewState("success");
+		} catch (err) {
+			setModelPreviewState("error");
+			setPreviewError(
+				err instanceof Error ? err.message : "Failed to fetch models",
+			);
 		}
 	};
 
@@ -909,6 +959,9 @@ export function AccountAddForm({
 				haikuModel: "",
 				fableModel: "",
 			});
+			setModelPreviewState("idle");
+			setPreviewModels([]);
+			setPreviewError("");
 			onSuccess();
 			return;
 		}
@@ -1104,6 +1157,9 @@ export function AccountAddForm({
 			haikuModel: "",
 			fableModel: "",
 		});
+		setModelPreviewState("idle");
+		setPreviewModels([]);
+		setPreviewError("");
 		onCancel();
 	};
 
@@ -2284,64 +2340,164 @@ export function AccountAddForm({
 								</p>
 							</div>
 							<div className="space-y-2">
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									disabled={
+										!newAccount.apiKey ||
+										!newAccount.customEndpoint ||
+										modelPreviewState === "loading"
+									}
+									onClick={handleFetchOpenAICompatibleModels}
+								>
+									{modelPreviewState === "loading"
+										? "Fetching…"
+										: "Fetch models"}
+								</Button>
+								{modelPreviewState === "error" && (
+									<p className="text-xs text-red-600 dark:text-red-400">
+										{previewError} — you can still enter model ids manually
+										below.
+									</p>
+								)}
+								{modelPreviewState === "success" && (
+									<p className="text-xs text-muted-foreground">
+										Found {previewModels.length} model
+										{previewModels.length === 1 ? "" : "s"} at this endpoint.
+									</p>
+								)}
+							</div>
+							<div className="space-y-2">
 								<Label>Model Mappings (Optional)</Label>
 								<p className="text-xs text-muted-foreground mb-2">
 									Map Anthropic model names to provider-specific models. Leave
 									empty to use defaults.
 								</p>
-								<div className="space-y-2 pl-4">
-									<div>
-										<Label htmlFor="opusModel" className="text-sm">
-											Opus Model
-										</Label>
-										<Input
-											id="opusModel"
-											value={newAccount.opusModel}
-											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-												setNewAccount({
-													...newAccount,
-													opusModel: (e.target as HTMLInputElement).value,
-												})
-											}
-											placeholder="openai/gpt-5 (default)"
-											className="mt-1"
-										/>
+								{modelPreviewState === "success" ? (
+									<div className="space-y-2 pl-4">
+										<div>
+											<Label htmlFor="opusModel" className="text-sm">
+												Opus Model
+											</Label>
+											<Select
+												value={newAccount.opusModel}
+												onValueChange={(value: string) =>
+													setNewAccount({ ...newAccount, opusModel: value })
+												}
+											>
+												<SelectTrigger id="opusModel" className="mt-1">
+													<SelectValue />
+												</SelectTrigger>
+												<SelectContent>
+													{previewModels.map((model) => (
+														<SelectItem key={model.id} value={model.id}>
+															{model.displayName}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</div>
+										<div>
+											<Label htmlFor="sonnetModel" className="text-sm">
+												Sonnet Model
+											</Label>
+											<Select
+												value={newAccount.sonnetModel}
+												onValueChange={(value: string) =>
+													setNewAccount({ ...newAccount, sonnetModel: value })
+												}
+											>
+												<SelectTrigger id="sonnetModel" className="mt-1">
+													<SelectValue />
+												</SelectTrigger>
+												<SelectContent>
+													{previewModels.map((model) => (
+														<SelectItem key={model.id} value={model.id}>
+															{model.displayName}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</div>
+										<div>
+											<Label htmlFor="haikuModel" className="text-sm">
+												Haiku Model
+											</Label>
+											<Select
+												value={newAccount.haikuModel}
+												onValueChange={(value: string) =>
+													setNewAccount({ ...newAccount, haikuModel: value })
+												}
+											>
+												<SelectTrigger id="haikuModel" className="mt-1">
+													<SelectValue />
+												</SelectTrigger>
+												<SelectContent>
+													{previewModels.map((model) => (
+														<SelectItem key={model.id} value={model.id}>
+															{model.displayName}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</div>
 									</div>
-									<div>
-										<Label htmlFor="sonnetModel" className="text-sm">
-											Sonnet Model
-										</Label>
-										<Input
-											id="sonnetModel"
-											value={newAccount.sonnetModel}
-											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-												setNewAccount({
-													...newAccount,
-													sonnetModel: (e.target as HTMLInputElement).value,
-												})
-											}
-											placeholder="openai/gpt-5 (default)"
-											className="mt-1"
-										/>
+								) : (
+									<div className="space-y-2 pl-4">
+										<div>
+											<Label htmlFor="opusModel" className="text-sm">
+												Opus Model
+											</Label>
+											<Input
+												id="opusModel"
+												value={newAccount.opusModel}
+												onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+													setNewAccount({
+														...newAccount,
+														opusModel: (e.target as HTMLInputElement).value,
+													})
+												}
+												placeholder="openai/gpt-5 (default)"
+												className="mt-1"
+											/>
+										</div>
+										<div>
+											<Label htmlFor="sonnetModel" className="text-sm">
+												Sonnet Model
+											</Label>
+											<Input
+												id="sonnetModel"
+												value={newAccount.sonnetModel}
+												onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+													setNewAccount({
+														...newAccount,
+														sonnetModel: (e.target as HTMLInputElement).value,
+													})
+												}
+												placeholder="openai/gpt-5 (default)"
+												className="mt-1"
+											/>
+										</div>
+										<div>
+											<Label htmlFor="haikuModel" className="text-sm">
+												Haiku Model
+											</Label>
+											<Input
+												id="haikuModel"
+												value={newAccount.haikuModel}
+												onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+													setNewAccount({
+														...newAccount,
+														haikuModel: (e.target as HTMLInputElement).value,
+													})
+												}
+												placeholder="openai/gpt-5-mini (default)"
+												className="mt-1"
+											/>
+										</div>
 									</div>
-									<div>
-										<Label htmlFor="haikuModel" className="text-sm">
-											Haiku Model
-										</Label>
-										<Input
-											id="haikuModel"
-											value={newAccount.haikuModel}
-											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-												setNewAccount({
-													...newAccount,
-													haikuModel: (e.target as HTMLInputElement).value,
-												})
-											}
-											placeholder="openai/gpt-5-mini (default)"
-											className="mt-1"
-										/>
-									</div>
-								</div>
+								)}
 							</div>
 						</>
 					)}
