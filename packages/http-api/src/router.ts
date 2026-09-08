@@ -91,6 +91,7 @@ import { createLogsHistoryHandler } from "./handlers/logs-history";
 import { createCleanupHandler } from "./handlers/maintenance";
 import {
 	createModelsHandler,
+	createModelsPreviewHandler,
 	createModelsRefreshHandler,
 } from "./handlers/models";
 import {
@@ -519,8 +520,12 @@ export class APIRouter {
 		// Model catalog routes
 		const modelsHandler = createModelsHandler(this.context);
 		const modelsRefreshHandler = createModelsRefreshHandler(this.context);
+		const modelsPreviewHandler = createModelsPreviewHandler();
 		this.handlers.set("GET:/api/models", (_req, url) => modelsHandler(url));
 		this.handlers.set("POST:/api/models/refresh", () => modelsRefreshHandler());
+		this.handlers.set("POST:/api/models/preview", (req) =>
+			modelsPreviewHandler(req),
+		);
 	}
 
 	/**

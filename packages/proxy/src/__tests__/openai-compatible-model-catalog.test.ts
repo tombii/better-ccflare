@@ -8,6 +8,7 @@ import type { ProxyContext } from "../handlers/proxy-types";
 import {
 	clearOpenAICompatibleModelCacheForTests,
 	deriveFamilyDefaults,
+	fetchOpenAICompatibleModelsPreview,
 	getOpenAICompatibleModels,
 } from "../openai-compatible-model-catalog";
 
@@ -249,6 +250,71 @@ describe("getOpenAICompatibleModels", () => {
 
 	it("returns nothing for an account that does not exist", async () => {
 		expect(await getOpenAICompatibleModels("ghost", makeCtx(null))).toBeNull();
+	});
+});
+
+describe("fetchOpenAICompatibleModelsPreview", () => {
+	// The wizard has no accountId yet, only the apiKey/endpoint the user just
+	// typed — this is the same live fetch as getOpenAICompatibleModels, minus
+	// the accountId-keyed cache and derived-defaults side effects.
+	it("returns the account's own listing for raw apiKey/endpoint", async () => {
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify(LIVE_BODY), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			})) as typeof globalThis.fetch;
+
+		const preview = await fetchOpenAICompatibleModelsPreview(
+			"sk-test",
+			"https://api.example.com/v1",
+		);
+
+		expect(preview.source).toBe("preview");
+		expect(preview.models.map((m) => m.id)).toEqual([
+			"gpt-oss-120b",
+			"gpt-oss-20b",
+			"gpt-oss-8b",
+		]);
+		expect(preview.fetchedAt).toBeGreaterThan(0);
+	});
+
+	it("throws for an empty API key", async () => {
+		await expect(
+			fetchOpenAICompatibleModelsPreview("", "https://api.example.com/v1"),
+		).rejects.toThrow();
+	});
+
+	it("throws on an HTTP error from the endpoint", async () => {
+		globalThis.fetch = (async () =>
+			new Response("unauthorized", { status: 401 })) as typeof globalThis.fetch;
+
+		await expect(
+			fetchOpenAICompatibleModelsPreview(
+				"sk-test",
+				"https://api.example.com/v1",
+			),
+		).rejects.toThrow("HTTP 401");
+	});
+
+	it("throws when the listing came back with no usable models", async () => {
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify({ data: [] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			})) as typeof globalThis.fetch;
+
+		await expect(
+			fetchOpenAICompatibleModelsPreview(
+				"sk-test",
+				"https://api.example.com/v1",
+			),
+		).rejects.toThrow("no usable models");
+	});
+
+	it("throws for an invalid endpoint URL", async () => {
+		await expect(
+			fetchOpenAICompatibleModelsPreview("sk-test", "not-a-url"),
+		).rejects.toThrow();
 	});
 });
 

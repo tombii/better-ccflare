@@ -419,6 +419,43 @@ class API extends HttpClient {
 		}
 	}
 
+	async previewOpenAICompatibleModels(data: {
+		apiKey: string;
+		endpoint: string;
+	}): Promise<{
+		provider: string;
+		models: Array<{ id: string; displayName: string; source: string }>;
+		fetchedAt: number;
+		source: string;
+	}> {
+		const startTime = Date.now();
+		const url = "/api/models/preview";
+
+		this.logger.debug(`→ POST ${url}`, { data: { endpoint: data.endpoint } });
+
+		try {
+			const response = await this.post<{
+				provider: string;
+				models: Array<{ id: string; displayName: string; source: string }>;
+				fetchedAt: number;
+				source: string;
+			}>(url, data);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async addNanoGPTAccount(data: {
 		name: string;
 		apiKey: string;

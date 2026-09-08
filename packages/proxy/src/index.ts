@@ -87,9 +87,11 @@ export {
 export type {
 	OpenAICompatibleModelEntry,
 	OpenAICompatibleModelListing,
+	OpenAICompatibleModelPreview,
 } from "./openai-compatible-model-catalog";
 export {
 	clearOpenAICompatibleModelCacheForAccount,
+	fetchOpenAICompatibleModelsPreview,
 	getOpenAICompatibleModels,
 } from "./openai-compatible-model-catalog";
 export {
