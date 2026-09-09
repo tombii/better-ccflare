@@ -339,6 +339,8 @@ interface ContinuationState {
 }
 
 interface PendingContinuation {
+	legacyProjection?: boolean;
+	continuationSuppressed?: boolean;
 	laneKey: string;
 	inputDigests: string[];
 	configDigest: string;
@@ -556,6 +558,7 @@ export class CodexProvider extends BaseProvider {
 	private readonly now: () => number;
 	private readonly continuationByLane = new Map<string, ContinuationState>();
 	private continuationGeneration = 0;
+	private readonly messagesContinuationRejected = new Map<string, number>();
 	private readonly pendingContinuationByRequest = new Map<
 		string,
 		PendingContinuation
@@ -912,6 +915,70 @@ export class CodexProvider extends BaseProvider {
 				}
 			}
 
+			const messagesModels =
+				process.env.CCFLARE_CODEX_MESSAGES_CONTINUATION_MODELS;
+			if (
+				!nativeResponses &&
+				process.env.CCFLARE_CODEX_MESSAGES_CONTINUATION === "1" &&
+				(messagesModels === undefined ||
+					messagesModels
+						.split(",")
+						.map((model) => model.trim())
+						.includes(codexBody.model))
+			) {
+				const caller = request.headers.get(
+					"x-better-ccflare-authenticated-caller",
+				);
+				// Opting a custom Responses endpoint into this bridge also opts it
+				// into GPT cache controls; ordinary custom-endpoint traffic is unchanged.
+				if (
+					caller &&
+					/^[0-9a-f]{64}$/.test(caller) &&
+					codexBody.prompt_cache_key === undefined
+				) {
+					codexBody.prompt_cache_key = this.derivePromptCacheKey(
+						body,
+						codexBody.instructions ?? "",
+						codexBody.input,
+						account,
+						true,
+					);
+				}
+				if (
+					requestId &&
+					caller &&
+					/^[0-9a-f]{64}$/.test(caller) &&
+					account?.id &&
+					codexBody.prompt_cache_key
+				) {
+					// The serving adapter owns the cache standard. Claude signatures and
+					// cache_control objects never enter the Responses request.
+					codexBody.prompt_cache_options = { ttl: "30m" };
+					if (codexBody.instructions) {
+						codexBody.input.unshift({
+							role: "developer",
+							content: [
+								{
+									type: "input_text",
+									text: codexBody.instructions,
+									prompt_cache_breakpoint: { mode: "explicit" },
+								},
+							],
+						} as unknown as CodexMessage);
+						codexBody.instructions = "";
+					}
+					this.prepareNativeContinuation(
+						codexBody,
+						request.headers,
+						account,
+						requestId,
+						caller,
+						true,
+						true,
+					);
+				}
+			}
+
 			// Only custom (non-function) tools can produce custom_tool_call output;
 			// let processResponse skip buffering when none were declared. Responses
 			// Lite can also declare custom tools via an "additional_tools" input
@@ -938,6 +1005,7 @@ export class CodexProvider extends BaseProvider {
 			// Proxy-owned correlation is needed only while preparing the transformed
 			// request. Do not disclose it to the upstream Responses service.
 			newHeaders.delete("x-better-ccflare-request-id");
+			newHeaders.delete("x-better-ccflare-authenticated-caller");
 			newHeaders.set("content-type", "application/json");
 			newHeaders.set(
 				"x-better-ccflare-request-stream",
@@ -1321,6 +1389,14 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	private sweepContinuationState(now: number): void {
+		for (const [lane, expires] of this.messagesContinuationRejected) {
+			if (expires <= now) this.messagesContinuationRejected.delete(lane);
+		}
+		while (this.messagesContinuationRejected.size > this.continuationMaxLanes) {
+			const oldest = this.messagesContinuationRejected.keys().next().value;
+			if (oldest === undefined) break;
+			this.messagesContinuationRejected.delete(oldest);
+		}
 		for (const [key, state] of this.continuationByLane) {
 			if (state.expiresAt <= now) this.continuationByLane.delete(key);
 		}
@@ -1351,6 +1427,7 @@ export class CodexProvider extends BaseProvider {
 		requestId: string,
 		callerIdentityDigest: unknown,
 		cacheControlsApplied: unknown,
+		legacyProjection = false,
 	): void {
 		// On a controlled request the gateway, not the caller, owns the chain.
 		// Never let a caller-provided response ID survive an inability to prepare
@@ -1373,6 +1450,7 @@ export class CodexProvider extends BaseProvider {
 		});
 		const laneKey = this.digest({
 			accountId: account.id,
+			protocol: legacyProjection ? "messages" : "responses",
 			model: body.model,
 			callerIdentityDigest,
 			sessionDigest,
@@ -1389,7 +1467,11 @@ export class CodexProvider extends BaseProvider {
 		// so measure it before any continuation slicing occurs.
 		const originalBreakpointIsExact =
 			this.hasExactlyOneExplicitPromptCacheBreakpoint(body.input);
-		const previous = this.continuationByLane.get(laneKey);
+		const continuationSuppressed =
+			legacyProjection && this.messagesContinuationRejected.has(laneKey);
+		const previous = continuationSuppressed
+			? undefined
+			: this.continuationByLane.get(laneKey);
 		let result: ContinuationResult = "cold";
 		let suffixStart = 0;
 		if (previousExpired) {
@@ -1421,6 +1503,8 @@ export class CodexProvider extends BaseProvider {
 				? previous.replayPrefixDigests
 				: inputDigests;
 		this.pendingContinuationByRequest.set(requestId, {
+			continuationSuppressed,
+			legacyProjection,
 			laneKey,
 			inputDigests,
 			configDigest,
@@ -1446,6 +1530,106 @@ export class CodexProvider extends BaseProvider {
 			inputItemCount: inputDigests.length,
 			suffixItemCount: inputDigests.length - suffixStart,
 		});
+	}
+
+	async recoverMessagesContinuation(
+		response: Response,
+		originalRequest: Request,
+		account: Account,
+	): Promise<Request | null> {
+		const requestId = originalRequest.headers.get(
+			"x-better-ccflare-request-id",
+		);
+		const pending = requestId
+			? this.pendingContinuationByRequest.get(requestId)
+			: undefined;
+		if (
+			!requestId ||
+			!pending?.legacyProjection ||
+			pending.result !== "hit" ||
+			![400, 404].includes(response.status)
+		)
+			return null;
+		let error: { code?: unknown; param?: unknown; type?: unknown } | undefined;
+		try {
+			error = ((await response.clone().json()) as { error?: typeof error })
+				.error;
+		} catch {
+			return null;
+		}
+		if (
+			error?.code !== "previous_response_not_found" &&
+			error?.code !== "invalid_previous_response_id" &&
+			!(
+				error?.param === "previous_response_id" &&
+				error?.type === "invalid_request_error"
+			)
+		)
+			return null;
+		// The endpoint may not retain store=false responses over HTTP. Preserve
+		// the session with one full-history retry, without changing retention,
+		// account, model, or attempting the same rejected chain on every turn.
+		const current = this.continuationByLane.get(pending.laneKey);
+		if ((current?.generation ?? null) === pending.baseGeneration) {
+			this.continuationByLane.delete(pending.laneKey);
+			this.messagesContinuationRejected.set(
+				pending.laneKey,
+				this.now() + this.continuationTtlMs,
+			);
+		}
+		this.pendingContinuationByRequest.delete(requestId);
+		log.info("Codex Messages continuation rejected; retrying full history", {
+			result: "previous_response_not_found",
+		});
+		return this.transformRequestBody(originalRequest, account);
+	}
+
+	private projectedOutputDigests(
+		output: unknown[],
+		legacy: boolean,
+	): string[] | null {
+		if (!legacy) return output.map((item) => this.replayItemDigest(item));
+		const content: AnthropicContentBlock[] = [];
+		for (const raw of output) {
+			if (!raw || typeof raw !== "object") return null;
+			const item = raw as Record<string, unknown>;
+			if (item.type === "reasoning") continue; // retained by upstream response ID
+			if (
+				item.type === "message" &&
+				item.role === "assistant" &&
+				Array.isArray(item.content)
+			) {
+				for (const rawBlock of item.content) {
+					const block = rawBlock as Record<string, unknown>;
+					if (
+						!block ||
+						block.type !== "output_text" ||
+						typeof block.text !== "string"
+					)
+						return null;
+					content.push({ type: "text", text: block.text });
+				}
+			} else if (
+				item.type === "function_call" &&
+				typeof item.call_id === "string" &&
+				typeof item.name === "string" &&
+				typeof item.arguments === "string"
+			) {
+				try {
+					content.push({
+						type: "tool_use",
+						id: item.call_id,
+						name: item.name,
+						input: JSON.parse(item.arguments),
+					});
+				} catch {
+					return null;
+				}
+			} else return null;
+		}
+		return this.convertMessage({ role: "assistant", content }).map((item) =>
+			this.replayItemDigest(item),
+		);
 	}
 
 	private commitNativeContinuation(
@@ -1479,6 +1663,11 @@ export class CodexProvider extends BaseProvider {
 		const pending = this.pendingContinuationByRequest.get(requestId);
 		if (!pending) return;
 		this.pendingContinuationByRequest.delete(requestId);
+		if (
+			pending.continuationSuppressed ||
+			this.messagesContinuationRejected.has(pending.laneKey)
+		)
+			return;
 		const current = this.continuationByLane.get(pending.laneKey);
 		if ((current?.generation ?? null) !== pending.baseGeneration) {
 			// Another request advanced/replaced this lane after preparation. A late
@@ -1577,10 +1766,15 @@ export class CodexProvider extends BaseProvider {
 			this.pendingContinuationByRequest.delete(requestId);
 			return;
 		}
-		pending.terminalCandidate = {
-			responseId,
-			outputDigests: output.map((item) => this.replayItemDigest(item)),
-		};
+		const outputDigests = this.projectedOutputDigests(
+			output,
+			pending.legacyProjection === true,
+		);
+		if (!outputDigests) {
+			this.pendingContinuationByRequest.delete(requestId);
+			return;
+		}
+		pending.terminalCandidate = { responseId, outputDigests };
 	}
 
 	private finalizeNativeContinuationStream(
@@ -1677,7 +1871,7 @@ export class CodexProvider extends BaseProvider {
 				diagnostics.cacheControlsApplied ? "true" : "false",
 			);
 		}
-		log.info("Codex native response diagnostics", {
+		log.info("Codex continuation response diagnostics", {
 			transportUsed,
 			continuationUsed: diagnostics?.result === "hit",
 			previousResponsePresent: diagnostics?.previousResponsePresent ?? false,
@@ -2303,9 +2497,11 @@ export class CodexProvider extends BaseProvider {
 		instructions: string,
 		input: readonly unknown[],
 		account?: Account,
+		controlledMessagesEndpoint = false,
 	): string | undefined {
 		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] === "0") return undefined;
-		if (!isOpenAiPromptCacheEndpoint(account)) return undefined;
+		if (!controlledMessagesEndpoint && !isOpenAiPromptCacheEndpoint(account))
+			return undefined;
 		const sessionId = this.extractSessionId(body);
 		if (!sessionId) return undefined;
 		// Digests are truncated to 48 hex chars so the full key fits the API's
@@ -2762,7 +2958,7 @@ export class CodexProvider extends BaseProvider {
 			stop_sequence: null,
 			usage,
 		};
-		const headers = sanitizeResponseHeaders(response.headers);
+		const headers = sanitizeResponseHeaders(transformed.headers);
 		headers.set("content-type", "application/json");
 		return new Response(JSON.stringify(jsonPayload), {
 			status: response.status,
@@ -2782,6 +2978,12 @@ export class CodexProvider extends BaseProvider {
 				`[codex:model-debug] request_id=${requestId} transformStreamingResponse initial fallback model=gpt-5.4 until response.created arrives`,
 			);
 		}
+		const controlledMessages =
+			response.ok &&
+			this.pendingContinuationByRequest.get(requestId)?.legacyProjection ===
+				true;
+		if (!response.ok && response.status !== 529)
+			this.pendingContinuationByRequest.delete(requestId);
 		const state: StreamState = {
 			buffer: "",
 			messageId: `msg_${crypto.randomUUID().replace(/-/g, "").substring(0, 24)}`,
@@ -2799,7 +3001,19 @@ export class CodexProvider extends BaseProvider {
 			sawToolUse: false,
 		};
 
-		const headers = sanitizeResponseHeaders(response.headers);
+		const headers = controlledMessages
+			? new Headers(
+					this.buildNativeResponsesPassthroughResponse(
+						new Response(null, {
+							status: response.status,
+							headers: response.headers,
+						}),
+						requestId,
+						false,
+					).headers,
+				)
+			: sanitizeResponseHeaders(response.headers);
+		headers.delete("x-better-ccflare-codex-response-format");
 		headers.set("content-type", "text/event-stream");
 
 		const { readable, writable } = new TransformStream<
@@ -2811,6 +3025,9 @@ export class CodexProvider extends BaseProvider {
 		const decoder = new TextDecoder();
 		const streamLiveness = new CodexStreamLiveness(this.streamLivenessOptions);
 
+		// Hold only the two terminal frames until upstream EOF. Claude clients may
+		// cancel at message_stop, so emitting it earlier would lose every checkpoint.
+		const terminalFrames: Uint8Array[] = [];
 		const writeSSE = async (event: string, data: unknown) => {
 			const payload =
 				typeof data === "object" && data !== null
@@ -2852,6 +3069,13 @@ export class CodexProvider extends BaseProvider {
 				payload.delta = delta;
 			}
 			const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+			if (
+				controlledMessages &&
+				(event === "message_delta" || event === "message_stop")
+			) {
+				terminalFrames.push(encoder.encode(line));
+				return;
+			}
 			await writer.write(encoder.encode(line));
 			streamLiveness.recordDownstreamWrite();
 		};
@@ -2887,6 +3111,7 @@ export class CodexProvider extends BaseProvider {
 		const processEvents = async () => {
 			const reader = response.body?.getReader();
 			let upstreamCancelStarted = false;
+			let cleanEof = false;
 			let upstreamDrainPromise: Promise<void> | null = null;
 
 			// `reader.cancel()` is a documented no-op on every released Bun
@@ -2926,6 +3151,8 @@ export class CodexProvider extends BaseProvider {
 			const cancelUpstreamOnce = (_reason: unknown): void => {
 				if (upstreamCancelStarted || !reader) return;
 				upstreamCancelStarted = true;
+				if (controlledMessages)
+					this.finalizeNativeContinuationStream(requestId, false);
 				upstreamDrainPromise = drainUpstream();
 				upstreamDrainPromise.catch(() => undefined);
 			};
@@ -2940,7 +3167,7 @@ export class CodexProvider extends BaseProvider {
 						// alive to the Anthropic client and to any intermediary idle
 						// timeout. A ping carries no content and cannot disturb the
 						// message/content-block sequence.
-						if (state.hasSentTerminalEvents) break;
+						if (state.hasSentTerminalEvents && !controlledMessages) break;
 						if (streamLiveness.canEmitHeartbeat()) {
 							await writeSSE("ping", { type: "ping" });
 							streamLiveness.recordDownstreamWrite();
@@ -2974,7 +3201,10 @@ export class CodexProvider extends BaseProvider {
 					if (outcome.type === "upstream_error") throw outcome.error;
 
 					const { value, done } = outcome.result;
-					if (done) break;
+					if (done) {
+						cleanEof = state.buffer.trim().length === 0;
+						break;
+					}
 
 					state.buffer += decoder.decode(value, { stream: true });
 
@@ -2988,6 +3218,8 @@ export class CodexProvider extends BaseProvider {
 							boundary.index + boundary[0].length,
 						);
 
+						if (controlledMessages)
+							this.observeNativeTerminalEvent(requestId, eventText);
 						const eventLine = eventText
 							.split(/\r?\n/)
 							.find((l) => l.startsWith("event:"));
@@ -3016,7 +3248,7 @@ export class CodexProvider extends BaseProvider {
 							writeSSE,
 							ensureMessageStart,
 						);
-						if (state.hasSentTerminalEvents) {
+						if (state.hasSentTerminalEvents && !controlledMessages) {
 							streamLiveness.stop();
 							cancelUpstreamOnce("Codex terminal response received");
 							break;
@@ -3067,7 +3299,20 @@ export class CodexProvider extends BaseProvider {
 				// streamDrainDeadlineMs / drainAbort — while writer.close() proceeds
 				// immediately, matching the fire-and-forget pattern used by
 				// cancelAfterForcedClose in anthropic-terminal-recovery.ts.
-				await writer.close();
+				try {
+					if (controlledMessages) {
+						const success =
+							cleanEof && !upstreamCancelStarted && !state.upstreamError;
+						if (success) {
+							for (const frame of terminalFrames) await writer.write(frame);
+						}
+						this.finalizeNativeContinuationStream(requestId, success);
+					}
+					await writer.close();
+				} catch {
+					if (controlledMessages)
+						this.finalizeNativeContinuationStream(requestId, false);
+				}
 			}
 		};
 
@@ -3508,4 +3753,16 @@ export class CodexProvider extends BaseProvider {
 				break;
 		}
 	}
+}
+
+/** Provider-specific recovery, kept out of the generic Provider interface. */
+export async function recoverCodexMessagesContinuation(
+	provider: unknown,
+	response: Response,
+	originalRequest: Request,
+	account: Account,
+): Promise<Request | null> {
+	return provider instanceof CodexProvider
+		? provider.recoverMessagesContinuation(response, originalRequest, account)
+		: null;
 }
