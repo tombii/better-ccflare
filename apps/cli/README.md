@@ -820,7 +820,7 @@ Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks f
 - [@aaapl](https://github.com/aaapl) — [#433](https://github.com/tombii/better-ccflare/pull/433), [#435](https://github.com/tombii/better-ccflare/pull/435)
 - [@mjonuschat](https://github.com/mjonuschat) — [#436](https://github.com/tombii/better-ccflare/pull/436)
 - [@anony253](https://github.com/anony253) — [#452](https://github.com/tombii/better-ccflare/pull/452)
-- [@valentinyanakiev](https://github.com/valentinyanakiev) — [#450](https://github.com/tombii/better-ccflare/pull/450), [#454](https://github.com/tombii/better-ccflare/pull/454)
+- [@valentinyanakiev](https://github.com/valentinyanakiev) — [#450](https://github.com/tombii/better-ccflare/pull/450), [#454](https://github.com/tombii/better-ccflare/pull/454), [#459](https://github.com/tombii/better-ccflare/pull/459)
 
 ## Contributing
 
@@ -841,3 +841,42 @@ MIT - See [LICENSE](LICENSE) for details
 <p align="center">
   Built with ❤️ for developers who ship
 </p>
+
+### Claude Messages continuation on Codex (opt-in)
+
+Set `CCFLARE_CODEX_MESSAGES_CONTINUATION=1` to let the Codex provider retain
+server-owned Responses continuation while serving `/v1/messages` clients. It
+requires an authenticated API key, a selected account, and a nonempty prompt
+cache key (normally derived from Claude session metadata on OpenAI endpoints).
+The first request sends the full translated history, implicit GPT cache options
+with a 30-minute TTL, and a developer-prefix breakpoint. Subsequent exact
+history/configuration matches send only new input and the stored response ID.
+Claude cache markers and signatures never become GPT input artifacts.
+
+State is separated by account, model, authenticated caller, session, and client
+protocol. Changed history/tools, expiration, process restart, unknown output,
+failed or ambiguous terminal events, and cancellation cannot create a reusable
+checkpoint. Streaming remains incremental, but checkpoint promotion requires
+clean upstream EOF. Opaque GPT reasoning remains upstream; the proxy retains
+only bounded in-memory response IDs and replay digests. Public responses remain
+Claude-compatible and cache telemetry continues to label this ingress `legacy`.
+
+This switch does not change model selection or fallback policy. It defaults off;
+disabling it restores the prior Messages request format. It does not transfer
+Anthropic caches or guarantee a cache-hit percentage. Custom endpoints must
+support these Responses controls when this bridge is enabled; authenticated
+Messages requests may then derive cache keys from ordinary session metadata.
+Caller-provided native input, identity, and response IDs remain untrusted.
+
+HTTP continuation requires the endpoint to retain the referenced response. If it
+returns `previous_response_not_found` (or a typed invalid previous-response ID),
+the bridge retries the original full history once on the same account and model,
+then suspends continuation for that chain for 30 minutes. GPT cache controls
+remain active. This does not change `store:false` or enable provider-side
+retention. Backend retention and actual cache reuse need endpoint-specific
+validation; local response-ID existence is not proof of backend availability.
+
+Optionally set `CCFLARE_CODEX_MESSAGES_CONTINUATION_MODELS` to a comma-separated
+list of exact resolved model names to limit this feature to validated models.
+Unset means all models when enabled; an empty list enables none. This scope
+controls adapter features, not model selection or fallback routes.
