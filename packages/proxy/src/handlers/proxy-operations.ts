@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
 	type AccountUsageSnapshot,
 	getModelFamily,
@@ -18,6 +19,7 @@ import {
 	isAnthropicExtraUsageExhausted,
 	isAnthropicOrgPermissionDenied,
 	isAnthropicOutOfCredits,
+	recoverCodexMessagesContinuation,
 	usageCache,
 } from "@better-ccflare/providers";
 import type {
@@ -841,6 +843,17 @@ export async function proxyWithAccount(
 		// Never trust or reuse a caller-supplied copy.
 		if (provider.name === "codex") {
 			headers.set("x-better-ccflare-request-id", requestMeta.id);
+			// This identity comes from front-door authentication, never a client header.
+			const caller = apiKeyId;
+			headers.delete("x-better-ccflare-authenticated-caller");
+			if (caller)
+				headers.set(
+					"x-better-ccflare-authenticated-caller",
+					createHash("sha256")
+						.update("better-ccflare:caller-api-key:v1\0")
+						.update(caller)
+						.digest("hex"),
+				);
 			if (isTrustedNativeResponses(requestMeta)) {
 				headers.set("x-better-ccflare-native-responses", "true");
 			}
@@ -938,6 +951,28 @@ export async function proxyWithAccount(
 		let rawResponse = isSyntheticProviderResponse(transformedRequest)
 			? materializeSyntheticResponse(transformedRequest)
 			: await forwardUpstream(transformedRequest);
+
+		if (provider.name === "codex" && [400, 404].includes(rawResponse.status)) {
+			const recovered = await recoverCodexMessagesContinuation(
+				provider,
+				rawResponse,
+				new Request(targetUrl, requestInit),
+				account,
+			);
+			if (recovered) {
+				// Exactly one retry on the same provider/account/model. Refresh the
+				// buffered body too so a later 529 retry cannot resend the old suffix.
+				retryBodyText = await recovered.text();
+				transformedRequest = new Request(recovered.url, {
+					method: recovered.method,
+					headers: recovered.headers,
+					body: retryBodyText,
+					signal: req.signal,
+				});
+				cancelDiscardedResponseBody(rawResponse);
+				rawResponse = await forwardUpstream(transformedRequest);
+			}
+		}
 
 		// Check if this is a Claude provider and we got an invalid thinking signature error
 		const isClaudeProvider =

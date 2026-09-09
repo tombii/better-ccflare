@@ -19,6 +19,7 @@ function stripInternalControlHeaders(headers: Headers): void {
 	headers.delete("x-better-ccflare-request-stream");
 	headers.delete("x-better-ccflare-codex-custom-tools");
 	headers.delete("x-better-ccflare-native-responses");
+	headers.delete("x-better-ccflare-authenticated-caller");
 	headers.delete("x-better-ccflare-exclude-providers");
 	headers.delete("x-better-ccflare-codex-continuation");
 	headers.delete("x-better-ccflare-prompt-cache-mode");

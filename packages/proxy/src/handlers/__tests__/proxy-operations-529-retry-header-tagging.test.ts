@@ -235,4 +235,50 @@ describe("proxyWithAccount — 529 in-place retry response tagging", () => {
 		expect(seen[1].requestStream).toBe("true");
 		expect(seen[1].customTools).toBe("true");
 	});
+	for (const caller of ["authenticated-key-record", undefined])
+		it(`Codex caller identity comes only from authenticated dispatch (${caller ?? "none"})`, async () => {
+			globalThis.fetch = mock(
+				async () =>
+					new Response("{}", {
+						headers: { "content-type": "application/json" },
+					}),
+			);
+			const ctx = makeProxyContext([]);
+			ctx.provider.name = "codex";
+			ctx.provider.prepareHeaders = () =>
+				new Headers({ "x-better-ccflare-authenticated-caller": "forged" });
+			let seen: string | null = "not-dispatched";
+			ctx.provider.transformRequestBody = async (request: Request) => {
+				seen = request.headers.get("x-better-ccflare-authenticated-caller");
+				return request;
+			};
+			const body = makeRequestBody();
+			try {
+				await proxyWithAccount(
+					new Request("https://proxy.local/v1/messages", {
+						method: "POST",
+						body,
+					}),
+					new URL("https://proxy.local/v1/messages"),
+					makeAccount(),
+					makeRequestMeta(),
+					body,
+					() => undefined,
+					0,
+					ctx,
+					null,
+					caller,
+				);
+			} catch (error) {
+				if (
+					!(error instanceof Error) ||
+					!error.message.includes("UsageCollector not initialized")
+				)
+					throw error;
+			}
+			if (caller) {
+				expect(seen).toMatch(/^[0-9a-f]{64}$/);
+				expect(seen).not.toBe(caller);
+			} else expect(seen).toBeNull();
+		});
 });

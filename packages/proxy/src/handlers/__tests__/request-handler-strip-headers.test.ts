@@ -36,6 +36,7 @@ describe("makeProxyRequest strips internal control headers before provider forwa
 			"x-better-ccflare-request-stream": "true",
 			"x-better-ccflare-codex-custom-tools": "true",
 			"x-better-ccflare-native-responses": "true",
+			"x-better-ccflare-authenticated-caller": "forged-caller",
 			"x-better-ccflare-exclude-providers": "anthropic-oauth",
 			"x-better-ccflare-codex-continuation": "previous_response_id",
 			"x-better-ccflare-prompt-cache-mode": "implicit",
@@ -62,6 +63,9 @@ describe("makeProxyRequest strips internal control headers before provider forwa
 		expect(sentHeaders?.get("x-better-ccflare-request-stream")).toBeNull();
 		expect(sentHeaders?.get("x-better-ccflare-codex-custom-tools")).toBeNull();
 		expect(sentHeaders?.get("x-better-ccflare-native-responses")).toBeNull();
+		expect(
+			sentHeaders?.get("x-better-ccflare-authenticated-caller"),
+		).toBeNull();
 		expect(sentHeaders?.get("x-better-ccflare-exclude-providers")).toBeNull();
 		for (const header of [
 			"x-better-ccflare-codex-continuation",
@@ -86,6 +90,7 @@ describe("makeProxyRequest strips internal control headers before provider forwa
 				"x-better-ccflare-keepalive": "true",
 				"x-better-ccflare-request-id": "internal-request-id",
 				"x-better-ccflare-native-responses": "true",
+				"x-better-ccflare-authenticated-caller": "forged-caller",
 				"x-better-ccflare-exclude-providers": "anthropic-oauth",
 				"x-better-ccflare-codex-continuation": "previous_response_id",
 				"x-better-ccflare-prompt-cache-mode": "implicit",
@@ -103,6 +108,9 @@ describe("makeProxyRequest strips internal control headers before provider forwa
 		expect(sentHeaders?.get("x-better-ccflare-keepalive")).toBeNull();
 		expect(sentHeaders?.get("x-better-ccflare-request-id")).toBeNull();
 		expect(sentHeaders?.get("x-better-ccflare-native-responses")).toBeNull();
+		expect(
+			sentHeaders?.get("x-better-ccflare-authenticated-caller"),
+		).toBeNull();
 		expect(sentHeaders?.get("x-better-ccflare-exclude-providers")).toBeNull();
 		for (const header of [
 			"x-better-ccflare-codex-continuation",
