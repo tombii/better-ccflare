@@ -1703,6 +1703,10 @@ export class CodexProvider extends BaseProvider {
 		// Keeping that framing matters for standards-compliant emitters and also
 		// makes this parser agree with the adapter's buffered-response parser.
 		const dataText = dataLines.join("\n");
+		// The stream's standard terminator, not a lifecycle event. It always
+		// legally follows response.completed, so it must never be treated as
+		// ambiguous trailing data or invalidate an already-observed checkpoint.
+		if (dataText === "[DONE]") return;
 		let data:
 			| {
 					type?: unknown;

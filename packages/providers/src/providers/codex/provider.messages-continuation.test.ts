@@ -244,6 +244,14 @@ describe("Messages fallback cache and continuation", () => {
 				(await request(provider, "two", replay)).previous_response_id,
 			).toBeUndefined();
 		});
+	test("trailing [DONE] sentinel after response.completed keeps the checkpoint", async () => {
+		const provider = new CodexProvider();
+		await request(provider, "one");
+		await complete(provider, "one", textOutput, "data: [DONE]\n\n");
+		expect((await request(provider, "two", replay)).previous_response_id).toBe(
+			"resp_one",
+		);
+	});
 	test("unknown output cannot be silently dropped to match a continuation", async () => {
 		const provider = new CodexProvider();
 		await request(provider, "one");
