@@ -321,6 +321,9 @@ interface CodexRequest {
 	metadata?: unknown;
 	service_tier?: unknown;
 	context_management?: unknown;
+	stream_options?: unknown;
+	client_metadata?: unknown;
+	access_programs?: unknown;
 }
 
 type ContinuationResult =
@@ -719,11 +722,23 @@ export class CodexProvider extends BaseProvider {
 		newHeaders.delete("x-api-key");
 		newHeaders.delete("host");
 
+		// These describe the client's connection to this proxy, not the proxy's
+		// connection to Codex. Ingress cookies belong to the proxy's domain;
+		// makeProxyRequest adds any host-scoped ChatGPT cookies separately.
+		newHeaders.delete("cookie");
+		newHeaders.delete("cdn-loop");
+		newHeaders.delete("forwarded");
+		newHeaders.delete("x-real-ip");
+
 		// Remove internal proxy headers. Every control and identity header this
 		// proxy understands lives under the one namespace, so the prefix is the
-		// whole rule.
+		// whole rule. Also remove headers supplied by ingress proxies/CDNs.
 		for (const key of [...newHeaders.keys()]) {
-			if (key.startsWith("x-better-ccflare-")) {
+			if (
+				key.startsWith("x-better-ccflare-") ||
+				key.startsWith("cf-") ||
+				key.startsWith("x-forwarded-")
+			) {
 				newHeaders.delete(key);
 			}
 		}
@@ -2719,6 +2734,9 @@ export class CodexProvider extends BaseProvider {
 			"metadata",
 			"service_tier",
 			"context_management",
+			"stream_options",
+			"client_metadata",
+			"access_programs",
 		] as const) {
 			if (passthrough?.[field] !== undefined) {
 				codexRequest[field] = passthrough[field];

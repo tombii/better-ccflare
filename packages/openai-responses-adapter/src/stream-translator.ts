@@ -1,4 +1,10 @@
 import { Logger } from "@better-ccflare/logger";
+import {
+	getCustomToolNames,
+	getResponseToolIdentity,
+	unwrapCustomToolInput,
+} from "./custom-tools";
+import type { ResponsesTool } from "./types";
 
 const log = new Logger("openai-responses-adapter");
 
@@ -11,7 +17,19 @@ interface State {
 	sequenceNumber: number;
 	blockIndexToOutput: Map<number, number>;
 	textByBlock: Map<number, string>;
-	toolByBlock: Map<number, { callId: string; name: string; argsBuf: string }>;
+	toolByBlock: Map<
+		number,
+		{
+			callId: string;
+			name: string;
+			namespace?: string;
+			argsBuf: string;
+			custom: boolean;
+			initialInput: unknown;
+		}
+	>;
+	customToolNames: Set<string>;
+	tools: ResponsesTool[];
 	inputTokens: number;
 	outputTokens: number;
 	doneSent: boolean;
@@ -72,6 +90,7 @@ function processEvent(
 	controller: TransformStreamDefaultController,
 	state: State,
 ): void {
+	if (state.streamError) return;
 	if (eventType === "message_start") {
 		const message = data.message as Record<string, unknown> | undefined;
 		const usage = message?.usage as Record<string, number> | undefined;
@@ -151,10 +170,17 @@ function processEvent(
 				state,
 			);
 		} else if (contentBlock.type === "tool_use") {
+			const custom = state.customToolNames.has(contentBlock.name as string);
+			const identity = getResponseToolIdentity(
+				contentBlock.name as string,
+				state.tools,
+			);
 			state.toolByBlock.set(blockIndex, {
 				callId: contentBlock.id as string,
-				name: contentBlock.name as string,
+				...identity,
 				argsBuf: "",
+				custom,
+				initialInput: contentBlock.input,
 			});
 			emitSse(
 				controller,
@@ -163,11 +189,11 @@ function processEvent(
 					type: "response.output_item.added",
 					output_index: outputIdx,
 					item: {
-						type: "function_call",
-						id: `${state.responseId}_fc_${outputIdx}`,
+						type: custom ? "custom_tool_call" : "function_call",
+						id: `${state.responseId}_${custom ? "ctc" : "fc"}_${outputIdx}`,
 						call_id: contentBlock.id as string,
-						name: contentBlock.name as string,
-						arguments: "",
+						...identity,
+						...(custom ? { input: "" } : { arguments: "" }),
 						status: "in_progress",
 					},
 				},
@@ -209,6 +235,9 @@ function processEvent(
 			const tool = state.toolByBlock.get(blockIndex);
 			if (tool) {
 				tool.argsBuf += partial;
+				// Custom input is wrapped in JSON upstream. Wait for the whole
+				// string so escaped newlines, quotes and Unicode remain lossless.
+				if (tool.custom) return;
 				emitSse(
 					controller,
 					"response.function_call_arguments.delta",
@@ -282,6 +311,76 @@ function processEvent(
 		} else if (state.toolByBlock.has(blockIndex)) {
 			// biome-ignore lint/style/noNonNullAssertion: guarded by the has() check above — TS can't narrow Map.get() from a prior has() call.
 			const tool = state.toolByBlock.get(blockIndex)!;
+			if (tool.custom) {
+				let input: string;
+				try {
+					input = unwrapCustomToolInput(
+						tool.argsBuf ? JSON.parse(tool.argsBuf) : tool.initialInput,
+					);
+				} catch {
+					processEvent(
+						"error",
+						{
+							error: {
+								type: "invalid_response_error",
+								message:
+									"Upstream custom tool call did not contain a text input",
+							},
+						},
+						controller,
+						state,
+					);
+					return;
+				}
+				const itemId = `${state.responseId}_ctc_${outputIdx}`;
+				if (input.length > 0) {
+					emitSse(
+						controller,
+						"response.custom_tool_call_input.delta",
+						{
+							type: "response.custom_tool_call_input.delta",
+							item_id: itemId,
+							output_index: outputIdx,
+							call_id: tool.callId,
+							delta: input,
+						},
+						state,
+					);
+				}
+				emitSse(
+					controller,
+					"response.custom_tool_call_input.done",
+					{
+						type: "response.custom_tool_call_input.done",
+						item_id: itemId,
+						output_index: outputIdx,
+						call_id: tool.callId,
+						input,
+					},
+					state,
+				);
+				const doneItem = {
+					type: "custom_tool_call",
+					id: itemId,
+					call_id: tool.callId,
+					name: tool.name,
+					...(tool.namespace ? { namespace: tool.namespace } : {}),
+					input,
+					status: "completed",
+				};
+				state.outputItems.push(doneItem);
+				emitSse(
+					controller,
+					"response.output_item.done",
+					{
+						type: "response.output_item.done",
+						output_index: outputIdx,
+						item: doneItem,
+					},
+					state,
+				);
+				return;
+			}
 			emitSse(
 				controller,
 				"response.function_call_arguments.done",
@@ -291,6 +390,7 @@ function processEvent(
 					output_index: outputIdx,
 					call_id: tool.callId,
 					name: tool.name,
+					...(tool.namespace ? { namespace: tool.namespace } : {}),
 					arguments: tool.argsBuf,
 				},
 				state,
@@ -300,6 +400,7 @@ function processEvent(
 				id: `${state.responseId}_fc_${outputIdx}`,
 				call_id: tool.callId,
 				name: tool.name,
+				...(tool.namespace ? { namespace: tool.namespace } : {}),
 				arguments: tool.argsBuf,
 				status: "completed",
 			};
@@ -409,6 +510,7 @@ export function translateAnthropicStreamToResponses(
 	anthropicResponse: Response,
 	responseId: string,
 	model: string,
+	tools?: ResponsesTool[],
 ): Response {
 	if (!anthropicResponse.body) {
 		return new Response(null, { status: anthropicResponse.status });
@@ -428,6 +530,8 @@ export function translateAnthropicStreamToResponses(
 		blockIndexToOutput: new Map(),
 		textByBlock: new Map(),
 		toolByBlock: new Map(),
+		customToolNames: getCustomToolNames(tools),
+		tools: tools ?? [],
 		inputTokens: 0,
 		outputTokens: 0,
 		doneSent: false,
