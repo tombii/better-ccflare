@@ -379,11 +379,11 @@ export class AlertService {
 				if (!result || result.status === "ok") continue;
 				// "expired" (deadline already passed) is treated as equally urgent as
 				// "critical" (deadline imminent) — same severity, same cooldown
-				// cadence. It must NOT be skipped: since this feature intentionally
-				// does not backfill last_manual_reauth_at, every pre-existing account
-				// (whose deadline falls back to created_at) starts out "expired" on
-				// rollout, so skipping this status would silently disable alerting
-				// for the feature's primary target population.
+				// cadence. It covers accounts with a recorded manual reauth whose
+				// predicted deadline has passed. Accounts without that timestamp have
+				// an unknown deadline and are already skipped above (checkReauthDeadline
+				// / computeReauthDeadline return null) — there is no fallback to
+				// created_at.
 				const isUrgent =
 					result.status === "critical" || result.status === "expired";
 				if (this.stopped) return;
