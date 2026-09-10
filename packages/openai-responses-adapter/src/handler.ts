@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { Logger } from "@better-ccflare/logger";
+import { getRequestTools } from "./custom-tools";
 import { translateRequestToAnthropic } from "./request-translator";
 import { translateAnthropicResponseToResponses } from "./response-translator";
 import { translateAnthropicStreamToResponses } from "./stream-translator";
@@ -48,6 +49,9 @@ const SUPPORTED_RESPONSES_REQUEST_FIELDS = new Set([
 	"metadata",
 	"service_tier",
 	"context_management",
+	"stream_options",
+	"client_metadata",
+	"access_programs",
 ]);
 const NATIVE_GENERATION_FIELDS = [
 	"text",
@@ -59,6 +63,9 @@ const NATIVE_GENERATION_FIELDS = [
 	"service_tier",
 	"context_management",
 	"max_output_tokens",
+	"stream_options",
+	"client_metadata",
+	"access_programs",
 ] as const satisfies readonly (keyof ResponsesRequest)[];
 
 type CacheDiagnostic = {
@@ -666,47 +673,43 @@ export async function handleResponsesRequest(
 		);
 	}
 
-	// 7. Translate non-200 Anthropic errors to OpenAI error shape
+	// 7. Normalize upstream errors, including native Codex/FastAPI errors.
 	if (anthropicResp.status !== 200) {
-		let errorBody: { error: { message: string; type: string; code: string } };
 		const contentType = anthropicResp.headers.get("content-type") ?? "";
-		if (contentType.includes("application/json")) {
+		let message = `Upstream request failed with HTTP ${anthropicResp.status}. Check the proxy request logs for the upstream account and response.`;
+		let type = "api_error";
+		let code = type;
+		if (
+			contentType.includes("application/json") ||
+			contentType.includes("+json")
+		) {
 			try {
-				const anthropicError = (await anthropicResp.json()) as {
-					type?: string;
-					error?: { type?: string; message?: string };
-				};
-				const errType = anthropicError?.error?.type ?? "api_error";
-				errorBody = {
-					error: {
-						message: anthropicError?.error?.message ?? "Unknown error",
-						type: errType,
-						code: errType,
-					},
-				};
+				const upstream = (await anthropicResp.json()) as Record<
+					string,
+					unknown
+				> | null;
+				const nested = upstream?.error;
+				const error =
+					nested !== null && typeof nested === "object"
+						? (nested as Record<string, unknown>)
+						: undefined;
+				const candidate =
+					error?.message ?? upstream?.detail ?? upstream?.message ?? nested;
+				if (typeof candidate === "string" && candidate.trim())
+					message = candidate;
+				if (typeof error?.type === "string") type = error.type;
+				code = typeof error?.code === "string" ? error.code : type;
 			} catch {
-				errorBody = {
-					error: {
-						message: "Unknown error",
-						type: "api_error",
-						code: "api_error",
-					},
-				};
+				// Keep a useful status-based error when the upstream body is malformed.
 			}
-		} else {
-			errorBody = {
-				error: {
-					message: "Unknown error",
-					type: "api_error",
-					code: "api_error",
-				},
-			};
 		}
-		return new Response(JSON.stringify(errorBody), {
+		return new Response(JSON.stringify({ error: { message, type, code } }), {
 			status: anthropicResp.status,
 			headers: (() => {
 				const headers = new Headers(anthropicResp.headers);
 				headers.delete("x-better-ccflare-codex-response-format");
+				headers.delete("content-length");
+				headers.delete("content-encoding");
 				headers.set("content-type", "application/json");
 				return headers;
 			})(),
@@ -774,6 +777,7 @@ export async function handleResponsesRequest(
 			anthropicResp,
 			responseId,
 			body.model,
+			getRequestTools(body),
 		);
 	}
 
@@ -793,11 +797,27 @@ export async function handleResponsesRequest(
 			{ status: 502, headers: { "Content-Type": "application/json" } },
 		);
 	}
-	const translated = translateAnthropicResponseToResponses(
-		respBody as Parameters<typeof translateAnthropicResponseToResponses>[0],
-		responseId,
-		body.model,
-	);
+	let translated: ReturnType<typeof translateAnthropicResponseToResponses>;
+	try {
+		translated = translateAnthropicResponseToResponses(
+			respBody as Parameters<typeof translateAnthropicResponseToResponses>[0],
+			responseId,
+			body.model,
+			getRequestTools(body),
+		);
+	} catch {
+		return new Response(
+			JSON.stringify({
+				error: {
+					message:
+						"Failed to translate upstream response: invalid tool input or response body",
+					type: "invalid_response_error",
+					code: "invalid_response_error",
+				},
+			}),
+			{ status: 502, headers: { "Content-Type": "application/json" } },
+		);
+	}
 	return new Response(JSON.stringify(translated), {
 		status: 200,
 		headers: { "Content-Type": "application/json" },

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { logBus } from "@better-ccflare/logger";
+import { getTranslatedToolName } from "../custom-tools";
 import { translateAnthropicStreamToResponses } from "../stream-translator";
 
 async function collectSseEvents(
@@ -7,9 +8,7 @@ async function collectSseEvents(
 ): Promise<Array<{ event: string; data: unknown }>> {
 	const text = await response.text();
 	const events: Array<{ event: string; data: unknown }> = [];
-	const rawEvents = text
-		.split(/\r?\n\r?\n/)
-		.filter((s) => s.trim().length > 0);
+	const rawEvents = text.split(/\r?\n\r?\n/).filter((s) => s.trim().length > 0);
 
 	for (const rawEvent of rawEvents) {
 		const lines = rawEvent.split(/\r?\n/);
@@ -42,6 +41,211 @@ function sseEvent(type: string, data: unknown): string {
 }
 
 describe("translateAnthropicStreamToResponses", () => {
+	test("namespaced custom and function calls restore name and namespace in SSE", async () => {
+		const events = [
+			sseEvent("message_start", { message: { id: "msg_namespaces" } }),
+		];
+		for (const [index, name, namespace, input] of [
+			[0, "exec", "functions", { input: "text(1)" }],
+			[1, "wait", "clock", { duration_ms: 10 }],
+		] as const) {
+			events.push(
+				sseEvent("content_block_start", {
+					index,
+					content_block: {
+						type: "tool_use",
+						id: `call_${index}`,
+						name: getTranslatedToolName(name, namespace),
+						input: {},
+					},
+				}),
+				sseEvent("content_block_delta", {
+					index,
+					delta: {
+						type: "input_json_delta",
+						partial_json: JSON.stringify(input),
+					},
+				}),
+				sseEvent("content_block_stop", { index }),
+			);
+		}
+		events.push(sseEvent("message_stop", {}));
+		const parsed = await collectSseEvents(
+			translateAnthropicStreamToResponses(
+				makeAnthropicStream(events),
+				"resp_namespaces",
+				"gpt-6-astra",
+				[
+					{
+						type: "namespace",
+						name: "functions",
+						tools: [{ type: "custom", name: "exec" }],
+					},
+					{
+						type: "namespace",
+						name: "clock",
+						tools: [{ type: "function", name: "wait" }],
+					},
+				],
+			),
+		);
+		for (const eventType of [
+			"response.output_item.added",
+			"response.output_item.done",
+		]) {
+			const items = parsed.filter((event) => event.event === eventType);
+			expect(items[0].data).toMatchObject({
+				item: {
+					type: "custom_tool_call",
+					name: "exec",
+					namespace: "functions",
+				},
+			});
+			expect(items[1].data).toMatchObject({
+				item: { type: "function_call", name: "wait", namespace: "clock" },
+			});
+		}
+		expect(parsed.at(-1)?.data).toMatchObject({
+			response: {
+				output: [
+					{
+						type: "custom_tool_call",
+						name: "exec",
+						namespace: "functions",
+						input: "text(1)",
+					},
+					{
+						type: "function_call",
+						name: "wait",
+						namespace: "clock",
+						arguments: '{"duration_ms":10}',
+					},
+				],
+			},
+		});
+	});
+
+	test("custom tool SSE decodes split JSON escapes into raw input and complete output", async () => {
+		const patch =
+			'*** Begin Patch\n*** Add File: hello.txt\n+"héllo" \\ 🚀\n*** End Patch';
+		const json = JSON.stringify({ input: patch }).replace(
+			"🚀",
+			"\\ud83d\\ude80",
+		);
+		const events = [
+			sseEvent("message_start", {
+				message: { id: "msg_custom", usage: { input_tokens: 12 } },
+			}),
+			sseEvent("content_block_start", {
+				index: 0,
+				content_block: {
+					type: "tool_use",
+					id: "call_patch",
+					name: "apply_patch",
+					input: {},
+				},
+			}),
+			...Array.from(json, (partial_json) =>
+				sseEvent("content_block_delta", {
+					index: 0,
+					delta: { type: "input_json_delta", partial_json },
+				}),
+			),
+			sseEvent("content_block_stop", { index: 0 }),
+			sseEvent("message_delta", { usage: { output_tokens: 30 } }),
+			sseEvent("message_stop", {}),
+		];
+		const parsed = await collectSseEvents(
+			translateAnthropicStreamToResponses(
+				makeAnthropicStream(events),
+				"resp_custom",
+				"gpt-5.4",
+				[{ type: "custom", name: "apply_patch" }],
+			),
+		);
+		expect(parsed.map((event) => event.event)).toEqual([
+			"response.created",
+			"response.in_progress",
+			"response.output_item.added",
+			"response.custom_tool_call_input.delta",
+			"response.custom_tool_call_input.done",
+			"response.output_item.done",
+			"response.completed",
+		]);
+		expect(parsed[2].data).toMatchObject({
+			item: {
+				type: "custom_tool_call",
+				call_id: "call_patch",
+				name: "apply_patch",
+				input: "",
+			},
+		});
+		expect(parsed[3].data).toMatchObject({
+			delta: patch,
+			call_id: "call_patch",
+		});
+		expect(parsed[4].data).toMatchObject({ input: patch });
+		const completedItem = {
+			type: "custom_tool_call",
+			id: "resp_custom_ctc_0",
+			call_id: "call_patch",
+			name: "apply_patch",
+			input: patch,
+			status: "completed",
+		};
+		expect(parsed[5].data).toMatchObject({ item: completedItem });
+		expect(parsed[6].data).toMatchObject({
+			response: { output: [completedItem] },
+		});
+	});
+
+	test("custom tool SSE accepts initial input and fails malformed input without completing a call", async () => {
+		for (const input of [
+			{ input: "" },
+			{ input: "complete patch" },
+			{ input: 42 },
+		]) {
+			const parsed = await collectSseEvents(
+				translateAnthropicStreamToResponses(
+					makeAnthropicStream([
+						sseEvent("message_start", { message: { id: "msg_custom" } }),
+						sseEvent("content_block_start", {
+							index: 0,
+							content_block: {
+								type: "tool_use",
+								id: "call_patch",
+								name: "apply_patch",
+								input,
+							},
+						}),
+						sseEvent("content_block_stop", { index: 0 }),
+						sseEvent("message_stop", {}),
+					]),
+					"resp_custom",
+					"gpt-5.4",
+					[{ type: "custom", name: "apply_patch" }],
+				),
+			);
+			if (typeof input.input === "string") {
+				expect(
+					parsed.find((event) => event.event === "response.output_item.done")
+						?.data,
+				).toMatchObject({
+					item: { type: "custom_tool_call", input: input.input },
+				});
+				expect(parsed.at(-1)?.event).toBe("response.completed");
+			} else {
+				expect(parsed.at(-1)?.event).toBe("response.failed");
+				expect(
+					parsed.some((event) => event.event === "response.output_item.done"),
+				).toBe(false);
+				expect(
+					parsed.some((event) => event.event === "response.completed"),
+				).toBe(false);
+			}
+		}
+	});
+
 	test("simple text streaming — correct event sequence and content", async () => {
 		const events = [
 			sseEvent("message_start", {

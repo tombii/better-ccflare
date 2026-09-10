@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { translateRequestToAnthropic } from "../request-translator";
 import { translateAnthropicResponseToResponses } from "../response-translator";
 import type { AnthropicResponse } from "../types";
 
@@ -19,6 +20,117 @@ function makeBaseResponse(
 }
 
 describe("translateAnthropicResponseToResponses", () => {
+	test("custom patch calls round-trip raw text and retain ordinary function calls", () => {
+		const patch =
+			'*** Begin Patch\n*** Add File: hello.txt\n+"héllo"\\world\n*** End Patch';
+		const tools = [
+			{ type: "custom" as const, name: "apply_patch" },
+			{ type: "function" as const, name: "read_file" },
+		];
+		const result = translateAnthropicResponseToResponses(
+			makeBaseResponse({
+				content: [
+					{
+						type: "tool_use",
+						id: "call_patch",
+						name: "apply_patch",
+						input: { input: patch },
+					},
+					{
+						type: "tool_use",
+						id: "call_read",
+						name: "read_file",
+						input: { path: "hello.txt" },
+					},
+				],
+			}),
+			"resp_custom",
+			"gpt-5.4",
+			tools,
+		);
+		expect(result.output).toEqual([
+			{
+				type: "custom_tool_call",
+				id: "resp_custom_ctc_0",
+				call_id: "call_patch",
+				name: "apply_patch",
+				input: patch,
+				status: "completed",
+			},
+			{
+				type: "function_call",
+				id: "resp_custom_fc_1",
+				call_id: "call_read",
+				name: "read_file",
+				arguments: '{"path":"hello.txt"}',
+				status: "completed",
+			},
+		]);
+		const replay = translateRequestToAnthropic({
+			model: "gpt-5.4",
+			tools,
+			input: [
+				...result.output,
+				{
+					type: "custom_tool_call_output",
+					call_id: "call_patch",
+					output: "Patch applied",
+				},
+				{
+					type: "function_call_output",
+					call_id: "call_read",
+					output: "File contents",
+				},
+			],
+		});
+		expect(replay.messages[0].content).toEqual([
+			{
+				type: "tool_use",
+				id: "call_patch",
+				name: "apply_patch",
+				input: { input: patch },
+			},
+			{
+				type: "tool_use",
+				id: "call_read",
+				name: "read_file",
+				input: { path: "hello.txt" },
+			},
+		]);
+		expect(replay.messages[1].content).toEqual([
+			{
+				type: "tool_result",
+				tool_use_id: "call_patch",
+				content: "Patch applied",
+			},
+			{
+				type: "tool_result",
+				tool_use_id: "call_read",
+				content: "File contents",
+			},
+		]);
+	});
+
+	test("rejects malformed custom tool input instead of emitting an executable call", () => {
+		expect(() =>
+			translateAnthropicResponseToResponses(
+				makeBaseResponse({
+					content: [
+						{
+							type: "tool_use",
+							id: "call_patch",
+							name: "apply_patch",
+							input: { input: 42 },
+						},
+					],
+				}),
+				"resp_custom",
+				"gpt-5.4",
+				[{ type: "custom", name: "apply_patch" }],
+			),
+		).toThrow("Upstream custom tool call did not contain a text input");
+	});
+
 	test("text-only response → single OutputMessageItem in output[]", () => {
 		const resp = makeBaseResponse({
 			content: [{ type: "text", text: "Hello world" }],

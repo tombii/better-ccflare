@@ -451,7 +451,9 @@ describe("translateRequestToAnthropic", () => {
 		expect(toolUse.input).toEqual({});
 	});
 
-	test("custom_tool_call appended like function_call", () => {
+	test("custom_tool_call preserves raw patch input in a JSON wrapper", () => {
+		const patch =
+			'*** Begin Patch\n*** Add File: hello.txt\n+"héllo"\n*** End Patch';
 		const req: ResponsesRequest = {
 			model: "claude-3-5-sonnet-20241022",
 			input: [
@@ -459,7 +461,7 @@ describe("translateRequestToAnthropic", () => {
 					type: "custom_tool_call",
 					call_id: "call_custom",
 					name: "custom_fn",
-					arguments: '{"a":1}',
+					input: patch,
 				},
 			],
 		};
@@ -468,8 +470,79 @@ describe("translateRequestToAnthropic", () => {
 			type: "tool_use",
 			id: "call_custom",
 			name: "custom_fn",
-			input: { a: 1 },
+			input: { input: patch },
 		});
+	});
+
+	test("custom tools expose a raw input string alongside regular function tools", () => {
+		const grammar = 'start: "*** Begin Patch" /[\\s\\S]*/ "*** End Patch"';
+		const result = translateRequestToAnthropic({
+			model: "gpt-5.4",
+			input: [],
+			tools: [
+				{
+					type: "custom",
+					name: "apply_patch",
+					description: "Apply a patch to the workspace.",
+					format: { type: "grammar", syntax: "lark", definition: grammar },
+				},
+				{
+					type: "function",
+					name: "read_file",
+					parameters: {
+						type: "object",
+						properties: { path: { type: "string" } },
+					},
+				},
+			],
+			tool_choice: { type: "custom", name: "apply_patch" },
+		});
+		expect(result.tools).toHaveLength(2);
+		expect(result.tools?.[0]).toMatchObject({
+			name: "apply_patch",
+			input_schema: {
+				type: "object",
+				properties: { input: { type: "string" } },
+				required: ["input"],
+				additionalProperties: false,
+			},
+		});
+		expect(result.tools?.[0].description).toContain(grammar);
+		expect(result.tools?.[1]).toMatchObject({
+			name: "read_file",
+			input_schema: {
+				type: "object",
+				properties: { path: { type: "string" } },
+			},
+		});
+		expect(result.tool_choice).toEqual({ type: "tool", name: "apply_patch" });
+	});
+
+	test("easy message input preserves strings and system/developer instructions", () => {
+		const result = translateRequestToAnthropic({
+			model: "gpt-5.4",
+			input: [
+				{ role: "system", content: "System instruction" },
+				{
+					type: "message",
+					role: "developer",
+					content: "Developer instruction",
+				},
+				{ role: "user", content: "Please inspect the code" },
+				{ type: "message", role: "assistant", content: "Inspecting now" },
+			],
+		});
+		expect(result.system).toBe("System instruction\n\nDeveloper instruction");
+		expect(result.messages).toEqual([
+			{
+				role: "user",
+				content: [{ type: "text", text: "Please inspect the code" }],
+			},
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "Inspecting now" }],
+			},
+		]);
 	});
 
 	test("custom_tool_call_output → user message with tool_result", () => {
@@ -489,6 +562,49 @@ describe("translateRequestToAnthropic", () => {
 			tool_use_id: "call_custom",
 			content: "custom result",
 		});
+	});
+
+	test("structured custom/function outputs translate text and images into Anthropic blocks", () => {
+		for (const type of [
+			"custom_tool_call_output",
+			"function_call_output",
+		] as const) {
+			const result = translateRequestToAnthropic({
+				model: "gpt-6-astra",
+				input: [
+					{
+						type,
+						call_id: "call_exec",
+						output: [
+							{ type: "input_text", text: "Script completed" },
+							{ type: "input_text", text: "{}" },
+							{
+								type: "input_image",
+								image_url: "data:image/png;base64,aGVsbG8=",
+							},
+						],
+					},
+				],
+			});
+			expect(result.messages[0].content).toEqual([
+				{
+					type: "tool_result",
+					tool_use_id: "call_exec",
+					content: [
+						{ type: "text", text: "Script completed" },
+						{ type: "text", text: "{}" },
+						{
+							type: "image",
+							source: {
+								type: "base64",
+								media_type: "image/png",
+								data: "aGVsbG8=",
+							},
+						},
+					],
+				},
+			]);
+		}
 	});
 
 	test("model passthrough for non-gpt-5 names", () => {

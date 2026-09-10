@@ -79,6 +79,56 @@ async function waitForAbort(
 	}
 }
 
+describe("CodexProvider request headers", () => {
+	it("removes ingress proxy headers and cookies while preserving Codex session metadata", () => {
+		const provider = new CodexProvider();
+		const ingressHeaders = {
+			"CF-Connecting-IP": "192.0.2.1",
+			"CF-IPCountry": "IE",
+			"CF-Ray": "ingress-ray",
+			"CF-Visitor": '{"scheme":"https"}',
+			"CDN-Loop": "cloudflare; loops=1",
+			Forwarded: 'for=192.0.2.1;host="proxy.example.com";proto=https',
+			"X-Forwarded-For": "192.0.2.1",
+			"X-Forwarded-Host": "proxy.example.com",
+			"X-Forwarded-Port": "443",
+			"X-Forwarded-Proto": "https",
+			"X-Real-IP": "192.0.2.1",
+			Cookie: "proxy_session=ingress-session; __cf_bm=ingress-cookie",
+		};
+		const clientMetadata = {
+			"content-type": "application/json",
+			"session-id": "session-123",
+			"x-client-request-id": "request-123",
+			"x-codex-turn-metadata": '{"turn_id":"turn-123"}',
+		};
+		const original = new Headers({
+			...ingressHeaders,
+			...clientMetadata,
+			Authorization: "Bearer proxy-client-token",
+			"x-api-key": "proxy-client-key",
+			"x-better-ccflare-native-responses": "true",
+		});
+		const originalEntries = [...original.entries()];
+
+		const prepared = provider.prepareHeaders(original, "upstream-access-token");
+
+		for (const name of Object.keys(ingressHeaders)) {
+			expect(prepared.get(name)).toBeNull();
+		}
+		for (const [name, value] of Object.entries(clientMetadata)) {
+			expect(prepared.get(name)).toBe(value);
+		}
+		expect(prepared.get("authorization")).toBe("Bearer upstream-access-token");
+		expect(prepared.get("x-api-key")).toBeNull();
+		expect(prepared.get("x-better-ccflare-native-responses")).toBeNull();
+		expect(prepared.get("version")).toBe(CODEX_VERSION);
+		expect(prepared.get("openai-beta")).toBe("responses=experimental");
+		expect(prepared.get("originator")).toBe("codex_cli_rs");
+		expect([...original.entries()]).toEqual(originalEntries);
+	});
+});
+
 describe("CodexProvider stream liveness", () => {
 	it("keeps a silent SSE stream alive until response.completed arrives", async () => {
 		const provider = new CodexProvider({
@@ -3393,6 +3443,30 @@ describe("CodexProvider native Responses preservation", () => {
 		).toHaveLength(1);
 	});
 
+	it("preserves current Codex client controls on the subscription endpoint", async () => {
+		const provider = new CodexProvider();
+		for (const nativeFields of [
+			{
+				stream_options: { reasoning_summary_delivery: "sequential_cutoff" },
+				client_metadata: { turn_id: "turn-123", empty_value: "" },
+				access_programs: { cyber: "standard" },
+			},
+			{ client_metadata: {} },
+			{},
+		]) {
+			const body = await transformContinuationTurn(provider, {
+				requestId: "request-codex-client-controls",
+				input: [inputItem("hello")],
+				continuation: false,
+				nativeFields,
+			});
+			expect(body.stream).toBe(true);
+			expect(body.stream_options).toEqual(nativeFields.stream_options);
+			expect(body.client_metadata).toEqual(nativeFields.client_metadata);
+			expect(body.access_programs).toEqual(nativeFields.access_programs);
+		}
+	});
+
 	it("rejects native max_output_tokens on the canonical subscription endpoint", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {
@@ -3450,6 +3524,9 @@ describe("CodexProvider native Responses preservation", () => {
 					previous_response_id: "resp_cross_tenant",
 					prompt_cache_options: { ttl: "30m" },
 					tools: [{ type: "custom", name: "attacker-tool" }],
+					stream_options: { reasoning_summary_delivery: "sequential_cutoff" },
+					client_metadata: { turn_id: "injected-turn" },
+					access_programs: { cyber: "daybreak_red" },
 					store: true,
 				},
 			}),
@@ -3470,6 +3547,9 @@ describe("CodexProvider native Responses preservation", () => {
 		expect(body.previous_response_id).toBeUndefined();
 		expect(body.prompt_cache_options).toBeUndefined();
 		expect(body.tools).toBeUndefined();
+		expect(body.stream_options).toBeUndefined();
+		expect(body.client_metadata).toBeUndefined();
+		expect(body.access_programs).toBeUndefined();
 		expect(body.store).toBe(false);
 	});
 
@@ -4224,6 +4304,52 @@ describe("CodexProvider native Responses preservation", () => {
 			expect(mismatch.previous_response_id).toBeUndefined();
 			expect(mismatch.input).toHaveLength(2);
 		}
+	});
+
+	it("reuses continuation while forwarding each response's client controls", async () => {
+		const provider = new CodexProvider();
+		const base = [inputItem("base")];
+		await transformContinuationTurn(provider, {
+			requestId: "request-client-metadata-seed",
+			input: base,
+			nativeFields: {
+				client_metadata: { turn_id: "turn-1" },
+				access_programs: { cyber: "standard" },
+			},
+		});
+		await completeContinuationTurn(
+			provider,
+			"request-client-metadata-seed",
+			"resp_client_metadata_seed",
+		);
+
+		const next = await transformContinuationTurn(provider, {
+			requestId: "request-client-metadata-next",
+			input: [...base, inputItem("tail")],
+			nativeFields: {
+				client_metadata: { turn_id: "turn-2" },
+				access_programs: { cyber: "standard" },
+			},
+		});
+		expect(next.previous_response_id).toBe("resp_client_metadata_seed");
+		expect(next.input).toEqual([inputItem("tail")]);
+		expect(next.client_metadata).toEqual({ turn_id: "turn-2" });
+
+		const changed = await transformContinuationTurn(provider, {
+			requestId: "request-access-program-change",
+			input: [...base, inputItem("tail")],
+			nativeFields: {
+				access_programs: { cyber: "daybreak_blue" },
+				stream_options: { reasoning_summary_delivery: "sequential_cutoff" },
+			},
+		});
+		expect(changed.previous_response_id).toBe("resp_client_metadata_seed");
+		expect(changed.input).toEqual([inputItem("tail")]);
+		expect(changed.client_metadata).toBeUndefined();
+		expect(changed.access_programs).toEqual({ cyber: "daybreak_blue" });
+		expect(changed.stream_options).toEqual({
+			reasoning_summary_delivery: "sequential_cutoff",
+		});
 	});
 
 	it("treats absent and empty prompt cache options as the same configuration", async () => {

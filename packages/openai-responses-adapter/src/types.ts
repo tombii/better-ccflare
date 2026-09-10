@@ -22,6 +22,11 @@ export interface ResponsesRequest {
 	metadata?: Record<string, unknown>;
 	service_tier?: string;
 	context_management?: unknown;
+	stream_options?: { reasoning_summary_delivery?: "sequential_cutoff" };
+	client_metadata?: Record<string, string>;
+	access_programs?: {
+		cyber: "standard" | "daybreak_blue" | "daybreak_red";
+	};
 	/** Codex CLI's stable conversation identity for prompt-cache routing. */
 	prompt_cache_key?: string;
 	/** GPT-5.6+ cache controls. Implicit mode is represented by omitting mode. */
@@ -35,16 +40,24 @@ export interface ResponsesRequest {
 // ResponseItem union — all item types codex can send
 export type ResponseItem =
 	| ResponseMessageItem
+	| AdditionalToolsItem
 	| FunctionCallItem
 	| FunctionCallOutputItem
 	| CustomToolCallItem
 	| CustomToolCallOutputItem;
 
-export interface ResponseMessageItem {
-	type: "message";
-	role: "user" | "assistant";
+export interface AdditionalToolsItem {
+	type: "additional_tools";
 	id?: string;
-	content: ResponseContent[];
+	role: string;
+	tools: ResponsesTool[];
+}
+
+export interface ResponseMessageItem {
+	type?: "message";
+	role: "user" | "assistant" | "developer" | "system";
+	id?: string;
+	content: string | ResponseContent[];
 }
 
 export type ResponseContent =
@@ -81,13 +94,14 @@ export interface FunctionCallItem {
 	id?: string;
 	call_id: string;
 	name: string;
+	namespace?: string;
 	arguments: string; // JSON string
 }
 
 export interface FunctionCallOutputItem {
 	type: "function_call_output";
 	call_id: string;
-	output: string; // JSON string
+	output: string | ResponseContent[];
 }
 
 export interface CustomToolCallItem {
@@ -95,21 +109,44 @@ export interface CustomToolCallItem {
 	id?: string;
 	call_id: string;
 	name: string;
-	arguments: string;
+	namespace?: string;
+	input: string;
 }
 
 export interface CustomToolCallOutputItem {
 	type: "custom_tool_call_output";
 	call_id: string;
-	output: string;
+	output: string | ResponseContent[];
 }
 
 // Tool definition
-export type ResponsesTool = ResponsesFunctionTool | ResponsesBuiltinTool;
+export type ResponsesTool =
+	| ResponsesFunctionTool
+	| ResponsesCustomTool
+	| ResponsesNamespaceTool
+	| ResponsesBuiltinTool;
+
+export interface ResponsesNamespaceTool {
+	type: "namespace";
+	name: string;
+	description?: string;
+	tools: ResponsesTool[];
+}
+
+export interface ResponsesCustomTool {
+	type: "custom";
+	name: string;
+	namespace?: string;
+	description?: string;
+	format?:
+		| { type: "text" }
+		| { type: "grammar"; syntax: "lark" | "regex"; definition: string };
+}
 
 export interface ResponsesFunctionTool {
 	type: "function";
 	name: string;
+	namespace?: string;
 	description?: string;
 	parameters?: Record<string, unknown>; // JSON Schema
 	strict?: boolean;
@@ -121,8 +158,9 @@ export interface ResponsesBuiltinTool {
 }
 
 export interface ResponsesToolChoice {
-	type: "function";
+	type: "function" | "custom";
 	name: string;
+	namespace?: string;
 }
 
 export interface ResponsesReasoning {
@@ -146,7 +184,20 @@ export interface ResponsesResponse {
 	error?: ResponsesError;
 }
 
-export type OutputItem = OutputMessageItem | OutputFunctionCallItem;
+export type OutputItem =
+	| OutputMessageItem
+	| OutputFunctionCallItem
+	| OutputCustomToolCallItem;
+
+export interface OutputCustomToolCallItem {
+	type: "custom_tool_call";
+	id: string;
+	call_id: string;
+	name: string;
+	namespace?: string;
+	input: string;
+	status: "completed";
+}
 
 export interface OutputMessageItem {
 	type: "message";
@@ -173,6 +224,7 @@ export interface OutputFunctionCallItem {
 	id: string;
 	call_id: string;
 	name: string;
+	namespace?: string;
 	arguments: string; // JSON string
 	status: "completed";
 }
@@ -237,7 +289,7 @@ export interface AnthropicToolUseContent {
 export interface AnthropicToolResultContent {
 	type: "tool_result";
 	tool_use_id: string;
-	content: string | AnthropicTextContent[];
+	content: string | (AnthropicTextContent | AnthropicImageContent)[];
 }
 
 export interface AnthropicTool {

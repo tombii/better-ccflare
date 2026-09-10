@@ -4,10 +4,13 @@ import {
 	LATEST_SONNET_MODEL,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
+import { getRequestTools, getTranslatedToolName } from "./custom-tools";
 import type {
 	AnthropicContent,
+	AnthropicImageContent,
 	AnthropicMessage,
 	AnthropicRequest,
+	AnthropicTextContent,
 	AnthropicTool,
 	AnthropicToolChoice,
 	ResponseItem,
@@ -45,12 +48,34 @@ function parseArguments(args: string): unknown {
 function translateTools(tools: ResponsesTool[]): AnthropicTool[] {
 	const result: AnthropicTool[] = [];
 	for (const tool of tools) {
+		if (tool.type === "custom") {
+			const description = [
+				tool.description,
+				"Pass the tool's complete raw text in the input string.",
+				tool.format?.type === "grammar"
+					? `The input must follow this ${tool.format.syntax} grammar:\n${tool.format.definition}`
+					: undefined,
+			]
+				.filter(Boolean)
+				.join("\n\n");
+			result.push({
+				name: getTranslatedToolName(tool.name, tool.namespace),
+				description,
+				input_schema: {
+					type: "object",
+					properties: { input: { type: "string" } },
+					required: ["input"],
+					additionalProperties: false,
+				},
+			});
+			continue;
+		}
 		if (tool.type !== "function") {
 			logger.warn(`Skipping unsupported/built-in tool type: ${tool.type}`);
 			continue;
 		}
 		result.push({
-			name: tool.name,
+			name: getTranslatedToolName(tool.name, tool.namespace),
 			description: tool.description,
 			input_schema: tool.parameters ?? {},
 		});
@@ -65,8 +90,14 @@ function translateToolChoice(
 	if (choice === "auto") return { type: "auto" };
 	if (choice === "required") return { type: "any" };
 	if (choice === "none") return { type: "none" };
-	if (typeof choice === "object" && choice.type === "function") {
-		return { type: "tool", name: choice.name };
+	if (
+		typeof choice === "object" &&
+		(choice.type === "function" || choice.type === "custom")
+	) {
+		return {
+			type: "tool",
+			name: getTranslatedToolName(choice.name, choice.namespace),
+		};
 	}
 	return undefined;
 }
@@ -77,7 +108,7 @@ function translateContentItem(c: {
 	refusal?: string;
 	image_url?: string;
 	file_id?: string;
-}): AnthropicContent {
+}): AnthropicTextContent | AnthropicImageContent {
 	if (c.type === "input_text" || c.type === "output_text") {
 		return { type: "text", text: c.text ?? "" };
 	}
@@ -139,14 +170,15 @@ export function translateRequestToAnthropic(
 	const developerBlocks: string[] = [];
 
 	for (const item of req.input) {
-		if (item.type === "message") {
-			const content: AnthropicContent[] = item.content.map((c) =>
-				translateContentItem(c),
-			);
+		if (item.type === "message" || item.type === undefined) {
+			const content: AnthropicContent[] =
+				typeof item.content === "string"
+					? [{ type: "text", text: item.content }]
+					: item.content.map((c) => translateContentItem(c));
 			// developer role is used by Codex CLI for system-level instructions.
 			// Anthropic /v1/messages does not accept this role in the messages array
 			// so we extract the text and merge it into the system prompt instead.
-			if ((item.role as string) === "developer") {
+			if (item.role === "developer" || item.role === "system") {
 				for (const c of content) {
 					if (c.type === "text") developerBlocks.push(c.text);
 				}
@@ -160,8 +192,11 @@ export function translateRequestToAnthropic(
 			const toolUseBlock: AnthropicContent = {
 				type: "tool_use",
 				id: item.call_id,
-				name: item.name,
-				input: parseArguments(item.arguments),
+				name: getTranslatedToolName(item.name, item.namespace),
+				input:
+					item.type === "custom_tool_call"
+						? { input: item.input }
+						: parseArguments(item.arguments),
 			};
 			const last = messages[messages.length - 1];
 			if (last && last.role === "assistant") {
@@ -182,7 +217,10 @@ export function translateRequestToAnthropic(
 					{
 						type: "tool_result",
 						tool_use_id: item.call_id,
-						content: item.output,
+						content:
+							typeof item.output === "string"
+								? item.output
+								: item.output.map((c) => translateContentItem(c)),
 					},
 				],
 			});
@@ -208,8 +246,7 @@ export function translateRequestToAnthropic(
 		result.stream = req.stream;
 	}
 
-	const translatedTools =
-		req.tools && req.tools.length > 0 ? translateTools(req.tools) : [];
+	const translatedTools = translateTools(getRequestTools(req));
 	if (translatedTools.length > 0) {
 		result.tools = translatedTools;
 		const toolChoice = translateToolChoice(req.tool_choice);

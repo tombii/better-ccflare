@@ -377,6 +377,8 @@ claude
 
 ### Codex CLI as a Client
 
+The Codex VS Code extension uses the same provider configuration. See the [VS Code setup and compatibility guide](docs/codex-vscode.md).
+
 better-ccflare supports [Codex CLI](https://github.com/openai/codex) as a client. Codex speaks the OpenAI Responses API; better-ccflare intercepts requests to `/v1/responses` and `/v1/responses/compact` and translates them to Anthropic `POST /v1/messages` internally, routing through your configured account pool.
 
 Configure Codex CLI to point at better-ccflare in `~/.codex/config.toml`:
@@ -399,7 +401,7 @@ Codex CLI requires an API key to start — use `dummy-key` if better-ccflare API
 Known limitations:
 
 - Regular HTTP does not trust an arbitrary caller-supplied `previous_response_id`. On the authenticated, native outbound Codex route, an operator-controlled gateway request can enable gateway-managed continuation: better-ccflare retains only the last upstream response ID and cryptographic input/configuration digests, resumes only after an exact ordered-prefix match, and otherwise sends the full input without a response ID. This bounded state is in memory, so a restart safely cold-starts. WebSocket transport is not implemented.
-- Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are preserved on the native outbound Codex route. Routes translated to Anthropic skip built-in tools and forward only `type: "function"` tools.
+- Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are preserved on the native outbound Codex route. Routes translated to Anthropic skip built-in tools, forward function tools, and bridge freeform custom tools such as Codex's `apply_patch` through a string input schema. Custom tool grammars are described to the model but cannot be enforced by the Anthropic API.
 - `/v1/responses` rejects unknown top-level request fields with `400 invalid_request_error` instead of silently dropping them. The canonical ChatGPT subscription endpoint also rejects an explicitly supplied `max_output_tokens`; omit it and let the served model choose its output limit. Custom OpenAI-compatible endpoints may accept it.
 - Claude OAuth accounts (Claude Pro/Team, `provider=anthropic` with OAuth tokens) are automatically excluded from Codex CLI traffic — Anthropic bans these when used outside Claude CLI. Anthropic API key accounts are fine and will be used normally.
 

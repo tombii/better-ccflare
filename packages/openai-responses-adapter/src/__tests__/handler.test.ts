@@ -357,6 +357,9 @@ describe("handleResponsesRequest", () => {
 			service_tier: "priority",
 			context_management: [{ type: "compaction", compact_threshold: 100_000 }],
 			max_output_tokens: 2048,
+			stream_options: { reasoning_summary_delivery: "sequential_cutoff" },
+			client_metadata: { "x-codex-turn-metadata": "vscode-test-turn" },
+			access_programs: { cyber: "standard" },
 		};
 		const req = new Request("http://localhost/v1/responses", {
 			method: "POST",
@@ -615,6 +618,210 @@ describe("handleResponsesRequest", () => {
 		expect(
 			resp.headers.get("x-better-ccflare-codex-response-format"),
 		).toBeNull();
+	});
+
+	test.each([
+		{
+			upstream: {
+				detail: "This model is unavailable for the selected account",
+			},
+			message: "This model is unavailable for the selected account",
+			type: "api_error",
+			code: "api_error",
+		},
+		{
+			upstream: {
+				error: {
+					message: "Account access denied",
+					type: "permission_error",
+					code: "account_denied",
+				},
+			},
+			message: "Account access denied",
+			type: "permission_error",
+			code: "account_denied",
+		},
+		{
+			upstream: { error: "Provider rejected the request" },
+			message: "Provider rejected the request",
+			type: "api_error",
+			code: "api_error",
+		},
+	])("preserves actionable upstream 403 errors: $message", async ({
+		upstream,
+		message,
+		type,
+		code,
+	}) => {
+		const req = new Request("http://localhost/v1/responses", {
+			method: "POST",
+			body: JSON.stringify({ model: "gpt-6-astra", input: "Hi" }),
+		});
+		const response = await handleResponsesRequest(
+			req,
+			new URL(req.url),
+			async () =>
+				new Response(JSON.stringify(upstream), {
+					status: 403,
+					headers: {
+						"content-type": "application/json",
+						"content-length": "123",
+						"content-encoding": "gzip",
+						"x-request-id": "upstream-request-id",
+					},
+				}),
+			{},
+		);
+		expect(response.status).toBe(403);
+		expect(await response.json()).toEqual({ error: { message, type, code } });
+		expect(response.headers.get("content-length")).toBeNull();
+		expect(response.headers.get("content-encoding")).toBeNull();
+		expect(response.headers.get("x-request-id")).toBe("upstream-request-id");
+	});
+
+	test.each([
+		["text/html", "<html>Upstream access denied</html>"],
+		["application/json", "invalid JSON"],
+		["application/json", "null"],
+	])("reports upstream HTTP status for unrecognized %s errors", async (contentType, upstreamBody) => {
+		const req = new Request("http://localhost/v1/responses", {
+			method: "POST",
+			body: JSON.stringify({ model: "gpt-6-astra", input: "Hi" }),
+		});
+		const response = await handleResponsesRequest(
+			req,
+			new URL(req.url),
+			async () =>
+				new Response(upstreamBody, {
+					status: 403,
+					headers: { "content-type": contentType },
+				}),
+			{},
+		);
+		const body = await response.json();
+		expect(response.status).toBe(403);
+		expect(body.error.message).toContain("HTTP 403");
+		expect(body.error.message).toContain("proxy request logs");
+		expect(body.error.message).not.toContain(upstreamBody);
+	});
+
+	test.each([
+		true,
+		false,
+	])("validates non-streaming custom tool bridge input (valid: %s)", async (valid) => {
+		const patch =
+			"*** Begin Patch\n*** Add File: example.txt\n+hello\n*** End Patch";
+		const req = new Request("http://localhost/v1/responses", {
+			method: "POST",
+			body: JSON.stringify({
+				model: "gpt-6-astra",
+				input: "Create example.txt",
+				stream: false,
+				tools: [{ type: "custom", name: "apply_patch" }],
+			}),
+		});
+		const response = await handleResponsesRequest(
+			req,
+			new URL(req.url),
+			async () =>
+				new Response(
+					JSON.stringify({
+						...JSON.parse(ANTHROPIC_MESSAGE_BODY),
+						content: [
+							{
+								type: "tool_use",
+								id: "call_patch",
+								name: "apply_patch",
+								input: valid
+									? { input: patch }
+									: { unexpected: "invalid input" },
+							},
+						],
+						stop_reason: "tool_use",
+					}),
+					{ headers: { "content-type": "application/json" } },
+				),
+			{},
+		);
+		const body = await response.json();
+		if (valid) {
+			expect(response.status).toBe(200);
+			expect(body.output[0]).toMatchObject({
+				type: "custom_tool_call",
+				name: "apply_patch",
+				call_id: "call_patch",
+				input: patch,
+			});
+		} else {
+			expect(response.status).toBe(502);
+			expect(body.error.type).toBe("invalid_response_error");
+			expect(body.output).toBeUndefined();
+		}
+	});
+
+	test("translates VS Code additional_tools namespaces without changing native input", async () => {
+		const input = [
+			{
+				type: "additional_tools",
+				role: "developer",
+				tools: [
+					{
+						type: "namespace",
+						name: "functions",
+						tools: [
+							{ type: "custom", name: "exec", description: "Execute code" },
+						],
+					},
+				],
+			},
+			{
+				type: "message",
+				role: "user",
+				content: [{ type: "input_text", text: "Create a file" }],
+			},
+		];
+		const req = new Request("http://localhost/v1/responses", {
+			method: "POST",
+			body: JSON.stringify({ model: "gpt-6-astra", input, stream: false }),
+		});
+		const code =
+			'await tools.apply_patch("*** Begin Patch\\n*** Add File: example.txt\\n+hello\\n*** End Patch")';
+		const response = await handleResponsesRequest(
+			req,
+			new URL(req.url),
+			async (upstream) => {
+				const body = await upstream.json();
+				expect(body.__better_ccflare_codex_passthrough.native_input).toEqual(
+					input,
+				);
+				expect(body.tools).toHaveLength(1);
+				expect(body.tools[0].input_schema.properties.input.type).toBe("string");
+				return new Response(
+					JSON.stringify({
+						...JSON.parse(ANTHROPIC_MESSAGE_BODY),
+						content: [
+							{
+								type: "tool_use",
+								id: "call_exec",
+								name: body.tools[0].name,
+								input: { input: code },
+							},
+						],
+						stop_reason: "tool_use",
+					}),
+					{ headers: { "content-type": "application/json" } },
+				);
+			},
+			{},
+		);
+		expect(response.status).toBe(200);
+		const body = await response.json();
+		expect(body.output[0]).toMatchObject({
+			type: "custom_tool_call",
+			name: "exec",
+			namespace: "functions",
+			input: code,
+		});
 	});
 
 	test("Test 4: streaming path → returns a text/event-stream response", async () => {
