@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { Account } from "@better-ccflare/types";
+import { isEligibleForReauthDeadline } from "@better-ccflare/types";
 import {
 	checkReauthDeadline,
 	computeReauthDeadline,
@@ -256,28 +257,43 @@ describe("checkReauthDeadline — Account eligibility predicate (bugs H3+M1)", (
 	});
 
 	it("returns null for a non-anthropic provider even with refresh_token and access_token set", () => {
+		// last_manual_reauth_at is deliberately non-null (unlike the account
+		// default): computeReauthDeadline already returns null whenever the
+		// timestamp is null, regardless of eligibility, so a null timestamp
+		// here would let this test pass even if isEligibleForReauthDeadline
+		// were broken. A real timestamp forces this to exercise the provider
+		// check specifically.
 		const account = makeAccount({
 			provider: "qwen",
 			refresh_token: "refresh-value",
 			access_token: "access-value",
+			last_manual_reauth_at: Date.now() - 5 * DAY_MS,
 		});
 		expect(checkReauthDeadline(account)).toBeNull();
 	});
 
 	it("returns null when refresh_token === access_token (API-key-in-both-fields pattern)", () => {
+		// See note above: a non-null last_manual_reauth_at ensures this
+		// exercises the refresh/access-token-equality check, not the separate
+		// null-timestamp short-circuit in computeReauthDeadline.
 		const account = makeAccount({
 			provider: "anthropic",
 			refresh_token: "same-value",
 			access_token: "same-value",
+			last_manual_reauth_at: Date.now() - 5 * DAY_MS,
 		});
 		expect(checkReauthDeadline(account)).toBeNull();
 	});
 
 	it("returns null for an anthropic account with refresh_token but null access_token (console-mode-after-downgrade pattern)", () => {
+		// See note above: a non-null last_manual_reauth_at ensures this
+		// exercises the null-access_token check, not the separate
+		// null-timestamp short-circuit in computeReauthDeadline.
 		const account = makeAccount({
 			provider: "anthropic",
 			refresh_token: "refresh-value",
 			access_token: null,
+			last_manual_reauth_at: Date.now() - 5 * DAY_MS,
 		});
 		expect(checkReauthDeadline(account)).toBeNull();
 	});
@@ -298,5 +314,57 @@ describe("checkReauthDeadline — Account eligibility predicate (bugs H3+M1)", (
 			last_manual_reauth_at: null,
 		});
 		expect(checkReauthDeadline(account)).toBeNull();
+	});
+});
+
+describe("isEligibleForReauthDeadline", () => {
+	it("returns true for a genuine Claude OAuth account (anthropic, distinct refresh/access tokens)", () => {
+		expect(
+			isEligibleForReauthDeadline({
+				provider: "anthropic",
+				refreshToken: "refresh-value",
+				accessToken: "access-value",
+			}),
+		).toBe(true);
+	});
+
+	it("returns false for a non-anthropic provider", () => {
+		expect(
+			isEligibleForReauthDeadline({
+				provider: "qwen",
+				refreshToken: "refresh-value",
+				accessToken: "access-value",
+			}),
+		).toBe(false);
+	});
+
+	it("returns false when refreshToken === accessToken", () => {
+		expect(
+			isEligibleForReauthDeadline({
+				provider: "anthropic",
+				refreshToken: "same-value",
+				accessToken: "same-value",
+			}),
+		).toBe(false);
+	});
+
+	it("returns false when accessToken is null", () => {
+		expect(
+			isEligibleForReauthDeadline({
+				provider: "anthropic",
+				refreshToken: "refresh-value",
+				accessToken: null,
+			}),
+		).toBe(false);
+	});
+
+	it("returns false when refreshToken is null", () => {
+		expect(
+			isEligibleForReauthDeadline({
+				provider: "anthropic",
+				refreshToken: null,
+				accessToken: "access-value",
+			}),
+		).toBe(false);
 	});
 });
