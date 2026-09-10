@@ -175,8 +175,9 @@ export function translateRequestToAnthropic(
 				typeof item.content === "string"
 					? [{ type: "text", text: item.content }]
 					: item.content.map((c) => translateContentItem(c));
-			// developer role is used by Codex CLI for system-level instructions.
-			// Anthropic /v1/messages does not accept this role in the messages array
+			// developer role is used by Codex CLI, and system role by Codex
+			// VS Code clients, for system-level instructions. Anthropic
+			// /v1/messages does not accept either role in the messages array
 			// so we extract the text and merge it into the system prompt instead.
 			if (item.role === "developer" || item.role === "system") {
 				for (const c of content) {

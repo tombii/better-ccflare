@@ -730,9 +730,9 @@ export class CodexProvider extends BaseProvider {
 		newHeaders.delete("forwarded");
 		newHeaders.delete("x-real-ip");
 
-		// Remove internal proxy headers. Every control and identity header this
-		// proxy understands lives under the one namespace, so the prefix is the
-		// whole rule. Also remove headers supplied by ingress proxies/CDNs.
+		// Remove internal proxy headers (x-better-ccflare-*) and headers
+		// supplied by ingress proxies/CDNs (cf-*, x-forwarded-*) — none of
+		// these describe the proxy's own connection to Codex.
 		for (const key of [...newHeaders.keys()]) {
 			if (
 				key.startsWith("x-better-ccflare-") ||
