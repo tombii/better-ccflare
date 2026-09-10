@@ -123,7 +123,8 @@ export function ensureSchema(db: Database): void {
 			total_requests INTEGER DEFAULT 0,
 			priority INTEGER DEFAULT 0,
 			consecutive_rate_limits INTEGER NOT NULL DEFAULT 0,
-			requires_reauth INTEGER DEFAULT 0
+			requires_reauth INTEGER DEFAULT 0,
+			last_manual_reauth_at INTEGER
 		)
 	`);
 
