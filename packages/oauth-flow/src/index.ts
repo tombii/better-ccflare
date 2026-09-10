@@ -236,13 +236,15 @@ export class OAuthFlow {
 		}
 
 		// Handle claude-oauth mode — update OAuth tokens in place
+		const reauthTimestamp = Date.now();
 		await adapter.run(
-			`UPDATE accounts SET refresh_token = ?, access_token = ?, expires_at = ?, refresh_token_issued_at = ?, requires_reauth = 0 WHERE id = ?`,
+			`UPDATE accounts SET refresh_token = ?, access_token = ?, expires_at = ?, refresh_token_issued_at = ?, last_manual_reauth_at = ?, requires_reauth = 0 WHERE id = ?`,
 			[
 				tokens.refreshToken,
 				tokens.accessToken,
 				tokens.expiresAt,
-				Date.now(),
+				reauthTimestamp,
+				reauthTimestamp,
 				id,
 			],
 		);

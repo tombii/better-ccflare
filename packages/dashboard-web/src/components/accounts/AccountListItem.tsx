@@ -275,6 +275,23 @@ export function AccountListItem({
 								</span>
 							)
 						)}
+						{!account.requiresReauth &&
+							(account.reauthDeadlineStatus === "warning" ||
+								account.reauthDeadlineStatus === "critical" ||
+								account.reauthDeadlineStatus === "expired") && (
+								<span
+									className="text-sm text-amber-600"
+									title={`Empirically observed ~28-day OAuth reauthentication deadline. Run: bun run cli --reauthenticate "${account.name}"`}
+								>
+									{account.reauthDeadlineStatus === "expired"
+										? Math.abs(account.hoursUntilReauthRequired ?? 0) < 24
+											? `Reauth overdue by ${Math.abs(account.hoursUntilReauthRequired ?? 0)}h`
+											: `Reauth overdue by ${Math.abs(account.daysUntilReauthRequired ?? 0)}d`
+										: (account.hoursUntilReauthRequired ?? Infinity) < 24
+											? `Reauth in ${account.hoursUntilReauthRequired}h`
+											: `Reauth in ${account.daysUntilReauthRequired}d`}
+								</span>
+							)}
 						{!presenter.isPaused && presenter.rateLimitStatus !== "OK" && (
 							<span
 								className={`text-sm ${

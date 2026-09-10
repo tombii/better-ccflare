@@ -50,7 +50,11 @@ import type {
 	LoadBalancingStrategy,
 	RateLimitReason,
 } from "@better-ccflare/types";
-import { requiresSessionDurationTracking } from "@better-ccflare/types";
+import {
+	computeReauthDeadline,
+	isEligibleForReauthDeadline,
+	requiresSessionDurationTracking,
+} from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 import {
 	computeRateLimitStatusDisplay,
@@ -311,6 +315,7 @@ export function createAccountsListHandler(
 			model_fallbacks: string | null;
 			billing_type: string | null;
 			pause_reason: string | null;
+			last_manual_reauth_at: number | null;
 			requires_reauth: 0 | 1;
 		}>(
 			`
@@ -347,6 +352,7 @@ export function createAccountsListHandler(
 					model_fallbacks,
 					billing_type,
 					pause_reason,
+					last_manual_reauth_at,
 					CASE
 						WHEN expires_at > ? THEN 1
 						ELSE 0
@@ -673,6 +679,18 @@ export function createAccountsListHandler(
 					}
 				}
 
+				const reauthDeadline = computeReauthDeadline({
+					eligible: isEligibleForReauthDeadline({
+						provider: account.provider,
+						refreshToken: account.refresh_token,
+						accessToken: account.access_token,
+					}),
+					lastManualReauthAt:
+						account.last_manual_reauth_at != null
+							? Number(account.last_manual_reauth_at)
+							: null,
+				});
+
 				return {
 					id: account.id,
 					name: account.name,
@@ -685,6 +703,13 @@ export function createAccountsListHandler(
 					created: new Date(Number(account.created_at)).toISOString(),
 					paused: account.paused === 1,
 					requiresReauth: account.requires_reauth === 1,
+					lastManualReauthAt:
+						account.last_manual_reauth_at != null
+							? Number(account.last_manual_reauth_at)
+							: null,
+					reauthDeadlineStatus: reauthDeadline?.status ?? null,
+					daysUntilReauthRequired: reauthDeadline?.daysUntilDeadline ?? null,
+					hoursUntilReauthRequired: reauthDeadline?.hoursUntilDeadline ?? null,
 					pauseReason: account.pause_reason ?? null,
 					priority: Number(account.priority) || 0,
 					tokenStatus: account.token_valid ? "valid" : "expired",

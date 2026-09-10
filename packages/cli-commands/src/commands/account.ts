@@ -2630,19 +2630,22 @@ export async function reauthenticateAccount(
 	console.log("Updating OAuth tokens...");
 
 	try {
+		const reauthTimestamp = Date.now();
 		await db.run(
 			`UPDATE accounts SET
 				refresh_token = ?,
 				access_token = ?,
 				expires_at = ?,
 				refresh_token_issued_at = ?,
+				last_manual_reauth_at = ?,
 				requires_reauth = 0
 			WHERE id = ?`,
 			[
 				tokens.refreshToken,
 				tokens.accessToken,
 				tokens.expiresAt,
-				Date.now(),
+				reauthTimestamp,
+				reauthTimestamp,
 				account.id,
 			],
 		);

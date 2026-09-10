@@ -92,3 +92,9 @@ export const REFRESH_TOKEN_HEALTH_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 h
  * - critical: Re-authenticate immediately to prevent service interruption
  * - expired: Service interruption likely, immediate re-authentication required
  */
+
+// Manual reauthentication deadline constants (REAUTH_MANUAL_DEADLINE_MS,
+// REAUTH_DEADLINE_WARNING_THRESHOLD_MS, REAUTH_DEADLINE_CRITICAL_THRESHOLD_MS)
+// now live canonically in @better-ccflare/types (packages/types/src/account.ts),
+// alongside computeReauthDeadline/isEligibleForReauthDeadline. See
+// packages/proxy/src/handlers/token-health-monitor.ts for the re-export.

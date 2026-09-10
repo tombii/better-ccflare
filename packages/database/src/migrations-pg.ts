@@ -101,6 +101,7 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			requires_reauth INTEGER DEFAULT 0,
 			billing_type TEXT DEFAULT NULL,
 			refresh_token_issued_at BIGINT,
+			last_manual_reauth_at BIGINT,
 			rate_limited_reason TEXT,
 			rate_limited_at BIGINT,
 			consecutive_rate_limits INTEGER NOT NULL DEFAULT 0
@@ -727,6 +728,12 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			column: "refresh_token_issued_at",
 			definition:
 				"ALTER TABLE accounts ADD COLUMN refresh_token_issued_at BIGINT",
+		},
+		{
+			table: "accounts",
+			column: "last_manual_reauth_at",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN last_manual_reauth_at BIGINT",
 		},
 		{
 			table: "accounts",

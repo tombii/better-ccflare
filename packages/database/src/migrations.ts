@@ -1012,6 +1012,16 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added refresh_token_issued_at column to accounts table");
 		}
 
+		// Add last_manual_reauth_at column to track when a human last manually reauthenticated
+		// (distinct from refresh_token_issued_at, which is also bumped by silent auto-refresh —
+		// see reauthenticateAccount() and OAuthFlow.completeReauth())
+		if (!initialAccountsColumnNames.includes("last_manual_reauth_at")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN last_manual_reauth_at INTEGER",
+			).run();
+			log.info("Added last_manual_reauth_at column to accounts table");
+		}
+
 		// Add auto_pause_on_overage_enabled column for Anthropic accounts
 		if (!initialAccountsColumnNames.includes("auto_pause_on_overage_enabled")) {
 			db.prepare(
