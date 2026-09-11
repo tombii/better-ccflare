@@ -1,6 +1,14 @@
 import { Logger } from "@better-ccflare/logger";
-import type { Account } from "@better-ccflare/types";
+import {
+	type Account,
+	computeReauthDeadline,
+	isEligibleForReauthDeadline,
+	type ReauthDeadlineStatus,
+} from "@better-ccflare/types";
 import { REFRESH_TOKEN_MAX_AGE_MS } from "../constants";
+
+export type { ReauthDeadlineStatus };
+export { computeReauthDeadline };
 
 const log = new Logger("TokenHealthMonitor");
 
@@ -297,6 +305,24 @@ export function isRefreshTokenLikelyExpired(account: Account): boolean {
 
 	const age = Date.now() - tokenIssuedAt;
 	return age > REFRESH_TOKEN_MAX_AGE_MS;
+}
+
+/**
+ * Convenience wrapper around computeReauthDeadline for a full Account object.
+ * ReauthDeadlineStatus/computeReauthDeadline are re-exported above from
+ * @better-ccflare/types, the canonical source for this arithmetic.
+ */
+export function checkReauthDeadline(
+	account: Account,
+): ReauthDeadlineStatus | null {
+	return computeReauthDeadline({
+		eligible: isEligibleForReauthDeadline({
+			provider: account.provider,
+			refreshToken: account.refresh_token,
+			accessToken: account.access_token,
+		}),
+		lastManualReauthAt: account.last_manual_reauth_at,
+	});
 }
 
 /**

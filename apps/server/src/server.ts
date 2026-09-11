@@ -933,7 +933,9 @@ export default async function startServer(options?: {
 	container.registerInstance(SERVICE_KEYS.PricingLogger, pricingLogger);
 	setPricingLogger(pricingLogger);
 
-	const alertService = new AlertService(db, config);
+	const alertService = new AlertService(db, config, () =>
+		dbOps.getAllAccounts(),
+	);
 	alertService.start();
 	registerDisposable({ dispose: () => alertService.stop() });
 
