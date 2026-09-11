@@ -929,6 +929,7 @@ export async function proxyWithAccount(
 		}
 		const transformedModel =
 			(transformedBodyJson?.model as string | undefined) ?? "";
+		let responseModelFallback = transformedModel;
 		if (
 			transformedModel &&
 			cacheControlRejectors.has(
@@ -1566,6 +1567,7 @@ export async function proxyWithAccount(
 					rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
 						? materializeSyntheticResponse(retryTransformedRequest)
 						: await forwardUpstream(retryTransformedRequest);
+					responseModelFallback = nextModel;
 
 					rawResponse = await checkZai1305(
 						rawResponse,
@@ -1714,6 +1716,7 @@ export async function proxyWithAccount(
 			account,
 			req.headers,
 			drainAbortController,
+			{ requestModel: responseModelFallback || null },
 		);
 
 		// Failover to next account on upstream 401 — credentials are invalid/expired
@@ -1826,6 +1829,7 @@ export async function proxyWithAccount(
 							account,
 							req.headers,
 							drainAbortController,
+							{ requestModel: responseModelFallback || null },
 						);
 
 						cancelDiscardedResponseBody(response);

@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	getProvider,
+	OpenAICompatibleProvider,
+	type ProviderResponseContext,
+	registerProvider,
+} from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
@@ -105,6 +111,16 @@ function jsonResponse(body: object, status: number): Response {
 	});
 }
 
+function streamResponseWithoutModel(): Response {
+	return new Response(
+		`data: ${JSON.stringify({
+			id: "chatcmpl-stream",
+			choices: [{ delta: { content: "done" }, finish_reason: null }],
+		})}\n\ndata: [DONE]\n\n`,
+		{ headers: { "content-type": "text/event-stream" } },
+	);
+}
+
 async function runProxy(account: Account, body: ArrayBuffer): Promise<void> {
 	try {
 		await proxyWithAccount(
@@ -166,6 +182,111 @@ describe("proxy account request transformer ordering", () => {
 		expect(outboundBodies).toHaveLength(1);
 		expect(outboundBodies[0]?.max_completion_tokens).toBe(321);
 		expect(outboundBodies[0]).not.toHaveProperty("max_tokens");
+	});
+
+	it("uses the mapped outbound model when the upstream stream omits model", async () => {
+		const originalProvider = getProvider("openai-compatible");
+		let convertedModel: string | undefined;
+
+		class InspectingOpenAIProvider extends OpenAICompatibleProvider {
+			override async processResponse(
+				response: Response,
+				account: Account | null,
+				requestHeaders?: Headers,
+				drainAbort?: AbortController,
+				context?: ProviderResponseContext,
+			): Promise<Response> {
+				const processed = await super.processResponse(
+					response,
+					account,
+					requestHeaders,
+					drainAbort,
+					context,
+				);
+				const raw = await processed.text();
+				const messageStart = raw
+					.split("\n")
+					.find((line) => line.startsWith('data: {"type":"message_start"'));
+				if (messageStart) {
+					convertedModel = JSON.parse(messageStart.slice(6)).message.model;
+				}
+
+				// Stop before forwardToClient needs the process-global usage collector.
+				return new Response(null, { status: 401 });
+			}
+		}
+
+		registerProvider(new InspectingOpenAIProvider());
+		globalThis.fetch = mock(async () => streamResponseWithoutModel());
+
+		try {
+			await runProxy(makeAccount(), makeRequestBody());
+			expect(convertedModel).toBe("primary-openai-model");
+		} finally {
+			if (originalProvider) registerProvider(originalProvider);
+		}
+	});
+
+	it("uses the final model fallback when its upstream stream omits model", async () => {
+		const originalProvider = getProvider("openai-compatible");
+		const outboundModels: unknown[] = [];
+		let convertedModel: string | undefined;
+
+		class InspectingOpenAIProvider extends OpenAICompatibleProvider {
+			override async processResponse(
+				response: Response,
+				account: Account | null,
+				requestHeaders?: Headers,
+				drainAbort?: AbortController,
+				context?: ProviderResponseContext,
+			): Promise<Response> {
+				const processed = await super.processResponse(
+					response,
+					account,
+					requestHeaders,
+					drainAbort,
+					context,
+				);
+				const raw = await processed.text();
+				const messageStart = raw
+					.split("\n")
+					.find((line) => line.startsWith('data: {"type":"message_start"'));
+				if (messageStart) {
+					convertedModel = JSON.parse(messageStart.slice(6)).message.model;
+				}
+				return new Response(null, { status: 401 });
+			}
+		}
+
+		registerProvider(new InspectingOpenAIProvider());
+		globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+			const request =
+				input instanceof Request ? input : new Request(String(input));
+			const body = (await request.json()) as Record<string, unknown>;
+			outboundModels.push(body.model);
+
+			return outboundModels.length === 1
+				? jsonResponse({ error: { message: "Rate limit exceeded" } }, 429)
+				: streamResponseWithoutModel();
+		});
+
+		try {
+			await runProxy(
+				makeAccount({
+					model_fallbacks: JSON.stringify({
+						sonnet: "fallback-openai-model",
+					}),
+				}),
+				makeRequestBody(),
+			);
+			expect(outboundModels).toEqual([
+				"primary-openai-model",
+				"fallback-openai-model",
+			]);
+			expect(convertedModel).toBe("fallback-openai-model");
+		} finally {
+			if (originalProvider) registerProvider(originalProvider);
+		}
 	});
 
 	it("applies the account transformer to the model-fallback attempt", async () => {

@@ -1218,6 +1218,26 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 // ── transformStreamingResponse — model extraction ────────────────────────────
 
 describe("transformStreamingResponse — model extraction", () => {
+	it("uses the mapped outbound model when the upstream stream omits model", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				choices: [{ index: 0, delta: { content: "Hi" }, finish_reason: null }],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream, {
+			fallbackModel: "gpt-5.6-terra",
+		});
+		const raw = await readStream(transformed.body);
+		const events = parseSSEEvents(raw);
+		const msgStart = events.find((e) => e.event === "message_start");
+		expect(msgStart).toBeDefined();
+		if (!msgStart) throw new Error("expected message_start event");
+
+		expect(parseEventData(msgStart).message.model).toBe("gpt-5.6-terra");
+	});
+
 	it("extracts model from first chunk and includes it in message_start", async () => {
 		const upstream = makeOpenAIStream([
 			JSON.stringify({
@@ -1227,7 +1247,9 @@ describe("transformStreamingResponse — model extraction", () => {
 			}),
 			"[DONE]",
 		]);
-		const transformed = transformStreamingResponse(upstream);
+		const transformed = transformStreamingResponse(upstream, {
+			fallbackModel: "fallback-must-not-win",
+		});
 		const raw = await readStream(transformed.body);
 		const events = parseSSEEvents(raw);
 		const msgStart = events.find((e) => e.event === "message_start");

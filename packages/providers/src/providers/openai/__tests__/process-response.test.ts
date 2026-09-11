@@ -103,6 +103,31 @@ function parseSSEEvents(raw: string) {
 // ---------------------------------------------------------------------------
 
 describe("processResponse – JSON (application/json)", () => {
+	it("uses the mapped outbound model when JSON response omits model", async () => {
+		const provider = makeProvider();
+		const upstream = openaiJsonResponse({
+			id: "chatcmpl-fallback",
+			choices: [
+				{
+					message: { role: "assistant", content: "hi" },
+					finish_reason: "stop",
+				},
+			],
+			usage: { prompt_tokens: 1, completion_tokens: 1 },
+		});
+
+		const result = await provider.processResponse(
+			upstream,
+			makeAccount(),
+			undefined,
+			undefined,
+			{ requestModel: "gpt-5.6-terra" },
+		);
+		const body = await result.json();
+
+		expect(body.model).toBe("gpt-5.6-terra");
+	});
+
 	it("simple text response converts to Anthropic message shape", async () => {
 		const provider = makeProvider();
 		const account = makeAccount();
@@ -319,6 +344,32 @@ describe("processResponse – JSON (application/json)", () => {
 // ---------------------------------------------------------------------------
 
 describe("processResponse – SSE (text/event-stream)", () => {
+	it("uses the mapped outbound model when SSE response omits model", async () => {
+		const provider = makeProvider();
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "chatcmpl-s-fallback",
+				choices: [{ delta: { content: "Hi" }, finish_reason: null }],
+			}),
+			"[DONE]",
+		]);
+
+		const result = await provider.processResponse(
+			upstream,
+			makeAccount(),
+			undefined,
+			undefined,
+			{ requestModel: "gpt-5.6-terra" },
+		);
+		if (!result.body) throw new Error("expected response body");
+		const events = parseSSEEvents(await readStream(result.body));
+		const messageStart = events.find((e) => e.event === "message_start");
+		expect(messageStart).toBeDefined();
+		if (!messageStart?.data) throw new Error("expected message_start event");
+
+		expect(JSON.parse(messageStart.data).message.model).toBe("gpt-5.6-terra");
+	});
+
 	it("returns a Response with a non-null body stream", async () => {
 		const provider = makeProvider();
 		const upstream = makeOpenAIStream([
