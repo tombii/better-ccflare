@@ -65,6 +65,52 @@ describe("forwardToClient usage-collector protocol", () => {
 		} as unknown as import("../handlers").ProxyContext;
 	}
 
+	it("aliases the client model without changing accounting bytes", async () => {
+		const { starts, ends } = createMockCollector();
+		const ctx = createCtx();
+		const upstream = JSON.stringify({
+			id: "msg_backend",
+			type: "message",
+			role: "assistant",
+			model: "gpt-5.3-codex",
+			content: [{ type: "text", text: "unchanged" }],
+		});
+
+		const response = await forwardToClient(
+			{
+				requestId: "req-model-alias",
+				method: "POST",
+				path: "/v1/messages",
+				account: null,
+				requestHeaders: new Headers({ "content-type": "application/json" }),
+				requestBody: new TextEncoder().encode(
+					JSON.stringify({ model: "claude-opus-4-6", messages: [] }),
+				),
+				response: new Response(upstream, {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+				// Equal original/applied metadata is intentional: a provider can map
+				// this alias later, without an agent-preference rewrite.
+				originalModel: "claude-opus-4-6",
+				appliedModel: "claude-opus-4-6",
+			},
+			ctx,
+		);
+
+		const clientJson = await response.json();
+		expect(clientJson.model).toBe("claude-opus-4-6");
+		expect(starts[0].originalModel).toBeNull();
+		expect(starts[0].appliedModel).toBeNull();
+		await waitFor(() => ends.length === 1);
+		expect(
+			Buffer.from(ends[0].responseBody as string, "base64").toString(),
+		).toBe(upstream);
+	});
+
 	it("calls handleStart with messageId", async () => {
 		const { starts } = createMockCollector();
 		const ctx = createCtx();

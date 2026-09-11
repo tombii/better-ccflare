@@ -18,6 +18,10 @@ import { isInternalProbe, type ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
 import { ingestModelsListing } from "./model-catalog";
+import {
+	rewriteAnthropicMessageJsonModelStream,
+	rewriteAnthropicMessageSseModel,
+} from "./response-model-alias";
 import { combineChunks, teeStream } from "./stream-tee";
 import { getUsageCollector } from "./usage-collector";
 import {
@@ -455,6 +459,14 @@ export async function forwardToClient(
 			onClose,
 			onError,
 		});
+		// Keep provider/accounting observers on the unmodified upstream bytes.
+		// Only the final client-facing stream presents the model id requested by
+		// the client. This alias is wire compatibility, not evidence that the
+		// upstream backend ran that model.
+		const clientBody =
+			isAnthropicMessagesSseResponse && originalModel
+				? rewriteAnthropicMessageSseModel(passthroughBody, originalModel)
+				: passthroughBody;
 
 		const headers = withModelRewriteHeader(
 			response.headers,
@@ -462,8 +474,9 @@ export async function forwardToClient(
 			appliedModel,
 		);
 		headers.delete("x-better-ccflare-request-path");
+		if (clientBody !== passthroughBody) headers.delete("content-length");
 
-		return new Response(passthroughBody, {
+		return new Response(clientBody, {
 			status: response.status,
 			statusText: response.statusText,
 			headers,
@@ -538,14 +551,31 @@ export async function forwardToClient(
 		},
 	});
 
+	const isAnthropicMessagesJsonResponse =
+		method === "POST" &&
+		path === "/v1/messages" &&
+		response.ok &&
+		(response.headers
+			.get("content-type")
+			?.toLowerCase()
+			.includes("application/json") ??
+			false);
+	// As with SSE above, this transform is downstream of analytics so logs,
+	// pricing and usage retain the provider's real response model.
+	const clientBody =
+		isAnthropicMessagesJsonResponse && originalModel
+			? rewriteAnthropicMessageJsonModelStream(passthroughBody, originalModel)
+			: passthroughBody;
+
 	const headers = withModelRewriteHeader(
 		response.headers,
 		originalModel,
 		appliedModel,
 	);
 	headers.delete("x-better-ccflare-request-path");
+	if (clientBody !== passthroughBody) headers.delete("content-length");
 
-	return new Response(passthroughBody, {
+	return new Response(clientBody, {
 		status: response.status,
 		statusText: response.statusText,
 		headers,
