@@ -34,6 +34,7 @@ const baseAccount: Account = {
 	autoRefreshEnabled: true,
 	customEndpoint: null,
 	modelMappings: null,
+	requestTransformer: null,
 	usageUtilization: null,
 	usageWindow: null,
 	usageData: null,
@@ -45,7 +46,10 @@ const baseAccount: Account = {
 	isPrimary: false,
 };
 
-function renderAccount(account: Account): string {
+function renderAccount(
+	account: Account,
+	onRequestTransformerChange?: (account: Account) => void,
+): string {
 	return renderToStaticMarkup(
 		<AccountListItem
 			account={account}
@@ -59,6 +63,7 @@ function renderAccount(account: Account): string {
 			onAutoRefreshToggle={() => {}}
 			onBillingTypeToggle={() => {}}
 			onAnthropicReauth={() => {}}
+			onRequestTransformerChange={onRequestTransformerChange}
 		/>,
 	);
 }
@@ -86,5 +91,55 @@ describe("AccountListItem", () => {
 		});
 
 		expect(html).toContain("Paused (failure threshold)");
+	});
+
+	it("shows the request transformer action only for openai-compatible accounts", () => {
+		const onRequestTransformerChange = () => {};
+		const openAICompatibleHtml = renderAccount(
+			{
+				...baseAccount,
+				provider: "openai-compatible",
+			},
+			onRequestTransformerChange,
+		);
+		const anthropicCompatibleHtml = renderAccount(
+			{
+				...baseAccount,
+				provider: "anthropic-compatible",
+			},
+			onRequestTransformerChange,
+		);
+
+		expect(openAICompatibleHtml).toContain(
+			'aria-label="Configure request transformer"',
+		);
+		expect(anthropicCompatibleHtml).not.toContain(
+			'aria-label="Configure request transformer"',
+		);
+	});
+
+	it("highlights the request transformer action when a transformer is enabled", () => {
+		const disabledHtml = renderAccount(
+			{
+				...baseAccount,
+				provider: "openai-compatible",
+			},
+			() => {},
+		);
+		const enabledHtml = renderAccount(
+			{
+				...baseAccount,
+				provider: "openai-compatible",
+				requestTransformer: "max-tokens-to-max-completion-tokens",
+			},
+			() => {},
+		);
+
+		expect(disabledHtml).toContain('aria-pressed="false"');
+		expect(disabledHtml).not.toContain(
+			"lucide lucide-replace h-4 w-4 text-primary",
+		);
+		expect(enabledHtml).toContain('aria-pressed="true"');
+		expect(enabledHtml).toContain("lucide lucide-replace h-4 w-4 text-primary");
 	});
 });

@@ -1,6 +1,6 @@
 import { AlertCircle, Plus } from "lucide-react";
 import { useState } from "react";
-import { type Account, api } from "../api";
+import { type Account, api, type RequestTransformer } from "../api";
 import { useAccounts, useRenameAccount } from "../hooks/queries";
 import { useApiError } from "../hooks/useApiError";
 import {
@@ -9,6 +9,7 @@ import {
 	AccountList,
 	AccountModelMappingsDialog,
 	AccountPriorityDialog,
+	AccountRequestTransformerDialog,
 	AnthropicReauthDialog,
 	CodexReauthDialog,
 	DeleteConfirmationDialog,
@@ -68,6 +69,13 @@ export function AccountsTab() {
 		account: null,
 	});
 	const [modelMappingsDialog, setModelMappingsDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
+	const [requestTransformerDialog, setRequestTransformerDialog] = useState<{
 		isOpen: boolean;
 		account: Account | null;
 	}>({
@@ -555,6 +563,10 @@ export function AccountsTab() {
 		setModelMappingsDialog({ isOpen: true, account });
 	};
 
+	const handleRequestTransformerChange = (account: Account) => {
+		setRequestTransformerDialog({ isOpen: true, account });
+	};
+
 	const handleReauth = (account: Account) => {
 		setQwenReauthDialog({ isOpen: true, account });
 	};
@@ -599,6 +611,20 @@ export function AccountsTab() {
 		try {
 			await api.updateAccountModelMappings(accountId, modelMappings);
 			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleUpdateRequestTransformer = async (
+		accountId: string,
+		requestTransformer: RequestTransformer | null,
+	) => {
+		try {
+			await api.updateAccountRequestTransformer(accountId, requestTransformer);
+			await loadAccounts();
+			setActionError(null);
 		} catch (err) {
 			setActionError(formatError(err));
 			throw err;
@@ -692,6 +718,7 @@ export function AccountsTab() {
 						onPeakHoursPauseToggle={handlePeakHoursPauseToggle}
 						onCustomEndpointChange={handleCustomEndpointChange}
 						onModelMappingsChange={handleModelMappingsChange}
+						onRequestTransformerChange={handleRequestTransformerChange}
 						onReauth={handleReauth}
 						onAnthropicReauth={handleAnthropicReauth}
 						onCodexReauth={handleCodexReauth}
@@ -770,6 +797,19 @@ export function AccountsTab() {
 						})
 					}
 					onUpdateModelMappings={handleUpdateModelMappings}
+				/>
+			)}
+			{requestTransformerDialog.isOpen && requestTransformerDialog.account && (
+				<AccountRequestTransformerDialog
+					isOpen={requestTransformerDialog.isOpen}
+					account={requestTransformerDialog.account}
+					onOpenChange={(open) =>
+						setRequestTransformerDialog({
+							isOpen: open,
+							account: open ? requestTransformerDialog.account : null,
+						})
+					}
+					onUpdateRequestTransformer={handleUpdateRequestTransformer}
 				/>
 			)}
 			<QwenReauthDialog

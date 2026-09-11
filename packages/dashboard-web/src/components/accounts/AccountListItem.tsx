@@ -8,6 +8,7 @@ import {
 	Pause,
 	Play,
 	RefreshCw,
+	Replace,
 	Trash2,
 	Zap,
 } from "lucide-react";
@@ -52,6 +53,7 @@ interface AccountListItemProps {
 	onPeakHoursPauseToggle?: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
+	onRequestTransformerChange?: (account: Account) => void;
 	onReauth?: (account: Account) => void;
 	onAnthropicReauth?: (account: Account) => void;
 	onCodexReauth?: (account: Account) => void;
@@ -73,6 +75,7 @@ export function AccountListItem({
 	onPeakHoursPauseToggle,
 	onCustomEndpointChange,
 	onModelMappingsChange,
+	onRequestTransformerChange,
 	onReauth,
 	onAnthropicReauth,
 	onCodexReauth,
@@ -363,6 +366,27 @@ export function AccountListItem({
 							/>
 						</Button>
 					)}
+					{account.provider === "openai-compatible" &&
+						onRequestTransformerChange && (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={() => onRequestTransformerChange(account)}
+								aria-label="Configure request transformer"
+								aria-pressed={account.requestTransformer !== null}
+								title={
+									account.requestTransformer
+										? "Request transformer: Max Tokens → Max Completion Tokens"
+										: "Configure request transformer"
+								}
+							>
+								<Replace
+									className={`h-4 w-4 ${
+										account.requestTransformer ? "text-primary" : ""
+									}`}
+								/>
+							</Button>
+						)}
 					{account.provider === "qwen" && onReauth && (
 						<Button
 							variant="ghost"
