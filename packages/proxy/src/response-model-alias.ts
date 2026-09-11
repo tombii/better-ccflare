@@ -1,5 +1,7 @@
 const encoder = new TextEncoder();
 
+export const MAX_ANTHROPIC_MESSAGE_JSON_ALIAS_BYTES = 256 * 1024;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -177,9 +179,9 @@ export function rewriteAnthropicMessageSseModel(
 }
 
 /**
- * Buffer one non-streaming response, then rewrite only a valid Message object.
- * JSON cannot be safely changed before the complete object is available, so
- * this intentionally retains the response body just as Response.json() would.
+ * Buffer one bounded non-streaming response, then rewrite only a valid Message
+ * object. JSON cannot be safely changed before the complete object is available.
+ * Responses over the limit are passed through byte-for-byte without aliasing.
  */
 export function rewriteAnthropicMessageJsonModelStream(
 	upstream: ReadableStream<Uint8Array>,
@@ -188,51 +190,92 @@ export function rewriteAnthropicMessageJsonModelStream(
 	const reader = upstream.getReader();
 	let chunks: Uint8Array[] = [];
 	let totalBytes = 0;
+	let passthrough = false;
 	let settled = false;
+	let released = false;
+
+	const release = (): void => {
+		if (released) return;
+		released = true;
+		reader.releaseLock();
+	};
+
+	const discardBuffered = (): void => {
+		chunks = [];
+		totalBytes = 0;
+	};
 
 	return new ReadableStream<Uint8Array>({
 		async pull(controller) {
 			if (settled) return;
 			try {
+				if (passthrough) {
+					const { value, done } = await reader.read();
+					if (settled) return;
+					if (done) {
+						settled = true;
+						release();
+						controller.close();
+					} else {
+						controller.enqueue(value);
+					}
+					return;
+				}
+
 				while (true) {
 					const { value, done } = await reader.read();
 					if (settled) return;
 					if (done) break;
-					chunks.push(value);
+					if (value.length === 0) continue;
+					if (
+						value.length >
+						MAX_ANTHROPIC_MESSAGE_JSON_ALIAS_BYTES - totalBytes
+					) {
+						passthrough = true;
+						for (const chunk of chunks) controller.enqueue(chunk);
+						discardBuffered();
+						controller.enqueue(value);
+						return;
+					}
+					// Copy only this view so a small chunk cannot retain a much larger
+					// upstream backing buffer for the duration of the bounded read. Do not
+					// call .slice(): Node Buffers override it to return another view.
+					chunks.push(new Uint8Array(value));
 					totalBytes += value.length;
 				}
-				settled = true;
-				reader.releaseLock();
+
 				const bodyBytes = new Uint8Array(totalBytes);
 				let offset = 0;
 				for (const chunk of chunks) {
 					bodyBytes.set(chunk, offset);
 					offset += chunk.length;
 				}
-				chunks = [];
-				totalBytes = 0;
+				discardBuffered();
 				const body = new TextDecoder().decode(bodyBytes);
 				controller.enqueue(
 					encoder.encode(
 						rewriteAnthropicMessageJsonModel(body, requestedModel),
 					),
 				);
+				settled = true;
+				release();
 				controller.close();
 			} catch (error) {
+				if (settled) return;
 				settled = true;
-				reader.releaseLock();
+				discardBuffered();
+				release();
 				controller.error(error);
 			}
 		},
 		async cancel(reason) {
 			if (settled) return;
 			settled = true;
-			chunks = [];
-			totalBytes = 0;
+			discardBuffered();
 			try {
 				await reader.cancel(reason);
 			} finally {
-				reader.releaseLock();
+				release();
 			}
 		},
 	});

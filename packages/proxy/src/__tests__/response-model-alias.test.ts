@@ -1,5 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import {
+	MAX_ANTHROPIC_MESSAGE_JSON_ALIAS_BYTES,
 	rewriteAnthropicMessageJsonModel,
 	rewriteAnthropicMessageJsonModelStream,
 	rewriteAnthropicMessageSseModel,
@@ -108,6 +109,190 @@ describe("Anthropic response model aliasing", () => {
 		);
 		expect(output.slice(0, rewrittenStart.length)).toEqual(rewrittenStart);
 		expect(output.slice(rewrittenStart.length)).toEqual(following);
+	});
+
+	it("rewrites a JSON response exactly at the buffering limit", async () => {
+		const prefix = '{"type":"message","model":"backend","content":"';
+		const suffix = '"}';
+		const padding = "x".repeat(
+			MAX_ANTHROPIC_MESSAGE_JSON_ALIAS_BYTES -
+				encoder.encode(prefix + suffix).length,
+		);
+		const body = prefix + padding + suffix;
+		expect(encoder.encode(body).length).toBe(
+			MAX_ANTHROPIC_MESSAGE_JSON_ALIAS_BYTES,
+		);
+		const upstream = new Response(encoder.encode(body)).body;
+		expect(upstream).not.toBeNull();
+
+		const output = await collect(
+			rewriteAnthropicMessageJsonModelStream(
+				upstream as ReadableStream<Uint8Array>,
+				"client-alias",
+			),
+		);
+		expect(JSON.parse(output).model).toBe("client-alias");
+	});
+
+	it("owns buffered Node Buffer subarrays before the source mutates", async () => {
+		const source = Buffer.from(
+			JSON.stringify({ type: "message", model: "backend", content: "stable" }),
+		);
+		let closeUpstream: (() => void) | undefined;
+		let firstPull = true;
+		const waitingToClose = new Promise<void>((resolve) => {
+			closeUpstream = resolve;
+		});
+		let chunkBuffered: (() => void) | undefined;
+		const buffered = new Promise<void>((resolve) => {
+			chunkBuffered = resolve;
+		});
+		const upstream = new ReadableStream<Uint8Array>({
+			async pull(controller) {
+				if (firstPull) {
+					firstPull = false;
+					controller.enqueue(source.subarray(0));
+					return;
+				}
+				chunkBuffered?.();
+				await waitingToClose;
+				controller.close();
+			},
+		});
+		const output = collect(
+			rewriteAnthropicMessageJsonModelStream(upstream, "client-alias"),
+		);
+
+		await buffered;
+		source.fill(120);
+		closeUpstream?.();
+		expect(JSON.parse(await output)).toEqual({
+			type: "message",
+			model: "client-alias",
+			content: "stable",
+		});
+	});
+
+	it("passes one oversized JSON chunk through byte-for-byte without parsing", async () => {
+		const parseSpy = spyOn(JSON, "parse");
+		const body = encoder.encode(
+			JSON.stringify({
+				type: "message",
+				model: "backend",
+				content: "x".repeat(MAX_ANTHROPIC_MESSAGE_JSON_ALIAS_BYTES),
+			}),
+		);
+		const parseCallsBefore = parseSpy.mock.calls.length;
+		const upstream = new Response(body).body;
+		expect(upstream).not.toBeNull();
+
+		const output = new Uint8Array(
+			await new Response(
+				rewriteAnthropicMessageJsonModelStream(
+					upstream as ReadableStream<Uint8Array>,
+					"client-alias",
+				),
+			).arrayBuffer(),
+		);
+		expect(output).toEqual(body);
+		expect(parseSpy.mock.calls.length).toBe(parseCallsBefore);
+		parseSpy.mockRestore();
+	});
+
+	it("falls back after many small chunks and preserves UTF-8 bytes", async () => {
+		const parseSpy = spyOn(JSON, "parse");
+		const fragment = encoder.encode("héllo 🌍 ".repeat(64));
+		const chunks: Uint8Array[] = [];
+		let size = 0;
+		while (size <= MAX_ANTHROPIC_MESSAGE_JSON_ALIAS_BYTES) {
+			const backing = new Uint8Array(fragment.length + 128);
+			backing.set(fragment, 64);
+			const chunk = backing.subarray(64, 64 + fragment.length);
+			chunks.push(chunk);
+			size += chunk.length;
+		}
+		const expected = new Uint8Array(size);
+		let offset = 0;
+		for (const chunk of chunks) {
+			expected.set(chunk, offset);
+			offset += chunk.length;
+		}
+		const parseCallsBefore = parseSpy.mock.calls.length;
+		const upstream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const chunk of chunks) controller.enqueue(chunk);
+				controller.close();
+			},
+		});
+
+		const output = new Uint8Array(
+			await new Response(
+				rewriteAnthropicMessageJsonModelStream(upstream, "client-alias"),
+			).arrayBuffer(),
+		);
+		expect(output).toEqual(expected);
+		expect(new TextDecoder().decode(output)).toBe(
+			new TextDecoder().decode(expected),
+		);
+		expect(parseSpy.mock.calls.length).toBe(parseCallsBefore);
+		parseSpy.mockRestore();
+	});
+
+	it("forwards upstream errors after switching to pass-through", async () => {
+		const upstreamError = new Error("upstream failed");
+		let reads = 0;
+		const upstream = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				reads++;
+				if (reads === 1) {
+					controller.enqueue(
+						new Uint8Array(MAX_ANTHROPIC_MESSAGE_JSON_ALIAS_BYTES + 1),
+					);
+					return;
+				}
+				controller.error(upstreamError);
+			},
+		});
+		const reader = rewriteAnthropicMessageJsonModelStream(
+			upstream,
+			"client-alias",
+		).getReader();
+
+		expect((await reader.read()).done).toBe(false);
+		await expect(reader.read()).rejects.toBe(upstreamError);
+	});
+
+	it("forwards cancellation while pass-through is pending after fallback", async () => {
+		let cancelReason: unknown;
+		let reads = 0;
+		const oversized = new Uint8Array(
+			MAX_ANTHROPIC_MESSAGE_JSON_ALIAS_BYTES + 1,
+		).fill(120);
+		const upstream = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				reads++;
+				if (reads === 1) {
+					controller.enqueue(oversized);
+					return;
+				}
+				return new Promise<void>(() => {});
+			},
+			cancel(reason) {
+				cancelReason = reason;
+			},
+		});
+		const reader = rewriteAnthropicMessageJsonModelStream(
+			upstream,
+			"client-alias",
+		).getReader();
+
+		const first = await reader.read();
+		expect(first.value).toEqual(oversized);
+		const pendingRead = reader.read().catch(() => undefined);
+		await Promise.resolve();
+		await reader.cancel("client left after fallback");
+		await pendingRead;
+		expect(cancelReason).toBe("client left after fallback");
 	});
 
 	it("forwards cancellation without transforming after a pending JSON read", async () => {
