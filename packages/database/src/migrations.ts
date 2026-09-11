@@ -123,7 +123,8 @@ export function ensureSchema(db: Database): void {
 			total_requests INTEGER DEFAULT 0,
 			priority INTEGER DEFAULT 0,
 			consecutive_rate_limits INTEGER NOT NULL DEFAULT 0,
-			requires_reauth INTEGER DEFAULT 0
+			requires_reauth INTEGER DEFAULT 0,
+			request_transformer TEXT
 		)
 	`);
 
@@ -607,6 +608,7 @@ function collapseAccountDuplicatesPreservingState(db: Database): void {
 		   pause_reason = COALESCE(pause_reason, ${freshest("pause_reason")}),
 		   rate_limited_reason = COALESCE(rate_limited_reason, ${freshest("rate_limited_reason")}),
 		   model_mappings = COALESCE(model_mappings, ${freshest("model_mappings")}),
+		   request_transformer = COALESCE(request_transformer, ${freshest("request_transformer")}),
 		   model_fallbacks = COALESCE(model_fallbacks, ${freshest("model_fallbacks")}),
 		   cross_region_mode = COALESCE(cross_region_mode, ${freshest("cross_region_mode")}),
 		   billing_type = COALESCE(billing_type, ${freshest("billing_type")})
@@ -981,6 +983,13 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added model_mappings column to accounts table");
 		}
 
+		if (!initialAccountsColumnNames.includes("request_transformer")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN request_transformer TEXT",
+			).run();
+			log.info("Added request_transformer column to accounts table");
+		}
+
 		// Add cross_region_mode column for Bedrock cross-region inference configuration
 		if (!initialAccountsColumnNames.includes("cross_region_mode")) {
 			db.prepare(
@@ -1104,6 +1113,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 					custom_endpoint TEXT,
 					auto_refresh_enabled INTEGER DEFAULT 0,
 					model_mappings TEXT,
+					request_transformer TEXT,
 					cross_region_mode TEXT DEFAULT 'geographic',
 					model_fallbacks TEXT,
 					auto_pause_on_overage_enabled INTEGER DEFAULT 0,
@@ -1123,7 +1133,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 					rate_limited_until, session_start, session_request_count,
 					paused, rate_limit_reset, rate_limit_status, rate_limit_remaining,
 					auto_fallback_enabled, custom_endpoint, auto_refresh_enabled,
-					model_mappings, cross_region_mode, model_fallbacks,
+					model_mappings, request_transformer, cross_region_mode, model_fallbacks,
 					auto_pause_on_overage_enabled, pause_reason, requires_reauth
 				FROM accounts
 			`).run();
@@ -1442,7 +1452,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			       rate_limited_until, session_start, session_request_count, paused,
 			       rate_limit_reset, rate_limit_status, rate_limit_remaining,
 			       auto_fallback_enabled, custom_endpoint, auto_refresh_enabled, model_mappings,
-			       cross_region_mode, model_fallbacks, billing_type, auto_pause_on_overage_enabled,
+			       request_transformer, cross_region_mode, model_fallbacks, billing_type, auto_pause_on_overage_enabled,
 			       pause_reason, requires_reauth
 			FROM accounts
 		`).run();

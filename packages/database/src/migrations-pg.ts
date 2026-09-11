@@ -93,6 +93,7 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			custom_endpoint TEXT,
 			auto_refresh_enabled INTEGER DEFAULT 0,
 			model_mappings TEXT,
+			request_transformer TEXT,
 			model_fallbacks TEXT,
 			cross_region_mode TEXT DEFAULT 'geographic',
 			auto_pause_on_overage_enabled INTEGER DEFAULT 0,
@@ -618,6 +619,7 @@ async function collapseAccountDuplicatesPreservingStatePg(
 			   pause_reason = COALESCE(pause_reason, ${pgFreshest("pause_reason")}),
 			   rate_limited_reason = COALESCE(rate_limited_reason, ${pgFreshest("rate_limited_reason")}),
 			   model_mappings = COALESCE(model_mappings, ${pgFreshest("model_mappings")}),
+			   request_transformer = COALESCE(request_transformer, ${pgFreshest("request_transformer")}),
 			   model_fallbacks = COALESCE(model_fallbacks, ${pgFreshest("model_fallbacks")}),
 			   cross_region_mode = COALESCE(cross_region_mode, ${pgFreshest("cross_region_mode")}),
 			   billing_type = COALESCE(billing_type, ${pgFreshest("billing_type")})
@@ -698,6 +700,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			table: "accounts",
 			column: "model_mappings",
 			definition: "ALTER TABLE accounts ADD COLUMN model_mappings TEXT",
+		},
+		{
+			table: "accounts",
+			column: "request_transformer",
+			definition: "ALTER TABLE accounts ADD COLUMN request_transformer TEXT",
 		},
 		{
 			table: "accounts",

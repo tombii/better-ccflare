@@ -49,8 +49,12 @@ import type {
 	FullUsageData,
 	LoadBalancingStrategy,
 	RateLimitReason,
+	RequestTransformer,
 } from "@better-ccflare/types";
-import { requiresSessionDurationTracking } from "@better-ccflare/types";
+import {
+	REQUEST_TRANSFORMERS,
+	requiresSessionDurationTracking,
+} from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 import {
 	computeRateLimitStatusDisplay,
@@ -307,6 +311,7 @@ export function createAccountsListHandler(
 			peak_hours_pause_enabled: 0 | 1;
 			custom_endpoint: string | null;
 			model_mappings: string | null;
+			request_transformer: RequestTransformer | null;
 			cross_region_mode: string | null;
 			model_fallbacks: string | null;
 			billing_type: string | null;
@@ -343,6 +348,7 @@ export function createAccountsListHandler(
 					COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
 
 					model_mappings,
+					request_transformer,
 					cross_region_mode,
 					model_fallbacks,
 					billing_type,
@@ -715,6 +721,7 @@ export function createAccountsListHandler(
 					peakHoursPauseEnabled: account.peak_hours_pause_enabled === 1,
 					customEndpoint: account.custom_endpoint,
 					modelMappings,
+					requestTransformer: account.request_transformer,
 					usageUtilization,
 					usageWindow,
 					usageData: fullUsageData, // Full usage data for UI
@@ -3356,6 +3363,59 @@ export function createAccountModelMappingsUpdateHandler(
 				error instanceof Error
 					? error
 					: new Error("Failed to update model mappings"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an account request transformer update handler.
+ */
+export function createAccountRequestTransformerUpdateHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const { requestTransformer }: { requestTransformer: unknown } =
+				await req.json();
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ provider: string | null }>(
+				"SELECT provider FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+			if (account.provider !== "openai-compatible") {
+				return errorResponse(
+					BadRequest(
+						"Request transformers are only available for openai-compatible accounts",
+					),
+				);
+			}
+			if (
+				requestTransformer !== null &&
+				(typeof requestTransformer !== "string" ||
+					!REQUEST_TRANSFORMERS.includes(
+						requestTransformer as (typeof REQUEST_TRANSFORMERS)[number],
+					))
+			) {
+				return errorResponse(BadRequest("Invalid request transformer"));
+			}
+
+			await db.run("UPDATE accounts SET request_transformer = ? WHERE id = ?", [
+				requestTransformer,
+				accountId,
+			]);
+
+			return jsonResponse({ success: true, requestTransformer });
+		} catch (error) {
+			log.error("Account request transformer update error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to update request transformer"),
 			);
 		}
 	};

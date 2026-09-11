@@ -755,8 +755,8 @@ describe("Database Migrations — non-destructive account dedup", () => {
 		// Discarded row is the ONLY holder of these values.
 		db.prepare(
 			`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at, last_used, refresh_token_issued_at, custom_endpoint,
-			   model_mappings, model_fallbacks, cross_region_mode, billing_type, pause_reason, rate_limited_reason, rate_limit_status)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			   model_mappings, model_fallbacks, cross_region_mode, billing_type, request_transformer, pause_reason, rate_limited_reason, rate_limit_status)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		).run(
 			"cfg-2",
 			"cfg",
@@ -771,6 +771,7 @@ describe("Database Migrations — non-destructive account dedup", () => {
 			'["fallback-model"]',
 			"geographic",
 			"subscription",
+			"max-tokens-to-max-completion-tokens",
 			"overage",
 			"model_fallback_429",
 			"OK",
@@ -780,7 +781,7 @@ describe("Database Migrations — non-destructive account dedup", () => {
 
 		const survivor = db
 			.prepare(
-				`SELECT model_mappings, model_fallbacks, cross_region_mode, billing_type,
+				`SELECT model_mappings, model_fallbacks, cross_region_mode, billing_type, request_transformer,
 				        pause_reason, rate_limited_reason, rate_limit_status
 				 FROM accounts WHERE name = 'cfg'`,
 			)
@@ -789,6 +790,9 @@ describe("Database Migrations — non-destructive account dedup", () => {
 		expect(survivor.model_fallbacks).toBe('["fallback-model"]');
 		expect(survivor.cross_region_mode).toBe("geographic");
 		expect(survivor.billing_type).toBe("subscription");
+		expect(survivor.request_transformer).toBe(
+			"max-tokens-to-max-completion-tokens",
+		);
 		expect(survivor.pause_reason).toBe("overage");
 		expect(survivor.rate_limited_reason).toBe("model_fallback_429");
 		expect(survivor.rate_limit_status).toBe("OK");

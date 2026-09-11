@@ -1,6 +1,7 @@
 // Export router - the main public API
 
 // Export handlers
+export { createAccountRequestTransformerUpdateHandler } from "./handlers/accounts";
 export * from "./handlers/storage";
 export { APIRouter } from "./router";
 export { AlertService } from "./services/alerts";
