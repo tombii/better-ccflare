@@ -17,6 +17,7 @@ import {
 	createAccountReloadHandler,
 	createAccountRemoveHandler,
 	createAccountRenameHandler,
+	createAccountRequestTransformerUpdateHandler,
 	createAccountResumeHandler,
 	createAccountsListHandler,
 	createAlibabaCodingPlanAccountAddHandler,
@@ -747,6 +748,15 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					modelMappingsHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account request transformer update
+			if (path.endsWith("/request-transformer") && method === "POST") {
+				const requestTransformerHandler =
+					createAccountRequestTransformerUpdateHandler(this.context.dbOps);
+				return await this.wrapHandler((req) =>
+					requestTransformerHandler(req, accountId),
 				)(req, url);
 			}
 

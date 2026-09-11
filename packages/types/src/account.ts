@@ -124,6 +124,11 @@ export type RateLimitReason =
 	 *  probe will rediscover the 403 until the org setting actually changes. */
 	| "org_permission_denied";
 
+export const REQUEST_TRANSFORMERS = [
+	"max-tokens-to-max-completion-tokens",
+] as const;
+export type RequestTransformer = (typeof REQUEST_TRANSFORMERS)[number];
+
 // Usage data types for Anthropic accounts
 export interface UsageWindowData {
 	utilization: number | null;
@@ -300,6 +305,7 @@ export interface AccountRow {
 	peak_hours_pause_enabled?: boolean | number | null;
 	custom_endpoint?: string | null;
 	model_mappings?: string | null; // JSON string for OpenAI-compatible providers
+	request_transformer?: RequestTransformer | null;
 	cross_region_mode?: string | null; // Bedrock cross-region inference mode
 	model_fallbacks?: string | null; // JSON string for model family fallback mappings
 	billing_type?: string | null; // Per-account billing override
@@ -339,6 +345,7 @@ export interface Account {
 	peak_hours_pause_enabled: boolean;
 	custom_endpoint: string | null;
 	model_mappings: string | null; // JSON string for OpenAI-compatible providers
+	request_transformer: RequestTransformer | null;
 	cross_region_mode: string | null; // Bedrock cross-region inference mode
 	model_fallbacks: string | null; // JSON string for model family fallback mappings
 	billing_type: string | null;
@@ -387,6 +394,7 @@ export interface AccountResponse {
 	peakHoursPauseEnabled?: boolean;
 	customEndpoint: string | null;
 	modelMappings: { [key: string]: string | string[] } | null; // Parsed model mappings (arrays = cycling models)
+	requestTransformer: RequestTransformer | null;
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
@@ -534,6 +542,7 @@ export function toAccount(row: AccountRow): Account {
 		peak_hours_pause_enabled: !!row.peak_hours_pause_enabled,
 		custom_endpoint: row.custom_endpoint || null,
 		model_mappings: row.model_mappings || null,
+		request_transformer: row.request_transformer ?? null,
 		cross_region_mode: row.cross_region_mode || null,
 		model_fallbacks: row.model_fallbacks || null,
 		billing_type: row.billing_type || null,
@@ -638,6 +647,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		peakHoursPauseEnabled: account.peak_hours_pause_enabled,
 		customEndpoint: account.custom_endpoint,
 		modelMappings,
+		requestTransformer: account.request_transformer,
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
 		usageData: null, // Will be filled in by API handler from cache

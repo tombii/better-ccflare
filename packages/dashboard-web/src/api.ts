@@ -21,6 +21,7 @@ import type {
 	ModelCatalogResponse,
 	RequestPayload,
 	RequestResponse,
+	RequestTransformer,
 	StatsWithAccounts,
 	UsageHistoryResponse,
 } from "@better-ccflare/types";
@@ -41,6 +42,7 @@ export type {
 	AgentWorkspace,
 	RequestPayload,
 	RequestResponse,
+	RequestTransformer,
 } from "@better-ccflare/types";
 
 // Agent response interface
@@ -1518,6 +1520,32 @@ class API extends HttpClient {
 			await this.post(url, {
 				modelMappings,
 			});
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async updateAccountRequestTransformer(
+		accountId: string,
+		requestTransformer: RequestTransformer | null,
+	): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/accounts/${accountId}/request-transformer`;
+
+		this.logger.debug(`→ POST ${url}`, { requestTransformer });
+
+		try {
+			await this.post(url, { requestTransformer });
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
 		} catch (error) {

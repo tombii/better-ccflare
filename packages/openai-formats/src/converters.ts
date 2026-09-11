@@ -308,6 +308,7 @@ export function convertAnthropicRequestToOpenAI(
  */
 export function convertOpenAIResponseToAnthropic(
 	openaiData: OpenAIResponse,
+	fallbackModel?: string,
 ): AnthropicResponse {
 	// Handle error responses
 	if (openaiData.error) {
@@ -374,7 +375,7 @@ export function convertOpenAIResponseToAnthropic(
 		type: "message",
 		role: "assistant",
 		content,
-		model: openaiData.model,
+		model: openaiData.model || fallbackModel,
 		stop_reason: mapOpenAIFinishReason(choice.finish_reason),
 		stop_sequence: undefined,
 		usage: {

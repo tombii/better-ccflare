@@ -13,6 +13,11 @@ export interface RateLimitInfo {
 	remaining?: number;
 }
 
+export interface ProviderResponseContext {
+	/** Model in the final request body sent upstream, after account mapping/fallback. */
+	requestModel?: string | null;
+}
+
 export interface Provider {
 	name: string;
 	/** Passive request coverage, including refusal before an upstream dispatch. */
@@ -79,6 +84,7 @@ export interface Provider {
 		account: Account | null,
 		requestHeaders?: Headers,
 		drainAbort?: AbortController,
+		context?: ProviderResponseContext,
 	): Promise<Response>;
 
 	/**

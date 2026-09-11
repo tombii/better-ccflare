@@ -6,6 +6,7 @@ const log = new Logger("openai-formats");
 
 export interface TransformStreamingResponseOptions {
 	contextWindowForModel?: (model: string) => number | undefined;
+	fallbackModel?: string;
 }
 
 /**
@@ -215,7 +216,7 @@ export function transformStreamingResponse(
 				streamContext = {
 					buffer: "",
 					hasStarted: false,
-					extractedModel: "unknown",
+					extractedModel: options.fallbackModel || "unknown",
 					contextWindowSize: undefined,
 					hasSentStart: false,
 					hasSentContentBlockStart: false,

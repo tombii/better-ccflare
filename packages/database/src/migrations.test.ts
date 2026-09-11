@@ -37,7 +37,41 @@ describe("Database Migrations - Tier Column Removal", () => {
 		expect(columnNames).toContain("name");
 		expect(columnNames).toContain("provider");
 		expect(columnNames).toContain("priority");
+		expect(columnNames).toContain("request_transformer");
 		expect(columnNames).not.toContain("account_tier"); // Should not exist initially
+	});
+
+	it("adds a nullable request_transformer column for existing accounts", () => {
+		ensureSchema(db);
+		db.prepare("ALTER TABLE accounts DROP COLUMN request_transformer").run();
+		db.prepare(
+			`INSERT INTO accounts (id, name, provider, refresh_token, created_at) VALUES (?, ?, ?, ?, ?)`,
+		).run(
+			"transformer-existing",
+			"transformer",
+			"openai-compatible",
+			"",
+			Date.now(),
+		);
+
+		runMigrations(db);
+
+		const column = (
+			db.prepare("PRAGMA table_info(accounts)").all() as Array<{
+				name: string;
+				type: string;
+				notnull: number;
+				dflt_value: string | null;
+			}>
+		).find((entry) => entry.name === "request_transformer");
+		expect(column?.type.toUpperCase()).toBe("TEXT");
+		expect(column?.notnull).toBe(0);
+		expect(column?.dflt_value).toBeNull();
+		expect(
+			db
+				.prepare("SELECT request_transformer FROM accounts WHERE id = ?")
+				.get("transformer-existing"),
+		).toEqual({ request_transformer: null });
 	});
 
 	it("should remove account_tier column from accounts table if it exists", () => {
@@ -57,15 +91,24 @@ describe("Database Migrations - Tier Column Removal", () => {
         total_requests INTEGER DEFAULT 0,
         priority INTEGER DEFAULT 0,
         billing_type TEXT DEFAULT NULL,
+		request_transformer TEXT,
         account_tier TEXT DEFAULT 'free'  -- This is the column we want to remove
       )
     `);
 
 		// Insert test data with tier
 		db.prepare(`
-      INSERT INTO accounts (id, name, provider, refresh_token, created_at, account_tier)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run("test-id", "test-account", "anthropic", "", Date.now(), "pro");
+		INSERT INTO accounts (id, name, provider, refresh_token, created_at, request_transformer, account_tier)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`).run(
+			"test-id",
+			"test-account",
+			"anthropic",
+			"",
+			Date.now(),
+			"max-tokens-to-max-completion-tokens",
+			"pro",
+		);
 
 		// Run migrations (should remove the tier column)
 		runMigrations(db);
@@ -83,11 +126,21 @@ describe("Database Migrations - Tier Column Removal", () => {
 
 		// Verify that data was preserved (except the removed column)
 		const account = db
-			.prepare("SELECT id, name, provider FROM accounts WHERE id = ?")
-			.get("test-id") as { id: string; name: string; provider: string };
+			.prepare(
+				"SELECT id, name, provider, request_transformer FROM accounts WHERE id = ?",
+			)
+			.get("test-id") as {
+			id: string;
+			name: string;
+			provider: string;
+			request_transformer: string | null;
+		};
 		expect(account.id).toBe("test-id");
 		expect(account.name).toBe("test-account");
 		expect(account.provider).toBe("anthropic");
+		expect(account.request_transformer).toBe(
+			"max-tokens-to-max-completion-tokens",
+		);
 	});
 
 	it("should remove tier column from oauth_sessions table if it exists", () => {

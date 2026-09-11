@@ -32,6 +32,7 @@ import { ensureCodexModelDefaults } from "../codex-model-catalog";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
+import { applyAccountRequestTransformer } from "./account-request-transformer";
 import { getXaiConvId } from "./account-selector";
 import { markFamilyExhausted } from "./model-capacity";
 import { forwardObservedUpstream } from "./observed-upstream";
@@ -813,6 +814,14 @@ export async function proxyWithAccount(
 
 		// Get the provider for this account
 		const provider = getProvider(account.provider) || ctx.provider;
+		const transformRequestForAccount = async (
+			request: Request,
+		): Promise<Request> => {
+			const providerRequest = provider.transformRequestBody
+				? await provider.transformRequestBody(request, account)
+				: request;
+			return applyAccountRequestTransformer(providerRequest, account);
+		};
 
 		// Validate that the account-specific provider can handle this path
 		validateProviderPath(provider, url.pathname);
@@ -903,9 +912,7 @@ export async function proxyWithAccount(
 		// call this proxy makes), so warming them here would only add latency.
 		await ensureCodexModelDefaults(account, ctx);
 
-		let transformedRequest = provider.transformRequestBody
-			? await provider.transformRequestBody(providerRequest, account)
-			: providerRequest;
+		let transformedRequest = await transformRequestForAccount(providerRequest);
 
 		// Pre-strip cache_control for (account, model) pairs known to reject it.
 		// Also doubles as the buffered body for in-place 529 retries below —
@@ -922,6 +929,7 @@ export async function proxyWithAccount(
 		}
 		const transformedModel =
 			(transformedBodyJson?.model as string | undefined) ?? "";
+		let responseModelFallback = transformedModel;
 		if (
 			transformedModel &&
 			cacheControlRejectors.has(
@@ -962,10 +970,14 @@ export async function proxyWithAccount(
 			if (recovered) {
 				// Exactly one retry on the same provider/account/model. Refresh the
 				// buffered body too so a later 529 retry cannot resend the old suffix.
-				retryBodyText = await recovered.text();
-				transformedRequest = new Request(recovered.url, {
-					method: recovered.method,
-					headers: recovered.headers,
+				const accountTransformedRecovery = await applyAccountRequestTransformer(
+					recovered,
+					account,
+				);
+				retryBodyText = await accountTransformedRecovery.text();
+				transformedRequest = new Request(accountTransformedRecovery.url, {
+					method: accountTransformedRecovery.method,
+					headers: accountTransformedRecovery.headers,
 					body: retryBodyText,
 					signal: req.signal,
 				});
@@ -1000,9 +1012,8 @@ export async function proxyWithAccount(
 
 				const retryProviderRequest = new Request(targetUrl, retryRequestInit);
 
-				const retryTransformedRequest = provider.transformRequestBody
-					? await provider.transformRequestBody(retryProviderRequest, account)
-					: retryProviderRequest;
+				const retryTransformedRequest =
+					await transformRequestForAccount(retryProviderRequest);
 
 				// Make the retry request (or unwrap a synthetic provider response)
 				cancelDiscardedResponseBody(rawResponse);
@@ -1520,9 +1531,8 @@ export async function proxyWithAccount(
 					};
 
 					const retryProviderRequest = new Request(targetUrl, retryRequestInit);
-					let retryTransformedRequest = provider.transformRequestBody
-						? await provider.transformRequestBody(retryProviderRequest, account)
-						: retryProviderRequest;
+					let retryTransformedRequest =
+						await transformRequestForAccount(retryProviderRequest);
 
 					// Re-patch model after transformRequestBody — the provider's conversion
 					// (e.g. convertAnthropicRequestToOpenAI) calls mapModelName which can
@@ -1557,6 +1567,7 @@ export async function proxyWithAccount(
 					rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
 						? materializeSyntheticResponse(retryTransformedRequest)
 						: await forwardUpstream(retryTransformedRequest);
+					responseModelFallback = nextModel;
 
 					rawResponse = await checkZai1305(
 						rawResponse,
@@ -1705,6 +1716,7 @@ export async function proxyWithAccount(
 			account,
 			req.headers,
 			drainAbortController,
+			{ requestModel: responseModelFallback || null },
 		);
 
 		// Failover to next account on upstream 401 — credentials are invalid/expired
@@ -1817,6 +1829,7 @@ export async function proxyWithAccount(
 							account,
 							req.headers,
 							drainAbortController,
+							{ requestModel: responseModelFallback || null },
 						);
 
 						cancelDiscardedResponseBody(response);

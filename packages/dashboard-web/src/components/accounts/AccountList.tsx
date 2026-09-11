@@ -16,6 +16,7 @@ interface AccountListProps {
 	onPeakHoursPauseToggle?: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
+	onRequestTransformerChange?: (account: Account) => void;
 	onReauth?: (account: Account) => void;
 	onAnthropicReauth?: (account: Account) => void;
 	onCodexReauth?: (account: Account) => void;
@@ -36,6 +37,7 @@ export function AccountList({
 	onPeakHoursPauseToggle,
 	onCustomEndpointChange,
 	onModelMappingsChange,
+	onRequestTransformerChange,
 	onReauth,
 	onAnthropicReauth,
 	onCodexReauth,
@@ -64,6 +66,7 @@ export function AccountList({
 					onPeakHoursPauseToggle={onPeakHoursPauseToggle}
 					onCustomEndpointChange={onCustomEndpointChange}
 					onModelMappingsChange={onModelMappingsChange}
+					onRequestTransformerChange={onRequestTransformerChange}
 					onReauth={onReauth}
 					onAnthropicReauth={onAnthropicReauth}
 					onCodexReauth={onCodexReauth}
