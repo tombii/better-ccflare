@@ -42,9 +42,9 @@ async function renameMaxTokens(request: Request): Promise<Request> {
 	});
 }
 
-const requestTransformers: Record<RequestTransformer, TransformRequest> = {
-	"max-tokens-to-max-completion-tokens": renameMaxTokens,
-};
+const requestTransformers = new Map<RequestTransformer, TransformRequest>([
+	["max-tokens-to-max-completion-tokens", renameMaxTokens],
+]);
 
 export async function applyAccountRequestTransformer(
 	request: Request,
@@ -53,7 +53,7 @@ export async function applyAccountRequestTransformer(
 	const requestTransformer = account.request_transformer;
 	if (!requestTransformer) return request;
 
-	const transform = requestTransformers[requestTransformer];
+	const transform = requestTransformers.get(requestTransformer);
 	if (!transform) {
 		log.warn("Unknown account request transformer; request left unchanged", {
 			requestTransformer,

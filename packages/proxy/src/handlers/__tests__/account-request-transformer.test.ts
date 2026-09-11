@@ -156,4 +156,29 @@ describe("applyAccountRequestTransformer", () => {
 			data: { requestTransformer: "removed-transformer" },
 		});
 	});
+
+	it("warns and returns the original request for a prototype-key persisted ID", async () => {
+		const request = jsonRequest({ model: "o1", max_tokens: 321 });
+		const events: LogEvent[] = [];
+		const capture = (event: LogEvent) => events.push(event);
+		logBus.on("log", capture);
+
+		try {
+			expect(
+				await applyAccountRequestTransformer(
+					request,
+					account("toString" as Account["request_transformer"]),
+				),
+			).toBe(request);
+		} finally {
+			logBus.off("log", capture);
+		}
+
+		expect(events).toContainEqual({
+			ts: expect.any(Number),
+			level: "WARN",
+			msg: "Unknown account request transformer; request left unchanged",
+			data: { requestTransformer: "toString" },
+		});
+	});
 });
