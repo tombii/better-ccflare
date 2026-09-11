@@ -12,7 +12,7 @@ async function renameMaxTokens(request: Request): Promise<Request> {
 
 	let body: unknown;
 	try {
-		body = await request.clone().json();
+		body = JSON.parse(await request.clone().text());
 	} catch {
 		return request;
 	}
