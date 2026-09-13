@@ -1896,26 +1896,45 @@ export async function proxyWithAccount(
 		// synthetic (keepalive / auto-refresh) requests, like the 529 path — a
 		// probe must not amplify an upstream outage into extra traffic, and its
 		// failure is not a client-visible request.
+		//
+		// BUDGET STACKING WITH THE 529 BLOCK ABOVE — the two loops have separate
+		// budgets, not a shared counter, and only one order stacks:
+		//
+		//   529 → retry → 500: the 529 loop breaks on `status !== 529`, then this
+		//     block enters with a full, fresh budget. At the defaults that is up
+		//     to three upstream calls on one account (original + one 529 retry +
+		//     one 5xx retry) before the bench and the failover.
+		//   500 → retry → 529: this loop stops (529 is deliberately not a
+		//     transient-5xx status), no 5xx bench is applied, and the 529 block
+		//     cannot run again because it already did. The overload cooldown is
+		//     applied downstream by processProxyResponse instead. Two calls, one
+		//     budget.
+		//
+		// Raising CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS therefore raises the
+		// worst-case call count on a single account super-linearly in the first
+		// order; see the latency note in docs/configuration.md.
 		if (
 			isTransientServerErrorStatus(response.status) &&
 			!isSyntheticInternal &&
 			getServerErrorRetryEnabled()
 		) {
 			const retryCfg = getOverloadRetryConfig();
-			// `x-should-retry: false` is the upstream telling us this response is
-			// deterministic for this request. Anthropic sends it on the 500s that
-			// a replay cannot fix; re-issuing then just burns another 36-60s of
-			// upstream processing before the same answer comes back.
-			const upstreamForbidsRetry =
-				response.headers.get("x-should-retry") === "false";
 			let attemptsMade = 1;
 
-			if (
-				retryCfg.enabled &&
-				retryCfg.maxAttempts > 1 &&
-				!upstreamForbidsRetry
-			) {
+			if (retryCfg.enabled && retryCfg.maxAttempts > 1) {
 				for (let attempt = 1; attempt < retryCfg.maxAttempts; attempt++) {
+					// `x-should-retry: false` is the upstream telling us the
+					// response in hand is deterministic for this request.
+					// Anthropic sends it on the 500s that a replay cannot fix;
+					// re-issuing then just burns another 36-60s of upstream
+					// processing before the same answer comes back.
+					//
+					// Re-read at the top of every iteration, not once before the
+					// loop: with a budget above 2 (CCFLARE_OVERLOAD_RETRY_MAX_
+					// ATTEMPTS >= 3) a retry response carrying the header has to
+					// stop the loop too, not just the original response.
+					if (response.headers.get("x-should-retry") === "false") break;
+
 					// Full-jitter backoff, identical to the 529 loop: sleep in
 					// [0, min(base * 2^attempt, max)].
 					const cap = Math.min(retryCfg.baseMs * 2 ** attempt, retryCfg.maxMs);

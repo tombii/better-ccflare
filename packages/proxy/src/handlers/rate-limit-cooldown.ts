@@ -206,8 +206,9 @@ export function resetRateLimitProbeGatesForTests(): void {
  * 529 or a 500 arrives mid-window. The longer,
  * already-active bench carries more information than a transient overload
  * does. In that case this function skips every write (in-memory and DB)
- * entirely and only releases the probe lease. This guard is 529-only: the
- * 429 path keeps its existing last-writer-wins behavior. "Never shorten an
+ * entirely and only releases the probe lease. The guard covers exactly the
+ * transient upstream reasons (both 529 variants and upstream_5xx_server_error);
+ * the 429 path keeps its existing last-writer-wins behavior. "Never shorten an
  * active cooldown" is not a project-wide invariant to begin with — the
  * successful-response clear in response-processor.ts unconditionally nulls
  * rate_limited_until (even a future one) the moment a response succeeds.

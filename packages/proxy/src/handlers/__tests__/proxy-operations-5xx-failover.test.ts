@@ -389,6 +389,123 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 		expect(account.rate_limited_reason).toBe("upstream_5xx_server_error");
 	});
 
+	it("stops retrying when a retry response carries x-should-retry: false", async () => {
+		// The header is upstream telling us this answer is deterministic. It has
+		// to be re-read on every attempt, not only on the first response: with a
+		// budget of 3 the second 500 would otherwise buy a third pointless call.
+		process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS = "3";
+		let callCount = 0;
+		globalThis.fetch = mock(async () => {
+			callCount++;
+			return callCount === 1
+				? serverErrorResponse(500)
+				: serverErrorResponse(500, { "x-should-retry": "false" });
+		});
+
+		const ctx = makeProxyContext();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody();
+		const { result, forwarded } = await runProxy(
+			makeRequest(bodyBuffer),
+			account,
+			bodyBuffer,
+			ctx,
+		);
+
+		expect(callCount).toBe(2);
+		expect(forwarded).toBe(false);
+		expect(result).toBeNull();
+		expect(account.rate_limited_reason).toBe("upstream_5xx_server_error");
+	});
+
+	it("honours an HTTP-date Retry-After, capped at the server-error cooldown", async () => {
+		const until = new Date(Date.now() + 30_000).toUTCString();
+		globalThis.fetch = mock(async () =>
+			serverErrorResponse(503, { "retry-after": until }),
+		);
+
+		const ctx = makeProxyContext();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody();
+		const { result } = await runProxy(
+			makeRequest(bodyBuffer),
+			account,
+			bodyBuffer,
+			ctx,
+		);
+
+		expect(result).toBeNull();
+		expect(account.rate_limited_reason).toBe("upstream_5xx_server_error");
+		// Honoured: the date, not the flat 60s cooldown.
+		expect(account.rate_limited_until ?? 0).toBeGreaterThan(
+			Date.now() + 20_000,
+		);
+		expect(account.rate_limited_until ?? 0).toBeLessThan(Date.now() + 45_000);
+	});
+
+	it("leaves a 401 on the retry to the credential path, with no 5xx bench", async () => {
+		// The upstream did not fail here; the account's credentials did. Benching
+		// with a server-error reason would blame the wrong thing and hide the
+		// reauth signal.
+		let callCount = 0;
+		globalThis.fetch = mock(async () => {
+			callCount++;
+			return callCount === 1
+				? serverErrorResponse(500)
+				: new Response(
+						'{"type":"error","error":{"type":"authentication_error"}}',
+						{
+							status: 401,
+							headers: { "content-type": "application/json" },
+						},
+					);
+		});
+
+		const ctx = makeProxyContext();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody();
+		const { result, forwarded } = await runProxy(
+			makeRequest(bodyBuffer),
+			account,
+			bodyBuffer,
+			ctx,
+		);
+
+		expect(callCount).toBe(2);
+		expect(forwarded).toBe(false);
+		expect(result).toBeNull();
+		expect(account.rate_limited_until).toBeNull();
+		expect(account.rate_limited_reason).toBeNull();
+	});
+
+	it("still benches and fails over when CCFLARE_OVERLOAD_RETRY_ENABLED=false", async () => {
+		// The shared retry kill-switch only removes the in-place re-issue. The
+		// failover half of the feature is governed by
+		// CCFLARE_SERVER_ERROR_RETRY_ENABLED and must survive it.
+		process.env.CCFLARE_OVERLOAD_RETRY_ENABLED = "false";
+		let callCount = 0;
+		globalThis.fetch = mock(async () => {
+			callCount++;
+			return serverErrorResponse(502);
+		});
+
+		const ctx = makeProxyContext();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody();
+		const { result, forwarded } = await runProxy(
+			makeRequest(bodyBuffer),
+			account,
+			bodyBuffer,
+			ctx,
+		);
+
+		expect(callCount).toBe(1);
+		expect(forwarded).toBe(false);
+		expect(result).toBeNull();
+		expect(account.rate_limited_reason).toBe("upstream_5xx_server_error");
+		expect(account.rate_limited_until).not.toBeNull();
+	});
+
 	it("forwards the 5xx untouched when CCFLARE_SERVER_ERROR_RETRY_ENABLED=false", async () => {
 		let callCount = 0;
 		globalThis.fetch = mock(async () => {

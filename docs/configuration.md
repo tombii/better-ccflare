@@ -135,7 +135,7 @@ These environment variables are not stored in the configuration file and must be
 | `BETTER_CCFLARE_MODELS_OAUTH_REFRESH` | Allow OAuth accounts as a fallback source for *scheduled* model catalog refreshes when no console/API-key account is eligible. Manual refreshes always allow the OAuth fallback regardless of this setting | - (console-only) | `BETTER_CCFLARE_MODELS_OAUTH_REFRESH=1` |
 | `BETTER_CCFLARE_HOST` | Server binding host | `0.0.0.0` | `BETTER_CCFLARE_HOST=127.0.0.1` (localhost-only) |
 | `SSL_KEY_PATH` / `SSL_CERT_PATH` | SSL private key / certificate paths for HTTPS | - | `SSL_KEY_PATH=/path/to/key.pem` |
-| `CCFLARE_OVERLOAD_RETRY_ENABLED` | In-place retry of Anthropic 529 "no reset" overloads before falling back to account cooldown | `true` | `CCFLARE_OVERLOAD_RETRY_ENABLED=false` |
+| `CCFLARE_OVERLOAD_RETRY_ENABLED` | In-place retry of Anthropic 529 "no reset" overloads before falling back to account cooldown. Also switches off the in-place retry for transient upstream server errors (HTTP 500/502/503/504), which share this flag — those responses are then benched and failed over immediately, without a re-issue; the failover half is governed separately by `CCFLARE_SERVER_ERROR_RETRY_ENABLED` below | `true` | `CCFLARE_OVERLOAD_RETRY_ENABLED=false` |
 | `CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS` | Total attempts including the original request | `2` | `CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS=3` |
 | `CCFLARE_OVERLOAD_RETRY_BASE_MS` | Overload retry backoff base in ms; `0` = no sleep | `750` | `CCFLARE_OVERLOAD_RETRY_BASE_MS=500` |
 | `CCFLARE_OVERLOAD_RETRY_MAX_MS` | Overload retry backoff ceiling in ms | `3000` | `CCFLARE_OVERLOAD_RETRY_MAX_MS=5000` |
