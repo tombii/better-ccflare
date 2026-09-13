@@ -968,15 +968,15 @@ export async function proxyWithAccount(
 		// call this proxy makes), so warming them here would only add latency.
 		await ensureCodexModelDefaults(account, ctx);
 
-		let transformedRequest = await transformRequestForAccount(providerRequest);
+		const initialTransformedRequest =
+			await transformRequestForAccount(providerRequest);
 
 		// Pre-strip cache_control for (account, model) pairs known to reject it.
 		// Also doubles as the buffered body for in-place 529 retries below —
 		// cloning the Request for retries tees the body into a branch nothing
 		// reads on the no-retry path, retaining its native buffer per request
 		// (#382).
-		const transformedBodyText = await transformedRequest.clone().text();
-		let retryBodyText = transformedBodyText;
+		const transformedBodyText = await initialTransformedRequest.clone().text();
 		let transformedBodyJson: Record<string, unknown> | null = null;
 		try {
 			transformedBodyJson = JSON.parse(transformedBodyText);
@@ -985,7 +985,47 @@ export async function proxyWithAccount(
 		}
 		const transformedModel =
 			(transformedBodyJson?.model as string | undefined) ?? "";
-		let responseModelFallback = transformedModel;
+
+		/**
+		 * The single source of truth for "the request currently in flight on this
+		 * account": what an in-place 529/5xx retry replays, what downstream
+		 * replays (checkZai1305) re-issue, and which model the response is
+		 * attributed to.
+		 *
+		 * It exists because three recovery paths change the request in flight and
+		 * each used to update a different subset of the three variables this
+		 * replaces (`transformedRequest`, `retryBodyText`, `responseModelFallback`).
+		 * The model-fallback loop recorded only the model, the cache-control
+		 * recovery only the Request, the thinking-signature recovery neither — so a
+		 * retry after any of them re-sent a request the upstream had just rejected.
+		 * One descriptor with one setter is what keeps them from drifting again.
+		 */
+		const outgoing: {
+			request: Request;
+			bodyText: string | undefined;
+			model: string;
+		} = {
+			request: initialTransformedRequest,
+			bodyText: transformedBodyText,
+			model: transformedModel,
+		};
+
+		/**
+		 * Adopts a rebuilt request as the one in flight. `bodyText` is what a
+		 * replay re-sends and must be this request's own body — never the previous
+		 * one. `model` is only passed when the recovery changed which model the
+		 * upstream is being asked for.
+		 */
+		const adoptOutgoingRequest = (
+			request: Request,
+			bodyText: string | undefined,
+			model?: string,
+		): void => {
+			outgoing.request = request;
+			outgoing.bodyText = bodyText;
+			if (model !== undefined) outgoing.model = model;
+		};
+
 		if (
 			transformedModel &&
 			cacheControlRejectors.has(
@@ -998,23 +1038,26 @@ export async function proxyWithAccount(
 					typeof stripCacheControlFromOpenAIRequest
 				>[0],
 			);
-			transformedRequest = new Request(transformedRequest.url, {
-				method: transformedRequest.method,
-				headers: transformedRequest.headers,
-				body: JSON.stringify(transformedBodyJson),
-				// A URL-based rebuild drops the signal — carry it over.
-				signal: req.signal,
-			});
-			retryBodyText = JSON.stringify(transformedBodyJson);
+			const preStrippedBodyText = JSON.stringify(transformedBodyJson);
+			adoptOutgoingRequest(
+				new Request(outgoing.request.url, {
+					method: outgoing.request.method,
+					headers: outgoing.request.headers,
+					body: preStrippedBodyText,
+					// A URL-based rebuild drops the signal — carry it over.
+					signal: req.signal,
+				}),
+				preStrippedBodyText,
+			);
 			log.debug(
 				`Pre-stripped cache_control for known rejector: account=${account.name} model=${transformedModel}`,
 			);
 		}
 
 		// Make the request (or unwrap a synthetic provider response)
-		let rawResponse = isSyntheticProviderResponse(transformedRequest)
-			? materializeSyntheticResponse(transformedRequest)
-			: await forwardUpstream(transformedRequest);
+		let rawResponse = isSyntheticProviderResponse(outgoing.request)
+			? materializeSyntheticResponse(outgoing.request)
+			: await forwardUpstream(outgoing.request);
 
 		if (provider.name === "codex" && [400, 404].includes(rawResponse.status)) {
 			const recovered = await recoverCodexMessagesContinuation(
@@ -1030,15 +1073,18 @@ export async function proxyWithAccount(
 					recovered,
 					account,
 				);
-				retryBodyText = await accountTransformedRecovery.text();
-				transformedRequest = new Request(accountTransformedRecovery.url, {
-					method: accountTransformedRecovery.method,
-					headers: accountTransformedRecovery.headers,
-					body: retryBodyText,
-					signal: req.signal,
-				});
+				const recoveredBodyText = await accountTransformedRecovery.text();
+				adoptOutgoingRequest(
+					new Request(accountTransformedRecovery.url, {
+						method: accountTransformedRecovery.method,
+						headers: accountTransformedRecovery.headers,
+						body: recoveredBodyText,
+						signal: req.signal,
+					}),
+					recoveredBodyText,
+				);
 				cancelDiscardedResponseBody(rawResponse);
-				rawResponse = await forwardUpstream(transformedRequest);
+				rawResponse = await forwardUpstream(outgoing.request);
 			}
 		}
 
@@ -1071,6 +1117,28 @@ export async function proxyWithAccount(
 				const retryTransformedRequest =
 					await transformRequestForAccount(retryProviderRequest);
 
+				// Adopt before sending: a later in-place retry must replay THIS
+				// request. Re-sending the unfiltered body would hand the upstream
+				// back the thinking signature it just rejected.
+				let retryTransformedBodyText: string | undefined;
+				try {
+					retryTransformedBodyText = await retryTransformedRequest
+						.clone()
+						.text();
+				} catch (err) {
+					// Unreachable for a Request built from a byte buffer; if it ever
+					// happens, keeping the previous descriptor is the pre-existing
+					// behaviour and strictly safer than pairing this request's URL and
+					// headers with the previous request's body.
+					log.warn("Failed to buffer the thinking-filtered retry body:", err);
+				}
+				if (retryTransformedBodyText !== undefined) {
+					adoptOutgoingRequest(
+						retryTransformedRequest,
+						retryTransformedBodyText,
+					);
+				}
+
 				// Make the retry request (or unwrap a synthetic provider response)
 				cancelDiscardedResponseBody(rawResponse);
 				rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
@@ -1100,10 +1168,11 @@ export async function proxyWithAccount(
 			try {
 				const retryBodyJson = JSON.parse(transformedBodyText);
 				stripCacheControlFromOpenAIRequest(retryBodyJson);
-				const retryRequest = new Request(transformedRequest.url, {
-					method: transformedRequest.method,
-					headers: transformedRequest.headers,
-					body: JSON.stringify(retryBodyJson),
+				const strippedBodyText = JSON.stringify(retryBodyJson);
+				const retryRequest = new Request(outgoing.request.url, {
+					method: outgoing.request.method,
+					headers: outgoing.request.headers,
+					body: strippedBodyText,
 					// A URL-based rebuild drops the signal — carry it over.
 					signal: req.signal,
 				});
@@ -1112,10 +1181,14 @@ export async function proxyWithAccount(
 					? materializeSyntheticResponse(retryRequest)
 					: await forwardUpstream(retryRequest);
 				// rawResponse now belongs to retryRequest (cache_control stripped),
-				// not the original transformedRequest — anything downstream that
-				// retries based on rawResponse (e.g. checkZai1305) must replay this
-				// request, not the stale one still carrying the rejected field.
-				transformedRequest = retryRequest;
+				// not to the request that was rejected — anything downstream that
+				// replays (checkZai1305, the in-place 529/5xx retries) must re-issue
+				// this request, BODY INCLUDED. Adopting only the Request, as this
+				// line used to, left the buffered body still carrying the rejected
+				// field for every replay. Kept after the await on purpose: a
+				// throwing re-issue is swallowed below and leaves the original
+				// response in hand, so the descriptor must stay with it.
+				adoptOutgoingRequest(retryRequest, strippedBodyText);
 			} catch (err) {
 				log.warn("Failed to retry without cache_control:", err);
 			}
@@ -1609,7 +1682,7 @@ export async function proxyWithAccount(
 		rawResponse = await checkZai1305(
 			rawResponse,
 			account,
-			transformedRequest,
+			outgoing.request,
 			log,
 		);
 
@@ -1709,36 +1782,66 @@ export async function proxyWithAccount(
 					// (e.g. convertAnthropicRequestToOpenAI) calls mapModelName which can
 					// remap nextModel back to the primary model if it has no Claude family
 					// pattern. Force nextModel into the final request body.
+					//
+					// The body text is kept because it is what an in-place retry has to
+					// replay: before this, the loop recorded only `nextModel` and a
+					// following 5xx/529 retry re-sent the model the upstream had just
+					// declared unavailable.
+					let retryTransformedBodyText: string | undefined;
 					try {
-						const transformedText = await retryTransformedRequest
+						retryTransformedBodyText = await retryTransformedRequest
 							.clone()
 							.text();
-						const transformedBody = JSON.parse(transformedText);
-						if (transformedBody.model !== nextModel) {
-							transformedBody.model = nextModel;
-							const repatchedHeaders = new Headers(
-								retryTransformedRequest.headers,
-							);
-							retryTransformedRequest = new Request(
-								retryTransformedRequest.url,
-								{
-									method: retryTransformedRequest.method,
-									headers: repatchedHeaders,
-									body: JSON.stringify(transformedBody),
-									// A URL-based rebuild drops the signal — carry it over.
-									signal: req.signal,
-								},
-							);
+					} catch (err) {
+						log.warn("Failed to buffer the model-fallback retry body:", err);
+					}
+					if (retryTransformedBodyText !== undefined) {
+						try {
+							const transformedBody = JSON.parse(retryTransformedBodyText);
+							if (transformedBody.model !== nextModel) {
+								transformedBody.model = nextModel;
+								const repatchedBodyText = JSON.stringify(transformedBody);
+								const repatchedHeaders = new Headers(
+									retryTransformedRequest.headers,
+								);
+								retryTransformedRequest = new Request(
+									retryTransformedRequest.url,
+									{
+										method: retryTransformedRequest.method,
+										headers: repatchedHeaders,
+										body: repatchedBodyText,
+										// A URL-based rebuild drops the signal — carry it over.
+										signal: req.signal,
+									},
+								);
+								retryTransformedBodyText = repatchedBodyText;
+							}
+						} catch {
+							// If re-patching fails, proceed with the transformed request as-is
 						}
-					} catch {
-						// If re-patching fails, proceed with the transformed request as-is
 					}
 
 					cancelDiscardedResponseBody(rawResponse);
 					rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
 						? materializeSyntheticResponse(retryTransformedRequest)
 						: await forwardUpstream(retryTransformedRequest);
-					responseModelFallback = nextModel;
+					if (retryTransformedBodyText === undefined) {
+						// Body unreadable — unreachable for a buffer-backed Request.
+						// Record the model and leave the replay on the previous request
+						// rather than pairing this URL and headers with a body we do not
+						// have.
+						adoptOutgoingRequest(
+							outgoing.request,
+							outgoing.bodyText,
+							nextModel,
+						);
+					} else {
+						adoptOutgoingRequest(
+							retryTransformedRequest,
+							retryTransformedBodyText,
+							nextModel,
+						);
+					}
 
 					rawResponse = await checkZai1305(
 						rawResponse,
@@ -1764,7 +1867,7 @@ export async function proxyWithAccount(
 				rawResponse = await checkZai1305(
 					rawResponse,
 					account,
-					transformedRequest,
+					outgoing.request,
 					log,
 				);
 			}
@@ -1841,7 +1944,7 @@ export async function proxyWithAccount(
 		// stream intent and request ID without needing the original request object.
 		const responseHeaders = new Headers(rawResponse.headers);
 		responseHeaders.set("x-better-ccflare-request-id", requestMeta.id);
-		const internalRequestStream = transformedRequest.headers.get(
+		const internalRequestStream = outgoing.request.headers.get(
 			"x-better-ccflare-request-stream",
 		);
 		if (internalRequestStream === "true" || internalRequestStream === "false") {
@@ -1850,7 +1953,7 @@ export async function proxyWithAccount(
 				internalRequestStream,
 			);
 		}
-		const internalCustomTools = transformedRequest.headers.get(
+		const internalCustomTools = outgoing.request.headers.get(
 			"x-better-ccflare-codex-custom-tools",
 		);
 		if (internalCustomTools === "true" || internalCustomTools === "false") {
@@ -1859,7 +1962,7 @@ export async function proxyWithAccount(
 				internalCustomTools,
 			);
 		}
-		const internalNativeResponses = transformedRequest.headers.get(
+		const internalNativeResponses = outgoing.request.headers.get(
 			"x-better-ccflare-native-responses",
 		);
 		if (
@@ -1887,7 +1990,7 @@ export async function proxyWithAccount(
 			account,
 			req.headers,
 			drainAbortController,
-			{ requestModel: responseModelFallback || null },
+			{ requestModel: outgoing.model || null },
 		);
 
 		// Failover to next account on upstream 401 — credentials are invalid/expired
@@ -1906,10 +2009,10 @@ export async function proxyWithAccount(
 		const reissueRequestInPlace = async (): Promise<Response> => {
 			// Rebuild from the buffered body text instead of a pre-cloned
 			// Request — an unread clone branch retains its native buffer (#382).
-			const retryRequest = new Request(transformedRequest.url, {
-				method: transformedRequest.method,
-				headers: transformedRequest.headers,
-				body: retryBodyText || undefined,
+			const retryRequest = new Request(outgoing.request.url, {
+				method: outgoing.request.method,
+				headers: outgoing.request.headers,
+				body: outgoing.bodyText || undefined,
 				signal: req.signal,
 			});
 			const retryRaw = isSyntheticProviderResponse(retryRequest)
@@ -1927,7 +2030,7 @@ export async function proxyWithAccount(
 				"x-better-ccflare-codex-custom-tools",
 				"x-better-ccflare-native-responses",
 			]) {
-				const value = transformedRequest.headers.get(forwarded);
+				const value = outgoing.request.headers.get(forwarded);
 				if (value === "true" || value === "false") {
 					retryTaggedHeaders.set(forwarded, value);
 				}
@@ -1943,7 +2046,7 @@ export async function proxyWithAccount(
 				account,
 				req.headers,
 				drainAbortController,
-				{ requestModel: responseModelFallback || null },
+				{ requestModel: outgoing.model || null },
 			);
 		};
 
