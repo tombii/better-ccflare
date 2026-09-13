@@ -205,6 +205,23 @@ function outOfCredits429() {
 	);
 }
 
+/** Verbatim from `proxy-operations-extra-usage-exhausted.test.ts`. */
+const EXTRA_USAGE_MESSAGE =
+	"Third-party apps now draw from your extra usage, not your plan limits. Add more at claude.ai/settings/usage and keep going.";
+
+function extraUsageExhausted400() {
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message: EXTRA_USAGE_MESSAGE,
+			},
+		}),
+		{ status: 400, headers: { "content-type": "application/json" } },
+	);
+}
+
 /** Verbatim from `proxy-operations-windowless-429.test.ts`. */
 function windowless429() {
 	return new Response(
@@ -369,6 +386,31 @@ describe("proxyWithAccount — a retried response is classified like a first res
 		expect(account.consecutive_rate_limits).toBe(0);
 		expect(markCalls(ctx)).toHaveLength(0);
 		expect(saveReasons(ctx)).toEqual(["out_of_credits"]);
+	});
+
+	it("passes a 400 extra_usage_exhausted behind a 500 straight to the client, stripped of the internal request-path header", async () => {
+		const { account, ctx, result, forwarded, callCount } = await runSequence([
+			() => serverErrorResponse(500),
+			() => extraUsageExhausted400(),
+		]);
+
+		expect(callCount).toBe(2);
+		// Returned by the classification itself, not handed to forwardToClient.
+		expect(forwarded).toBe(false);
+		expect(result).not.toBeNull();
+		expect(result?.status).toBe(400);
+		// A billing rejection, not account exhaustion: no bench, no streak bump.
+		expect(account.rate_limited_until).toBeNull();
+		expect(account.rate_limited_reason).toBeNull();
+		expect(account.consecutive_rate_limits).toBe(0);
+		expect(markCalls(ctx)).toHaveLength(0);
+		expect(saveReasons(ctx)).toEqual(["extra_usage_exhausted"]);
+		// `reissueRequestInPlace` tags every retry response with the internal
+		// request-path header so the provider can identify the response type.
+		// A response returned straight out of the classification chain never
+		// passes the client-bound exits in response-handler.ts that delete it,
+		// so the chain has to delete it itself.
+		expect(result?.headers.get("x-better-ccflare-request-path")).toBeNull();
 	});
 
 	it("classifies a windowless 429 behind a 500 exactly like a direct windowless 429", async () => {

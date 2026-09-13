@@ -2345,7 +2345,20 @@ export async function proxyWithAccount(
 			response.status !== 529
 		) {
 			const retryOutcome = await classifyRetriedUpstreamResponse(response);
-			if (retryOutcome !== NOT_CLASSIFIED) return retryOutcome;
+			if (retryOutcome !== NOT_CLASSIFIED) {
+				if (retryOutcome !== null) {
+					// A classification that returns the response hands it to the
+					// client directly, bypassing the three client-bound exits in
+					// response-handler.ts that delete this header. On the first
+					// response that is harmless — the raw upstream response was
+					// never tagged — but `reissueRequestInPlace` tags every retry
+					// response with it so `processResponse` can tell /v1/models
+					// from /v1/messages. Without this delete the internal path
+					// leaks to the client on `5xx → 400 extra_usage_exhausted`.
+					retryOutcome.headers.delete("x-better-ccflare-request-path");
+				}
+				return retryOutcome;
+			}
 		}
 
 		// Check for rate limit using account-specific provider.
