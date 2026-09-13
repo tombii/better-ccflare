@@ -1914,6 +1914,11 @@ export async function proxyWithAccount(
 		// order is 1 + (N-1) + (N-1) = 2N-1 upstream calls on one account, so
 		// raising N grows that count linearly with a factor of two, and each
 		// call can take as long as the slow 5xx that triggered it.
+		// True once the block below has benched this account for a transient 5xx
+		// AND fallen through instead of failing over (terminal candidate
+		// account). Consumed by processProxyResponse, which must not re-classify
+		// an already-classified server error as a quota rate limit.
+		let terminalServerErrorBenched = false;
 		if (
 			isTransientServerErrorStatus(response.status) &&
 			!isSyntheticInternal &&
@@ -2048,6 +2053,7 @@ export async function proxyWithAccount(
 					cancelDiscardedResponseBody(response);
 					return null;
 				}
+				terminalServerErrorBenched = true;
 			}
 		}
 
@@ -2088,6 +2094,16 @@ export async function proxyWithAccount(
 			},
 			requestMeta.id,
 			requestMeta,
+			// Terminal transient 5xx: the bench above is this response's
+			// classification, and processProxyResponse must not replace it with
+			// a quota cooldown just because the provider found a rate-limit
+			// header on it. Reporting "not rate-limited" also routes the
+			// response into the ordinary forwardToClient below, so the client
+			// sees the real upstream status and body — which is why the
+			// terminal-529 branch (and its clone) needs no counterpart here:
+			// that branch exists to forward a response processProxyResponse
+			// classified as rate-limited, and this one never is.
+			{ serverErrorBenchApplied: terminalServerErrorBenched },
 		);
 		if (needsRateLimitCheckClone) {
 			cancelDiscardedResponseBody(responseForRateLimitCheck);

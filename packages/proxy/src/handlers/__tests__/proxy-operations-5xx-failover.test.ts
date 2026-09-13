@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
+import * as responseHandlerModule from "../../response-handler";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 import { resetRateLimitProbeGatesForTests } from "../rate-limit-cooldown";
@@ -84,6 +85,9 @@ function makeProxyContext(): ProxyContext {
 			),
 			saveRequest: mock((..._args: unknown[]) => Promise.resolve()),
 			updateAccountUsage: mock(() => Promise.resolve()),
+			updateAccountRateLimitMeta: mock((..._args: unknown[]) =>
+				Promise.resolve(),
+			),
 			getAdapter: mock(() => ({
 				run: mock(() => Promise.resolve()),
 				get: mock(() => Promise.resolve(null)),
@@ -137,6 +141,43 @@ function serverErrorResponse(
 		status,
 		headers: { "content-type": "application/json", ...headers },
 	});
+}
+
+/**
+ * Captures the Response handed to `forwardToClient` instead of letting the
+ * real one throw "UsageCollector not initialized".
+ *
+ * Reaching the pass-through path proves only that we did not fail over; it
+ * says nothing about WHICH response was passed through. Every assertion that
+ * the *upstream* status and body survived to the client needs the captured
+ * argument, so the terminal-account cases install this stub.
+ *
+ * `mock.module` is process-global in Bun with no per-file isolation, so the
+ * stub is installed inside the individual test and torn down in `afterEach` —
+ * never at module top level, where it would also rewrite `forwardToClient`
+ * for every other proxy test file sharing the process.
+ */
+let capturedForward: Response | null = null;
+
+// Snapshotted at load time, before any mock.module call: Bun live-updates the
+// imported namespace object, so reading it during teardown would hand the stub
+// straight back and leak it into every test that follows.
+const realResponseHandler = { ...responseHandlerModule };
+
+function captureForwardedResponse(): void {
+	capturedForward = null;
+	mock.module("../../response-handler", () => ({
+		...realResponseHandler,
+		forwardToClient: async (options: { response: Response }) => {
+			capturedForward = options.response;
+			return options.response;
+		},
+	}));
+}
+
+function restoreForwardToClient(): void {
+	capturedForward = null;
+	mock.module("../../response-handler", () => realResponseHandler);
 }
 
 /**
@@ -203,6 +244,7 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
+		restoreForwardToClient();
 		delete process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS;
 		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS;
 		delete process.env.CCFLARE_OVERLOAD_RETRY_ENABLED;
@@ -340,6 +382,7 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 
 		expect(result).toBeNull();
 		expect(account.rate_limited_reason).toBe("upstream_5xx_server_error");
+		expect(account.rate_limited_until).not.toBeNull();
 		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
 			before + 4_000,
 		);
@@ -354,6 +397,7 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 		const ctx = makeProxyContext();
 		const account = makeAccount();
 		const bodyBuffer = makeRequestBody();
+		const before = Date.now();
 		const { result } = await runProxy(
 			makeRequest(bodyBuffer),
 			account,
@@ -362,6 +406,12 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 		);
 
 		expect(result).toBeNull();
+		expect(account.rate_limited_reason).toBe("upstream_5xx_server_error");
+		// A bare upper bound is satisfied by "no bench at all" — the lower bound
+		// and the non-null check are what make this a cap test rather than a
+		// tautology.
+		expect(account.rate_limited_until).not.toBeNull();
+		expect(account.rate_limited_until ?? 0).toBeGreaterThan(before + 55_000);
 		expect(account.rate_limited_until ?? 0).toBeLessThanOrEqual(
 			Date.now() + 60_000,
 		);
@@ -436,6 +486,7 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 
 		expect(result).toBeNull();
 		expect(account.rate_limited_reason).toBe("upstream_5xx_server_error");
+		expect(account.rate_limited_until).not.toBeNull();
 		// Honoured: the date, not the flat 60s cooldown.
 		expect(account.rate_limited_until ?? 0).toBeGreaterThan(
 			Date.now() + 20_000,
@@ -531,12 +582,17 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 	});
 
 	it("forwards the upstream 5xx to the client on the last candidate account", async () => {
-		globalThis.fetch = mock(async () => serverErrorResponse(500));
+		let callCount = 0;
+		globalThis.fetch = mock(async () => {
+			callCount++;
+			return serverErrorResponse(500);
+		});
+		captureForwardedResponse();
 
 		const ctx = makeProxyContext();
 		const account = makeAccount();
 		const bodyBuffer = makeRequestBody();
-		const { result, forwarded } = await runProxy(
+		const { result } = await runProxy(
 			makeRequest(bodyBuffer),
 			account,
 			bodyBuffer,
@@ -544,13 +600,15 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 			true,
 		);
 
-		if (result) {
-			expect(result.status).toBe(500);
-		} else {
-			// Reaching forwardToClient is itself the proof that the upstream
-			// response was passed through rather than turned into pool_exhausted.
-			expect(forwarded).toBe(true);
-		}
+		// The retry budget is spent on the terminal account too: one original
+		// call plus CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS - 1 re-issues.
+		expect(callCount).toBe(2);
+		// What reaches the client is the upstream response itself — same status,
+		// same body — not a synthetic pool_exhausted and not an empty shell.
+		expect(capturedForward).not.toBeNull();
+		expect(capturedForward?.status).toBe(500);
+		expect(await (capturedForward as Response).text()).toBe(serverErrorBody);
+		expect(result?.status).toBe(500);
 		// The account is still benched, exactly as the terminal 529 path does.
 		// `rate_limited_reason` alone does not pin this: processProxyResponse
 		// runs on the fall-through and only ever clears `rate_limited_until`,
@@ -562,6 +620,58 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 		// The fall-through path writes its own row downstream; the 5xx block
 		// must not add a second one for the same request.
 		expect(saveCalls(ctx)).toHaveLength(0);
+	});
+
+	it("keeps a terminal 5xx classified as a server error when hard-limit rate-limit headers ride along", async () => {
+		// `AnthropicProvider.parseRateLimit` treats
+		// `anthropic-ratelimit-unified-status: rate_limited` as rate-limited
+		// whatever the HTTP status is (HARD_LIMIT_STATUSES in
+		// packages/providers/src/providers/anthropic/provider.ts), and
+		// proxyWithAccount resolves the real provider from `account.provider`.
+		// So on the terminal account a 500 carrying that header used to be
+		// re-classified downstream in processProxyResponse: the 60s
+		// `upstream_5xx_server_error` bench was overwritten by a quota
+		// cooldown, the 429 streak advanced, and proxyWithAccount returned null
+		// (pool_exhausted) instead of forwarding the real 500.
+		let callCount = 0;
+		globalThis.fetch = mock(async () => {
+			callCount++;
+			return serverErrorResponse(500, {
+				"anthropic-ratelimit-unified-status": "rate_limited",
+				"anthropic-ratelimit-unified-reset": String(
+					Math.floor((Date.now() + 3_600_000) / 1000),
+				),
+			});
+		});
+		captureForwardedResponse();
+
+		const ctx = makeProxyContext();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody();
+		const before = Date.now();
+		const { result } = await runProxy(
+			makeRequest(bodyBuffer),
+			account,
+			bodyBuffer,
+			ctx,
+			true,
+		);
+
+		expect(callCount).toBe(2);
+		// The server-error classification survives end to end.
+		expect(account.rate_limited_reason).toBe("upstream_5xx_server_error");
+		expect(account.rate_limited_until).not.toBeNull();
+		expect(account.rate_limited_until ?? 0).toBeGreaterThan(before + 55_000);
+		expect(account.rate_limited_until ?? 0).toBeLessThanOrEqual(
+			Date.now() + 60_000,
+		);
+		// Not the account's own quota: the streak stays frozen.
+		expect(account.consecutive_rate_limits).toBe(0);
+		// And the client gets the real upstream error, not pool_exhausted.
+		expect(capturedForward).not.toBeNull();
+		expect(capturedForward?.status).toBe(500);
+		expect(await (capturedForward as Response).text()).toBe(serverErrorBody);
+		expect(result?.status).toBe(500);
 	});
 
 	it("retries a streaming request's 500 the same way as a non-streaming one", async () => {

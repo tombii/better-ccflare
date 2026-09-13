@@ -305,6 +305,10 @@ export function updateAccountMetadata(
  * @param account - The account used
  * @param ctx - The proxy context
  * @param requestId - The request ID for usage tracking
+ * @param requestMeta - Request headers/path, used for the internal-probe checks
+ * @param options - `serverErrorBenchApplied` is set by the transient-5xx
+ *   failover in proxy-operations.ts on the terminal candidate account; see the
+ *   guard at the top of the rate-limit branch below.
  * @returns Promise resolving to whether the response is rate-limited
  */
 export async function processProxyResponse(
@@ -313,6 +317,7 @@ export async function processProxyResponse(
 	ctx: ProxyContext,
 	requestId?: string,
 	requestMeta?: { headers?: Headers; path?: string },
+	options?: { serverErrorBenchApplied?: boolean },
 ): Promise<boolean> {
 	let rateLimitInfo = ctx.provider.parseRateLimit(response);
 
@@ -373,6 +378,37 @@ export async function processProxyResponse(
 	const isKeepalive = isInternalProbe(requestMeta?.headers, ctx, "keepalive");
 
 	if (rateLimitInfo.isRateLimited) {
+		// This response has already been classified upstream of us: the
+		// transient-5xx failover in proxy-operations.ts benched the account with
+		// `upstream_5xx_server_error` and, being out of candidate accounts, is
+		// forwarding the real upstream error to the client.
+		//
+		// A provider can still report `isRateLimited` for it. Anthropic's
+		// parseRateLimit keys off `anthropic-ratelimit-unified-status`
+		// regardless of HTTP status (HARD_LIMIT_STATUSES in
+		// providers/anthropic/provider.ts), so a 500 that happens to carry
+		// `rate_limited` used to be re-classified here: the 60s server-error
+		// bench was overwritten by a shorter quota cooldown, the 429 streak
+		// advanced, and returning `true` turned the request into a
+		// pool_exhausted failover instead of forwarding the upstream 500.
+		//
+		// A quota header riding along on a request the upstream failed to serve
+		// is not evidence that the account hit its own quota, and the account
+		// is benched either way — so the server-error classification wins and we
+		// report "not rate-limited" so the caller forwards the upstream
+		// response. Metadata bookkeeping still runs, exactly as it does on the
+		// cooldown path below; the probe lease was already released by
+		// applyRateLimitCooldown when the bench was applied.
+		if (options?.serverErrorBenchApplied) {
+			log.warn(
+				`Account ${account.name}: upstream ${response.status} also carried rate-limit headers (status=${rateLimitInfo.statusHeader ?? "none"}) — keeping the server-error bench and forwarding the upstream response`,
+			);
+			const bypassSession =
+				requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
+			updateAccountMetadata(account, response, ctx, requestId, bypassSession);
+			return false;
+		}
+
 		// Skip cooldown application on synthetic cache-keepalive replays. The
 		// keepalive scheduler fires parallel requests across every cached
 		// account simultaneously; bursts of 4+ concurrent requests can trip
