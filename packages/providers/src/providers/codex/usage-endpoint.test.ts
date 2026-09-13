@@ -116,11 +116,21 @@ describe("parseCodexUsagePayload", () => {
 
 	it("ignores windows whose length is neither 5 hours nor a week", () => {
 		const usage = parseCodexUsagePayload(
-			payload(window({ limit_window_seconds: 3_600 }), null),
+			payload(window({ limit_window_seconds: 24 * 60 * 60 }), null),
 			NOW_MS,
 		);
 
 		expect(usage).toBeNull();
+	});
+
+	it("slots any window up to five hours as five_hour, like the header parser", () => {
+		const usage = parseCodexUsagePayload(
+			payload(window({ used_percent: 3, limit_window_seconds: 3_600 }), null),
+			NOW_MS,
+		);
+
+		expect(usage?.five_hour?.utilization).toBe(3);
+		expect(usage?.seven_day).toBeUndefined();
 	});
 
 	it("drops a window without a numeric used_percent instead of minting 0%", () => {

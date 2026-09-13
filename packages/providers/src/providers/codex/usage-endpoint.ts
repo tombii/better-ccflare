@@ -67,29 +67,19 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 /**
- * Same general idea as `pickWindowSlot` in `./usage.ts` (which works in
- * minutes off parsed headers): a window at least a week long is the weekly
- * window. Unlike that helper, the five-hour bucket also needs a *lower*
- * bound here — `./usage.ts` only ever sees the two window lengths the
- * subscription actually sends, but this endpoint's `limit_window_seconds` is
- * arbitrary server data, and a naive "anything <= five hours" comparison
- * would wrongly bucket a stray short-lived window (e.g. an hourly cap) as
- * the five-hour session window. Requiring the window to be more than half
- * of five hours keeps real five-hour windows (and small clock jitter around
- * that value) while rejecting lengths that are neither five hours nor a
- * week.
+ * Mirrors `pickWindowSlot` in `./usage.ts` (which works in minutes off parsed
+ * headers): any window up to five hours is the session window, anything from
+ * a week up is the weekly window, in-between lengths are not ours to display.
+ * Kept identical to the header parser on purpose — the endpoint path and the
+ * `x-codex-*` header path must never disagree about how the same account's
+ * windows slot.
  */
 function slotFor(
 	windowSeconds: number | null | undefined,
 ): "five_hour" | "seven_day" | null {
 	if (!isFiniteNumber(windowSeconds) || windowSeconds <= 0) return null;
+	if (windowSeconds <= FIVE_HOUR_WINDOW_SECONDS) return "five_hour";
 	if (windowSeconds >= SEVEN_DAY_WINDOW_SECONDS) return "seven_day";
-	if (
-		windowSeconds > FIVE_HOUR_WINDOW_SECONDS / 2 &&
-		windowSeconds <= FIVE_HOUR_WINDOW_SECONDS
-	) {
-		return "five_hour";
-	}
 	return null;
 }
 
