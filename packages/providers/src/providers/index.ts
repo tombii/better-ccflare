@@ -19,6 +19,7 @@ export type {
 	CodexUsagePayload,
 	CodexUsageRefreshFetchResult,
 	CodexUsageWindowPayload,
+	CodexWindowSlot,
 	FetchCodexUsageOptions,
 } from "./codex/index";
 export {
@@ -30,12 +31,14 @@ export {
 	CODEX_VERSION,
 	CodexOAuthProvider,
 	CodexProvider,
+	codexWindowRolledOver,
 	extractChatgptAccountId,
 	fetchCodexUsageData,
 	fetchCodexUsageOnDemand,
 	isCodexSubscriptionEndpoint,
 	parseCodexUsageHeaders,
 	parseCodexUsagePayload,
+	pickCodexRolloverSlot,
 	readCodexPlanType,
 } from "./codex/index";
 export { KiloProvider } from "./kilo/index";

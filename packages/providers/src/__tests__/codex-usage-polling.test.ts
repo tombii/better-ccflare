@@ -173,3 +173,92 @@ describe("usageCache polling for codex", () => {
 		expect(usageCache.get(ACCOUNT_ID)).toBeNull();
 	});
 });
+
+describe("codex polling and window rollovers", () => {
+	let originalFetch: typeof fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		usageCache.stopPolling(ACCOUNT_ID);
+		globalThis.fetch = originalFetch;
+	});
+
+	/** A 5-hour window at `percent` used, resetting `resetInMs` from now. */
+	function fiveHourPayload(percent: number, resetInMs: number) {
+		return {
+			plan_type: "plus",
+			rate_limit: {
+				allowed: true,
+				limit_reached: false,
+				primary_window: {
+					used_percent: percent,
+					limit_window_seconds: 18_000,
+					reset_at: Math.floor((Date.now() + resetInMs) / 1000),
+				},
+				secondary_window: null,
+			},
+		};
+	}
+
+	function seedBaseline(percent: number, resetInMs: number): void {
+		usageCache.set(ACCOUNT_ID, {
+			five_hour: {
+				utilization: percent,
+				resets_at: new Date(Date.now() + resetInMs).toISOString(),
+			},
+		} as UsageData);
+	}
+
+	async function pollOnce(
+		body: unknown,
+		onWindowReset: (accountId: string) => void,
+	): Promise<void> {
+		globalThis.fetch = mock(async () =>
+			okResponse(body),
+		) as unknown as typeof fetch;
+		usageCache.startPolling(
+			ACCOUNT_ID,
+			async () => TOKEN,
+			"codex",
+			ONE_HOUR_MS,
+			undefined,
+			onWindowReset,
+		);
+		await usageCache.refreshNow(ACCOUNT_ID);
+	}
+
+	it("does not reset the session when the 5-hour deadline slides forward", async () => {
+		// OpenAI pushes resets_at forward while the account sits idle. The old
+		// ">60s advance" rule fired on nearly every poll here.
+		const onWindowReset = mock((_accountId: string) => {});
+		seedBaseline(20, ONE_HOUR_MS);
+
+		await pollOnce(fiveHourPayload(25, 2 * ONE_HOUR_MS), onWindowReset);
+
+		expect(onWindowReset).not.toHaveBeenCalled();
+		const cached = usageCache.get(ACCOUNT_ID) as UsageData | null;
+		expect(cached?.five_hour?.utilization).toBe(25);
+	});
+
+	it("does not reset the session when utilization keeps rising past the deadline", async () => {
+		const onWindowReset = mock((_accountId: string) => {});
+		seedBaseline(20, -60_000);
+
+		await pollOnce(fiveHourPayload(25, 5 * ONE_HOUR_MS), onWindowReset);
+
+		expect(onWindowReset).not.toHaveBeenCalled();
+	});
+
+	it("resets the session once on a real rollover", async () => {
+		const onWindowReset = mock((_accountId: string) => {});
+		seedBaseline(80, -60_000);
+
+		await pollOnce(fiveHourPayload(5, 5 * ONE_HOUR_MS), onWindowReset);
+
+		expect(onWindowReset).toHaveBeenCalledTimes(1);
+		expect(onWindowReset.mock.calls[0][0]).toBe(ACCOUNT_ID);
+	});
+});

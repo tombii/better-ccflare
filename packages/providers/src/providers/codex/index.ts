@@ -32,3 +32,8 @@ export {
 	parseCodexUsagePayload,
 	readCodexPlanType,
 } from "./usage-endpoint";
+export type { CodexWindowSlot } from "./window-rollover";
+export {
+	codexWindowRolledOver,
+	pickCodexRolloverSlot,
+} from "./window-rollover";

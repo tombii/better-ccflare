@@ -28,6 +28,10 @@ import {
 import { extractChatgptAccountId } from "./providers/codex/account-id";
 import { fetchCodexUsageData } from "./providers/codex/usage-endpoint";
 import {
+	codexWindowRolledOver,
+	pickCodexRolloverSlot,
+} from "./providers/codex/window-rollover";
+import {
 	fetchXaiUsageData,
 	getRepresentativeXaiUtilization,
 	getRepresentativeXaiWindow,
@@ -1189,13 +1193,38 @@ class UsageCache {
 				});
 				if (result.data) {
 					this.usageRateLimitedUntil.delete(accountId);
-					const callback = this.windowResetCallbacks.get(accountId);
-					if (callback)
-						this.notifyWindowReset(accountId, result.data, "codex", callback);
+					// Codex does not use the generic ">60s advance" rule: OpenAI slides
+					// the 5-hour `resets_at` forward while the account is idle, so that
+					// rule would reset session affinity on nearly every poll. Evaluate
+					// the shared predicate against the baseline BEFORE overwriting it —
+					// after `cache.set` the traffic path in response-processor.ts would
+					// compare against an already-advanced reset and never fire either.
+					// The poller cannot read CODEX_FIVE_HOUR_WINDOW_ENABLED (config
+					// lives outside this package), so it always follows the window the
+					// payload actually reports.
+					const previous = this.cache.get(accountId)?.data as
+						| UsageData
+						| undefined;
+					const slot = pickCodexRolloverSlot(result.data);
+					const rolledOver = codexWindowRolledOver(
+						previous,
+						result.data,
+						Date.now(),
+						slot,
+					);
 					this.cache.set(accountId, {
 						data: result.data,
 						timestamp: Date.now(),
 					});
+					if (rolledOver) {
+						const callback = this.windowResetCallbacks.get(accountId);
+						if (callback) {
+							log.info(
+								`Codex ${slot} window rolled over for account ${accountId} (polled), resetting session`,
+							);
+							callback(accountId);
+						}
+					}
 					const snapshotCb = this.snapshotCallbacks.get(accountId);
 					if (snapshotCb) snapshotCb(accountId, result.data);
 					log.debug(
