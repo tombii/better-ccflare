@@ -44,7 +44,9 @@ import {
 	fetchCodexUsageOnDemand,
 	getProvider,
 	getRankingUtilizationForProvider,
+	isCodexSubscriptionEndpoint,
 	setProviderModelDefaultOverrides,
+	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
 import {
@@ -56,6 +58,7 @@ import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
 	drainUsageCollector,
+	earliestCodexResetMs,
 	forceCloseCircuit,
 	getCodexModels,
 	getModelCatalog,
@@ -145,7 +148,81 @@ const MEMORY_GROWTH_ERROR_BYTES = 1024 * 1024 * 1024;
 export function supportsRefreshBackedUsagePolling(
 	provider: string | null | undefined,
 ): boolean {
-	return provider === "anthropic" || provider === "xai";
+	return provider === "anthropic" || provider === "xai" || provider === "codex";
+}
+
+/**
+ * Whether `startUsagePollingWithRefresh` should poll this account. Codex is
+ * polled only against OpenAI's own ChatGPT backend: the usage endpoint is a
+ * chatgpt.com path, so an account pointed at a custom OpenAI-compatible
+ * endpoint has nothing to poll and is skipped instead of failing every 90 s.
+ */
+export function supportsUsagePollingForAccount(account: {
+	provider: string | null | undefined;
+	custom_endpoint?: string | null;
+}): boolean {
+	if (!supportsRefreshBackedUsagePolling(account.provider)) return false;
+	if (account.provider !== "codex") return true;
+	return (
+		!account.custom_endpoint ||
+		isCodexSubscriptionEndpoint(account.custom_endpoint)
+	);
+}
+
+/**
+ * Build the `onSnapshot` callback `usageCache.startPolling` fires after every
+ * successful poll. Anthropic rows are written as-is. Codex goes through
+ * `recordCodexUsageSnapshot` (drops windows without a real reset, shares the
+ * 90 s throttle with the traffic path in response-processor) and refreshes
+ * `accounts.rate_limit_reset` so the load balancer's session expiry keeps
+ * working for an account that is idle through the proxy.
+ */
+export function createUsageSnapshotRecorder(
+	account: Pick<Account, "id" | "name" | "provider">,
+	dbOps: DatabaseOperations,
+	logger: Logger,
+): (accountId: string, data: UsageData) => Promise<void> {
+	return async (accountId, data) => {
+		if (account.provider === "codex") {
+			const usage = data as unknown as Record<string, unknown>;
+			try {
+				await recordCodexUsageSnapshot(
+					dbOps,
+					accountId,
+					account.name,
+					usage,
+					Date.now(),
+				);
+			} catch (err) {
+				logger.warn(
+					`Failed to record Codex usage snapshot for account ${accountId}: ${err}`,
+				);
+			}
+			const earliestReset = earliestCodexResetMs(usage);
+			if (earliestReset !== null) {
+				try {
+					await dbOps
+						.getAdapter()
+						.run("UPDATE accounts SET rate_limit_reset = ? WHERE id = ?", [
+							earliestReset,
+							accountId,
+						]);
+				} catch (err) {
+					logger.warn(
+						`Failed to update rate_limit_reset for Codex account ${accountId} from polled usage: ${err}`,
+					);
+				}
+			}
+			return;
+		}
+		try {
+			await dbOps.recordUsageSnapshot(accountId, data, Date.now());
+		} catch (err) {
+			logger.warn(
+				`Failed to record usage snapshot for account ${accountId}: ${err}`,
+			);
+		}
+	};
 }
 
 /**
@@ -612,15 +689,7 @@ function startUsagePollingWithRefresh(
 							),
 						);
 				},
-				(accountId, data) => {
-					proxyContext.dbOps
-						.recordUsageSnapshot(accountId, data, Date.now())
-						.catch((err) =>
-							logger.warn(
-								`Failed to record usage snapshot for account ${accountId}: ${err}`,
-							),
-						);
-				},
+				createUsageSnapshotRecorder(account, proxyContext.dbOps, logger),
 			);
 
 			// Reset retry count on success
@@ -1246,9 +1315,9 @@ export default async function startServer(options?: {
 			);
 			return false;
 		}
-		if (!supportsRefreshBackedUsagePolling(account.provider)) {
+		if (!supportsUsagePollingForAccount(account)) {
 			log.warn(
-				`Cannot restart usage polling: account ${account.name} does not support refresh-backed usage polling`,
+				`Cannot restart usage polling: account ${account.name} does not support usage polling (provider or custom endpoint)`,
 			);
 			return false;
 		}
@@ -1771,7 +1840,7 @@ Available endpoints:
 	// grok.com gRPC-web and may need to refresh an expired imported Grok CLI token
 	// before the first usage fetch.
 	const refreshBackedUsageAccounts = accounts.filter((a) =>
-		supportsRefreshBackedUsagePolling(a.provider),
+		supportsUsagePollingForAccount(a),
 	);
 	if (refreshBackedUsageAccounts.length > 0) {
 		log.info(

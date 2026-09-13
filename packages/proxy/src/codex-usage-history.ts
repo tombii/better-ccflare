@@ -98,3 +98,22 @@ export async function recordCodexUsageSnapshot(
 		return false;
 	}
 }
+
+/**
+ * Soonest reset among the real windows of a Codex usage payload, in epoch ms.
+ * Feeds `accounts.rate_limit_reset`, which the load balancer's Codex session
+ * expiry (`codexWindowHasReset`) and the auto-refresh scheduler read. Shared
+ * by the traffic path (response-processor) and the pollers so both write the
+ * same value for the same payload.
+ */
+export function earliestCodexResetMs(
+	usage: Record<string, unknown>,
+): number | null {
+	let earliest: number | null = null;
+	for (const window of Object.values(realWindows(usage))) {
+		const ms = new Date((window as { resets_at: string }).resets_at).getTime();
+		if (!Number.isFinite(ms)) continue;
+		if (earliest === null || ms < earliest) earliest = ms;
+	}
+	return earliest;
+}

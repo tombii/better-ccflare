@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { DatabaseOperations } from "@better-ccflare/database";
 import { Logger, logBus } from "@better-ccflare/logger";
+import { resetCodexUsageHistoryThrottle } from "@better-ccflare/proxy";
 import type { LogEvent } from "@better-ccflare/types";
 import {
 	bootstrapMinimaxUsagePolling,
+	createUsageSnapshotRecorder,
 	registerMinimaxUsagePolling,
 	supportsRefreshBackedUsagePolling,
+	supportsUsagePollingForAccount,
 	type UsageCacheRegistrar,
 } from "./server";
 
@@ -14,13 +18,142 @@ describe("supportsRefreshBackedUsagePolling", () => {
 	it("includes pollable OAuth providers that need token refresh", () => {
 		expect(supportsRefreshBackedUsagePolling("anthropic")).toBe(true);
 		expect(supportsRefreshBackedUsagePolling("xai")).toBe(true);
+		expect(supportsRefreshBackedUsagePolling("codex")).toBe(true);
 	});
 
 	it("does not include providers whose usage is not polled through this path", () => {
-		expect(supportsRefreshBackedUsagePolling("codex")).toBe(false);
 		expect(supportsRefreshBackedUsagePolling("qwen")).toBe(false);
 		expect(supportsRefreshBackedUsagePolling("nanogpt")).toBe(false);
 		expect(supportsRefreshBackedUsagePolling(null)).toBe(false);
+	});
+});
+
+describe("supportsUsagePollingForAccount", () => {
+	it("polls Codex accounts on OpenAI's own ChatGPT endpoint", () => {
+		expect(
+			supportsUsagePollingForAccount({
+				provider: "codex",
+				custom_endpoint: null,
+			}),
+		).toBe(true);
+		expect(
+			supportsUsagePollingForAccount({
+				provider: "codex",
+				custom_endpoint: "https://chatgpt.com/backend-api/codex/responses",
+			}),
+		).toBe(true);
+	});
+
+	it("skips Codex accounts pointed at a custom endpoint (nothing to poll there)", () => {
+		expect(
+			supportsUsagePollingForAccount({
+				provider: "codex",
+				custom_endpoint: "https://my-gateway.example/v1/responses",
+			}),
+		).toBe(false);
+	});
+
+	it("ignores custom_endpoint for other providers", () => {
+		expect(
+			supportsUsagePollingForAccount({
+				provider: "anthropic",
+				custom_endpoint: "https://proxy.example",
+			}),
+		).toBe(true);
+		expect(supportsUsagePollingForAccount({ provider: "qwen" })).toBe(false);
+	});
+});
+
+describe("createUsageSnapshotRecorder", () => {
+	const logger = new Logger("test");
+
+	function makeDbOps() {
+		const recorded: Array<{
+			accountId: string;
+			usage: Record<string, unknown>;
+			now: number;
+		}> = [];
+		const runs: Array<{ sql: string; params: unknown[] }> = [];
+		const dbOps = {
+			recordUsageSnapshot: async (
+				accountId: string,
+				usage: Record<string, unknown>,
+				now: number,
+			) => {
+				recorded.push({ accountId, usage, now });
+			},
+			getAdapter: () => ({
+				run: async (sql: string, params: unknown[]) => {
+					runs.push({ sql, params });
+				},
+			}),
+		} as unknown as DatabaseOperations;
+		return { dbOps, recorded, runs };
+	}
+
+	beforeEach(() => {
+		resetCodexUsageHistoryThrottle();
+	});
+
+	it("writes Codex windows through the Codex history helper and refreshes rate_limit_reset", async () => {
+		const { dbOps, recorded, runs } = makeDbOps();
+		const soon = new Date(Date.now() + 60_000).toISOString();
+		const later = new Date(Date.now() + 600_000).toISOString();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-codex", name: "Ania Codex", provider: "codex" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-codex", {
+			five_hour: { utilization: 12, resets_at: soon },
+			seven_day: { utilization: 43, resets_at: later },
+		});
+
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].accountId).toBe("acc-codex");
+		expect(Object.keys(recorded[0].usage).sort()).toEqual([
+			"five_hour",
+			"seven_day",
+		]);
+		expect(runs).toHaveLength(1);
+		expect(runs[0].sql).toContain("rate_limit_reset");
+		expect(runs[0].params).toEqual([new Date(soon).getTime(), "acc-codex"]);
+	});
+
+	it("drops Codex windows without a real reset and writes nothing when none remain", async () => {
+		const { dbOps, recorded, runs } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-codex", name: "Ania Codex", provider: "codex" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-codex", {
+			five_hour: { utilization: 0, resets_at: null },
+		});
+
+		expect(recorded).toHaveLength(0);
+		expect(runs).toHaveLength(0);
+	});
+
+	it("writes Anthropic payloads as-is and never touches rate_limit_reset", async () => {
+		const { dbOps, recorded, runs } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-anthropic", name: "Fabian", provider: "anthropic" },
+			dbOps,
+			logger,
+		);
+		const data = {
+			five_hour: { utilization: 5, resets_at: null },
+			seven_day: { utilization: 30, resets_at: null },
+		};
+
+		await recorder("acc-anthropic", data);
+
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].usage).toEqual(data);
+		expect(runs).toHaveLength(0);
 	});
 });
 

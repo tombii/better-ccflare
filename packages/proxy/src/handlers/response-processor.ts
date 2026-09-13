@@ -7,7 +7,10 @@ import {
 } from "@better-ccflare/providers";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
 import { circuitKeyFor, recordSuccess } from "../circuit-breaker";
-import { recordCodexUsageSnapshot } from "../codex-usage-history";
+import {
+	earliestCodexResetMs,
+	recordCodexUsageSnapshot,
+} from "../codex-usage-history";
 import { drainBody } from "./discard-body-cancel";
 import { isInternalProbe, type ProxyContext } from "./proxy-types";
 import {
@@ -170,15 +173,12 @@ export function updateAccountMetadata(
 				).then(() => undefined),
 			);
 
-			// Update rate_limit_reset from usage headers so auto-refresh can track windows
-			const resetTimes = [
-				codexUsage.five_hour?.resets_at,
-				codexUsage.seven_day?.resets_at,
-			]
-				.filter((t): t is string => t != null)
-				.map((t) => new Date(t).getTime());
-			if (resetTimes.length > 0) {
-				const earliestReset = Math.min(...resetTimes);
+			// Update rate_limit_reset from usage headers so auto-refresh and the
+			// load balancer's session expiry track the soonest window.
+			const earliestReset = earliestCodexResetMs(
+				codexUsage as unknown as Record<string, unknown>,
+			);
+			if (earliestReset !== null) {
 				ctx.asyncWriter.enqueue(() =>
 					ctx.dbOps
 						.getAdapter()
