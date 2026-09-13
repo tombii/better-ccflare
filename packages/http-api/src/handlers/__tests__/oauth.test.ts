@@ -6,11 +6,17 @@ import {
 	DatabaseOperations as DirectDbOps,
 } from "@better-ccflare/database";
 import {
+	registerPollingRestarter,
+	unregisterPollingRestarter,
+} from "@better-ccflare/proxy";
+import {
 	createAnthropicReauthCallbackHandler,
 	createAnthropicReauthInitHandler,
+	createCodexDeviceFlowInitHandler,
 	createCodexDeviceFlowStatusHandler,
 	createCodexReauthHandler,
 	createOAuthInitHandler,
+	createQwenDeviceFlowInitHandler,
 	createQwenDeviceFlowStatusHandler,
 	createQwenReauthHandler,
 } from "../oauth";
@@ -754,5 +760,99 @@ describe("createAnthropicReauthCallbackHandler", () => {
 		expect(res.status).toBe(400);
 		const data = await res.json();
 		expect(data.error).toMatch(/session/i);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Device-flow adds must start usage polling for the account they just created
+// ---------------------------------------------------------------------------
+
+const DEVICE_FLOW_POLLING_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-device-flow-polling.db`;
+const DEVICE_FLOW_SERVER_ID = "test-device-flow-polling-server";
+
+describe("device flow adds start usage polling", () => {
+	let dbOps: DatabaseOperations;
+	let seen: string[];
+
+	beforeAll(async () => {
+		try {
+			if (existsSync(DEVICE_FLOW_POLLING_DB_PATH)) {
+				unlinkSync(DEVICE_FLOW_POLLING_DB_PATH);
+			}
+		} catch {
+			// ignore
+		}
+		dbOps = new DirectDbOps(DEVICE_FLOW_POLLING_DB_PATH);
+		seen = [];
+		registerPollingRestarter(DEVICE_FLOW_SERVER_ID, async (id: string) => {
+			seen.push(id);
+			return true;
+		});
+	});
+
+	afterAll(async () => {
+		unregisterPollingRestarter(DEVICE_FLOW_SERVER_ID);
+		await dbOps.close();
+		try {
+			if (existsSync(DEVICE_FLOW_POLLING_DB_PATH)) {
+				unlinkSync(DEVICE_FLOW_POLLING_DB_PATH);
+			}
+		} catch {
+			// ignore
+		}
+	});
+
+	it("starts polling for a Codex account added via the web device flow", async () => {
+		const handler = createCodexDeviceFlowInitHandler(dbOps);
+		const res = await handler(
+			new Request("http://localhost/api/oauth/codex/device", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name: "codex-device-flow-add" }),
+			}),
+		);
+		expect(res.status).toBe(200);
+		const data = await res.json();
+
+		const status = await waitForSessionComplete(
+			createCodexDeviceFlowStatusHandler(),
+			data.sessionId,
+		);
+		expect(status).toBe("complete");
+
+		const row = await dbOps
+			.getAdapter()
+			.get<{ id: string }>("SELECT id FROM accounts WHERE name = ?", [
+				"codex-device-flow-add",
+			]);
+		expect(row?.id).toBeDefined();
+		expect(seen).toContain(row?.id as string);
+	});
+
+	it("starts polling for a Qwen account added via the web device flow", async () => {
+		const handler = createQwenDeviceFlowInitHandler(dbOps);
+		const res = await handler(
+			new Request("http://localhost/api/oauth/qwen/device", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name: "qwen-device-flow-add" }),
+			}),
+		);
+		expect(res.status).toBe(200);
+		const data = await res.json();
+
+		const status = await waitForSessionComplete(
+			createQwenDeviceFlowStatusHandler(),
+			data.sessionId,
+		);
+		expect(status).toBe("complete");
+
+		const row = await dbOps
+			.getAdapter()
+			.get<{ id: string }>("SELECT id FROM accounts WHERE name = ?", [
+				"qwen-device-flow-add",
+			]);
+		expect(row?.id).toBeDefined();
+		expect(seen).toContain(row?.id as string);
 	});
 });

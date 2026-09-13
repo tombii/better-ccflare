@@ -62,6 +62,7 @@ import {
 	computeRateLimitStatusDisplay,
 	getRepresentativeUsageResetMs,
 } from "./rate-limit-status";
+import { startUsagePollingForNewAccount } from "./usage-polling-start";
 
 const log = new Logger("AccountsHandler");
 
@@ -987,6 +988,10 @@ export function createAccountAddHandler(
 					],
 				);
 
+				// The server only starts usage polling for accounts that existed
+				// at boot, so a runtime add would never be polled until restart.
+				await startUsagePollingForNewAccount(accountId, name);
+
 				return jsonResponse({
 					success: true,
 					message: `Account ${name} added successfully`,
@@ -1351,6 +1356,8 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 			log.info(
 				`Successfully added z.ai account: ${name} (Priority ${priority})`,
 			);
+
+			await startUsagePollingForNewAccount(accountId, name);
 
 			// Get the created account for response
 			const account = await db.get<{

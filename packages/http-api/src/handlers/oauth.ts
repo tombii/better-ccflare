@@ -24,6 +24,7 @@ import {
 	pollForToken as pollQwenForToken,
 } from "@better-ccflare/providers/qwen";
 import { clearAccountRefreshCache } from "@better-ccflare/proxy";
+import { startUsagePollingForNewAccount } from "./usage-polling-start";
 
 const log = new Logger("OAuthHandler");
 
@@ -158,6 +159,10 @@ export function createQwenDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 						}
 						throw insertErr;
 					}
+
+					// Accounts created at runtime are invisible to the boot-time
+					// polling setup, so ask the server to start polling now.
+					await startUsagePollingForNewAccount(accountId, name);
 
 					qwenSessions.set(sessionId, {
 						status: "complete",
@@ -445,6 +450,10 @@ export function createCodexDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 						}
 						throw insertErr;
 					}
+
+					// Accounts created at runtime are invisible to the boot-time
+					// polling setup, so ask the server to start polling now.
+					await startUsagePollingForNewAccount(accountId, name);
 
 					codexSessions.set(sessionId, {
 						status: "complete",
@@ -995,7 +1004,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 					`Completing OAuth flow for account '${name}' in ${savedMode} mode`,
 				);
 
-				await oauthFlow.complete(
+				const created = await oauthFlow.complete(
 					{
 						sessionId,
 						code,
@@ -1010,6 +1019,10 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				dbOps.deleteOAuthSession(sessionId);
 
 				log.info(`Successfully added account '${name}' via OAuth`);
+
+				// Accounts created at runtime are invisible to the boot-time
+				// polling setup, so ask the server to start polling now.
+				await startUsagePollingForNewAccount(created.id, name);
 
 				return jsonResponse({
 					success: true,
