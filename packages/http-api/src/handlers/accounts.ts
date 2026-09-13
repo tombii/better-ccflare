@@ -212,7 +212,9 @@ async function getCachedOrPersistedCodexUsage(
 			const usage = parseCodexUsageHeaders(new Headers(headerEntries), {
 				baseTimeMs: payloadTimestamp,
 				allowRelativeResetAfter: true,
-				defaultUtilization: codexStatus === 429 ? 100 : 0,
+				// A 429 with reset-only headers is a real "exhausted" signal; any
+				// other status must not mint a percentage the upstream never sent.
+				...(codexStatus === 429 ? { defaultUtilization: 100 } : {}),
 			});
 			if (!usage) continue;
 

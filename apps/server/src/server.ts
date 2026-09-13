@@ -762,7 +762,6 @@ function startUsagePollingWithRefresh(
 				return;
 			}
 
-			// Don't restore paused state on error - let the user control pause/resume via API
 			// Retry with exponential backoff (5 min, 10 min, 20 min, ...)
 			const baseDelayMs = 5 * 60 * 1000; // 5 minutes
 			const delayMs = Math.min(
