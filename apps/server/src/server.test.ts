@@ -4,9 +4,10 @@ import { join } from "node:path";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { Logger, logBus } from "@better-ccflare/logger";
 import { resetCodexUsageHistoryThrottle } from "@better-ccflare/proxy";
-import type { LogEvent } from "@better-ccflare/types";
+import type { Account, LogEvent } from "@better-ccflare/types";
 import {
 	bootstrapMinimaxUsagePolling,
+	createRefreshBackedTokenProvider,
 	createUsageSnapshotRecorder,
 	registerMinimaxUsagePolling,
 	supportsRefreshBackedUsagePolling,
@@ -959,5 +960,91 @@ describe("startServer() wiring guards", () => {
 		// Third argument must flow through the configured poll interval —
 		// i.e. not a hardcoded numeric literal.
 		expect(argList[2]).not.toMatch(/^\d+$/);
+	});
+});
+
+describe("createRefreshBackedTokenProvider", () => {
+	function makePollingAccount(overrides: Partial<Account> = {}): Account {
+		return {
+			id: "acc-1",
+			name: "Paused Codex",
+			provider: "codex",
+			access_token: "stale-at",
+			refresh_token: "stale-rt",
+			expires_at: 1,
+			paused: true,
+			...overrides,
+		} as unknown as Account;
+	}
+
+	it("never touches the persisted pause state of a paused account", async () => {
+		// The old wrapper called resumeAccount() + pauseAccount() around the
+		// refresh, and pauseAccount defaults reason="manual", which erased an
+		// automatic pause reason and blocked auto-resume.
+		const calls: string[] = [];
+		const account = makePollingAccount();
+		const provider = createRefreshBackedTokenProvider(account, {
+			getAccount: async (accountId) => {
+				calls.push(`getAccount:${accountId}`);
+				return makePollingAccount({ paused: true });
+			},
+			getValidAccessToken: async () => {
+				calls.push("getValidAccessToken");
+				return "fresh-token";
+			},
+		});
+
+		expect(await provider()).toBe("fresh-token");
+		expect(calls).toEqual(["getAccount:acc-1", "getValidAccessToken"]);
+		expect(account.paused).toBe(true);
+	});
+
+	it("syncs rotated tokens from the database before refreshing", async () => {
+		const account = makePollingAccount();
+		let seen: Account | null = null;
+		const provider = createRefreshBackedTokenProvider(account, {
+			getAccount: async () =>
+				makePollingAccount({
+					access_token: "rotated-at",
+					refresh_token: "rotated-rt",
+					expires_at: 99,
+				}),
+			getValidAccessToken: async (acc) => {
+				seen = acc;
+				return acc.access_token ?? "";
+			},
+		});
+
+		expect(await provider()).toBe("rotated-at");
+		expect(seen).toBe(account);
+		expect(account.refresh_token).toBe("rotated-rt");
+		expect(account.expires_at).toBe(99);
+	});
+
+	it("falls through to the in-memory account when the row is gone", async () => {
+		const account = makePollingAccount({ access_token: "in-memory" });
+		const provider = createRefreshBackedTokenProvider(account, {
+			getAccount: async () => null,
+			getValidAccessToken: async (acc) => acc.access_token ?? "",
+		});
+
+		expect(await provider()).toBe("in-memory");
+		expect(account.access_token).toBe("in-memory");
+	});
+
+	it("propagates a database failure instead of swallowing it", async () => {
+		let tokenCalls = 0;
+		const provider = createRefreshBackedTokenProvider(makePollingAccount(), {
+			getAccount: async () => {
+				throw new Error("db offline");
+			},
+			getValidAccessToken: async () => {
+				tokenCalls += 1;
+				return "never";
+			},
+		});
+
+		await expect(provider()).rejects.toThrow("db offline");
+		expect(tokenCalls).toBe(0);
 	});
 });
