@@ -155,6 +155,25 @@ describe("usageCache polling for codex", () => {
 		expect(usageCache.get(ACCOUNT_ID)).toBeNull();
 	});
 
+	it("marks a rate limit on a 429 without a Retry-After header", async () => {
+		globalThis.fetch = mock(
+			async () => new Response("slow down", { status: 429 }),
+		) as unknown as typeof fetch;
+
+		usageCache.startPolling(
+			ACCOUNT_ID,
+			async () => TOKEN,
+			"codex",
+			ONE_HOUR_MS,
+		);
+		const refreshed = await usageCache.refreshNow(ACCOUNT_ID);
+
+		expect(refreshed).toBe(false);
+		const until = usageCache.getRateLimitedUntil(ACCOUNT_ID);
+		expect(until).not.toBeNull();
+		expect((until as number) - Date.now()).toBeGreaterThan(30_000);
+	});
+
 	it("does not mark a rate limit on a 403", async () => {
 		globalThis.fetch = mock(
 			async () => new Response("forbidden", { status: 403 }),

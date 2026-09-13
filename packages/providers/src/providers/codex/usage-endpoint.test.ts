@@ -287,6 +287,21 @@ describe("fetchCodexUsageData", () => {
 		expect(result.retryAfterMs).toBeLessThanOrEqual(45_000);
 	});
 
+	it("defaults retryAfterMs to 60 s on a 429 without Retry-After", async () => {
+		const fetchMock = mock(
+			async () => new Response("slow down", { status: 429 }),
+		);
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const result = await fetchCodexUsageData("tok-1", { now: () => NOW_MS });
+
+		expect(result.data).toBeNull();
+		expect(result.status).toBe(429);
+		// A 429 with an unusable Retry-After is still a 429 — without a marker
+		// the poller would hammer the endpoint on its normal 90 s cadence.
+		expect(result.retryAfterMs).toBe(60_000);
+	});
+
 	it("returns null data with the status on 401/403 and no retryAfterMs", async () => {
 		for (const status of [401, 403, 500]) {
 			const fetchMock = mock(async () => new Response("denied", { status }));

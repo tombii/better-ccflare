@@ -115,6 +115,21 @@ describe("createCodexUsageRefresher", () => {
 		expect(calls.snapshots[0].force).toBe(true);
 	});
 
+	it("stops at a rate-limited free endpoint instead of spending quota on the probe", async () => {
+		const { deps, calls } = makeDeps({
+			fetchFromUsageEndpoint: async () => ({ data: null, status: 429 }),
+		});
+		const refresh = createCodexUsageRefresher(deps);
+
+		const outcome = await refresh("acc-1");
+
+		expect(outcome.success).toBe(false);
+		expect(outcome.message).toContain("rate limited");
+		expect(outcome.message).toContain("Ania Codex");
+		expect(calls.probe).toEqual([]);
+		expect(calls.cacheSet).toEqual([]);
+	});
+
 	it("skips the usage endpoint for an account on a custom endpoint", async () => {
 		const custom = "https://gateway.example/v1/responses";
 		const { deps, calls } = makeDeps({

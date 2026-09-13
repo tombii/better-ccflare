@@ -3,12 +3,10 @@ import type {
 	CodexUsageRefreshFetchResult,
 	UsageData,
 } from "@better-ccflare/providers";
+import type { CodexUsageRefreshOutcome } from "@better-ccflare/proxy";
 import type { Account } from "@better-ccflare/types";
 
-export interface CodexUsageRefreshOutcome {
-	success: boolean;
-	message: string;
-}
+export type { CodexUsageRefreshOutcome };
 
 /**
  * Everything the refresher needs from the server, injected so the
@@ -20,7 +18,8 @@ export interface CodexUsageRefresherDeps {
 	getAccessToken(account: Account): Promise<string>;
 	/**
 	 * Free GET against the ChatGPT usage endpoint (`fetchCodexUsageData`).
-	 * `data: null` means "nothing usable came back — fall back to the probe".
+	 * `data: null` means "nothing usable came back — fall back to the probe",
+	 * except on a 429, which ends the refresh rather than spending quota.
 	 */
 	fetchFromUsageEndpoint(
 		accessToken: string,
@@ -66,7 +65,8 @@ function formatPercent(window: { utilization: number } | undefined): string {
  * 1. Read the free ChatGPT usage endpoint — the same one the poller uses.
  * 2. Only if that yields nothing (custom endpoint, 403, transport error) send
  *    one deliberately minimal `/responses` request and read the `x-codex-*`
- *    headers. That probe spends quota, which is why it is the fallback.
+ *    headers. That probe spends quota, which is why it is the fallback — and
+ *    why a 429 from the free endpoint stops here instead of falling through.
  */
 export function createCodexUsageRefresher(deps: CodexUsageRefresherDeps) {
 	async function persist(
@@ -145,6 +145,17 @@ export function createCodexUsageRefresher(deps: CodexUsageRefresherDeps) {
 				return {
 					success: true,
 					message: `Usage refreshed for '${account.name}' (5h: ${fiveHour}, 7d: ${sevenDay}).`,
+				};
+			}
+			if (free.status === 429) {
+				// The fallback probe spends quota. Upstream just said "slow down",
+				// so paying for a second request is the one thing not to do here.
+				deps.log.info(
+					`Codex usage endpoint is rate limited for '${account.name}'; skipping the /responses probe`,
+				);
+				return {
+					success: false,
+					message: `Codex usage endpoint is rate limited for '${account.name}'; try again later`,
 				};
 			}
 			deps.log.info(

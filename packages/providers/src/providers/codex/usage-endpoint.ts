@@ -17,6 +17,15 @@ export const CODEX_USAGE_ENDPOINT =
 /** Same budget as the other usage fetchers in this package. */
 const CODEX_USAGE_REQUEST_TIMEOUT_MS = 5000;
 
+/**
+ * Backoff applied to a 429 whose `Retry-After` is missing or unparseable.
+ * Without it the caller gets `retryAfterMs: null`, which reads exactly like a
+ * 401/403 and clears the rate-limit marker — so the poller would go straight
+ * back to its normal 90 s cadence against an endpoint that just asked it to
+ * stop. One minute is the shortest wait that is unambiguously a wait.
+ */
+export const CODEX_USAGE_DEFAULT_RETRY_AFTER_MS = 60_000;
+
 const FIVE_HOUR_WINDOW_SECONDS = 5 * 60 * 60;
 const SEVEN_DAY_WINDOW_SECONDS = 7 * 24 * 60 * 60;
 
@@ -45,7 +54,11 @@ export interface CodexUsagePayload {
 export interface CodexUsageFetchResult {
 	/** Mapped windows, or null when the response carried none we recognise. */
 	data: UsageData | null;
-	/** Set on 429 when the response carried a usable Retry-After. */
+	/**
+	 * Set on 429 only: the response's `Retry-After`, or
+	 * {@link CODEX_USAGE_DEFAULT_RETRY_AFTER_MS} when it is missing or
+	 * unparseable. `null` on every other outcome.
+	 */
 	retryAfterMs: number | null;
 	/** Upstream HTTP status; 0 when the request never completed. */
 	status: number;
@@ -160,8 +173,9 @@ function parseRetryAfterMs(
 /**
  * Fetch the account's rate-limit windows from the ChatGPT backend. Costs no
  * quota. Non-2xx and transport failures come back as `data: null` with the
- * status so the caller can decide how to back off; 429 additionally carries
- * `retryAfterMs`.
+ * status so the caller can decide how to back off; 429 always carries a
+ * `retryAfterMs`, falling back to
+ * {@link CODEX_USAGE_DEFAULT_RETRY_AFTER_MS} when the header is unusable.
  */
 export async function fetchCodexUsageData(
 	accessToken: string,
@@ -195,7 +209,8 @@ export async function fetchCodexUsageData(
 		if (!response.ok) {
 			const retryAfterMs =
 				response.status === 429
-					? parseRetryAfterMs(response.headers.get("retry-after"), now())
+					? (parseRetryAfterMs(response.headers.get("retry-after"), now()) ??
+						CODEX_USAGE_DEFAULT_RETRY_AFTER_MS)
 					: null;
 			const bodyText = await response.text().catch(() => "");
 			log.warn(
