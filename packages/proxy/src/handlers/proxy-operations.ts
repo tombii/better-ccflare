@@ -1843,9 +1843,15 @@ export async function proxyWithAccount(
 							`Account ${account.name}: in-place retry ${attempt}/${retryCfg.maxAttempts - 1} after ${Math.round(delayMs)}ms for 529 overloaded_error`,
 						);
 
-						const retryResponse = await reissueRequestInPlace();
-
+						// Drain BEFORE re-issuing, not after: the decision to retry
+						// has already made this body dead, and a re-issue that
+						// rejects (connection reset on the second call is the
+						// common one) unwinds straight to the outer catch, which
+						// fails over without ever reaching a drain placed after
+						// the await. That left the whole 529 body holding its
+						// off-heap backing store until GC — issue #273.
 						cancelDiscardedResponseBody(response);
+						const retryResponse = await reissueRequestInPlace();
 						response = retryResponse;
 
 						// If credentials expired mid-retry, break out and let the 401
@@ -1951,8 +1957,12 @@ export async function proxyWithAccount(
 						`Account ${account.name}: in-place retry ${attempt}/${retryCfg.maxAttempts - 1} after ${Math.round(delayMs)}ms for upstream ${response.status}`,
 					);
 
-					const retryResponse = await reissueRequestInPlace();
+					// Drain before the re-issue, for the reason spelled out in the
+					// 529 loop above: a rejecting re-issue must not strand this
+					// body. Only the body is consumed — the `x-should-retry`
+					// header read at the top of the next iteration still works.
 					cancelDiscardedResponseBody(response);
+					const retryResponse = await reissueRequestInPlace();
 					response = retryResponse;
 					attemptsMade++;
 
