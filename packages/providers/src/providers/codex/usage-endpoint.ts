@@ -66,6 +66,13 @@ function isFiniteNumber(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value);
 }
 
+/** ISO string for an epoch-ms value, or null when it is outside the Date-valid range. */
+function toIsoString(timestampMs: number): string | null {
+	if (!Number.isFinite(timestampMs)) return null;
+	const date = new Date(timestampMs);
+	return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
 /**
  * Mirrors `pickWindowSlot` in `./usage.ts` (which works in minutes off parsed
  * headers): any window up to five hours is the session window, anything from
@@ -93,12 +100,14 @@ function toWindow(
 
 	let resetsAt: string | null = null;
 	if (isFiniteNumber(raw.reset_at) && raw.reset_at > 0) {
-		resetsAt = new Date(raw.reset_at * 1000).toISOString();
-	} else if (
+		resetsAt = toIsoString(raw.reset_at * 1000);
+	}
+	if (
+		resetsAt === null &&
 		isFiniteNumber(raw.reset_after_seconds) &&
 		raw.reset_after_seconds >= 0
 	) {
-		resetsAt = new Date(nowMs + raw.reset_after_seconds * 1000).toISOString();
+		resetsAt = toIsoString(nowMs + raw.reset_after_seconds * 1000);
 	}
 
 	return { utilization, resets_at: resetsAt };

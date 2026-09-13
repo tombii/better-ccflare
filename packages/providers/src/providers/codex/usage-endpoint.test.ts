@@ -154,6 +154,33 @@ describe("parseCodexUsagePayload", () => {
 		expect(usage?.five_hour?.utilization).toBe(100);
 	});
 
+	it("falls back to reset_after_seconds when reset_at is outside the valid Date range", () => {
+		const usage = parseCodexUsagePayload(
+			payload(
+				window({ used_percent: 9, reset_at: 1e15, reset_after_seconds: 600 }),
+				null,
+			),
+			NOW_MS,
+		);
+
+		expect(usage?.five_hour?.utilization).toBe(9);
+		expect(usage?.five_hour?.resets_at).toBe(
+			new Date(NOW_MS + 600 * 1000).toISOString(),
+		);
+	});
+
+	it("keeps the percentage with a null reset when every reset field is out of range, instead of throwing", () => {
+		const usage = parseCodexUsagePayload(
+			payload(
+				window({ used_percent: 9, reset_at: 1e15, reset_after_seconds: 1e15 }),
+				null,
+			),
+			NOW_MS,
+		);
+
+		expect(usage).toEqual({ five_hour: { utilization: 9, resets_at: null } });
+	});
+
 	it("returns null for bodies without rate_limit", () => {
 		expect(parseCodexUsagePayload({ plan_type: "plus" }, NOW_MS)).toBeNull();
 		expect(parseCodexUsagePayload({ rate_limit: null }, NOW_MS)).toBeNull();
