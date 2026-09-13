@@ -14,18 +14,29 @@ export {
 	AnthropicCompatibleProvider,
 } from "./anthropic-compatible/index";
 export { BedrockProvider, parseBedrockConfig } from "./bedrock/index";
-export type { CodexUsageRefreshFetchResult } from "./codex/index";
+export type {
+	CodexUsageFetchResult,
+	CodexUsagePayload,
+	CodexUsageRefreshFetchResult,
+	CodexUsageWindowPayload,
+	FetchCodexUsageOptions,
+} from "./codex/index";
 export {
 	CODEX_DEFAULT_ENDPOINT,
 	CODEX_KNOWN_MODELS,
 	CODEX_MODEL_CONTEXT_WINDOWS,
 	CODEX_PING_MODEL,
+	CODEX_USAGE_ENDPOINT,
 	CODEX_VERSION,
 	CodexOAuthProvider,
 	CodexProvider,
 	extractChatgptAccountId,
+	fetchCodexUsageData,
 	fetchCodexUsageOnDemand,
+	isCodexSubscriptionEndpoint,
 	parseCodexUsageHeaders,
+	parseCodexUsagePayload,
+	readCodexPlanType,
 } from "./codex/index";
 export { KiloProvider } from "./kilo/index";
 export {
