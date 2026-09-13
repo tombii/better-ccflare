@@ -25,6 +25,8 @@ import {
 	getRepresentativeNanoGPTWindow,
 	type NanoGPTUsageData,
 } from "./nanogpt-usage-fetcher";
+import { extractChatgptAccountId } from "./providers/codex/account-id";
+import { fetchCodexUsageData } from "./providers/codex/usage-endpoint";
 import {
 	fetchXaiUsageData,
 	getRepresentativeXaiUtilization,
@@ -443,9 +445,7 @@ export function getRepresentativeWindow(
  * account isn't actually available again until every exhausted window
  * clears, so picking the earlier one would report recovery too soon.
  */
-function getWinningZaiTokenWindow(
-	usage: ZaiUsageData,
-): ZaiUsageWindow | null {
+function getWinningZaiTokenWindow(usage: ZaiUsageData): ZaiUsageWindow | null {
 	const candidates = [usage.tokens_limit, usage.tokens_limit_weekly].filter(
 		(window): window is ZaiUsageWindow => window !== null,
 	);
@@ -726,9 +726,7 @@ export function getRepresentativeUsageSnapshotForProvider(
 			zai.time_limit,
 			zai.tokens_limit,
 			zai.tokens_limit_weekly,
-		].filter(
-			(window): window is NonNullable<typeof window> => window !== null,
-		);
+		].filter((window): window is NonNullable<typeof window> => window !== null);
 		if (candidates.length === 0) return null;
 		// On a tie (both windows equally exhausted), prefer the LATER reset —
 		// the account isn't actually available again until every exhausted
@@ -1182,6 +1180,44 @@ class UsageCache {
 					);
 					return { success: true, retryAfterMs: null };
 				}
+			} else if (provider === "codex") {
+				// Free GET against the ChatGPT backend usage endpoint (the same one
+				// the Codex CLI polls). The account id header is derived from the
+				// token on every poll because OpenAI rotates tokens on refresh.
+				const result = await fetchCodexUsageData(token, {
+					chatgptAccountId: extractChatgptAccountId(token),
+				});
+				if (result.data) {
+					this.usageRateLimitedUntil.delete(accountId);
+					const callback = this.windowResetCallbacks.get(accountId);
+					if (callback)
+						this.notifyWindowReset(accountId, result.data, "codex", callback);
+					this.cache.set(accountId, {
+						data: result.data,
+						timestamp: Date.now(),
+					});
+					const snapshotCb = this.snapshotCallbacks.get(accountId);
+					if (snapshotCb) snapshotCb(accountId, result.data);
+					log.debug(
+						`Successfully fetched Codex usage data for account ${accountId}: 5h=${
+							result.data.five_hour?.utilization ?? "n/a"
+						}% 7d=${result.data.seven_day?.utilization ?? "n/a"}% (plan: ${
+							result.planType ?? "unknown"
+						})`,
+					);
+					return { success: true, retryAfterMs: null };
+				}
+				if (result.retryAfterMs != null && result.retryAfterMs > 0) {
+					this.usageRateLimitedUntil.set(
+						accountId,
+						Date.now() + result.retryAfterMs,
+					);
+				} else {
+					// Non-429 failure (401/403/5xx/network): clear any stale marker and
+					// let scheduleNextPoll's exponential backoff handle the retry.
+					this.usageRateLimitedUntil.delete(accountId);
+				}
+				return { success: false, retryAfterMs: result.retryAfterMs };
 			} else {
 				// Default to Anthropic usage data
 				const result = await fetchUsageData(token);
