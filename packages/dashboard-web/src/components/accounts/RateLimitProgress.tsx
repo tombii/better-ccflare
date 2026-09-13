@@ -447,12 +447,30 @@ export function RateLimitProgress({
 				resetTime: resetIso,
 			},
 		);
-		// Codex: drop the 5-hour row entirely. Its percentage is either absent or
-		// borrowed from the time-elapsed fallback, so the bar showed how much of
-		// the window had passed as if it were consumption. The weekly window is
-		// what actually limits a Codex account, and it is the only bar kept here.
+		// Codex: keep the 5-hour row only when the account really reported one —
+		// a numeric percentage AND a reset. OpenAI dropped the 5-hour window on
+		// 2026-07-12 and brought it back for Plus on 2026-08-25; Pro accounts
+		// still report only the weekly window. For them the row must stay hidden
+		// rather than show a fabricated 0% or the elapsed-time fallback, which
+		// is why this reads the payload's own window instead of trusting the
+		// fallback-filled row from collectAnthropicUsageRows.
+		const codexFiveHour = (
+			usageData as {
+				five_hour?: {
+					utilization: number | null;
+					resets_at: string | null;
+				} | null;
+			}
+		).five_hour;
+		const codexHasRealFiveHour =
+			typeof codexFiveHour?.utilization === "number" &&
+			typeof codexFiveHour?.resets_at === "string";
 		usages.push(
-			...(isCodex ? rows.filter((row) => row.window !== "five_hour") : rows),
+			...(isCodex
+				? rows.filter(
+						(row) => row.window !== "five_hour" || codexHasRealFiveHour,
+					)
+				: rows),
 		);
 	} else if (
 		providerShowsWeeklyUsage(provider) &&
@@ -493,10 +511,10 @@ export function RateLimitProgress({
 	const throttledWindowSet = new Set(usageThrottledWindows);
 
 	// The throttle notice normally rides along inside the throttled window's row.
-	// Codex no longer renders a 5-hour row, and throttling on that window still
-	// delays real requests — so surface any throttled window that has no row of
-	// its own as a standalone line. Without this, dropping the bar would also
-	// silently drop the warning.
+	// Codex renders its 5-hour row only when the account reports one, and
+	// throttling on that window still delays real requests — so surface any
+	// throttled window that has no row of its own as a standalone line. Without
+	// this, hiding the bar would also silently drop the warning.
 	const renderedWindows = new Set(
 		usages
 			.map((usage) => usage.window)

@@ -410,12 +410,15 @@ describe("RateLimitProgress", () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Codex: the 5-hour bar was misleading (its percentage was either absent or
-	// borrowed from elapsed time), so the weekly window is the only bar left —
-	// and it must be permanent, including when there is no data at all.
+	// Codex: OpenAI removed the 5-hour window on 2026-07-12 and restored it for
+	// Plus accounts on 2026-08-25 (Pro stays weekly-only). The 5-hour row is
+	// shown only when the account really reported one — a number AND a reset.
+	// An unknown window (null) or a reset-less percentage stays hidden, so a
+	// Pro account never shows a fabricated 0% and never the elapsed-time bar.
+	// The weekly row is permanent.
 	// -------------------------------------------------------------------------
 
-	it("drops the Codex 5-hour row and keeps the weekly one", () => {
+	it("shows the Codex 5-hour row when the account reports a real one", () => {
 		const fiveHourReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 		const sevenDayReset = new Date(
 			Date.now() + 3 * 24 * 60 * 60 * 1000,
@@ -434,12 +437,56 @@ describe("RateLimitProgress", () => {
 			/>,
 		);
 
+		expect(html).toContain("Usage (5-hour)");
+		expect(html).toContain(">10%<");
+		expect(html).toContain("Usage (Weekly)");
+		expect(html).toContain(">63%<");
+	});
+
+	it("hides the Codex 5-hour row when the window is unknown", () => {
+		const sevenDayReset = new Date(
+			Date.now() + 3 * 24 * 60 * 60 * 1000,
+		).toISOString();
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={sevenDayReset}
+				usageUtilization={63}
+				usageWindow="seven_day"
+				usageData={{
+					five_hour: { utilization: null, resets_at: null },
+					seven_day: { utilization: 63, resets_at: sevenDayReset },
+				}}
+				provider="codex"
+				showWeekly
+			/>,
+		);
+
 		expect(html).not.toContain("Usage (5-hour)");
 		expect(html).toContain("Usage (Weekly)");
 		expect(html).toContain(">63%<");
-		// Anchored to the percentage span: a bare "10%" also matches the tooltip's
-		// CSS `clamp(10%, ...)`, which has nothing to do with the 5-hour window.
-		expect(html).not.toContain(">10%<");
+	});
+
+	it("hides a Codex 5-hour percentage that has no reset (legacy minted zero)", () => {
+		// Older caches and snapshots can still carry { utilization: 0, resets_at: null }.
+		const sevenDayReset = new Date(
+			Date.now() + 3 * 24 * 60 * 60 * 1000,
+		).toISOString();
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={sevenDayReset}
+				usageUtilization={63}
+				usageWindow="seven_day"
+				usageData={{
+					five_hour: { utilization: 0, resets_at: null },
+					seven_day: { utilization: 63, resets_at: sevenDayReset },
+				}}
+				provider="codex"
+				showWeekly
+			/>,
+		);
+
+		expect(html).not.toContain("Usage (5-hour)");
+		expect(html).toContain("Usage (Weekly)");
 	});
 
 	it("keeps the same Anthropic payload's 5-hour row for Anthropic", () => {
