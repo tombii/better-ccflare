@@ -113,9 +113,14 @@ export function updateAccountMetadata(
 	// successful response. No need to duplicate that logic here.
 
 	if (account.provider === "codex") {
-		const codexUsage = parseCodexUsageHeaders(response.headers, {
-			defaultUtilization: response.status === 429 ? 100 : 0,
-		});
+		// Only a 429 is a real "exhausted" signal worth filling a missing
+		// percentage with. On every other status an absent
+		// `x-codex-*-used-percent` means UNKNOWN, and minting 0 there painted
+		// an empty bar over a window nobody had measured.
+		const codexUsage = parseCodexUsageHeaders(
+			response.headers,
+			response.status === 429 ? { defaultUtilization: 100 } : {},
+		);
 		if (codexUsage) {
 			const prevUsage = usageCache.get(account.id) as UsageData | null;
 			// Which window this session is riding, and whether it actually rolled

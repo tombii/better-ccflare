@@ -4966,6 +4966,48 @@ describe("parseCodexUsageHeaders", () => {
 		});
 		expect(usage?.five_hour).toBeUndefined();
 	});
+
+	it("omits a legacy reset-only 5-hour header that carries no percentage", () => {
+		// A reset time alone says nothing about consumption. Minting 0% here
+		// painted a full bar on the dashboard for an account whose usage was
+		// simply unknown.
+		const headers = new Headers({
+			"x-codex-5h-reset-at": "1774600000",
+			"x-codex-7d-reset-at": "1775000000",
+		});
+
+		expect(parseCodexUsageHeaders(headers)).toBeNull();
+	});
+
+	it("fills a reset-only window when the caller states the utilization", () => {
+		// A 429 is a real "exhausted" signal, so the traffic path passes 100.
+		const headers = new Headers({
+			"x-codex-primary-window-minutes": "300",
+			"x-codex-primary-reset-at": "1774600000",
+		});
+
+		const usage = parseCodexUsageHeaders(headers, { defaultUtilization: 100 });
+
+		expect(usage?.five_hour).toEqual({
+			utilization: 100,
+			resets_at: new Date(1774600000 * 1000).toISOString(),
+		});
+	});
+
+	it("omits a window whose percentage header is missing when no default is given", () => {
+		const headers = new Headers({
+			"x-codex-primary-window-minutes": "300",
+			"x-codex-primary-reset-at": "1774600000",
+			"x-codex-secondary-used-percent": "43",
+			"x-codex-secondary-window-minutes": "10080",
+			"x-codex-secondary-reset-at": "1775000000",
+		});
+
+		const usage = parseCodexUsageHeaders(headers);
+
+		expect(Object.keys(usage ?? {})).toEqual(["seven_day"]);
+		expect(usage?.five_hour).toBeUndefined();
+	});
 });
 
 describe("parseCodexUsageHeaders reset-after handling", () => {

@@ -3,10 +3,16 @@ import type { UsageData, UsageWindow } from "../../usage-fetcher";
 export interface ParseCodexUsageHeadersOptions {
 	baseTimeMs?: number;
 	allowRelativeResetAfter?: boolean;
+	/**
+	 * Percentage to assume for a window the headers describe without an
+	 * `x-codex-*-used-percent` value. Left unset, such a window is omitted:
+	 * a reset time alone says nothing about consumption, and a minted 0 reads
+	 * downstream as "nothing used". Only a caller holding a real signal — the
+	 * traffic path on a 429, which passes 100 — should fill it in.
+	 */
 	defaultUtilization?: number;
 }
 
-const DEFAULT_UTILIZATION = 0;
 const FIVE_HOUR_WINDOW_MINUTES = 5 * 60;
 const SEVEN_DAY_WINDOW_MINUTES = 7 * 24 * 60;
 
@@ -86,9 +92,11 @@ function toUsageWindow(
 	utilization: number | null,
 	resetsAt: string | null,
 ): UsageWindow | null {
-	if (utilization === null && resetsAt === null) return null;
+	// No percentage, no window. `utilization` is the payload here; the reset
+	// time only qualifies it.
+	if (utilization === null) return null;
 	return {
-		utilization: utilization ?? 0,
+		utilization,
 		resets_at: resetsAt,
 	};
 }
@@ -107,7 +115,7 @@ function readWindow(
 	prefix: "primary" | "secondary",
 	baseTimeMs: number,
 	allowRelativeResetAfter: boolean,
-	defaultUtilization: number,
+	defaultUtilization: number | undefined,
 ): {
 	window: "five_hour" | "seven_day" | null;
 	data: UsageWindow | null;
@@ -134,7 +142,7 @@ function readWindow(
 	return {
 		window: pickWindowSlot(windowMinutes),
 		data: hasMeaningfulWindowData
-			? toUsageWindow(utilization ?? defaultUtilization, resetsAt)
+			? toUsageWindow(utilization ?? defaultUtilization ?? null, resetsAt)
 			: null,
 	};
 }
@@ -146,7 +154,7 @@ export function parseCodexUsageHeaders(
 	const {
 		baseTimeMs = Date.now(),
 		allowRelativeResetAfter = true,
-		defaultUtilization = DEFAULT_UTILIZATION,
+		defaultUtilization,
 	} = options;
 	const primary = readWindow(
 		headers,
@@ -174,13 +182,13 @@ export function parseCodexUsageHeaders(
 		(primary.window === "five_hour" ? primary.data : null) ??
 		(secondary.window === "five_hour" ? secondary.data : null) ??
 		(legacyFiveHourReset
-			? toUsageWindow(defaultUtilization, legacyFiveHourReset)
+			? toUsageWindow(defaultUtilization ?? null, legacyFiveHourReset)
 			: null);
 	const sevenDay =
 		(primary.window === "seven_day" ? primary.data : null) ??
 		(secondary.window === "seven_day" ? secondary.data : null) ??
 		(legacySevenDayReset
-			? toUsageWindow(defaultUtilization, legacySevenDayReset)
+			? toUsageWindow(defaultUtilization ?? null, legacySevenDayReset)
 			: null);
 
 	if (!fiveHour && !sevenDay) {
