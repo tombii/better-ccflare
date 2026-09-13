@@ -395,4 +395,38 @@ describe("collectWindows with a single flat window", () => {
 
 		expect(windows.map((w) => w.window)).toEqual(["five_hour"]);
 	});
+
+	it("still routes an Alibaba Coding Plan payload (five_hour without seven_day) to the Alibaba branch", () => {
+		const now = Date.now();
+		const windows = collectWindows({
+			five_hour: {
+				used: 10,
+				total: 100,
+				percentUsed: 10,
+				resetAt: now + 60_000,
+			},
+			weekly: {
+				used: 95,
+				total: 100,
+				percentUsed: 95,
+				resetAt: now + 3 * 24 * 60 * 60 * 1000,
+			},
+			monthly: {
+				used: 50,
+				total: 100,
+				percentUsed: 50,
+				resetAt: now + 20 * 24 * 60 * 60 * 1000,
+			},
+			planName: "Coding Plan Lite",
+			status: "VALID",
+			remainingDays: 20,
+		} as never);
+
+		expect(windows.map((w) => w.window)).toEqual([
+			"five_hour",
+			"weekly",
+			"monthly",
+		]);
+		expect(windows.find((w) => w.window === "weekly")?.utilization).toBe(95);
+	});
 });
