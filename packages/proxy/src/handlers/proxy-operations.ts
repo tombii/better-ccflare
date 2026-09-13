@@ -1910,9 +1910,10 @@ export async function proxyWithAccount(
 		//     applied downstream by processProxyResponse instead. Two calls, one
 		//     budget.
 		//
-		// Raising CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS therefore raises the
-		// worst-case call count on a single account super-linearly in the first
-		// order; see the latency note in docs/configuration.md.
+		// With N = CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS the worst case in the first
+		// order is 1 + (N-1) + (N-1) = 2N-1 upstream calls on one account, so
+		// raising N grows that count linearly with a factor of two, and each
+		// call can take as long as the slow 5xx that triggered it.
 		if (
 			isTransientServerErrorStatus(response.status) &&
 			!isSyntheticInternal &&
