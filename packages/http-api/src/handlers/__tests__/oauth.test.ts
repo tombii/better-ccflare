@@ -790,6 +790,25 @@ describe("device flow adds start usage polling", () => {
 		});
 	});
 
+	/**
+	 * The device flows start usage polling fire-and-forget, so the restarter may
+	 * run a tick after the session reports "complete". Poll until it has been
+	 * called instead of asserting immediately.
+	 */
+	async function waitForRestarter(
+		ids: string[],
+		id: string,
+		timeoutMs = 2000,
+	): Promise<void> {
+		const deadline = Date.now() + timeoutMs;
+		while (!ids.includes(id)) {
+			if (Date.now() > deadline) {
+				throw new Error(`restarter not called for ${id} within ${timeoutMs}ms`);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+	}
+
 	afterAll(async () => {
 		unregisterPollingRestarter(DEVICE_FLOW_SERVER_ID);
 		await dbOps.close();
@@ -826,6 +845,7 @@ describe("device flow adds start usage polling", () => {
 				"codex-device-flow-add",
 			]);
 		expect(row?.id).toBeDefined();
+		await waitForRestarter(seen, row?.id as string);
 		expect(seen).toContain(row?.id as string);
 	});
 
@@ -853,6 +873,7 @@ describe("device flow adds start usage polling", () => {
 				"qwen-device-flow-add",
 			]);
 		expect(row?.id).toBeDefined();
+		await waitForRestarter(seen, row?.id as string);
 		expect(seen).toContain(row?.id as string);
 	});
 });

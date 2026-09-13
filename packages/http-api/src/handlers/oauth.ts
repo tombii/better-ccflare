@@ -160,10 +160,6 @@ export function createQwenDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 						throw insertErr;
 					}
 
-					// Accounts created at runtime are invisible to the boot-time
-					// polling setup, so ask the server to start polling now.
-					await startUsagePollingForNewAccount(accountId, name);
-
 					qwenSessions.set(sessionId, {
 						status: "complete",
 						accountName: name,
@@ -172,6 +168,12 @@ export function createQwenDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 
 					// Clean up session after 10 minutes
 					setTimeout(() => qwenSessions.delete(sessionId), 10 * 60 * 1000);
+
+					// Accounts created at runtime are invisible to the boot-time
+					// polling setup, so ask the server to start polling now. Fire and
+					// forget: the helper never throws, and a slow restarter must not
+					// hold the dashboard's "complete" status hostage.
+					void startUsagePollingForNewAccount(accountId, name);
 				} catch (err) {
 					log.error(`Qwen device flow polling failed for '${name}':`, err);
 					qwenSessions.set(sessionId, {
@@ -451,10 +453,6 @@ export function createCodexDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 						throw insertErr;
 					}
 
-					// Accounts created at runtime are invisible to the boot-time
-					// polling setup, so ask the server to start polling now.
-					await startUsagePollingForNewAccount(accountId, name);
-
 					codexSessions.set(sessionId, {
 						status: "complete",
 						accountName: name,
@@ -462,6 +460,12 @@ export function createCodexDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 					log.info(`Codex account '${name}' added via web device flow`);
 
 					setTimeout(() => codexSessions.delete(sessionId), 10 * 60 * 1000);
+
+					// Accounts created at runtime are invisible to the boot-time
+					// polling setup, so ask the server to start polling now. Fire and
+					// forget: the helper never throws, and a slow restarter must not
+					// hold the dashboard's "complete" status hostage.
+					void startUsagePollingForNewAccount(accountId, name);
 				} catch (err) {
 					log.error(`Codex device flow polling failed for '${name}':`, err);
 					codexSessions.set(sessionId, {
