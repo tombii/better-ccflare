@@ -40,11 +40,15 @@ import { handleResponsesRequest } from "@better-ccflare/openai-responses-adapter
 import {
 	CODEX_DEFAULT_ENDPOINT,
 	CODEX_PING_MODEL,
+	extractChatgptAccountId,
 	extractWeeklyResetTime,
+	fetchCodexUsageData,
 	fetchCodexUsageOnDemand,
 	getProvider,
 	getRankingUtilizationForProvider,
+	isCodexSubscriptionEndpoint,
 	setProviderModelDefaultOverrides,
+	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
 import {
@@ -56,6 +60,7 @@ import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
 	drainUsageCollector,
+	earliestCodexResetMs,
 	forceCloseCircuit,
 	getCodexModels,
 	getModelCatalog,
@@ -90,6 +95,7 @@ import {
 	type StrategyStore,
 } from "@better-ccflare/types";
 import { serve } from "bun";
+import { createCodexUsageRefresher } from "./codex-usage-refresher";
 
 /**
  * Build a load-balancing strategy from its enum name. Add new strategies here
@@ -145,7 +151,72 @@ const MEMORY_GROWTH_ERROR_BYTES = 1024 * 1024 * 1024;
 export function supportsRefreshBackedUsagePolling(
 	provider: string | null | undefined,
 ): boolean {
-	return provider === "anthropic" || provider === "xai";
+	return provider === "anthropic" || provider === "xai" || provider === "codex";
+}
+
+/**
+ * Whether `startUsagePollingWithRefresh` should poll this account. Codex is
+ * polled only against OpenAI's own ChatGPT backend: the usage endpoint is a
+ * chatgpt.com path, so an account pointed at a custom OpenAI-compatible
+ * endpoint has nothing to poll and is skipped instead of failing every 90 s.
+ */
+export function supportsUsagePollingForAccount(account: {
+	provider: string | null | undefined;
+	custom_endpoint?: string | null;
+}): boolean {
+	if (!supportsRefreshBackedUsagePolling(account.provider)) return false;
+	if (account.provider !== "codex") return true;
+	return (
+		!account.custom_endpoint ||
+		isCodexSubscriptionEndpoint(account.custom_endpoint)
+	);
+}
+
+/**
+ * Build the `onSnapshot` callback `usageCache.startPolling` fires after every
+ * successful poll. Anthropic rows are written as-is. Codex goes through
+ * `recordCodexUsageSnapshot` (drops windows without a real reset, shares the
+ * 90 s throttle with the traffic path in response-processor).
+ *
+ * Polled windows are deliberately NOT written to `accounts.rate_limit_reset`.
+ * `AutoRefreshScheduler` only picks up accounts whose `rate_limit_reset <= now`
+ * and `codexWindowHasReset` / `peek-availability` likewise need the ELAPSED
+ * value to survive until they act on it — a 90 s poller would overwrite it with
+ * the next future reset within seconds of every rollover and neither would ever
+ * fire. Only real traffic (`response-processor.ts`) and the manual refresh
+ * button write that column, exactly as they do on main.
+ */
+export function createUsageSnapshotRecorder(
+	account: Pick<Account, "id" | "name" | "provider">,
+	dbOps: DatabaseOperations,
+	logger: Logger,
+): (accountId: string, data: UsageData) => Promise<void> {
+	return async (accountId, data) => {
+		if (account.provider === "codex") {
+			const usage = data as unknown as Record<string, unknown>;
+			try {
+				await recordCodexUsageSnapshot(
+					dbOps,
+					accountId,
+					account.name,
+					usage,
+					Date.now(),
+				);
+			} catch (err) {
+				logger.warn(
+					`Failed to record Codex usage snapshot for account ${accountId}: ${err}`,
+				);
+			}
+			return;
+		}
+		try {
+			await dbOps.recordUsageSnapshot(accountId, data, Date.now());
+		} catch (err) {
+			logger.warn(
+				`Failed to record usage snapshot for account ${accountId}: ${err}`,
+			);
+		}
+	};
 }
 
 /**
@@ -470,9 +541,40 @@ async function prewarmBedrockCache(account: Account, region: string) {
 	}
 }
 
+/** What {@link createRefreshBackedTokenProvider} needs from the server. */
+export interface RefreshBackedTokenProviderDeps {
+	getAccount(accountId: string): Promise<Account | null>;
+	getValidAccessToken(account: Account): Promise<string>;
+}
+
 /**
- * Start usage polling for an account with automatic token refresh
- * Temporarily resumes paused accounts for token refresh, then restores original state
+ * Token provider for usage polling: re-read the account's tokens from the DB
+ * on every call (OpenAI and Anthropic rotate refresh tokens, and re-auth
+ * replaces them), then let the token manager refresh if needed. It never
+ * touches the persisted pause state — the token manager does not care
+ * whether the account is paused, and the old resume/pause toggle rewrote an
+ * automatic pause_reason (overage, rate_limit_window) to "manual", which
+ * blocked auto-resume, and briefly exposed a paused account to traffic.
+ */
+export function createRefreshBackedTokenProvider(
+	account: Account,
+	deps: RefreshBackedTokenProviderDeps,
+): () => Promise<string> {
+	return async () => {
+		const current = await deps.getAccount(account.id);
+		if (current) {
+			account.access_token = current.access_token;
+			account.refresh_token = current.refresh_token;
+			account.expires_at = current.expires_at;
+		}
+		return deps.getValidAccessToken(account);
+	};
+}
+
+/**
+ * Start usage polling for an account with automatic token refresh.
+ * Polling runs regardless of the account's paused state and leaves that state
+ * untouched — see {@link createRefreshBackedTokenProvider}.
  */
 function startUsagePollingWithRefresh(
 	account: Account,
@@ -487,43 +589,12 @@ function startUsagePollingWithRefresh(
 	// Initial polling with token refresh
 	const pollWithRefresh = async () => {
 		try {
-			// Create a token provider function that gets a fresh token each time
-			const tokenProvider = async () => {
-				// Get the current paused state from the database to avoid stale state issues
-				// This is important because the account might be paused/resumed via API during runtime
-				const currentAccount = await proxyContext.dbOps.getAccount(account.id);
-				const wasTemporarilyResumed = currentAccount?.paused === true;
-
-				// Update in-memory account with fresh token data from DB
-				// This prevents using stale tokens after re-authentication
-				if (currentAccount) {
-					account.access_token = currentAccount.access_token;
-					account.refresh_token = currentAccount.refresh_token;
-					account.expires_at = currentAccount.expires_at;
-				}
-
-				// If account is currently paused, temporarily resume it for token refresh
-				if (wasTemporarilyResumed) {
-					logger.debug(
-						`Temporarily resuming account ${account.name} for token refresh`,
-					);
-					proxyContext.dbOps.resumeAccount(account.id);
-					account.paused = false;
-				}
-
-				try {
-					// Get a valid access token (refreshes if necessary)
-					const accessToken = await getValidAccessToken(account, proxyContext);
-					return accessToken;
-				} finally {
-					// Restore paused state ONLY if we temporarily resumed it above
-					if (wasTemporarilyResumed) {
-						logger.debug(`Restoring paused state for account ${account.name}`);
-						proxyContext.dbOps.pauseAccount(account.id);
-						account.paused = true;
-					}
-				}
-			};
+			// Fresh token on every poll, read back from the DB first so a
+			// rotated or re-authenticated token is never missed.
+			const tokenProvider = createRefreshBackedTokenProvider(account, {
+				getAccount: (accountId) => proxyContext.dbOps.getAccount(accountId),
+				getValidAccessToken: (acc) => getValidAccessToken(acc, proxyContext),
+			});
 
 			// Start usage polling with the token provider
 			usageCache.startPolling(
@@ -612,15 +683,7 @@ function startUsagePollingWithRefresh(
 							),
 						);
 				},
-				(accountId, data) => {
-					proxyContext.dbOps
-						.recordUsageSnapshot(accountId, data, Date.now())
-						.catch((err) =>
-							logger.warn(
-								`Failed to record usage snapshot for account ${accountId}: ${err}`,
-							),
-						);
-				},
+				createUsageSnapshotRecorder(account, proxyContext.dbOps, logger),
 			);
 
 			// Reset retry count on success
@@ -699,7 +762,6 @@ function startUsagePollingWithRefresh(
 				return;
 			}
 
-			// Don't restore paused state on error - let the user control pause/resume via API
 			// Retry with exponential backoff (5 min, 10 min, 20 min, ...)
 			const baseDelayMs = 5 * 60 * 1000; // 5 minutes
 			const delayMs = Math.min(
@@ -835,6 +897,13 @@ export default async function startServer(options?: {
 	// route. The config POST handler mirrors it again after a write.
 	setForceAccountModel(config.getForceAccountModel());
 	installOutboundProxy(() => config.getOutboundProxy());
+	// The usage poller detects Codex window rollovers with the same predicate
+	// as the traffic path, so it must ride the same window. Config cannot be
+	// imported from @better-ccflare/providers, so hand the reader over once,
+	// before any polling starts. Read lazily so a live config change applies.
+	usageCache.setCodexRolloverPolicy({
+		pinFiveHour: () => config.getCodexFiveHourWindowEnabled(),
+	});
 	const outboundProxyUrl = config.getOutboundProxy();
 	if (outboundProxyUrl) {
 		const { protocol, host } = new URL(outboundProxyUrl);
@@ -1246,9 +1315,12 @@ export default async function startServer(options?: {
 			);
 			return false;
 		}
-		if (!supportsRefreshBackedUsagePolling(account.provider)) {
-			log.warn(
-				`Cannot restart usage polling: account ${account.name} does not support refresh-backed usage polling`,
+		if (!supportsUsagePollingForAccount(account)) {
+			// Debug, not warn: every account creation now asks to start polling,
+			// so this fires routinely for the many API-key providers that have
+			// no usage endpoint. That is the expected answer, not a problem.
+			log.debug(
+				`Cannot restart usage polling: account ${account.name} does not support usage polling (provider or custom endpoint)`,
 			);
 			return false;
 		}
@@ -1271,153 +1343,76 @@ export default async function startServer(options?: {
 		return true;
 	});
 
-	// Register this server's codex on-demand usage refresher. Codex does not
-	// expose a free usage endpoint (unlike Anthropic's /api/oauth/usage), so
-	// each call sends a tiny upstream request and parses the x-codex-* headers
-	// from the response. The subscription endpoint rejects output-token caps,
-	// so fetchCodexUsageOnDemand aborts and cancels immediately after headers.
-	registerCodexUsageRefresher(serverId, async (accountId: string) => {
-		const account = await dbOps.getAccount(accountId);
-		if (!account) {
-			return {
-				success: false,
-				message: `Account ${accountId} not found`,
-			};
-		}
-		if (account.provider !== "codex") {
-			return {
-				success: false,
-				message: `Account '${account.name}' is not a Codex account`,
-			};
-		}
-		if (!account.access_token && !account.refresh_token) {
-			return {
-				success: false,
-				message: `Account '${account.name}' has no tokens — please re-authenticate`,
-			};
-		}
-
-		let accessToken: string;
-		try {
-			accessToken = await getValidAccessToken(account, proxyContext);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			log.warn(
-				`Codex usage refresh: failed to get access token for ${account.name}: ${message}`,
-			);
-			return {
-				success: false,
-				message: `Could not refresh access token for '${account.name}': ${message}`,
-			};
-		}
-
-		const endpoint = account.custom_endpoint ?? CODEX_DEFAULT_ENDPOINT;
-
-		// Ping with a model this account can actually address, and with the
-		// cheapest one of those. A hardcoded name goes stale silently and fatally:
-		// the subscription endpoint rejects an unknown model before it accounts for
-		// quota, so the 400 carries no `x-codex-*` headers and the refresh fails
-		// with nothing to show. The account's own listing already answers the
-		// "which models exist" half for the family mapping — reuse it, and take the
-		// tail rather than the head, because the reply is discarded as soon as the
-		// headers arrive and the headers describe the subscription, not the model.
-		// `CODEX_PING_MODEL` is only reached when that listing has never been
-		// readable.
-		let pingModel = CODEX_PING_MODEL;
-		try {
-			pingModel =
-				lowestTierCodexModel(await getCodexModels(accountId, proxyContext)) ??
-				CODEX_PING_MODEL;
-		} catch (error) {
-			log.debug(
-				`Codex usage refresh: could not resolve the model list for ${account.name}, pinging ${pingModel}: ${error}`,
-			);
-		}
-
-		let fetchResult: Awaited<ReturnType<typeof fetchCodexUsageOnDemand>>;
-		try {
-			fetchResult = await fetchCodexUsageOnDemand(
-				accessToken,
-				endpoint,
-				pingModel,
-			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			log.error(
-				`Codex usage refresh: upstream fetch failed for ${account.name}:`,
-				message,
-			);
-			return {
-				success: false,
-				message: `Codex request failed for '${account.name}': ${message}`,
-			};
-		}
-
-		// Persist rate-limit reset even on non-2xx so the dashboard sees the
-		// most accurate reset time when the account is currently limited.
-		const codexProvider = getProvider("codex");
-		if (codexProvider) {
-			const rl = codexProvider.parseRateLimit(fetchResult.response);
-			if (rl.resetTime != null) {
+	// Register this server's Codex usage refresher (the dashboard refresh
+	// button). It reads the free ChatGPT usage endpoint first and falls back
+	// to the quota-spending /responses probe only when that endpoint yields
+	// nothing (custom endpoint, 403). See apps/server/src/codex-usage-refresher.ts.
+	registerCodexUsageRefresher(
+		serverId,
+		createCodexUsageRefresher({
+			getAccount: (accountId) => dbOps.getAccount(accountId),
+			getAccessToken: (account) => getValidAccessToken(account, proxyContext),
+			fetchFromUsageEndpoint: async (accessToken) => {
+				const result = await fetchCodexUsageData(accessToken, {
+					chatgptAccountId: extractChatgptAccountId(accessToken),
+				});
+				return { data: result.data, status: result.status };
+			},
+			usageEndpointAvailable: isCodexSubscriptionEndpoint,
+			defaultEndpoint: CODEX_DEFAULT_ENDPOINT,
+			resolvePingModel: async (accountId) => {
+				// Ping with a model this account can actually address, and with the
+				// cheapest one of those. A hardcoded name goes stale silently and
+				// fatally: the subscription endpoint rejects an unknown model before
+				// it accounts for quota, so the 400 carries no `x-codex-*` headers
+				// and the refresh fails with nothing to show. The account's own
+				// listing already answers the "which models exist" half for the
+				// family mapping — reuse it, and take the tail rather than the head,
+				// because the reply is discarded as soon as the headers arrive and
+				// the headers describe the subscription, not the model.
+				// `CODEX_PING_MODEL` is only reached when that listing has never
+				// been readable.
 				try {
-					await db.run(
-						"UPDATE accounts SET rate_limit_reset = ? WHERE id = ?",
-						[rl.resetTime, account.id],
+					return (
+						lowestTierCodexModel(
+							await getCodexModels(accountId, proxyContext),
+						) ?? CODEX_PING_MODEL
 					);
 				} catch (error) {
-					log.warn(
-						`Codex usage refresh: failed to update rate_limit_reset for ${account.name}:`,
-						error,
+					log.debug(
+						`Codex usage refresh: could not resolve the model list for ${accountId}, pinging ${CODEX_PING_MODEL}: ${error}`,
 					);
+					return CODEX_PING_MODEL;
 				}
-			}
-		}
-
-		if (!fetchResult.data) {
-			// Naming the model matters here: this is the shape a rejected model
-			// takes, and without it the message says nothing actionable.
-			return {
-				success: false,
-				message: `Codex returned no usage headers (status ${fetchResult.response.status}) for '${account.name}' when pinging model '${pingModel}'`,
-			};
-		}
-
-		usageCache.set(accountId, fetchResult.data);
-
-		// Persist alongside the cache: this on-demand read costs quota, so it must
-		// outlive the 10-minute cache. `force` skips the traffic throttle — the
-		// operator asked for this read explicitly.
-		await recordCodexUsageSnapshot(
-			dbOps,
-			accountId,
-			account.name,
-			fetchResult.data as unknown as Record<string, unknown>,
-			Date.now(),
-			true,
-		);
-
-		const fiveHour = fetchResult.data.five_hour?.utilization ?? 0;
-		const sevenDay = fetchResult.data.seven_day?.utilization ?? 0;
-		const isRateLimited = fetchResult.response.status === 429;
-		log.info(
-			`Codex usage refreshed for '${account.name}' via ${pingModel}: 5h=${fiveHour}%, 7d=${sevenDay}%${
-				isRateLimited ? " (rate-limited)" : ""
-			}`,
-		);
-
-		// 429 still produces a successful header refresh (the usage payload is
-		// what we wanted), but the dashboard message must not celebrate it —
-		// otherwise the operator sees "refreshed successfully" while the
-		// account is fully exhausted. See tombii's PR #219 review note.
-		const message = isRateLimited
-			? `Usage refreshed for '${account.name}' — account is rate limited (5h: ${fiveHour}%, 7d: ${sevenDay}%).`
-			: `Usage refreshed for '${account.name}' (5h: ${fiveHour}%, 7d: ${sevenDay}%).`;
-
-		return {
-			success: true,
-			message,
-		};
-	});
+			},
+			fetchFromProbe: fetchCodexUsageOnDemand,
+			probeResetTime: (response) =>
+				getProvider("codex")?.parseRateLimit(response).resetTime ?? null,
+			cacheSet: (accountId, data) => usageCache.set(accountId, data),
+			getCachedUsage: (accountId) =>
+				(usageCache.get(accountId) as UsageData | null) ?? null,
+			resetSession: (accountId) =>
+				dbOps.resetAccountSession(accountId, Date.now()),
+			pinFiveHour: () => config.getCodexFiveHourWindowEnabled(),
+			recordSnapshot: (accountId, accountName, usage, now, force) =>
+				recordCodexUsageSnapshot(
+					dbOps,
+					accountId,
+					accountName,
+					usage,
+					now,
+					force,
+				),
+			updateRateLimitReset: async (accountId, resetMs) => {
+				await db.run("UPDATE accounts SET rate_limit_reset = ? WHERE id = ?", [
+					resetMs,
+					accountId,
+				]);
+			},
+			earliestResetMs: earliestCodexResetMs,
+			log,
+		}),
+	);
 
 	// Initialize auto-refresh scheduler (now that proxyContext is available)
 	autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);
@@ -1771,7 +1766,7 @@ Available endpoints:
 	// grok.com gRPC-web and may need to refresh an expired imported Grok CLI token
 	// before the first usage fetch.
 	const refreshBackedUsageAccounts = accounts.filter((a) =>
-		supportsRefreshBackedUsagePolling(a.provider),
+		supportsUsagePollingForAccount(a),
 	);
 	if (refreshBackedUsageAccounts.length > 0) {
 		log.info(

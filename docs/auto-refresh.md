@@ -206,6 +206,11 @@ pays for them with the only camouflage the probe has. The button is a different
 case and keeps its `"."`: it fires only when a human clicks it, so it has no
 cadence to fingerprint.
 
+Since the Codex usage poller reads the free `chatgpt.com/backend-api/wham/usage`
+endpoint (see `docs/providers.md`, CodexProvider feature 8), the refresh button
+only falls back to the `"."` ping when that endpoint returns nothing — an
+account on a custom endpoint, or a 403.
+
 ## Setting Up Auto-Refresh
 
 ### Prerequisites

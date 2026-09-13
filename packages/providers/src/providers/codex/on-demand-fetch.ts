@@ -25,7 +25,7 @@ function resolveCodexUsageEndpoint(endpoint: string): string {
 	}
 }
 
-function isCodexSubscriptionEndpoint(endpoint: string): boolean {
+export function isCodexSubscriptionEndpoint(endpoint: string): boolean {
 	try {
 		const candidate = new URL(endpoint);
 		const subscription = new URL(CODEX_DEFAULT_ENDPOINT);

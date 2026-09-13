@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { DatabaseOperations } from "@better-ccflare/database";
 import { Logger, logBus } from "@better-ccflare/logger";
-import type { LogEvent } from "@better-ccflare/types";
+import { resetCodexUsageHistoryThrottle } from "@better-ccflare/proxy";
+import type { Account, LogEvent } from "@better-ccflare/types";
 import {
 	bootstrapMinimaxUsagePolling,
+	createRefreshBackedTokenProvider,
+	createUsageSnapshotRecorder,
 	registerMinimaxUsagePolling,
 	supportsRefreshBackedUsagePolling,
+	supportsUsagePollingForAccount,
 	type UsageCacheRegistrar,
 } from "./server";
 
@@ -14,13 +19,144 @@ describe("supportsRefreshBackedUsagePolling", () => {
 	it("includes pollable OAuth providers that need token refresh", () => {
 		expect(supportsRefreshBackedUsagePolling("anthropic")).toBe(true);
 		expect(supportsRefreshBackedUsagePolling("xai")).toBe(true);
+		expect(supportsRefreshBackedUsagePolling("codex")).toBe(true);
 	});
 
 	it("does not include providers whose usage is not polled through this path", () => {
-		expect(supportsRefreshBackedUsagePolling("codex")).toBe(false);
 		expect(supportsRefreshBackedUsagePolling("qwen")).toBe(false);
 		expect(supportsRefreshBackedUsagePolling("nanogpt")).toBe(false);
 		expect(supportsRefreshBackedUsagePolling(null)).toBe(false);
+	});
+});
+
+describe("supportsUsagePollingForAccount", () => {
+	it("polls Codex accounts on OpenAI's own ChatGPT endpoint", () => {
+		expect(
+			supportsUsagePollingForAccount({
+				provider: "codex",
+				custom_endpoint: null,
+			}),
+		).toBe(true);
+		expect(
+			supportsUsagePollingForAccount({
+				provider: "codex",
+				custom_endpoint: "https://chatgpt.com/backend-api/codex/responses",
+			}),
+		).toBe(true);
+	});
+
+	it("skips Codex accounts pointed at a custom endpoint (nothing to poll there)", () => {
+		expect(
+			supportsUsagePollingForAccount({
+				provider: "codex",
+				custom_endpoint: "https://my-gateway.example/v1/responses",
+			}),
+		).toBe(false);
+	});
+
+	it("ignores custom_endpoint for other providers", () => {
+		expect(
+			supportsUsagePollingForAccount({
+				provider: "anthropic",
+				custom_endpoint: "https://proxy.example",
+			}),
+		).toBe(true);
+		expect(supportsUsagePollingForAccount({ provider: "qwen" })).toBe(false);
+	});
+});
+
+describe("createUsageSnapshotRecorder", () => {
+	const logger = new Logger("test");
+
+	function makeDbOps() {
+		const recorded: Array<{
+			accountId: string;
+			usage: Record<string, unknown>;
+			now: number;
+		}> = [];
+		const runs: Array<{ sql: string; params: unknown[] }> = [];
+		const dbOps = {
+			recordUsageSnapshot: async (
+				accountId: string,
+				usage: Record<string, unknown>,
+				now: number,
+			) => {
+				recorded.push({ accountId, usage, now });
+			},
+			getAdapter: () => ({
+				run: async (sql: string, params: unknown[]) => {
+					runs.push({ sql, params });
+				},
+			}),
+		} as unknown as DatabaseOperations;
+		return { dbOps, recorded, runs };
+	}
+
+	beforeEach(() => {
+		resetCodexUsageHistoryThrottle();
+	});
+
+	it("writes Codex windows through the Codex history helper and never touches rate_limit_reset", async () => {
+		const { dbOps, recorded, runs } = makeDbOps();
+		const soon = new Date(Date.now() + 60_000).toISOString();
+		const later = new Date(Date.now() + 600_000).toISOString();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-codex", name: "Ania Codex", provider: "codex" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-codex", {
+			five_hour: { utilization: 12, resets_at: soon },
+			seven_day: { utilization: 43, resets_at: later },
+		});
+
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].accountId).toBe("acc-codex");
+		expect(Object.keys(recorded[0].usage).sort()).toEqual([
+			"five_hour",
+			"seven_day",
+		]);
+		// A polled window must not land in accounts.rate_limit_reset: the
+		// auto-refresh scheduler gates on `rate_limit_reset <= now` and
+		// codexWindowHasReset needs the ELAPSED value to survive until they act
+		// on it. A 90s poller writing the next future reset erases it.
+		expect(runs).toHaveLength(0);
+	});
+
+	it("drops Codex windows without a real reset and writes nothing when none remain", async () => {
+		const { dbOps, recorded, runs } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-codex", name: "Ania Codex", provider: "codex" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-codex", {
+			five_hour: { utilization: 0, resets_at: null },
+		});
+
+		expect(recorded).toHaveLength(0);
+		expect(runs).toHaveLength(0);
+	});
+
+	it("writes Anthropic payloads as-is and never touches rate_limit_reset", async () => {
+		const { dbOps, recorded, runs } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-anthropic", name: "Fabian", provider: "anthropic" },
+			dbOps,
+			logger,
+		);
+		const data = {
+			five_hour: { utilization: 5, resets_at: null },
+			seven_day: { utilization: 30, resets_at: null },
+		};
+
+		await recorder("acc-anthropic", data);
+
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].usage).toEqual(data);
+		expect(runs).toHaveLength(0);
 	});
 });
 
@@ -824,5 +960,91 @@ describe("startServer() wiring guards", () => {
 		// Third argument must flow through the configured poll interval —
 		// i.e. not a hardcoded numeric literal.
 		expect(argList[2]).not.toMatch(/^\d+$/);
+	});
+});
+
+describe("createRefreshBackedTokenProvider", () => {
+	function makePollingAccount(overrides: Partial<Account> = {}): Account {
+		return {
+			id: "acc-1",
+			name: "Paused Codex",
+			provider: "codex",
+			access_token: "stale-at",
+			refresh_token: "stale-rt",
+			expires_at: 1,
+			paused: true,
+			...overrides,
+		} as unknown as Account;
+	}
+
+	it("never touches the persisted pause state of a paused account", async () => {
+		// The old wrapper called resumeAccount() + pauseAccount() around the
+		// refresh, and pauseAccount defaults reason="manual", which erased an
+		// automatic pause reason and blocked auto-resume.
+		const calls: string[] = [];
+		const account = makePollingAccount();
+		const provider = createRefreshBackedTokenProvider(account, {
+			getAccount: async (accountId) => {
+				calls.push(`getAccount:${accountId}`);
+				return makePollingAccount({ paused: true });
+			},
+			getValidAccessToken: async () => {
+				calls.push("getValidAccessToken");
+				return "fresh-token";
+			},
+		});
+
+		expect(await provider()).toBe("fresh-token");
+		expect(calls).toEqual(["getAccount:acc-1", "getValidAccessToken"]);
+		expect(account.paused).toBe(true);
+	});
+
+	it("syncs rotated tokens from the database before refreshing", async () => {
+		const account = makePollingAccount();
+		let seen: Account | null = null;
+		const provider = createRefreshBackedTokenProvider(account, {
+			getAccount: async () =>
+				makePollingAccount({
+					access_token: "rotated-at",
+					refresh_token: "rotated-rt",
+					expires_at: 99,
+				}),
+			getValidAccessToken: async (acc) => {
+				seen = acc;
+				return acc.access_token ?? "";
+			},
+		});
+
+		expect(await provider()).toBe("rotated-at");
+		expect(seen).toBe(account);
+		expect(account.refresh_token).toBe("rotated-rt");
+		expect(account.expires_at).toBe(99);
+	});
+
+	it("falls through to the in-memory account when the row is gone", async () => {
+		const account = makePollingAccount({ access_token: "in-memory" });
+		const provider = createRefreshBackedTokenProvider(account, {
+			getAccount: async () => null,
+			getValidAccessToken: async (acc) => acc.access_token ?? "",
+		});
+
+		expect(await provider()).toBe("in-memory");
+		expect(account.access_token).toBe("in-memory");
+	});
+
+	it("propagates a database failure instead of swallowing it", async () => {
+		let tokenCalls = 0;
+		const provider = createRefreshBackedTokenProvider(makePollingAccount(), {
+			getAccount: async () => {
+				throw new Error("db offline");
+			},
+			getValidAccessToken: async () => {
+				tokenCalls += 1;
+				return "never";
+			},
+		});
+
+		await expect(provider()).rejects.toThrow("db offline");
+		expect(tokenCalls).toBe(0);
 	});
 });

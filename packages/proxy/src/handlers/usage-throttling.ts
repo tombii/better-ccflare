@@ -134,7 +134,17 @@ export function collectWindows(
 		if (windows.length > 0) return windows;
 	}
 
-	if ("five_hour" in data && "seven_day" in data) {
+	// Either flat window is enough: Codex payloads carry only the windows the
+	// upstream reported (a Pro account has no five_hour at all). Alibaba Coding
+	// Plan also has a top-level `five_hour` (different inner shape, no
+	// `seven_day`); it is recognised by its `weekly` + `monthly` keys plus the
+	// absence of `seven_day` (an anthropic-like payload can carry `weekly` /
+	// `monthly` incidentally alongside a real `seven_day` — that combination
+	// must still be treated as anthropic-like, not misrouted to Alibaba) and
+	// must keep reaching its own branch below, so exclude that shape here.
+	const isAlibabaShape =
+		"weekly" in data && "monthly" in data && !("seven_day" in data);
+	if (!isAlibabaShape && ("five_hour" in data || "seven_day" in data)) {
 		const anthropicLike = data as {
 			five_hour?: { utilization?: number | null; resets_at?: string | null };
 			seven_day?: { utilization?: number | null; resets_at?: string | null };

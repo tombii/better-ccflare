@@ -302,6 +302,26 @@ describe("computePoolUsage", () => {
 		expect(seven.average).toBe(51.5);
 	});
 
+	it("Codex with a real five_hour contributes to the 5-hour pool", () => {
+		const reset = new Date(NOW + 60 * 60 * 1000).toISOString();
+		const accounts: AccountResponse[] = [
+			mkAccount({
+				name: "codex",
+				provider: "codex",
+				usageData: {
+					five_hour: { utilization: 35, resets_at: reset },
+					seven_day: { utilization: 63, resets_at: null },
+				} as never,
+			}),
+		];
+
+		const five = computePoolUsage(accounts, "five_hour", NOW);
+		expect(five.contributing).toHaveLength(1);
+		expect(five.contributing[0].name).toBe("codex");
+		expect(five.contributing[0].pct).toBe(35);
+		expect(five.excluded).toEqual([]);
+	});
+
 	it("paused account → excluded reason paused", () => {
 		const accounts: AccountResponse[] = [
 			mkAccount({

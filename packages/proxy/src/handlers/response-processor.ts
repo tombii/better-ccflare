@@ -1,13 +1,19 @@
 import { getRateLimitResetStabilityMs, logError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
+	codexWindowRolledOver,
 	type Provider,
 	parseCodexUsageHeaders,
+	pickCodexRolloverSlot,
+	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
 import { circuitKeyFor, recordSuccess } from "../circuit-breaker";
-import { recordCodexUsageSnapshot } from "../codex-usage-history";
+import {
+	earliestCodexResetMs,
+	recordCodexUsageSnapshot,
+} from "../codex-usage-history";
 import { drainBody } from "./discard-body-cancel";
 import { isInternalProbe, type ProxyContext } from "./proxy-types";
 import {
@@ -107,49 +113,34 @@ export function updateAccountMetadata(
 	// successful response. No need to duplicate that logic here.
 
 	if (account.provider === "codex") {
-		const codexUsage = parseCodexUsageHeaders(response.headers, {
-			defaultUtilization: response.status === 429 ? 100 : 0,
-		});
+		// Only a 429 is a real "exhausted" signal worth filling a missing
+		// percentage with. On every other status an absent
+		// `x-codex-*-used-percent` means UNKNOWN, and minting 0 there painted
+		// an empty bar over a window nobody had measured.
+		const codexUsage = parseCodexUsageHeaders(
+			response.headers,
+			response.status === 429 ? { defaultUtilization: 100 } : {},
+		);
 		if (codexUsage) {
-			const prevUsage = usageCache.get(account.id);
-			// Which window this session is riding. Both sides of the comparison
-			// below must read the same slot: a 5-hour boundary held against a
-			// weekly one would fabricate a rollover. With
-			// CODEX_FIVE_HOUR_WINDOW_ENABLED the slot stays pinned to the 5-hour
-			// window, as it was before OpenAI withdrew that window; otherwise it
-			// follows the shortest window this payload actually reports.
-			const windowSlot: "five_hour" | "seven_day" =
-				ctx.config.getCodexFiveHourWindowEnabled() ||
-				codexUsage.five_hour?.resets_at != null
-					? "five_hour"
-					: "seven_day";
-			const prevResetAt = (
-				prevUsage as {
-					five_hour?: { resets_at: string | null };
-					seven_day?: { resets_at: string | null };
-				} | null
-			)?.[windowSlot]?.resets_at;
+			const prevUsage = usageCache.get(account.id) as UsageData | null;
+			// Which window this session is riding, and whether it actually rolled
+			// over. Both live in @better-ccflare/providers so the usage poller
+			// applies the very same rule: OpenAI's 5-hour deadline slides forward
+			// while an account is idle, so a future-moving reset on its own is not
+			// a rollover. With CODEX_FIVE_HOUR_WINDOW_ENABLED the slot stays
+			// pinned to the 5-hour window, as it was before OpenAI withdrew it.
+			const windowSlot = pickCodexRolloverSlot(
+				codexUsage,
+				ctx.config.getCodexFiveHourWindowEnabled(),
+			);
+			const prevResetAt = prevUsage?.[windowSlot]?.resets_at;
 			const newResetAt = codexUsage[windowSlot]?.resets_at;
-			const prevUtilization = (
-				prevUsage as {
-					five_hour?: { utilization: number };
-					seven_day?: { utilization: number };
-				} | null
-			)?.[windowSlot]?.utilization;
-			const newUtilization = codexUsage[windowSlot]?.utilization;
-			const observedAt = Date.now();
-			const prevResetAtMs =
-				prevResetAt != null ? new Date(prevResetAt).getTime() : Number.NaN;
-			const newResetAtMs =
-				newResetAt != null ? new Date(newResetAt).getTime() : Number.NaN;
-			const windowRolledOver =
-				Number.isFinite(prevResetAtMs) &&
-				Number.isFinite(newResetAtMs) &&
-				prevResetAtMs <= observedAt &&
-				newResetAtMs > prevResetAtMs &&
-				typeof prevUtilization === "number" &&
-				typeof newUtilization === "number" &&
-				newUtilization < prevUtilization;
+			const windowRolledOver = codexWindowRolledOver(
+				prevUsage,
+				codexUsage,
+				Date.now(),
+				windowSlot,
+			);
 
 			usageCache.set(account.id, codexUsage);
 			log.debug(
@@ -170,15 +161,12 @@ export function updateAccountMetadata(
 				).then(() => undefined),
 			);
 
-			// Update rate_limit_reset from usage headers so auto-refresh can track windows
-			const resetTimes = [
-				codexUsage.five_hour?.resets_at,
-				codexUsage.seven_day?.resets_at,
-			]
-				.filter((t): t is string => t != null)
-				.map((t) => new Date(t).getTime());
-			if (resetTimes.length > 0) {
-				const earliestReset = Math.min(...resetTimes);
+			// Update rate_limit_reset from usage headers so auto-refresh and the
+			// load balancer's session expiry track the soonest window.
+			const earliestReset = earliestCodexResetMs(
+				codexUsage as unknown as Record<string, unknown>,
+			);
+			if (earliestReset !== null) {
 				ctx.asyncWriter.enqueue(() =>
 					ctx.dbOps
 						.getAdapter()

@@ -171,4 +171,94 @@ describe("GET /api/accounts — Codex weekly usage recovery", () => {
 		expect(usage?.five_hour.utilization).toBeNull();
 		expect(usage?.seven_day.utilization).toBe(51);
 	});
+
+	/** Epoch SECONDS, as the `x-codex-*-reset-at` headers carry them. */
+	const futureResetSeconds = () => Math.floor((Date.now() + 3_600_000) / 1000);
+
+	/**
+	 * Store a request + its payload so the handler's stored-payload recovery
+	 * step (the one between the in-memory cache and the usage_snapshots
+	 * fallback) has something to reparse.
+	 */
+	async function storePayload(
+		headers: Record<string, string>,
+		status: number,
+	): Promise<void> {
+		const timestamp = Date.now() - 30_000;
+		const requestId = `req-${status}-${timestamp}`;
+		await adapter.run(
+			`INSERT INTO requests (id, timestamp, method, path, account_used, status_code)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			[requestId, timestamp, "POST", "/v1/messages", ACCOUNT_ID, status],
+		);
+		await adapter.run(
+			`INSERT INTO request_payloads (id, json, timestamp) VALUES (?, ?, ?)`,
+			[
+				requestId,
+				JSON.stringify({
+					response: { status, headers },
+					meta: { timestamp },
+				}),
+				timestamp,
+			],
+		);
+	}
+
+	it("does not recover a 0% five-hour window from a stored 200 payload that carries only a reset", async () => {
+		// A reset time says when the window rolls over, never how much was used.
+		await storePayload(
+			{
+				"x-codex-primary-window-minutes": "300",
+				"x-codex-primary-reset-at": String(futureResetSeconds()),
+			},
+			200,
+		);
+
+		const account = await readAccount(makeHandler(null));
+		const usage = account?.usageData as {
+			five_hour?: { utilization: number | null };
+		} | null;
+		expect(usage?.five_hour?.utilization ?? null).toBeNull();
+		expect(account?.usageUtilization).toBeNull();
+	});
+
+	it("keeps the reported weekly percentage while leaving the reset-only five-hour window unknown", async () => {
+		await storePayload(
+			{
+				"x-codex-primary-window-minutes": "300",
+				"x-codex-primary-reset-at": String(futureResetSeconds()),
+				"x-codex-secondary-window-minutes": String(7 * 24 * 60),
+				"x-codex-secondary-used-percent": "42",
+				"x-codex-secondary-reset-at": String(
+					Math.floor((Date.now() + 3 * 24 * 60 * 60 * 1000) / 1000),
+				),
+			},
+			200,
+		);
+
+		const account = await readAccount(makeHandler(null));
+		const usage = account?.usageData as {
+			five_hour: { utilization: number | null };
+			seven_day: { utilization: number | null };
+		} | null;
+		expect(usage?.seven_day.utilization).toBe(42);
+		expect(usage?.five_hour.utilization).toBeNull();
+	});
+
+	it("still recovers 100% from a stored 429 payload that carries only a reset", async () => {
+		// A 429 with reset-only headers is a real "exhausted" signal.
+		await storePayload(
+			{
+				"x-codex-primary-window-minutes": "300",
+				"x-codex-primary-reset-at": String(futureResetSeconds()),
+			},
+			429,
+		);
+
+		const account = await readAccount(makeHandler(null));
+		const usage = account?.usageData as {
+			five_hour: { utilization: number | null };
+		} | null;
+		expect(usage?.five_hour.utilization).toBe(100);
+	});
 });

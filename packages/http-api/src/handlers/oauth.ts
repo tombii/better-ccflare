@@ -24,6 +24,7 @@ import {
 	pollForToken as pollQwenForToken,
 } from "@better-ccflare/providers/qwen";
 import { clearAccountRefreshCache } from "@better-ccflare/proxy";
+import { startUsagePollingForNewAccount } from "./usage-polling-start";
 
 const log = new Logger("OAuthHandler");
 
@@ -167,6 +168,12 @@ export function createQwenDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 
 					// Clean up session after 10 minutes
 					setTimeout(() => qwenSessions.delete(sessionId), 10 * 60 * 1000);
+
+					// Accounts created at runtime are invisible to the boot-time
+					// polling setup, so ask the server to start polling now. Fire and
+					// forget: the helper never throws, and a slow restarter must not
+					// hold the dashboard's "complete" status hostage.
+					void startUsagePollingForNewAccount(accountId, name);
 				} catch (err) {
 					log.error(`Qwen device flow polling failed for '${name}':`, err);
 					qwenSessions.set(sessionId, {
@@ -453,6 +460,12 @@ export function createCodexDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 					log.info(`Codex account '${name}' added via web device flow`);
 
 					setTimeout(() => codexSessions.delete(sessionId), 10 * 60 * 1000);
+
+					// Accounts created at runtime are invisible to the boot-time
+					// polling setup, so ask the server to start polling now. Fire and
+					// forget: the helper never throws, and a slow restarter must not
+					// hold the dashboard's "complete" status hostage.
+					void startUsagePollingForNewAccount(accountId, name);
 				} catch (err) {
 					log.error(`Codex device flow polling failed for '${name}':`, err);
 					codexSessions.set(sessionId, {
@@ -995,7 +1008,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 					`Completing OAuth flow for account '${name}' in ${savedMode} mode`,
 				);
 
-				await oauthFlow.complete(
+				const created = await oauthFlow.complete(
 					{
 						sessionId,
 						code,
@@ -1010,6 +1023,10 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				dbOps.deleteOAuthSession(sessionId);
 
 				log.info(`Successfully added account '${name}' via OAuth`);
+
+				// Accounts created at runtime are invisible to the boot-time
+				// polling setup, so ask the server to start polling now.
+				await startUsagePollingForNewAccount(created.id, name);
 
 				return jsonResponse({
 					success: true,

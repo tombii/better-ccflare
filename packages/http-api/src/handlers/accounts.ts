@@ -62,6 +62,7 @@ import {
 	computeRateLimitStatusDisplay,
 	getRepresentativeUsageResetMs,
 } from "./rate-limit-status";
+import { startUsagePollingForNewAccount } from "./usage-polling-start";
 
 const log = new Logger("AccountsHandler");
 
@@ -212,7 +213,9 @@ async function getCachedOrPersistedCodexUsage(
 			const usage = parseCodexUsageHeaders(new Headers(headerEntries), {
 				baseTimeMs: payloadTimestamp,
 				allowRelativeResetAfter: true,
-				defaultUtilization: codexStatus === 429 ? 100 : 0,
+				// A 429 with reset-only headers is a real "exhausted" signal; any
+				// other status must not mint a percentage the upstream never sent.
+				...(codexStatus === 429 ? { defaultUtilization: 100 } : {}),
 			});
 			if (!usage) continue;
 
@@ -985,6 +988,10 @@ export function createAccountAddHandler(
 					],
 				);
 
+				// The server only starts usage polling for accounts that existed
+				// at boot, so a runtime add would never be polled until restart.
+				await startUsagePollingForNewAccount(accountId, name);
+
 				return jsonResponse({
 					success: true,
 					message: `Account ${name} added successfully`,
@@ -1349,6 +1356,8 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 			log.info(
 				`Successfully added z.ai account: ${name} (Priority ${priority})`,
 			);
+
+			await startUsagePollingForNewAccount(accountId, name);
 
 			// Get the created account for response
 			const account = await db.get<{
@@ -4459,14 +4468,19 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 			}
 
 			if (account.provider === "codex") {
+				// Refresh first so the click yields data immediately, then make
+				// sure the background poller is running — an account added after
+				// the server booted has none, and its usage would go stale again
+				// as soon as the cache TTL expired.
 				const outcome = await refreshCodexUsageForAccount(accountId);
+				const pollingRestarted = await restartUsagePollingForAccount(accountId);
 				log.info(
-					`Codex usage refresh requested for account '${account.name}' (success: ${outcome.success})`,
+					`Codex usage refresh requested for account '${account.name}' (success: ${outcome.success}, polling restarted: ${pollingRestarted})`,
 				);
 				return jsonResponse({
 					success: outcome.success,
 					message: outcome.message,
-					pollingRestarted: false,
+					pollingRestarted,
 				});
 			}
 

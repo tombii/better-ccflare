@@ -41,9 +41,10 @@ export function resetCodexUsageHistoryThrottle(): void {
 
 /**
  * Keep only windows that carry both a real percentage and a real reset.
- * `parseCodexUsageHeaders` fills a window missing from the headers with
- * `{ utilization: defaultUtilization, resets_at: null }`, so a `resets_at` of
- * null is the tell for a synthetic window. Recording those would poison the
+ * `parseCodexUsageHeaders` omits a window the headers did not report, and
+ * older cache/snapshot payloads may still carry the former
+ * `{ utilization: 0, resets_at: null }` placeholder, so a `resets_at` of null
+ * is the tell for a synthetic window. Recording those would poison the
  * history with zeros that read as "nothing was used this week".
  */
 function realWindows(usage: Record<string, unknown>): Record<string, unknown> {
@@ -96,4 +97,23 @@ export async function recordCodexUsageSnapshot(
 		);
 		return false;
 	}
+}
+
+/**
+ * Soonest reset among the real windows of a Codex usage payload, in epoch ms.
+ * Feeds `accounts.rate_limit_reset`, which the load balancer's Codex session
+ * expiry (`codexWindowHasReset`) and the auto-refresh scheduler read. Shared
+ * by the traffic path (response-processor) and the pollers so both write the
+ * same value for the same payload.
+ */
+export function earliestCodexResetMs(
+	usage: Record<string, unknown>,
+): number | null {
+	let earliest: number | null = null;
+	for (const window of Object.values(realWindows(usage))) {
+		const ms = new Date((window as { resets_at: string }).resets_at).getTime();
+		if (!Number.isFinite(ms)) continue;
+		if (earliest === null || ms < earliest) earliest = ms;
+	}
+	return earliest;
 }
