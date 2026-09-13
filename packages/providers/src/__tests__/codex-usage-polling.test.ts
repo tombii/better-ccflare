@@ -421,3 +421,139 @@ describe("codex polling and the configured rollover window", () => {
 		expect(onWindowReset).not.toHaveBeenCalled();
 	});
 });
+
+describe("codex polling and cache teardown", () => {
+	let originalFetch: typeof fetch;
+	// Each test gets a pristine account: the generation counter must start from
+	// its initial state, which is exactly the state a teardown has to leave
+	// unambiguous for an in-flight poll.
+	let accountId = ACCOUNT_ID;
+	let accountSeq = 0;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+		accountSeq += 1;
+		accountId = `${ACCOUNT_ID}-teardown-${accountSeq}`;
+	});
+
+	afterEach(() => {
+		usageCache.stopPolling(accountId);
+		usageCache.resetCodexRolloverPolicy();
+		globalThis.fetch = originalFetch;
+	});
+
+	/**
+	 * Arm a fetch mock that blocks until `release()` is called. `started`
+	 * resolves once the poller's request is on the wire, so the test can tear
+	 * the cache down in the middle of the flight.
+	 */
+	function deferredFetch(body: unknown): {
+		started: Promise<void>;
+		release: () => void;
+	} {
+		let releaseFetch: (() => void) | undefined;
+		const fetchReleased = new Promise<void>((resolve) => {
+			releaseFetch = resolve;
+		});
+		let markFetchStarted: (() => void) | undefined;
+		const fetchStarted = new Promise<void>((resolve) => {
+			markFetchStarted = resolve;
+		});
+		globalThis.fetch = mock(async () => {
+			markFetchStarted?.();
+			await fetchReleased;
+			return okResponse(body);
+		}) as unknown as typeof fetch;
+		return {
+			started: fetchStarted,
+			release: () => {
+				releaseFetch?.();
+			},
+		};
+	}
+
+	function startPollingWithSnapshots(snapshots: UsageData[]): void {
+		usageCache.startPolling(
+			accountId,
+			async () => TOKEN,
+			"codex",
+			ONE_HOUR_MS,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			(_accountId, data) => {
+				snapshots.push(data);
+			},
+		);
+	}
+
+	it("does not resurrect the cache when stopPolling() lands while a poll is in flight", async () => {
+		// Teardown must invalidate the in-flight poll. Dropping the generation
+		// instead of advancing it makes it read back as 0 — exactly the value
+		// the poll captured — so the late payload sails past the stale-poll
+		// guard and re-installs an entry for an account that is already gone.
+		const snapshots: UsageData[] = [];
+		const { started, release } = deferredFetch(payload());
+		startPollingWithSnapshots(snapshots);
+
+		const pending = usageCache.refreshNow(accountId);
+		await started;
+
+		usageCache.stopPolling(accountId);
+
+		release();
+		await pending;
+
+		expect(usageCache.get(accountId)).toBeNull();
+		expect(snapshots).toHaveLength(0);
+	});
+
+	it("does not resurrect the cache when delete() lands while a poll is in flight", async () => {
+		// delete() leaves polling registered (a reload clears the entry and
+		// keeps fetching), so the in-flight poll still holds a live token
+		// provider and callbacks when its response lands.
+		const snapshots: UsageData[] = [];
+		const { started, release } = deferredFetch(payload());
+		startPollingWithSnapshots(snapshots);
+
+		const pending = usageCache.refreshNow(accountId);
+		await started;
+
+		usageCache.delete(accountId);
+
+		release();
+		await pending;
+
+		expect(usageCache.get(accountId)).toBeNull();
+		expect(snapshots).toHaveLength(0);
+
+		// Only the poll that was in flight is invalidated — the account must not
+		// be locked out of caching from here on.
+		globalThis.fetch = mock(async () =>
+			okResponse(payload(7, 21)),
+		) as unknown as typeof fetch;
+
+		expect(await usageCache.refreshNow(accountId)).toBe(true);
+		const cached = usageCache.get(accountId) as UsageData | null;
+		expect(cached?.five_hour?.utilization).toBe(7);
+		expect(snapshots).toHaveLength(1);
+	});
+
+	it("does not resurrect the cache when clear() lands while a poll is in flight", async () => {
+		const snapshots: UsageData[] = [];
+		const { started, release } = deferredFetch(payload());
+		startPollingWithSnapshots(snapshots);
+
+		const pending = usageCache.refreshNow(accountId);
+		await started;
+
+		usageCache.clear();
+
+		release();
+		await pending;
+
+		expect(usageCache.get(accountId)).toBeNull();
+		expect(snapshots).toHaveLength(0);
+	});
+});

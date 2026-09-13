@@ -770,11 +770,15 @@ export type AccessTokenProvider = () => Promise<string>;
 class UsageCache {
 	private cache = new Map<string, { data: AnyUsageData; timestamp: number }>();
 	/**
-	 * Per-account write counter, bumped by {@link install}. A poll captures it
-	 * before its request goes on the wire and re-reads it when the response
-	 * lands: a different value means another writer (the traffic path in
-	 * response-processor.ts, or a manual refresh) replaced the entry in the
-	 * meantime, so the poll's payload is stale and must be dropped.
+	 * Per-account write counter, bumped by {@link install} and by every teardown
+	 * ({@link invalidateInFlight}). A poll captures it before its request goes on
+	 * the wire and re-reads it when the response lands: a different value means
+	 * another writer (the traffic path in response-processor.ts, a manual
+	 * refresh, or a teardown that dropped the account) touched the entry in the
+	 * meantime, so the poll's payload is stale and must be dropped. Teardown
+	 * ADVANCES this counter instead of deleting it — a deleted entry reads back
+	 * as 0, the very generation a first poll captures, so the guard would let the
+	 * late payload through.
 	 */
 	private generations = new Map<string, number>();
 	private pollTimeouts = new Map<string, NodeJS.Timeout>();
@@ -1021,7 +1025,7 @@ class UsageCache {
 			this.snapshotCallbacks.delete(accountId);
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
-			this.generations.delete(accountId);
+			this.invalidateInFlight(accountId);
 			this.usageRateLimitedUntil.delete(accountId);
 			// Clear any in-flight fetch so it doesn't linger after polling stops.
 			this.inFlightFetches.delete(accountId);
@@ -1427,6 +1431,18 @@ class UsageCache {
 	 */
 	private install(accountId: string, data: AnyUsageData): void {
 		this.cache.set(accountId, { data, timestamp: Date.now() });
+		this.invalidateInFlight(accountId);
+	}
+
+	/**
+	 * Invalidate every in-flight poll for the account. Teardown must ADVANCE the
+	 * generation rather than delete it: a missing entry reads back as 0, which is
+	 * exactly the generation a poll captured before the teardown, so a late
+	 * response would pass the stale-poll guard and resurrect the cleared entry.
+	 * The map is bounded by the number of accounts ever polled, so keeping the
+	 * counter around costs nothing.
+	 */
+	private invalidateInFlight(accountId: string): void {
 		this.generations.set(accountId, (this.generations.get(accountId) ?? 0) + 1);
 	}
 
@@ -1513,7 +1529,7 @@ class UsageCache {
 	 */
 	delete(accountId: string): void {
 		this.cache.delete(accountId);
-		this.generations.delete(accountId);
+		this.invalidateInFlight(accountId);
 		log.debug(`Cleared usage cache for account ${accountId}`);
 	}
 
@@ -1525,7 +1541,11 @@ class UsageCache {
 			this.stopPolling(accountId);
 		}
 		this.cache.clear();
-		this.generations.clear();
+		// Advance, never drop: a poll still on the wire has to see a different
+		// generation when it returns (see {@link generations}).
+		for (const accountId of this.generations.keys()) {
+			this.invalidateInFlight(accountId);
+		}
 		this.usageRateLimitedUntil.clear();
 		log.info("Cleared all usage cache and stopped polling");
 	}
