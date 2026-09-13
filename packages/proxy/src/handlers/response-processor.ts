@@ -463,11 +463,20 @@ export async function processProxyResponse(
 			);
 		}
 
-		// (b) Clear rate_limited_until on any successful upstream response. We clear
-		// unconditionally (even if the timestamp is still in the future) because a
-		// successful response proves the account is usable — e.g. after a seat
-		// reassignment that resets usage mid-window before the stored expiry fires.
-		if (account.rate_limited_until) {
+		// (b) Clear rate_limited_until on any non-server-error upstream response.
+		// We clear even if the timestamp is still in the future, because such a
+		// response proves the account is usable — e.g. after a seat reassignment
+		// that resets usage mid-window before the stored expiry fires.
+		//
+		// A 5xx is the one thing that proves nothing: the upstream failed to
+		// serve the request, so it is not evidence the account recovered. Before
+		// this guard, a 500 arriving on a benched account (the transient-5xx
+		// failover in proxy-operations.ts benches, then lets the terminal
+		// response fall through to here) cleared the bench it had just applied,
+		// putting the account straight back into rotation in front of the next
+		// request. 4xx still clears, as before: those did reach the account's own
+		// upstream accounting.
+		if (account.rate_limited_until && response.status < 500) {
 			account.rate_limited_until = null;
 			ctx.asyncWriter.enqueue(async () => {
 				const db = ctx.dbOps.getAdapter();
