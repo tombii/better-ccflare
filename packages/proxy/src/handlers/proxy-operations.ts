@@ -1963,17 +1963,22 @@ export async function proxyWithAccount(
 					0,
 					(account.rate_limited_until ?? Date.now()) - Date.now(),
 				);
-				log.warn(
-					`Account ${account.name}: upstream ${response.status} after ${attemptsMade} attempt(s), benching for ${benchMs} ms and failing over`,
-				);
-
 				// On the last candidate account, fall through instead of failing
 				// over: the account loop has nowhere left to go, and the client
 				// learns more from the real upstream status than from a synthetic
 				// pool_exhausted. Mirrors the terminal-529 handling below — the
 				// bench still applies, and response-processor.ts deliberately does
 				// not clear it on a 5xx.
-				if (!returnRateLimitedResponseOnExhaustion) {
+				const isTerminalAttempt = returnRateLimitedResponseOnExhaustion;
+				log.warn(
+					`Account ${account.name}: upstream ${response.status} after ${attemptsMade} attempt(s), benching for ${benchMs} ms and ${
+						isTerminalAttempt
+							? "forwarding the upstream response (last candidate account)"
+							: "failing over"
+					}`,
+				);
+
+				if (!isTerminalAttempt) {
 					cancelDiscardedResponseBody(response);
 					return null;
 				}
