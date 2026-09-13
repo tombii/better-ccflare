@@ -176,6 +176,66 @@ jobs:
             done <<< "$COMMITS"
             COMMITS=$(echo "$FILTERED_COMMITS" | sed '/^$/d')
 
+            # Collapse commits absorbed into a PR merge into a single entry using
+            # the (cleaned-up) PR title, so a PR's internal WIP/fixup commits don't
+            # each show up as their own changelog line. Commits made straight to
+            # main (never merged via a PR) are untouched and still listed individually.
+            MERGES=$(git log --merges --format="%H %P" "$PREV_TAG"..HEAD)
+            ABSORBED_HASHES=""
+            PR_ENTRIES=""
+            if [ -n "$MERGES" ]; then
+              while IFS= read -r mergeline; do
+                [ -z "$mergeline" ] && continue
+                MERGE_HASH=$(echo "$mergeline" | awk '{print $1}')
+                PARENT1=$(echo "$mergeline" | awk '{print $2}')
+                PARENT2=$(echo "$mergeline" | awk '{print $3}')
+                [ -z "$PARENT2" ] && continue
+
+                SUBJECT=$(git log -1 --format="%s" "$MERGE_HASH")
+                PR_NUM=""
+                PR_TITLE=""
+
+                if echo "$SUBJECT" | grep -qE "\(PR #[0-9]+\)$"; then
+                  # Manual --no-ff merge: subject is "<title> (PR #N)"
+                  PR_NUM=$(echo "$SUBJECT" | grep -oE "\(PR #[0-9]+\)$" | grep -oE "[0-9]+")
+                  PR_TITLE=$(echo "$SUBJECT" | sed -E 's/ \(PR #[0-9]+\)$//')
+                elif echo "$SUBJECT" | grep -qE "^Merge pull request #[0-9]+"; then
+                  # GitHub-UI merge: real title is the first line of the body
+                  PR_NUM=$(echo "$SUBJECT" | grep -oE "#[0-9]+" | grep -oE "[0-9]+")
+                  PR_TITLE=$(git log -1 --format="%b" "$MERGE_HASH" | sed '/^$/d' | head -1)
+                fi
+
+                [ -z "$PR_NUM" ] && continue
+                [ -z "$PR_TITLE" ] && continue
+
+                # Commits reachable only through the merged-in branch (parent2),
+                # not already on the target branch (parent1), are absorbed by this PR.
+                # The merge commit's own line is replaced too, so it isn't duplicated
+                # alongside the synthesized PR entry below.
+                MERGE_SHORT=$(git rev-parse --short "$MERGE_HASH")
+                EXCLUSIVE=$(git log --format="%h" "$PARENT1".."$PARENT2" 2>/dev/null || true)
+
+                ABSORBED_HASHES="$ABSORBED_HASHES$MERGE_SHORT"$'\n'"$EXCLUSIVE"$'\n'
+                PR_ENTRIES="$PR_ENTRIES$MERGE_SHORT $PR_TITLE (#$PR_NUM)"$'\n'
+              done <<< "$MERGES"
+            fi
+            ABSORBED_HASHES=$(echo "$ABSORBED_HASHES" | sed '/^$/d' | sort -u)
+            PR_ENTRIES=$(echo "$PR_ENTRIES" | sed '/^$/d')
+
+            if [ -n "$ABSORBED_HASHES" ]; then
+              COMMITS=$(echo "$COMMITS" | while IFS= read -r commit; do
+                [ -z "$commit" ] && continue
+                HASH=$(echo "$commit" | cut -d' ' -f1)
+                if echo "$ABSORBED_HASHES" | grep -qxF "$HASH"; then
+                  continue
+                fi
+                echo "$commit"
+              done)
+            fi
+            if [ -n "$PR_ENTRIES" ]; then
+              COMMITS=$(printf "%s\n%s\n" "$COMMITS" "$PR_ENTRIES" | sed '/^$/d')
+            fi
+
             if [ -n "$COMMITS" ]; then
               CHANGELOG="$CHANGELOG
 
@@ -192,8 +252,12 @@ jobs:
               SECURITY=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (security|vulnerabilit|redact|ReDoS)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | eval "$THANKS_SKIP" | sort -u)
               IMPROVEMENTS=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (improve|enhance|update|refactor)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | eval "$THANKS_SKIP" | sort -u)
 
-              # Breaking changes detection (check prefix and footer)
-              BREAKING=$(echo "$COMMITS" | while IFS= read -r commit; do
+              # Breaking changes detection (check prefix and footer).
+              # Scans the pre-collapse commit list (including commits absorbed into a
+              # PR merge) so a BREAKING CHANGE footer on one of a PR's internal
+              # commits is never missed, even though that commit no longer gets its
+              # own changelog entry.
+              BREAKING=$(git log --pretty=format:"%h %s" "$PREV_TAG"..HEAD | while IFS= read -r commit; do
                 if [ -n "$commit" ]; then
                   HASH=$(echo "$commit" | cut -d' ' -f1)
                   MSG=$(echo "$commit" | cut -d' ' -f2-)
