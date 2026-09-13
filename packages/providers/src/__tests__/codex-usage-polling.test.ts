@@ -202,6 +202,7 @@ describe("codex polling and window rollovers", () => {
 
 	afterEach(() => {
 		usageCache.stopPolling(ACCOUNT_ID);
+		usageCache.resetCodexRolloverPolicy();
 		globalThis.fetch = originalFetch;
 	});
 
@@ -338,6 +339,84 @@ describe("codex polling and window rollovers", () => {
 			okResponse(fiveHourPayload(5, 5 * ONE_HOUR_MS)),
 		) as unknown as typeof fetch;
 		await usageCache.refreshNow(ACCOUNT_ID);
+
+		expect(onWindowReset).not.toHaveBeenCalled();
+	});
+});
+
+describe("codex polling and the configured rollover window", () => {
+	let originalFetch: typeof fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		usageCache.stopPolling(ACCOUNT_ID);
+		usageCache.resetCodexRolloverPolicy();
+		globalThis.fetch = originalFetch;
+	});
+
+	function weeklyOnlyPayload(percent: number, resetInMs: number) {
+		return {
+			plan_type: "pro",
+			rate_limit: {
+				allowed: true,
+				limit_reached: false,
+				primary_window: {
+					used_percent: percent,
+					limit_window_seconds: 604_800,
+					reset_at: Math.floor((Date.now() + resetInMs) / 1000),
+				},
+				secondary_window: null,
+			},
+		};
+	}
+
+	function seedWeeklyBaseline(percent: number, resetInMs: number): void {
+		usageCache.set(ACCOUNT_ID, {
+			seven_day: {
+				utilization: percent,
+				resets_at: new Date(Date.now() + resetInMs).toISOString(),
+			},
+		} as UsageData);
+	}
+
+	async function pollWeekly(
+		onWindowReset: (accountId: string) => void,
+	): Promise<void> {
+		globalThis.fetch = mock(async () =>
+			okResponse(weeklyOnlyPayload(5, 5 * ONE_HOUR_MS)),
+		) as unknown as typeof fetch;
+		usageCache.startPolling(
+			ACCOUNT_ID,
+			async () => TOKEN,
+			"codex",
+			ONE_HOUR_MS,
+			undefined,
+			onWindowReset,
+		);
+		await usageCache.refreshNow(ACCOUNT_ID);
+	}
+
+	it("rides the weekly window by default, as the traffic path does", async () => {
+		const onWindowReset = mock((_accountId: string) => {});
+		seedWeeklyBaseline(80, -60_000);
+
+		await pollWeekly(onWindowReset);
+
+		expect(onWindowReset).toHaveBeenCalledTimes(1);
+	});
+
+	it("stays pinned to the 5-hour window when the policy says so", async () => {
+		// CODEX_FIVE_HOUR_WINDOW_ENABLED keeps the session on the 5-hour
+		// window. A weekly-only payload then has nothing to compare, so the
+		// poller must reach the same verdict as response-processor.ts.
+		const onWindowReset = mock((_accountId: string) => {});
+		usageCache.setCodexRolloverPolicy({ pinFiveHour: () => true });
+		seedWeeklyBaseline(80, -60_000);
+
+		await pollWeekly(onWindowReset);
 
 		expect(onWindowReset).not.toHaveBeenCalled();
 	});

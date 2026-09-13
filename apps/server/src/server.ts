@@ -898,6 +898,13 @@ export default async function startServer(options?: {
 	// route. The config POST handler mirrors it again after a write.
 	setForceAccountModel(config.getForceAccountModel());
 	installOutboundProxy(() => config.getOutboundProxy());
+	// The usage poller detects Codex window rollovers with the same predicate
+	// as the traffic path, so it must ride the same window. Config cannot be
+	// imported from @better-ccflare/providers, so hand the reader over once,
+	// before any polling starts. Read lazily so a live config change applies.
+	usageCache.setCodexRolloverPolicy({
+		pinFiveHour: () => config.getCodexFiveHourWindowEnabled(),
+	});
 	const outboundProxyUrl = config.getOutboundProxy();
 	if (outboundProxyUrl) {
 		const { protocol, host } = new URL(outboundProxyUrl);

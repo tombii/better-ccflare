@@ -800,6 +800,26 @@ class UsageCache {
 		string,
 		Promise<{ success: boolean; retryAfterMs: number | null }>
 	>();
+	/**
+	 * Which Codex window a session rides, mirroring
+	 * `CODEX_FIVE_HOUR_WINDOW_ENABLED`. Config lives outside this package, so
+	 * the server injects the reader once at startup; the default matches an
+	 * unset flag. The traffic path in response-processor.ts reads the same
+	 * setting, and both sides of a rollover comparison must agree on the slot.
+	 */
+	private codexRolloverPolicy: { pinFiveHour: () => boolean } = {
+		pinFiveHour: () => false,
+	};
+
+	/** Point the Codex rollover slot at the configured window. */
+	setCodexRolloverPolicy(policy: { pinFiveHour: () => boolean }): void {
+		this.codexRolloverPolicy = policy;
+	}
+
+	/** Restore the unconfigured default (tests). */
+	resetCodexRolloverPolicy(): void {
+		this.codexRolloverPolicy = { pinFiveHour: () => false };
+	}
 
 	/**
 	 * Schedule the next poll with exponential backoff on failures.
@@ -1222,13 +1242,16 @@ class UsageCache {
 					// the shared predicate against the baseline BEFORE overwriting it —
 					// after `cache.set` the traffic path in response-processor.ts would
 					// compare against an already-advanced reset and never fire either.
-					// The poller cannot read CODEX_FIVE_HOUR_WINDOW_ENABLED (config
-					// lives outside this package), so it always follows the window the
-					// payload actually reports.
+					// The slot follows the injected policy so the poller and the
+					// traffic path ride the same window under
+					// CODEX_FIVE_HOUR_WINDOW_ENABLED.
 					const previous = this.cache.get(accountId)?.data as
 						| UsageData
 						| undefined;
-					const slot = pickCodexRolloverSlot(result.data);
+					const slot = pickCodexRolloverSlot(
+						result.data,
+						this.codexRolloverPolicy.pinFiveHour(),
+					);
 					const rolledOver = codexWindowRolledOver(
 						previous,
 						result.data,
