@@ -1728,6 +1728,54 @@ export async function proxyWithAccount(
 			return null;
 		}
 
+		// Re-issues this request on the same account, once. Shared by the 529
+		// overload retry loop and the transient-5xx retry loop below so the two
+		// cannot drift apart — every metadata detail here was a bug fixed once
+		// already and must not be re-derived per call site.
+		const reissueRequestInPlace = async (): Promise<Response> => {
+			// Rebuild from the buffered body text instead of a pre-cloned
+			// Request — an unread clone branch retains its native buffer (#382).
+			const retryRequest = new Request(transformedRequest.url, {
+				method: transformedRequest.method,
+				headers: transformedRequest.headers,
+				body: retryBodyText || undefined,
+				signal: req.signal,
+			});
+			const retryRaw = isSyntheticProviderResponse(retryRequest)
+				? materializeSyntheticResponse(retryRequest)
+				: await forwardUpstream(retryRequest);
+
+			// Mirror the first response's metadata tagging: providers read
+			// stream intent / custom-tool state from these headers, and the
+			// map fallback behind them has a 30s TTL a long backoff can
+			// outlive — the request ID alone is not enough.
+			const retryTaggedHeaders = new Headers(retryRaw.headers);
+			retryTaggedHeaders.set("x-better-ccflare-request-id", requestMeta.id);
+			for (const forwarded of [
+				"x-better-ccflare-request-stream",
+				"x-better-ccflare-codex-custom-tools",
+				"x-better-ccflare-native-responses",
+			]) {
+				const value = transformedRequest.headers.get(forwarded);
+				if (value === "true" || value === "false") {
+					retryTaggedHeaders.set(forwarded, value);
+				}
+			}
+			retryTaggedHeaders.set("x-better-ccflare-request-path", requestMeta.path);
+			const retryTaggedRaw = new Response(retryRaw.body, {
+				status: retryRaw.status,
+				statusText: retryRaw.statusText,
+				headers: retryTaggedHeaders,
+			});
+			return provider.processResponse(
+				retryTaggedRaw,
+				account,
+				req.headers,
+				drainAbortController,
+				{ requestModel: responseModelFallback || null },
+			);
+		};
+
 		// In-place retry for reset-less 529 (overloaded_error) — bounded attempts with
 		// full-jitter exponential backoff before applying account cooldown. This prevents
 		// all accounts cooling simultaneously under concurrency spikes. Skipped for
@@ -1760,77 +1808,7 @@ export async function proxyWithAccount(
 							`Account ${account.name}: in-place retry ${attempt}/${retryCfg.maxAttempts - 1} after ${Math.round(delayMs)}ms for 529 overloaded_error`,
 						);
 
-						// Rebuild from the buffered body text instead of a
-						// pre-cloned Request — an unread clone branch retains
-						// its native buffer (#382).
-						const retryRequest = new Request(transformedRequest.url, {
-							method: transformedRequest.method,
-							headers: transformedRequest.headers,
-							body: retryBodyText || undefined,
-							signal: req.signal,
-						});
-						const retryRaw = isSyntheticProviderResponse(retryRequest)
-							? materializeSyntheticResponse(retryRequest)
-							: await forwardUpstream(retryRequest);
-
-						// Mirror the first response's metadata tagging: providers read
-						// stream intent / custom-tool state from these headers, and the
-						// map fallback behind them has a 30s TTL a long backoff can
-						// outlive — the request ID alone is not enough.
-						const retryTaggedHeaders = new Headers(retryRaw.headers);
-						retryTaggedHeaders.set(
-							"x-better-ccflare-request-id",
-							requestMeta.id,
-						);
-						const retryRequestStream = transformedRequest.headers.get(
-							"x-better-ccflare-request-stream",
-						);
-						if (
-							retryRequestStream === "true" ||
-							retryRequestStream === "false"
-						) {
-							retryTaggedHeaders.set(
-								"x-better-ccflare-request-stream",
-								retryRequestStream,
-							);
-						}
-						const retryCustomTools = transformedRequest.headers.get(
-							"x-better-ccflare-codex-custom-tools",
-						);
-						if (retryCustomTools === "true" || retryCustomTools === "false") {
-							retryTaggedHeaders.set(
-								"x-better-ccflare-codex-custom-tools",
-								retryCustomTools,
-							);
-						}
-						const retryNativeResponses = transformedRequest.headers.get(
-							"x-better-ccflare-native-responses",
-						);
-						if (
-							retryNativeResponses === "true" ||
-							retryNativeResponses === "false"
-						) {
-							retryTaggedHeaders.set(
-								"x-better-ccflare-native-responses",
-								retryNativeResponses,
-							);
-						}
-						retryTaggedHeaders.set(
-							"x-better-ccflare-request-path",
-							requestMeta.path,
-						);
-						const retryTaggedRaw = new Response(retryRaw.body, {
-							status: retryRaw.status,
-							statusText: retryRaw.statusText,
-							headers: retryTaggedHeaders,
-						});
-						const retryResponse = await provider.processResponse(
-							retryTaggedRaw,
-							account,
-							req.headers,
-							drainAbortController,
-							{ requestModel: responseModelFallback || null },
-						);
+						const retryResponse = await reissueRequestInPlace();
 
 						cancelDiscardedResponseBody(response);
 						response = retryResponse;
