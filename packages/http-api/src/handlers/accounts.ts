@@ -4468,14 +4468,19 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 			}
 
 			if (account.provider === "codex") {
+				// Refresh first so the click yields data immediately, then make
+				// sure the background poller is running — an account added after
+				// the server booted has none, and its usage would go stale again
+				// as soon as the cache TTL expired.
 				const outcome = await refreshCodexUsageForAccount(accountId);
+				const pollingRestarted = await restartUsagePollingForAccount(accountId);
 				log.info(
-					`Codex usage refresh requested for account '${account.name}' (success: ${outcome.success})`,
+					`Codex usage refresh requested for account '${account.name}' (success: ${outcome.success}, polling restarted: ${pollingRestarted})`,
 				);
 				return jsonResponse({
 					success: outcome.success,
 					message: outcome.message,
-					pollingRestarted: false,
+					pollingRestarted,
 				});
 			}
 
