@@ -1166,7 +1166,16 @@ export async function proxyWithAccount(
 			}
 
 			try {
-				const retryBodyJson = JSON.parse(transformedBodyText);
+				// Strip from the body CURRENTLY in flight, not from the original
+				// transform. The thinking-signature recovery above may already have
+				// replaced it; rebuilding from `transformedBodyText` there would
+				// strip cache_control off the unfiltered body and hand the upstream
+				// back the thinking signature it rejected one response ago. The
+				// fallback keeps the pre-descriptor behaviour for the (unreachable)
+				// case of a recovery that could not buffer its own body.
+				const retryBodyJson = JSON.parse(
+					outgoing.bodyText ?? transformedBodyText,
+				);
 				stripCacheControlFromOpenAIRequest(retryBodyJson);
 				const strippedBodyText = JSON.stringify(retryBodyJson);
 				const retryRequest = new Request(outgoing.request.url, {
@@ -1645,6 +1654,11 @@ export async function proxyWithAccount(
 		 * `checkZai1305` is likewise not re-run: it is a body peek that rewrites a
 		 * 200 into a synthetic 429, not a classification of an error the upstream
 		 * reported, and the retry loops never fed it before.
+		 *
+		 * The debug dump of a 429's rate-limit headers is first-path-only for the
+		 * same reason: it sits inside the fallback loop's guard rather than in a
+		 * handler. A retried 429 is therefore classified identically but not
+		 * logged — harmless, since the bench and the audit row both record it.
 		 */
 		const classifyRetriedUpstreamResponse = async (
 			retried: Response,
@@ -1669,6 +1683,14 @@ export async function proxyWithAccount(
 			);
 			if (outOfCredits !== NOT_CLASSIFIED) return outOfCredits;
 
+			// A body with no model diverges from the first path, which skips the
+			// `if (requestedModel)` block and lands on the "All models exhausted"
+			// bench (`all_models_exhausted_429`) while this leaves the response to
+			// the generic `processProxyResponse` bench. Deliberate, and the same
+			// narrowing as the `modelList.length > 1` exclusion below: the
+			// first-path bench is the fallback loop's terminal state, and the loop
+			// is not re-entered here. Practically unreachable anyway — /v1/messages
+			// rejects a body without `model`.
 			if (!requestedModel) return NOT_CLASSIFIED;
 			const modelList = getModelList(requestedModel, account);
 			if (modelList && modelList.length > 1) return NOT_CLASSIFIED;
@@ -1830,6 +1852,17 @@ export async function proxyWithAccount(
 						// Record the model and leave the replay on the previous request
 						// rather than pairing this URL and headers with a body we do not
 						// have.
+						//
+						// `model` is attribution-only in this branch, and deliberately
+						// still `nextModel`: `rawResponse` above came from
+						// `retryTransformedRequest`, so `nextModel` is the model that
+						// actually produced the response `processResponse` is about to
+						// read `requestModel` for. Recording it unconditionally is also
+						// what the pre-descriptor `responseModelFallback = nextModel`
+						// did, so response metadata is unchanged. The cost is that a
+						// replay from here re-sends the PREVIOUS model's body under the
+						// next model's name — still better than replaying a body that
+						// was never read.
 						adoptOutgoingRequest(
 							outgoing.request,
 							outgoing.bodyText,

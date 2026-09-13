@@ -126,6 +126,39 @@ function thinkingBody() {
 	});
 }
 
+/**
+ * Both recoveries in one body: a bogus thinking signature AND `cache_control`
+ * on a content part, so the thinking recovery runs first and the cache-control
+ * recovery then has to build on ITS body rather than on the original.
+ */
+function thinkingAndCacheControlBody() {
+	return encode({
+		model: "claude-sonnet-4-5",
+		thinking: { type: "enabled", budget_tokens: 1024 },
+		messages: [
+			{
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: "hello",
+						cache_control: { type: "ephemeral" },
+					},
+				],
+			},
+			{
+				role: "assistant",
+				content: [
+					{ type: "thinking", thinking: "hmm", signature: "bogus-signature" },
+					{ type: "text", text: "hi" },
+				],
+			},
+			{ role: "user", content: "again" },
+		],
+		max_tokens: 10,
+	});
+}
+
 function makeProxyContext(): ProxyContext {
 	return {
 		strategy: { getNextAccount: () => null } as never,
@@ -370,6 +403,36 @@ describe("proxyWithAccount — an in-place retry replays the request actually in
 		expect(bodies[1]).not.toContain("cache_control");
 		// …and the retry replays the recovered body, not the rejected one.
 		expect(bodies[2]).toBe(bodies[1]);
+	});
+
+	it("builds the cache-control recovery on the thinking-filtered body, not on the original", async () => {
+		const bodies = scriptUpstream([
+			invalidThinkingSignature400,
+			cacheControlRejection400,
+			serverError500,
+			serverError500,
+		]);
+
+		await runProxy(
+			// Fresh id: the (account, model) rejector set is module-level, and a
+			// pre-stripped first attempt would make the recovery unreachable.
+			makeAccount({ id: "acc-thinking-then-cache-control" }),
+			thinkingAndCacheControlBody(),
+		);
+
+		expect(bodies).toHaveLength(4);
+		expect(bodies[0]).toContain('"type":"thinking"');
+		expect(bodies[0]).toContain("cache_control");
+		// The thinking recovery ran and left cache_control alone.
+		expect(bodies[1]).not.toContain('"type":"thinking"');
+		expect(bodies[1]).toContain("cache_control");
+		// The cache-control recovery strips its field from the body currently in
+		// flight. Rebuilding from the original request body instead would hand
+		// the upstream back the thinking signature it rejected two responses ago.
+		expect(bodies[2]).not.toContain("cache_control");
+		expect(bodies[2]).not.toContain('"type":"thinking"');
+		// …and the 5xx retry replays that same recovered body.
+		expect(bodies[3]).toBe(bodies[2]);
 	});
 
 	it("replays the thinking-filtered body after a thinking-signature recovery", async () => {
