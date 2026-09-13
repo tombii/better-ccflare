@@ -1979,6 +1979,52 @@ export async function proxyWithAccount(
 				);
 
 				if (!isTerminalAttempt) {
+					// Audit row for the attempt that failed here. The whole block
+					// already runs only for real traffic (`!isSyntheticInternal`
+					// gates it above), so no second synthetic check is needed —
+					// unlike the org_permission_denied branch, which benches
+					// probes too and therefore guards its own row.
+					//
+					// Without this row the attempt disappears: the account that
+					// picks the request up next writes the only history entry, and
+					// it carries neither the 5xx status nor the seconds burned
+					// here. That is exactly the data the 2026-09-13 incident was
+					// diagnosed from.
+					let requestedModel: string | null = null;
+					if (effectiveBodyBuffer)
+						requestedModel = effectiveBodyContext.getModel();
+					const responseTime = Date.now() - requestMeta.timestamp;
+					const modelRewrite = isModelRewrite(
+						requestMeta.originalModel,
+						requestMeta.appliedModel,
+					);
+					const failedStatus = response.status;
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.saveRequest(
+							crypto.randomUUID(),
+							req.method,
+							url.pathname,
+							account.id,
+							failedStatus,
+							false,
+							reason,
+							responseTime,
+							failoverAttempts,
+							requestedModel ? { model: requestedModel } : undefined,
+							requestMeta.agentUsed ?? undefined,
+							apiKeyId ?? undefined,
+							apiKeyName ?? undefined,
+							requestMeta.project ?? null,
+							undefined,
+							requestMeta.comboName ?? null,
+							modelRewrite ? (requestMeta.originalModel ?? null) : null,
+							modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+							requestMeta.projectAttributionSource ?? null,
+							requestMeta.agentAttributionSource ?? null,
+							null,
+							requestMeta.clientSessionId ?? null,
+						),
+					);
 					cancelDiscardedResponseBody(response);
 					return null;
 				}

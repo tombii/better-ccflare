@@ -59,6 +59,7 @@ function makeRequestMeta(overrides: Partial<RequestMeta> = {}): RequestMeta {
 		path: "/v1/messages",
 		timestamp: Date.now(),
 		headers: new Headers(),
+		clientSessionId: "sess-5xx",
 		...overrides,
 	};
 }
@@ -105,7 +106,11 @@ function makeProxyContext(): ProxyContext {
 			isStreamingResponse: () => false,
 		} as never,
 		refreshInFlight: new Map(),
-		asyncWriter: { enqueue: mock(() => {}) } as never,
+		asyncWriter: {
+			enqueue: mock(async (job: () => void | Promise<void>) => {
+				await job();
+			}),
+		} as never,
 		config: { getStorePayloads: () => true } as never,
 		internalProbeSecret: "test-secret",
 	};
@@ -145,6 +150,7 @@ async function runProxy(
 	bodyBuffer: ArrayBuffer,
 	ctx: ProxyContext,
 	isLastAccount = false,
+	failoverAttempts = 0,
 ): Promise<{ result: Response | null; forwarded: boolean }> {
 	let forwarded = false;
 	let result: Response | null = null;
@@ -156,7 +162,7 @@ async function runProxy(
 			makeRequestMeta(),
 			bodyBuffer,
 			() => undefined,
-			0,
+			failoverAttempts,
 			ctx,
 			undefined,
 			undefined,
@@ -171,6 +177,14 @@ async function runProxy(
 	}
 	return { result, forwarded };
 }
+
+/**
+ * saveRequest(id, method, path, accountUsed, statusCode, success, errorMessage,
+ * responseTime, failoverAttempts, usage, ..., clientSessionId)
+ */
+const saveCalls = (ctx: ProxyContext) =>
+	(ctx.dbOps.saveRequest as ReturnType<typeof mock>).mock
+		.calls as unknown as unknown[][];
 
 describe("proxyWithAccount — transient upstream 5xx retry and failover", () => {
 	let originalFetch: typeof globalThis.fetch;
@@ -258,6 +272,54 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 		);
 		// The 429 streak is reserved for genuine quota exhaustion.
 		expect(account.consecutive_rate_limits).toBe(0);
+	});
+
+	it("records an audit row for the failed attempt before failing over", async () => {
+		// The production incident was diagnosed from exactly this row. Without
+		// it the 36-60s the request spent on the broken account vanishes from
+		// history, and the row the *next* account writes shows only
+		// failover_attempts=1 with no trace of what it failed over from.
+		globalThis.fetch = mock(async () => serverErrorResponse(500));
+
+		const ctx = makeProxyContext();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody();
+		const { result } = await runProxy(
+			makeRequest(bodyBuffer),
+			account,
+			bodyBuffer,
+			ctx,
+			false,
+			2,
+		);
+
+		expect(result).toBeNull();
+		expect(saveCalls(ctx)).toHaveLength(1);
+		const args = saveCalls(ctx)[0];
+		expect(args[3]).toBe("acc-1");
+		expect(args[4]).toBe(500);
+		expect(args[5]).toBe(false);
+		expect(args[6]).toBe("upstream_5xx_server_error");
+		expect(typeof args[7]).toBe("number");
+		expect(args[8]).toBe(2);
+		expect(args[9]).toEqual({ model: "claude-sonnet-4-5" });
+		// The tail arguments are easy to drop when copying a sibling branch.
+		expect(args[args.length - 1]).toBe("sess-5xx");
+	});
+
+	it("records no audit row for a synthetic probe's 5xx", async () => {
+		globalThis.fetch = mock(async () => serverErrorResponse(500));
+
+		const ctx = makeProxyContext();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody();
+		const probeReq = makeRequest(bodyBuffer, {
+			"x-better-ccflare-keepalive": "true",
+			"x-better-ccflare-internal-probe-secret": "test-secret",
+		});
+		await runProxy(probeReq, account, bodyBuffer, ctx);
+
+		expect(saveCalls(ctx)).toHaveLength(0);
 	});
 
 	it("honours a short Retry-After instead of the full cooldown", async () => {
@@ -373,7 +435,16 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 			expect(forwarded).toBe(true);
 		}
 		// The account is still benched, exactly as the terminal 529 path does.
+		// `rate_limited_reason` alone does not pin this: processProxyResponse
+		// runs on the fall-through and only ever clears `rate_limited_until`,
+		// never the reason, so a regression of the `status < 500` guard in
+		// response-processor.ts would leave the reason set and the bench gone.
 		expect(account.rate_limited_reason).toBe("upstream_5xx_server_error");
+		expect(account.rate_limited_until).not.toBeNull();
+		expect(account.rate_limited_until ?? 0).toBeGreaterThan(Date.now());
+		// The fall-through path writes its own row downstream; the 5xx block
+		// must not add a second one for the same request.
+		expect(saveCalls(ctx)).toHaveLength(0);
 	});
 
 	it("retries a streaming request's 500 the same way as a non-streaming one", async () => {
