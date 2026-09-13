@@ -95,7 +95,7 @@ describe("createUsageSnapshotRecorder", () => {
 		resetCodexUsageHistoryThrottle();
 	});
 
-	it("writes Codex windows through the Codex history helper and refreshes rate_limit_reset", async () => {
+	it("writes Codex windows through the Codex history helper and never touches rate_limit_reset", async () => {
 		const { dbOps, recorded, runs } = makeDbOps();
 		const soon = new Date(Date.now() + 60_000).toISOString();
 		const later = new Date(Date.now() + 600_000).toISOString();
@@ -116,9 +116,11 @@ describe("createUsageSnapshotRecorder", () => {
 			"five_hour",
 			"seven_day",
 		]);
-		expect(runs).toHaveLength(1);
-		expect(runs[0].sql).toContain("rate_limit_reset");
-		expect(runs[0].params).toEqual([new Date(soon).getTime(), "acc-codex"]);
+		// A polled window must not land in accounts.rate_limit_reset: the
+		// auto-refresh scheduler gates on `rate_limit_reset <= now` and
+		// codexWindowHasReset needs the ELAPSED value to survive until they act
+		// on it. A 90s poller writing the next future reset erases it.
+		expect(runs).toHaveLength(0);
 	});
 
 	it("drops Codex windows without a real reset and writes nothing when none remain", async () => {

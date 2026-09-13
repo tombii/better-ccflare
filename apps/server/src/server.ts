@@ -176,9 +176,15 @@ export function supportsUsagePollingForAccount(account: {
  * Build the `onSnapshot` callback `usageCache.startPolling` fires after every
  * successful poll. Anthropic rows are written as-is. Codex goes through
  * `recordCodexUsageSnapshot` (drops windows without a real reset, shares the
- * 90 s throttle with the traffic path in response-processor) and refreshes
- * `accounts.rate_limit_reset` so the load balancer's session expiry keeps
- * working for an account that is idle through the proxy.
+ * 90 s throttle with the traffic path in response-processor).
+ *
+ * Polled windows are deliberately NOT written to `accounts.rate_limit_reset`.
+ * `AutoRefreshScheduler` only picks up accounts whose `rate_limit_reset <= now`
+ * and `codexWindowHasReset` / `peek-availability` likewise need the ELAPSED
+ * value to survive until they act on it — a 90 s poller would overwrite it with
+ * the next future reset within seconds of every rollover and neither would ever
+ * fire. Only real traffic (`response-processor.ts`) and the manual refresh
+ * button write that column, exactly as they do on main.
  */
 export function createUsageSnapshotRecorder(
 	account: Pick<Account, "id" | "name" | "provider">,
@@ -200,21 +206,6 @@ export function createUsageSnapshotRecorder(
 				logger.warn(
 					`Failed to record Codex usage snapshot for account ${accountId}: ${err}`,
 				);
-			}
-			const earliestReset = earliestCodexResetMs(usage);
-			if (earliestReset !== null) {
-				try {
-					await dbOps
-						.getAdapter()
-						.run("UPDATE accounts SET rate_limit_reset = ? WHERE id = ?", [
-							earliestReset,
-							accountId,
-						]);
-				} catch (err) {
-					logger.warn(
-						`Failed to update rate_limit_reset for Codex account ${accountId} from polled usage: ${err}`,
-					);
-				}
 			}
 			return;
 		}
