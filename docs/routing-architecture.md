@@ -47,7 +47,10 @@ flowchart TD
     P -->|"No"| P3["Apply account cooldown,<br/>fail over to next candidate"]
     P2 --> N
     P3 --> N
-    O -->|"No"| Q["Return response to client"]
+    O -->|"No"| R{"Upstream 500/502/503/504?"}
+    R -->|"Yes"| R2["Retry once in place;<br/>if it persists, bench<br/>(upstream_5xx_server_error)<br/>and fail over"]
+    R2 --> N
+    R -->|"No"| Q["Return response to client"]
 ```
 
 Three classes of 429 are narrower than the account and therefore fail over per
@@ -58,6 +61,18 @@ request with the account left in rotation — no cooldown, no
 - **`windowless_429`** — `x-should-retry: true` with no rate-limit metadata at all (no `retry-after`, no `anthropic-ratelimit-*` / `x-ratelimit-*` header). Measured on a production install as **request**-scoped: the same account served 200s two seconds before and 38 seconds after on the same model, retries spanning 11.2s returned identical bare 429s without ever clearing, and the next account rejected the same client request the same way. Benching for it drained the pool one account per failover attempt. The check is fail-closed — any header that reports window state, known name or not, is treated as a real limit and benched as before.
 - **Synthetic keepalive replays** — the keepalive scheduler's own parallel burst trips a per-IP limit; no request-history row is written either.
 
+A transient upstream server error — HTTP **500/502/503/504** from any provider
+— is neither a quota signal nor narrower than the account, so it gets its own
+treatment: the request is re-issued once on the same account, and if the error
+survives that the account is benched under `upstream_5xx_server_error` and the
+request fails over. The bench is `CCFLARE_SERVER_ERROR_COOLDOWN_MS` (60s) or a
+shorter upstream `Retry-After`, never ramps, and leaves
+`consecutive_rate_limits` untouched — the account's own quota is fine, the
+provider (or the organization behind the account) is not. On the last candidate
+account the real upstream response is forwarded instead of a synthetic
+`pool_exhausted`. Set `CCFLARE_SERVER_ERROR_RETRY_ENABLED=false` to forward
+these straight to the client again.
+
 The `windowless_429` exemption is not universal: it is evaluated only on the
 no-fallback path (the requested model has no multi-entry mapping). An account
 **with** multi-entry model mappings walks its fallback list first, and when every
@@ -65,7 +80,7 @@ mapped model has 429ed the request ends at `all_models_exhausted_429`, which
 **does** apply an account cooldown — even if each individual 429 reported no
 window.
 
-*Source: `packages/proxy/src/proxy.ts` (`handleProxy`, `applyUsageThrottling`), `packages/proxy/src/handlers/account-selector.ts` (`selectAccountsForRequest`), `packages/proxy/src/handlers/proxy-operations.ts` + `packages/proxy/src/handlers/retryable-429.ts` (the three no-bench 429 classes).*
+*Source: `packages/proxy/src/proxy.ts` (`handleProxy`, `applyUsageThrottling`), `packages/proxy/src/handlers/account-selector.ts` (`selectAccountsForRequest`), `packages/proxy/src/handlers/proxy-operations.ts` + `packages/proxy/src/handlers/retryable-429.ts` (the three no-bench 429 classes and the transient-5xx retry/bench path).*
 
 ## The Load-Balancing Strategies
 
