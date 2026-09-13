@@ -40,7 +40,9 @@ import { handleResponsesRequest } from "@better-ccflare/openai-responses-adapter
 import {
 	CODEX_DEFAULT_ENDPOINT,
 	CODEX_PING_MODEL,
+	extractChatgptAccountId,
 	extractWeeklyResetTime,
+	fetchCodexUsageData,
 	fetchCodexUsageOnDemand,
 	getProvider,
 	getRankingUtilizationForProvider,
@@ -93,6 +95,7 @@ import {
 	type StrategyStore,
 } from "@better-ccflare/types";
 import { serve } from "bun";
+import { createCodexUsageRefresher } from "./codex-usage-refresher";
 
 /**
  * Build a load-balancing strategy from its enum name. Add new strategies here
@@ -1340,153 +1343,71 @@ export default async function startServer(options?: {
 		return true;
 	});
 
-	// Register this server's codex on-demand usage refresher. Codex does not
-	// expose a free usage endpoint (unlike Anthropic's /api/oauth/usage), so
-	// each call sends a tiny upstream request and parses the x-codex-* headers
-	// from the response. The subscription endpoint rejects output-token caps,
-	// so fetchCodexUsageOnDemand aborts and cancels immediately after headers.
-	registerCodexUsageRefresher(serverId, async (accountId: string) => {
-		const account = await dbOps.getAccount(accountId);
-		if (!account) {
-			return {
-				success: false,
-				message: `Account ${accountId} not found`,
-			};
-		}
-		if (account.provider !== "codex") {
-			return {
-				success: false,
-				message: `Account '${account.name}' is not a Codex account`,
-			};
-		}
-		if (!account.access_token && !account.refresh_token) {
-			return {
-				success: false,
-				message: `Account '${account.name}' has no tokens — please re-authenticate`,
-			};
-		}
-
-		let accessToken: string;
-		try {
-			accessToken = await getValidAccessToken(account, proxyContext);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			log.warn(
-				`Codex usage refresh: failed to get access token for ${account.name}: ${message}`,
-			);
-			return {
-				success: false,
-				message: `Could not refresh access token for '${account.name}': ${message}`,
-			};
-		}
-
-		const endpoint = account.custom_endpoint ?? CODEX_DEFAULT_ENDPOINT;
-
-		// Ping with a model this account can actually address, and with the
-		// cheapest one of those. A hardcoded name goes stale silently and fatally:
-		// the subscription endpoint rejects an unknown model before it accounts for
-		// quota, so the 400 carries no `x-codex-*` headers and the refresh fails
-		// with nothing to show. The account's own listing already answers the
-		// "which models exist" half for the family mapping — reuse it, and take the
-		// tail rather than the head, because the reply is discarded as soon as the
-		// headers arrive and the headers describe the subscription, not the model.
-		// `CODEX_PING_MODEL` is only reached when that listing has never been
-		// readable.
-		let pingModel = CODEX_PING_MODEL;
-		try {
-			pingModel =
-				lowestTierCodexModel(await getCodexModels(accountId, proxyContext)) ??
-				CODEX_PING_MODEL;
-		} catch (error) {
-			log.debug(
-				`Codex usage refresh: could not resolve the model list for ${account.name}, pinging ${pingModel}: ${error}`,
-			);
-		}
-
-		let fetchResult: Awaited<ReturnType<typeof fetchCodexUsageOnDemand>>;
-		try {
-			fetchResult = await fetchCodexUsageOnDemand(
-				accessToken,
-				endpoint,
-				pingModel,
-			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			log.error(
-				`Codex usage refresh: upstream fetch failed for ${account.name}:`,
-				message,
-			);
-			return {
-				success: false,
-				message: `Codex request failed for '${account.name}': ${message}`,
-			};
-		}
-
-		// Persist rate-limit reset even on non-2xx so the dashboard sees the
-		// most accurate reset time when the account is currently limited.
-		const codexProvider = getProvider("codex");
-		if (codexProvider) {
-			const rl = codexProvider.parseRateLimit(fetchResult.response);
-			if (rl.resetTime != null) {
+	// Register this server's Codex usage refresher (the dashboard refresh
+	// button). It reads the free ChatGPT usage endpoint first and falls back
+	// to the quota-spending /responses probe only when that endpoint yields
+	// nothing (custom endpoint, 403). See apps/server/src/codex-usage-refresher.ts.
+	registerCodexUsageRefresher(
+		serverId,
+		createCodexUsageRefresher({
+			getAccount: (accountId) => dbOps.getAccount(accountId),
+			getAccessToken: (account) => getValidAccessToken(account, proxyContext),
+			fetchFromUsageEndpoint: async (accessToken) => {
+				const result = await fetchCodexUsageData(accessToken, {
+					chatgptAccountId: extractChatgptAccountId(accessToken),
+				});
+				return { data: result.data, status: result.status };
+			},
+			usageEndpointAvailable: isCodexSubscriptionEndpoint,
+			defaultEndpoint: CODEX_DEFAULT_ENDPOINT,
+			resolvePingModel: async (accountId) => {
+				// Ping with a model this account can actually address, and with the
+				// cheapest one of those. A hardcoded name goes stale silently and
+				// fatally: the subscription endpoint rejects an unknown model before
+				// it accounts for quota, so the 400 carries no `x-codex-*` headers
+				// and the refresh fails with nothing to show. The account's own
+				// listing already answers the "which models exist" half for the
+				// family mapping — reuse it, and take the tail rather than the head,
+				// because the reply is discarded as soon as the headers arrive and
+				// the headers describe the subscription, not the model.
+				// `CODEX_PING_MODEL` is only reached when that listing has never
+				// been readable.
 				try {
-					await db.run(
-						"UPDATE accounts SET rate_limit_reset = ? WHERE id = ?",
-						[rl.resetTime, account.id],
+					return (
+						lowestTierCodexModel(
+							await getCodexModels(accountId, proxyContext),
+						) ?? CODEX_PING_MODEL
 					);
 				} catch (error) {
-					log.warn(
-						`Codex usage refresh: failed to update rate_limit_reset for ${account.name}:`,
-						error,
+					log.debug(
+						`Codex usage refresh: could not resolve the model list for ${accountId}, pinging ${CODEX_PING_MODEL}: ${error}`,
 					);
+					return CODEX_PING_MODEL;
 				}
-			}
-		}
-
-		if (!fetchResult.data) {
-			// Naming the model matters here: this is the shape a rejected model
-			// takes, and without it the message says nothing actionable.
-			return {
-				success: false,
-				message: `Codex returned no usage headers (status ${fetchResult.response.status}) for '${account.name}' when pinging model '${pingModel}'`,
-			};
-		}
-
-		usageCache.set(accountId, fetchResult.data);
-
-		// Persist alongside the cache: this on-demand read costs quota, so it must
-		// outlive the 10-minute cache. `force` skips the traffic throttle — the
-		// operator asked for this read explicitly.
-		await recordCodexUsageSnapshot(
-			dbOps,
-			accountId,
-			account.name,
-			fetchResult.data as unknown as Record<string, unknown>,
-			Date.now(),
-			true,
-		);
-
-		const fiveHour = fetchResult.data.five_hour?.utilization ?? 0;
-		const sevenDay = fetchResult.data.seven_day?.utilization ?? 0;
-		const isRateLimited = fetchResult.response.status === 429;
-		log.info(
-			`Codex usage refreshed for '${account.name}' via ${pingModel}: 5h=${fiveHour}%, 7d=${sevenDay}%${
-				isRateLimited ? " (rate-limited)" : ""
-			}`,
-		);
-
-		// 429 still produces a successful header refresh (the usage payload is
-		// what we wanted), but the dashboard message must not celebrate it —
-		// otherwise the operator sees "refreshed successfully" while the
-		// account is fully exhausted. See tombii's PR #219 review note.
-		const message = isRateLimited
-			? `Usage refreshed for '${account.name}' — account is rate limited (5h: ${fiveHour}%, 7d: ${sevenDay}%).`
-			: `Usage refreshed for '${account.name}' (5h: ${fiveHour}%, 7d: ${sevenDay}%).`;
-
-		return {
-			success: true,
-			message,
-		};
-	});
+			},
+			fetchFromProbe: fetchCodexUsageOnDemand,
+			probeResetTime: (response) =>
+				getProvider("codex")?.parseRateLimit(response).resetTime ?? null,
+			cacheSet: (accountId, data) => usageCache.set(accountId, data),
+			recordSnapshot: (accountId, accountName, usage, now, force) =>
+				recordCodexUsageSnapshot(
+					dbOps,
+					accountId,
+					accountName,
+					usage,
+					now,
+					force,
+				),
+			updateRateLimitReset: async (accountId, resetMs) => {
+				await db.run("UPDATE accounts SET rate_limit_reset = ? WHERE id = ?", [
+					resetMs,
+					accountId,
+				]);
+			},
+			earliestResetMs: earliestCodexResetMs,
+			log,
+		}),
+	);
 
 	// Initialize auto-refresh scheduler (now that proxyContext is available)
 	autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);
