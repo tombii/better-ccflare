@@ -769,6 +769,14 @@ export type AccessTokenProvider = () => Promise<string>;
  */
 class UsageCache {
 	private cache = new Map<string, { data: AnyUsageData; timestamp: number }>();
+	/**
+	 * Per-account write counter, bumped by {@link install}. A poll captures it
+	 * before its request goes on the wire and re-reads it when the response
+	 * lands: a different value means another writer (the traffic path in
+	 * response-processor.ts, or a manual refresh) replaced the entry in the
+	 * meantime, so the poll's payload is stale and must be dropped.
+	 */
+	private generations = new Map<string, number>();
 	private pollTimeouts = new Map<string, NodeJS.Timeout>();
 	private failureCounts = new Map<string, number>();
 	private tokenProviders = new Map<string, AccessTokenProvider>();
@@ -993,6 +1001,7 @@ class UsageCache {
 			this.snapshotCallbacks.delete(accountId);
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
+			this.generations.delete(accountId);
 			this.usageRateLimitedUntil.delete(accountId);
 			// Clear any in-flight fetch so it doesn't linger after polling stops.
 			this.inFlightFetches.delete(accountId);
@@ -1188,11 +1197,25 @@ class UsageCache {
 				// Free GET against the ChatGPT backend usage endpoint (the same one
 				// the Codex CLI polls). The account id header is derived from the
 				// token on every poll because OpenAI rotates tokens on refresh.
+				// Snapshot the cache generation before the request leaves: if
+				// another writer lands while it is on the wire, this payload is
+				// already stale by the time it returns.
+				const generationBefore = this.generations.get(accountId) ?? 0;
 				const result = await fetchCodexUsageData(token, {
 					chatgptAccountId: extractChatgptAccountId(token),
 				});
 				if (result.data) {
 					this.usageRateLimitedUntil.delete(accountId);
+					if ((this.generations.get(accountId) ?? 0) !== generationBefore) {
+						// The traffic path (or a manual refresh) already wrote a newer
+						// payload. Installing this one would rewind the dashboard and
+						// leave a pre-rollover baseline behind, which the next poll
+						// would read as a second rollover of the same window.
+						log.debug(
+							`Discarding Codex usage poll for account ${accountId}: another writer updated the cache while the request was in flight`,
+						);
+						return { success: true, retryAfterMs: null };
+					}
 					// Codex does not use the generic ">60s advance" rule: OpenAI slides
 					// the 5-hour `resets_at` forward while the account is idle, so that
 					// rule would reset session affinity on nearly every poll. Evaluate
@@ -1212,10 +1235,7 @@ class UsageCache {
 						Date.now(),
 						slot,
 					);
-					this.cache.set(accountId, {
-						data: result.data,
-						timestamp: Date.now(),
-					});
+					this.install(accountId, result.data);
 					if (rolledOver) {
 						const callback = this.windowResetCallbacks.get(accountId);
 						if (callback) {
@@ -1378,10 +1398,20 @@ class UsageCache {
 	}
 
 	/**
+	 * Write a payload into the cache and bump the account's generation. Every
+	 * write must go through here so an in-flight poll can tell that it lost a
+	 * race — see {@link generations}.
+	 */
+	private install(accountId: string, data: AnyUsageData): void {
+		this.cache.set(accountId, { data, timestamp: Date.now() });
+		this.generations.set(accountId, (this.generations.get(accountId) ?? 0) + 1);
+	}
+
+	/**
 	 * Set cached usage data for an account
 	 */
 	set(accountId: string, data: AnyUsageData): void {
-		this.cache.set(accountId, { data, timestamp: Date.now() });
+		this.install(accountId, data);
 
 		// Periodic cleanup of stale entries to prevent memory bloat
 		// Run cleanup every 100 sets to balance performance and memory
@@ -1460,6 +1490,7 @@ class UsageCache {
 	 */
 	delete(accountId: string): void {
 		this.cache.delete(accountId);
+		this.generations.delete(accountId);
 		log.debug(`Cleared usage cache for account ${accountId}`);
 	}
 
@@ -1471,6 +1502,7 @@ class UsageCache {
 			this.stopPolling(accountId);
 		}
 		this.cache.clear();
+		this.generations.clear();
 		this.usageRateLimitedUntil.clear();
 		log.info("Cleared all usage cache and stopped polling");
 	}

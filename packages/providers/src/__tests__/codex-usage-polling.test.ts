@@ -280,4 +280,65 @@ describe("codex polling and window rollovers", () => {
 		expect(onWindowReset).toHaveBeenCalledTimes(1);
 		expect(onWindowReset.mock.calls[0][0]).toBe(ACCOUNT_ID);
 	});
+
+	it("discards a poll whose payload lost the race against the traffic path", async () => {
+		// The poller reads the pre-rollover window; while that GET is on the
+		// wire a real response makes response-processor.ts detect the rollover,
+		// reset the session and write the fresh window through usageCache.set.
+		// The late poll must not put the expired window back — that both
+		// rewinds the dashboard and makes the NEXT poll look like a second
+		// rollover of the same window.
+		const onWindowReset = mock((_accountId: string) => {});
+		seedBaseline(80, -60_000);
+
+		let releaseFetch: (() => void) | undefined;
+		const fetchReleased = new Promise<void>((resolve) => {
+			releaseFetch = resolve;
+		});
+		let markFetchStarted: (() => void) | undefined;
+		const fetchStarted = new Promise<void>((resolve) => {
+			markFetchStarted = resolve;
+		});
+		globalThis.fetch = mock(async () => {
+			markFetchStarted?.();
+			await fetchReleased;
+			// Stale: the 5-hour window as it stood before the rollover.
+			return okResponse(fiveHourPayload(80, -60_000));
+		}) as unknown as typeof fetch;
+
+		usageCache.startPolling(
+			ACCOUNT_ID,
+			async () => TOKEN,
+			"codex",
+			ONE_HOUR_MS,
+			undefined,
+			onWindowReset,
+		);
+		const pending = usageCache.refreshNow(ACCOUNT_ID);
+		await fetchStarted;
+
+		// The traffic path wins the race.
+		usageCache.set(ACCOUNT_ID, {
+			five_hour: {
+				utilization: 5,
+				resets_at: new Date(Date.now() + 5 * ONE_HOUR_MS).toISOString(),
+			},
+		} as UsageData);
+
+		releaseFetch?.();
+		await pending;
+
+		const cached = usageCache.get(ACCOUNT_ID) as UsageData | null;
+		expect(cached?.five_hour?.utilization).toBe(5);
+		expect(onWindowReset).not.toHaveBeenCalled();
+
+		// And the next poll, seeing the same fresh window, must not read the
+		// discarded payload as a baseline and fire a duplicate rollover.
+		globalThis.fetch = mock(async () =>
+			okResponse(fiveHourPayload(5, 5 * ONE_HOUR_MS)),
+		) as unknown as typeof fetch;
+		await usageCache.refreshNow(ACCOUNT_ID);
+
+		expect(onWindowReset).not.toHaveBeenCalled();
+	});
 });
