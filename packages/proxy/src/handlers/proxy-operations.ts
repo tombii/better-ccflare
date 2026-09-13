@@ -158,6 +158,27 @@ function isTransientServerErrorStatus(status: number): boolean {
 }
 
 /**
+ * Answered by an upstream-error classification handler that has nothing to say
+ * about the response it was given, so the caller keeps going.
+ *
+ * A sentinel rather than a `{ handled: boolean }` wrapper because BOTH other
+ * outcomes are meaningful values the caller returns verbatim: `null` means
+ * "already benched/recorded, fail over to the next account" and a `Response`
+ * means "hand this to the client". Wrapping them would force every extracted
+ * handler body to be rewritten around a new return shape; with the sentinel the
+ * bodies are the code they replaced, character for character — including the
+ * `cancelDiscardedResponseBody(rawResponse); return null;` pairs that the issue
+ * #273 static call-site check in `bun-leak-273-regression.test.ts` greps for.
+ */
+const NOT_CLASSIFIED: unique symbol = Symbol("upstream-error-not-classified");
+
+/**
+ * What a handler in the upstream-error classification chain answers: a response
+ * to return to the client, `null` to fail over, or {@link NOT_CLASSIFIED}.
+ */
+type UpstreamErrorClassification = Response | null | typeof NOT_CLASSIFIED;
+
+/**
  * Absolute epoch (ms) a `Retry-After` header asks us to wait until, for both
  * RFC 7231 forms (delta-seconds and HTTP-date). Returns null when the header is
  * absent, unparseable, or already in the past — a stale value must not shorten
@@ -1100,141 +1121,54 @@ export async function proxyWithAccount(
 			}
 		}
 
-		// ── extra_usage_exhausted: billing-policy rejection, NOT a rate limit (issue #293) ──
-		// Anthropic returns 400 invalid_request_error when a Claude OAuth account's
-		// "extra usage" credit balance is depleted for third-party-app traffic (e.g.
-		// OpenCode). This is a billing rejection, not account exhaustion — we do NOT
-		// bench the account and we do NOT change what's returned to the client; the
-		// 400 is passed through unchanged. We only log/record it for dashboard visibility.
-		// Checked before isModelUnavailableError since this 400 shape (invalid_request_error
-		// mentioning "extra usage") is not a "model unavailable" condition and would
-		// otherwise never be reached — isModelUnavailableError only matches not_found_error,
-		// model_not_found, "model not found"/"does not exist", or ResourceNotFoundException.
-		// Gated to Anthropic/Claude-OAuth accounts only — the body-shape match
-		// (invalid_request_error + "extra usage") is specific enough for Anthropic's
-		// API but could otherwise coincidentally match an arbitrary OpenAI-compatible
-		// provider's error text and mislabel its billing state.
-		if (
-			isClaudeProvider &&
-			rawResponse.status === 400 &&
-			(await isAnthropicExtraUsageExhausted(rawResponse.clone()))
-		) {
-			let requestedModel: string | null = null;
-			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
-
-			const reason: RateLimitReason = "extra_usage_exhausted";
-			log.warn(
-				`Account ${account.name} extra_usage_exhausted (400${requestedModel ? `, model=${requestedModel}` : ""}) — ` +
-					`Anthropic extra-usage credits depleted for this OAuth account; NOT benching, response passed through to client`,
-			);
-			const responseTime = Date.now() - requestMeta.timestamp;
-			const modelRewrite = isModelRewrite(
-				requestMeta.originalModel,
-				requestMeta.appliedModel,
-			);
-			ctx.asyncWriter.enqueue(() =>
-				ctx.dbOps.saveRequest(
-					crypto.randomUUID(),
-					req.method,
-					url.pathname,
-					account.id,
-					400,
-					false,
-					reason,
-					responseTime,
-					failoverAttempts,
-					requestedModel ? { model: requestedModel } : undefined,
-					requestMeta.agentUsed ?? undefined,
-					apiKeyId ?? undefined,
-					apiKeyName ?? undefined,
-					requestMeta.project ?? null,
-					undefined,
-					requestMeta.comboName ?? null,
-					modelRewrite ? (requestMeta.originalModel ?? null) : null,
-					modelRewrite ? (requestMeta.appliedModel ?? null) : null,
-					requestMeta.projectAttributionSource ?? null,
-					requestMeta.agentAttributionSource ?? null,
-					null,
-					requestMeta.clientSessionId ?? null,
-				),
-			);
-			// Do not bench the account or fail over — pass Anthropic's real error
-			// through to the client unchanged, same as any other 400 today.
-			return withSanitizedProxyHeaders(rawResponse);
-		}
-
-		// Check for ZAI 1305 overloaded error in SSE stream and retry/fallback
-		rawResponse = await checkZai1305(
-			rawResponse,
-			account,
-			transformedRequest,
-			log,
-		);
-
-		// ── org_permission_denied: the ORGANIZATION forbids this account ──
-		// Anthropic answers 403 `permission_error` when an account's org has
-		// OAuth — or Claude Code specifically — turned off by an admin. Measured
-		// on a live pool: three accounts of one organization returned it 25 times
-		// within the hour, every one carrying `x-should-retry: false`, while the
-		// usage poller had independently racked up 49 consecutive failures per
-		// account. That signal existed in-process the whole time and never
-		// reached the router.
+		// ── Upstream-error classification ───────────────────────────────────
+		// Each handler below was inline on the first-response path and is now a
+		// named closure so the in-place 529/5xx retry loops can put the response a
+		// RETRY produced through exactly the same classification. A retry can
+		// answer 403 `permission_error` or 429 `out_of_credits` just as the first
+		// attempt can, and before this extraction those answers were handed to the
+		// client unclassified, with the account left unbenched and still at the
+		// front of the priority order.
 		//
-		// Before this branch, a 403 matched none of the failover guards (401 /
-		// 429 / 529 / model-unavailable) and fell through to forwardToClient, so
-		// the client saw the error even with healthy accounts still in the pool.
-		// Worse, `processProxyResponse` classifies any non-429 as "not rate
-		// limited" and unconditionally clears `rate_limited_until`, so the
-		// offending account also lost any existing bench and stayed pinned at the
-		// front of the priority order for every following request. Returning null
-		// here short-circuits both halves of that.
-		//
-		// The account is benched exactly like an exhausted quota window: it
-		// cannot serve anything at all, so it must leave the rotation, and the
-		// exponential ramp plus the single-flight recovery probe (see
-		// rate-limit-cooldown.ts) means at most one request per cooldown expiry
-		// is spent rediscovering a block only an admin can lift.
-		//
-		// POOL-WIDE DRAIN CAVEAT: if every account in the pool belongs to the
-		// same org and that org has disabled access, every account benches in
-		// turn and the pool goes fully dark — bench, cooldown expiry,
-		// single-flight probe, re-bench, repeat — until an admin changes the
-		// org setting. There is no pool-wide/provider-wide circuit here, only
-		// this per-account exponential cooldown, so nothing short-circuits
-		// that loop early. The warn log below fires on every account as it
-		// benches, so an "all accounts benched with org_permission_denied"
-		// pattern across the pool in a short window is the signal to look for
-		// when debugging a fully-dark pool.
-		if (
-			isClaudeProvider &&
-			rawResponse.status === 403 &&
-			// Passed un-cloned on purpose: the predicate clones internally and
-			// never consumes its argument, so wrapping it in another clone here
-			// would strand a tee branch for every non-matching 403 (issue #356).
-			(await isAnthropicOrgPermissionDenied(rawResponse))
-		) {
-			let requestedModel: string | null = null;
-			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
+		// The bodies are the code they replaced, unchanged. The only edits: the
+		// response to classify arrives as a parameter instead of being read from
+		// the enclosing `rawResponse`, and each handler ends in NOT_CLASSIFIED
+		// instead of falling out of an `if`. The parameter keeps the name
+		// `rawResponse` so the bodies stay byte-identical; inside a handler that
+		// name always means the argument, never the outer first-response variable.
 
-			const reason: RateLimitReason = "org_permission_denied";
-			log.warn(
-				`Account ${account.name} org_permission_denied (403${requestedModel ? `, model=${requestedModel}` : ""}) — ` +
-					`organization forbids OAuth/Claude Code access for this account; ` +
-					`benching account and failing over to next account`,
-			);
+		/** 400 `invalid_request_error` for depleted Anthropic extra-usage credit. */
+		const classifyExtraUsageExhausted = async (
+			rawResponse: Response,
+		): Promise<UpstreamErrorClassification> => {
+			// ── extra_usage_exhausted: billing-policy rejection, NOT a rate limit (issue #293) ──
+			// Anthropic returns 400 invalid_request_error when a Claude OAuth account's
+			// "extra usage" credit balance is depleted for third-party-app traffic (e.g.
+			// OpenCode). This is a billing rejection, not account exhaustion — we do NOT
+			// bench the account and we do NOT change what's returned to the client; the
+			// 400 is passed through unchanged. We only log/record it for dashboard visibility.
+			// Checked before isModelUnavailableError since this 400 shape (invalid_request_error
+			// mentioning "extra usage") is not a "model unavailable" condition and would
+			// otherwise never be reached — isModelUnavailableError only matches not_found_error,
+			// model_not_found, "model not found"/"does not exist", or ResourceNotFoundException.
+			// Gated to Anthropic/Claude-OAuth accounts only — the body-shape match
+			// (invalid_request_error + "extra usage") is specific enough for Anthropic's
+			// API but could otherwise coincidentally match an arbitrary OpenAI-compatible
+			// provider's error text and mislabel its billing state.
+			if (
+				isClaudeProvider &&
+				rawResponse.status === 400 &&
+				(await isAnthropicExtraUsageExhausted(rawResponse.clone()))
+			) {
+				let requestedModel: string | null = null;
+				if (effectiveBodyBuffer)
+					requestedModel = effectiveBodyContext.getModel();
 
-			// Benched even for synthetic probes. Unlike a 429 — where a keepalive
-			// burst can trip Anthropic's per-IP limit and produce a cooldown no
-			// real user earned — a 403 from the organization is authoritative
-			// regardless of who asked, so learning it from a probe is genuine
-			// information and throwing it away would only delay the bench until a
-			// real request pays for it.
-			applyRateLimitCooldown(account, { reason }, ctx);
-
-			// The audit row, however, stays real-traffic-only: a synthetic probe's
-			// rejection was never a client-visible request, and recording it would
-			// just be history noise. Same rationale as the out_of_credits path.
-			if (!isSyntheticInternal) {
+				const reason: RateLimitReason = "extra_usage_exhausted";
+				log.warn(
+					`Account ${account.name} extra_usage_exhausted (400${requestedModel ? `, model=${requestedModel}` : ""}) — ` +
+						`Anthropic extra-usage credits depleted for this OAuth account; NOT benching, response passed through to client`,
+				);
 				const responseTime = Date.now() - requestMeta.timestamp;
 				const modelRewrite = isModelRewrite(
 					requestMeta.originalModel,
@@ -1246,7 +1180,7 @@ export async function proxyWithAccount(
 						req.method,
 						url.pathname,
 						account.id,
-						403,
+						400,
 						false,
 						reason,
 						responseTime,
@@ -1266,40 +1200,125 @@ export async function proxyWithAccount(
 						requestMeta.clientSessionId ?? null,
 					),
 				);
+				// Do not bench the account or fail over — pass Anthropic's real error
+				// through to the client unchanged, same as any other 400 today.
+				return withSanitizedProxyHeaders(rawResponse);
 			}
-			cancelDiscardedResponseBody(rawResponse);
-			return null;
-		}
+			return NOT_CLASSIFIED;
+		};
 
-		// On model unavailable / rate-limited: cycle through the model list for
-		// this account. getModelList returns [primary, ...fallbacks] merged from
-		// model_mappings arrays and legacy model_fallbacks. We already tried index 0
-		// (the primary), so start at index 1.
-		let zai1305AlreadyChecked = false;
-		if (await isModelUnavailableError(rawResponse)) {
-			// Log 429 response headers for debugging upstream rate-limit info
-			if (rawResponse.status === 429) {
-				const rlHeaders: Record<string, string> = {};
-				rawResponse.headers.forEach((v, k) => {
-					const lk = k.toLowerCase();
-					if (
-						lk.includes("rate") ||
-						lk.includes("retry") ||
-						lk.includes("limit") ||
-						lk.includes("reset") ||
-						lk.includes("x-") ||
-						lk.includes("quota")
-					) {
-						rlHeaders[k] = v;
-					}
-				});
-				log.debug(
-					`Account ${account.name} received 429 — headers: ${JSON.stringify(rlHeaders)}`,
+		/** 403 `permission_error`: the account's organization forbids this access. */
+		const classifyOrgPermissionDenied = async (
+			rawResponse: Response,
+		): Promise<UpstreamErrorClassification> => {
+			// ── org_permission_denied: the ORGANIZATION forbids this account ──
+			// Anthropic answers 403 `permission_error` when an account's org has
+			// OAuth — or Claude Code specifically — turned off by an admin. Measured
+			// on a live pool: three accounts of one organization returned it 25 times
+			// within the hour, every one carrying `x-should-retry: false`, while the
+			// usage poller had independently racked up 49 consecutive failures per
+			// account. That signal existed in-process the whole time and never
+			// reached the router.
+			//
+			// Before this branch, a 403 matched none of the failover guards (401 /
+			// 429 / 529 / model-unavailable) and fell through to forwardToClient, so
+			// the client saw the error even with healthy accounts still in the pool.
+			// Worse, `processProxyResponse` classifies any non-429 as "not rate
+			// limited" and unconditionally clears `rate_limited_until`, so the
+			// offending account also lost any existing bench and stayed pinned at the
+			// front of the priority order for every following request. Returning null
+			// here short-circuits both halves of that.
+			//
+			// The account is benched exactly like an exhausted quota window: it
+			// cannot serve anything at all, so it must leave the rotation, and the
+			// exponential ramp plus the single-flight recovery probe (see
+			// rate-limit-cooldown.ts) means at most one request per cooldown expiry
+			// is spent rediscovering a block only an admin can lift.
+			//
+			// POOL-WIDE DRAIN CAVEAT: if every account in the pool belongs to the
+			// same org and that org has disabled access, every account benches in
+			// turn and the pool goes fully dark — bench, cooldown expiry,
+			// single-flight probe, re-bench, repeat — until an admin changes the
+			// org setting. There is no pool-wide/provider-wide circuit here, only
+			// this per-account exponential cooldown, so nothing short-circuits
+			// that loop early. The warn log below fires on every account as it
+			// benches, so an "all accounts benched with org_permission_denied"
+			// pattern across the pool in a short window is the signal to look for
+			// when debugging a fully-dark pool.
+			if (
+				isClaudeProvider &&
+				rawResponse.status === 403 &&
+				// Passed un-cloned on purpose: the predicate clones internally and
+				// never consumes its argument, so wrapping it in another clone here
+				// would strand a tee branch for every non-matching 403 (issue #356).
+				(await isAnthropicOrgPermissionDenied(rawResponse))
+			) {
+				let requestedModel: string | null = null;
+				if (effectiveBodyBuffer)
+					requestedModel = effectiveBodyContext.getModel();
+
+				const reason: RateLimitReason = "org_permission_denied";
+				log.warn(
+					`Account ${account.name} org_permission_denied (403${requestedModel ? `, model=${requestedModel}` : ""}) — ` +
+						`organization forbids OAuth/Claude Code access for this account; ` +
+						`benching account and failing over to next account`,
 				);
-			}
-			let requestedModel: string | null = null;
-			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
 
+				// Benched even for synthetic probes. Unlike a 429 — where a keepalive
+				// burst can trip Anthropic's per-IP limit and produce a cooldown no
+				// real user earned — a 403 from the organization is authoritative
+				// regardless of who asked, so learning it from a probe is genuine
+				// information and throwing it away would only delay the bench until a
+				// real request pays for it.
+				applyRateLimitCooldown(account, { reason }, ctx);
+
+				// The audit row, however, stays real-traffic-only: a synthetic probe's
+				// rejection was never a client-visible request, and recording it would
+				// just be history noise. Same rationale as the out_of_credits path.
+				if (!isSyntheticInternal) {
+					const responseTime = Date.now() - requestMeta.timestamp;
+					const modelRewrite = isModelRewrite(
+						requestMeta.originalModel,
+						requestMeta.appliedModel,
+					);
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.saveRequest(
+							crypto.randomUUID(),
+							req.method,
+							url.pathname,
+							account.id,
+							403,
+							false,
+							reason,
+							responseTime,
+							failoverAttempts,
+							requestedModel ? { model: requestedModel } : undefined,
+							requestMeta.agentUsed ?? undefined,
+							apiKeyId ?? undefined,
+							apiKeyName ?? undefined,
+							requestMeta.project ?? null,
+							undefined,
+							requestMeta.comboName ?? null,
+							modelRewrite ? (requestMeta.originalModel ?? null) : null,
+							modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+							requestMeta.projectAttributionSource ?? null,
+							requestMeta.agentAttributionSource ?? null,
+							null,
+							requestMeta.clientSessionId ?? null,
+						),
+					);
+				}
+				cancelDiscardedResponseBody(rawResponse);
+				return null;
+			}
+			return NOT_CLASSIFIED;
+		};
+
+		/** 429 carrying `overage-disabled-reason: out_of_credits`. */
+		const classifyOutOfCredits429 = async (
+			rawResponse: Response,
+			requestedModel: string | null,
+		): Promise<UpstreamErrorClassification> => {
 			// ── out_of_credits: model/beta-scoped depletion, NOT account-wide (issue #261) ──
 			// Anthropic returns 429 + `overage-disabled-reason: out_of_credits` with no reset
 			// header. This is scoped to a specific model/beta (e.g. context-1m), not the
@@ -1385,6 +1404,252 @@ export async function proxyWithAccount(
 				cancelDiscardedResponseBody(rawResponse);
 				return null;
 			}
+			return NOT_CLASSIFIED;
+		};
+
+		/**
+		 * The 429 branch taken when this account has no fallback model to cycle
+		 * to: keepalive burst, windowless (request-scoped) 429, or a genuine
+		 * window that benches the account. Answers NOT_CLASSIFIED for any other
+		 * status so the caller can fall through to its model-not-found handling.
+		 */
+		const classifyNoFallback429 = async (
+			rawResponse: Response,
+			requestedModel: string | null,
+		): Promise<UpstreamErrorClassification> => {
+			if (rawResponse.status === 429) {
+				// Skip cooldown on synthetic cache-keepalive replays. The
+				// keepalive scheduler fires parallel requests to every
+				// cached account; a burst of 4+ simultaneous requests
+				// trips Anthropic's per-IP burst limit and 429s every
+				// account at the same instant. Applying real cooldowns
+				// here drains the pool to zero routable accounts even
+				// though no real user-facing rate limit was hit.
+				const isKeepalive = isInternalProbe(req.headers, ctx, "keepalive");
+				if (isKeepalive) {
+					log.warn(
+						`Keepalive replay for ${account.name} got 429 — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
+					);
+					cancelDiscardedResponseBody(rawResponse);
+					return null;
+				}
+
+				// ── windowless 429: request-scoped, NOT account-wide (issue #301) ──
+				// Anthropic 429s some requests with `x-should-retry: true` and no
+				// rate-limit metadata whatsoever — no `retry-after`, not one
+				// `anthropic-ratelimit-*` / `x-ratelimit-*` header. Live measurement
+				// on a production install showed this to be scoped to the REQUEST,
+				// not the account: the same account served 200s two seconds before
+				// and 38 seconds after on the same model, three in-place retries
+				// spanning 11.2s returned three identical bare 429s (never once a
+				// success), and the NEXT account rejected the same client request
+				// the same way. The rejected requests are session-initialising ones
+				// with no project attribution; ordinary conversation turns on the
+				// same account succeed throughout.
+				//
+				// So benching is simply the wrong response: it drains the pool one
+				// account per attempt until the operator has to force-reset every
+				// account before ordinary traffic works again. Treat it exactly like
+				// out_of_credits above (issue #261) — fail over per request with NO
+				// cooldown and NO consecutive-429 increment, leaving the account in
+				// rotation. Placed after the keepalive check so a synthetic probe
+				// still records nothing at all.
+				//
+				// The predicate is `isRetryable429` (header-only, synchronous,
+				// fail-closed: `x-should-retry: true`, no `retry-after`, and no
+				// header under either rate-limit prefix). Its name is now a slight
+				// misnomer — nothing is retried any more — but it is exactly the
+				// right discriminator and its module is reviewed and tested, so it
+				// keeps its name.
+				if (isRetryable429(rawResponse, isClaudeProvider)) {
+					const reason: RateLimitReason = "windowless_429";
+					log.warn(
+						`Account ${account.name} returned a windowless 429 (${
+							requestedModel ? `model=${requestedModel}, ` : ""
+						}x-should-retry with no rate-limit window) — request-scoped, ` +
+							`NOT benching account; failing over to next account`,
+					);
+					const responseTime = Date.now() - requestMeta.timestamp;
+					const modelRewrite = isModelRewrite(
+						requestMeta.originalModel,
+						requestMeta.appliedModel,
+					);
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.saveRequest(
+							crypto.randomUUID(),
+							req.method,
+							url.pathname,
+							account.id,
+							429,
+							false,
+							reason,
+							responseTime,
+							failoverAttempts,
+							requestedModel ? { model: requestedModel } : undefined,
+							requestMeta.agentUsed ?? undefined,
+							apiKeyId ?? undefined,
+							apiKeyName ?? undefined,
+							requestMeta.project ?? null,
+							undefined,
+							requestMeta.comboName ?? null,
+							modelRewrite ? (requestMeta.originalModel ?? null) : null,
+							modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+							requestMeta.projectAttributionSource ?? null,
+							requestMeta.agentAttributionSource ?? null,
+							null,
+							requestMeta.clientSessionId ?? null,
+						),
+					);
+					cancelDiscardedResponseBody(rawResponse);
+					return null;
+				}
+
+				log.warn(
+					`Account ${account.name} rate-limited (429), no model fallbacks — failing over to next account`,
+				);
+				const cooldownUntil = extractCooldownUntil(
+					rawResponse,
+					account.id,
+					usageCache.getRateLimitedUntil.bind(usageCache),
+				);
+				const reason: RateLimitReason = "model_fallback_429";
+				applyRateLimitCooldown(
+					account,
+					{ resetTime: cooldownUntil, reason },
+					ctx,
+				);
+				const responseTime = Date.now() - requestMeta.timestamp;
+				const modelRewrite = isModelRewrite(
+					requestMeta.originalModel,
+					requestMeta.appliedModel,
+				);
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.saveRequest(
+						crypto.randomUUID(),
+						req.method,
+						url.pathname,
+						account.id,
+						429,
+						false,
+						reason,
+						responseTime,
+						failoverAttempts,
+						requestedModel ? { model: requestedModel } : undefined,
+						requestMeta.agentUsed ?? undefined,
+						apiKeyId ?? undefined,
+						apiKeyName ?? undefined,
+						requestMeta.project ?? null,
+						undefined,
+						requestMeta.comboName ?? null,
+						modelRewrite ? (requestMeta.originalModel ?? null) : null,
+						modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+						requestMeta.projectAttributionSource ?? null,
+						requestMeta.agentAttributionSource ?? null,
+						null,
+						requestMeta.clientSessionId ?? null,
+					),
+				);
+				cancelDiscardedResponseBody(rawResponse);
+				return null;
+			}
+			return NOT_CLASSIFIED;
+		};
+
+		/**
+		 * The classification chain as a retry response has to see it: every
+		 * handler above, in the first-response order, minus the model-cycling
+		 * fallback loop.
+		 *
+		 * The fallback loop is excluded on purpose. It exists to answer "the model
+		 * this account was asked for is unavailable"; a model that the upstream
+		 * accepted on the first attempt has not become unavailable because a
+		 * retry was needed, and re-entering the loop here would re-issue the
+		 * request against a second model on an account we are about to leave. For
+		 * the same reason, when the account DOES have fallback models configured
+		 * (`modelList.length > 1`) a retried 429 is left to the downstream
+		 * handling it gets today rather than benched by `classifyNoFallback429`.
+		 *
+		 * `checkZai1305` is likewise not re-run: it is a body peek that rewrites a
+		 * 200 into a synthetic 429, not a classification of an error the upstream
+		 * reported, and the retry loops never fed it before.
+		 */
+		const classifyRetriedUpstreamResponse = async (
+			retried: Response,
+		): Promise<UpstreamErrorClassification> => {
+			const extraUsage = await classifyExtraUsageExhausted(retried);
+			if (extraUsage !== NOT_CLASSIFIED) return extraUsage;
+
+			const orgDenied = await classifyOrgPermissionDenied(retried);
+			if (orgDenied !== NOT_CLASSIFIED) return orgDenied;
+
+			// Everything below lived under `isModelUnavailableError`, which is
+			// unconditionally true for a 429 and only reachable for 404/400
+			// otherwise — and 404/400 is the fallback loop's business, not ours.
+			if (retried.status !== 429) return NOT_CLASSIFIED;
+
+			let requestedModel: string | null = null;
+			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
+
+			const outOfCredits = await classifyOutOfCredits429(
+				retried,
+				requestedModel,
+			);
+			if (outOfCredits !== NOT_CLASSIFIED) return outOfCredits;
+
+			if (!requestedModel) return NOT_CLASSIFIED;
+			const modelList = getModelList(requestedModel, account);
+			if (modelList && modelList.length > 1) return NOT_CLASSIFIED;
+			return classifyNoFallback429(retried, requestedModel);
+		};
+
+		const extraUsageOutcome = await classifyExtraUsageExhausted(rawResponse);
+		if (extraUsageOutcome !== NOT_CLASSIFIED) return extraUsageOutcome;
+
+		// Check for ZAI 1305 overloaded error in SSE stream and retry/fallback
+		rawResponse = await checkZai1305(
+			rawResponse,
+			account,
+			transformedRequest,
+			log,
+		);
+
+		const orgPermissionOutcome = await classifyOrgPermissionDenied(rawResponse);
+		if (orgPermissionOutcome !== NOT_CLASSIFIED) return orgPermissionOutcome;
+
+		// On model unavailable / rate-limited: cycle through the model list for
+		// this account. getModelList returns [primary, ...fallbacks] merged from
+		// model_mappings arrays and legacy model_fallbacks. We already tried index 0
+		// (the primary), so start at index 1.
+		let zai1305AlreadyChecked = false;
+		if (await isModelUnavailableError(rawResponse)) {
+			// Log 429 response headers for debugging upstream rate-limit info
+			if (rawResponse.status === 429) {
+				const rlHeaders: Record<string, string> = {};
+				rawResponse.headers.forEach((v, k) => {
+					const lk = k.toLowerCase();
+					if (
+						lk.includes("rate") ||
+						lk.includes("retry") ||
+						lk.includes("limit") ||
+						lk.includes("reset") ||
+						lk.includes("x-") ||
+						lk.includes("quota")
+					) {
+						rlHeaders[k] = v;
+					}
+				});
+				log.debug(
+					`Account ${account.name} received 429 — headers: ${JSON.stringify(rlHeaders)}`,
+				);
+			}
+			let requestedModel: string | null = null;
+			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
+
+			const outOfCreditsOutcome = await classifyOutOfCredits429(
+				rawResponse,
+				requestedModel,
+			);
+			if (outOfCreditsOutcome !== NOT_CLASSIFIED) return outOfCreditsOutcome;
 
 			if (requestedModel) {
 				const modelList = getModelList(requestedModel, account);
@@ -1393,141 +1658,12 @@ export async function proxyWithAccount(
 					// 429s should never be forwarded to the client when other
 					// accounts are available; only genuine model-not-found
 					// errors (404/400) warrant returning the upstream response.
-					if (rawResponse.status === 429) {
-						// Skip cooldown on synthetic cache-keepalive replays. The
-						// keepalive scheduler fires parallel requests to every
-						// cached account; a burst of 4+ simultaneous requests
-						// trips Anthropic's per-IP burst limit and 429s every
-						// account at the same instant. Applying real cooldowns
-						// here drains the pool to zero routable accounts even
-						// though no real user-facing rate limit was hit.
-						const isKeepalive = isInternalProbe(req.headers, ctx, "keepalive");
-						if (isKeepalive) {
-							log.warn(
-								`Keepalive replay for ${account.name} got 429 — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
-							);
-							cancelDiscardedResponseBody(rawResponse);
-							return null;
-						}
-
-						// ── windowless 429: request-scoped, NOT account-wide (issue #301) ──
-						// Anthropic 429s some requests with `x-should-retry: true` and no
-						// rate-limit metadata whatsoever — no `retry-after`, not one
-						// `anthropic-ratelimit-*` / `x-ratelimit-*` header. Live measurement
-						// on a production install showed this to be scoped to the REQUEST,
-						// not the account: the same account served 200s two seconds before
-						// and 38 seconds after on the same model, three in-place retries
-						// spanning 11.2s returned three identical bare 429s (never once a
-						// success), and the NEXT account rejected the same client request
-						// the same way. The rejected requests are session-initialising ones
-						// with no project attribution; ordinary conversation turns on the
-						// same account succeed throughout.
-						//
-						// So benching is simply the wrong response: it drains the pool one
-						// account per attempt until the operator has to force-reset every
-						// account before ordinary traffic works again. Treat it exactly like
-						// out_of_credits above (issue #261) — fail over per request with NO
-						// cooldown and NO consecutive-429 increment, leaving the account in
-						// rotation. Placed after the keepalive check so a synthetic probe
-						// still records nothing at all.
-						//
-						// The predicate is `isRetryable429` (header-only, synchronous,
-						// fail-closed: `x-should-retry: true`, no `retry-after`, and no
-						// header under either rate-limit prefix). Its name is now a slight
-						// misnomer — nothing is retried any more — but it is exactly the
-						// right discriminator and its module is reviewed and tested, so it
-						// keeps its name.
-						if (isRetryable429(rawResponse, isClaudeProvider)) {
-							const reason: RateLimitReason = "windowless_429";
-							log.warn(
-								`Account ${account.name} returned a windowless 429 (${
-									requestedModel ? `model=${requestedModel}, ` : ""
-								}x-should-retry with no rate-limit window) — request-scoped, ` +
-									`NOT benching account; failing over to next account`,
-							);
-							const responseTime = Date.now() - requestMeta.timestamp;
-							const modelRewrite = isModelRewrite(
-								requestMeta.originalModel,
-								requestMeta.appliedModel,
-							);
-							ctx.asyncWriter.enqueue(() =>
-								ctx.dbOps.saveRequest(
-									crypto.randomUUID(),
-									req.method,
-									url.pathname,
-									account.id,
-									429,
-									false,
-									reason,
-									responseTime,
-									failoverAttempts,
-									requestedModel ? { model: requestedModel } : undefined,
-									requestMeta.agentUsed ?? undefined,
-									apiKeyId ?? undefined,
-									apiKeyName ?? undefined,
-									requestMeta.project ?? null,
-									undefined,
-									requestMeta.comboName ?? null,
-									modelRewrite ? (requestMeta.originalModel ?? null) : null,
-									modelRewrite ? (requestMeta.appliedModel ?? null) : null,
-									requestMeta.projectAttributionSource ?? null,
-									requestMeta.agentAttributionSource ?? null,
-									null,
-									requestMeta.clientSessionId ?? null,
-								),
-							);
-							cancelDiscardedResponseBody(rawResponse);
-							return null;
-						}
-
-						log.warn(
-							`Account ${account.name} rate-limited (429), no model fallbacks — failing over to next account`,
-						);
-						const cooldownUntil = extractCooldownUntil(
-							rawResponse,
-							account.id,
-							usageCache.getRateLimitedUntil.bind(usageCache),
-						);
-						const reason: RateLimitReason = "model_fallback_429";
-						applyRateLimitCooldown(
-							account,
-							{ resetTime: cooldownUntil, reason },
-							ctx,
-						);
-						const responseTime = Date.now() - requestMeta.timestamp;
-						const modelRewrite = isModelRewrite(
-							requestMeta.originalModel,
-							requestMeta.appliedModel,
-						);
-						ctx.asyncWriter.enqueue(() =>
-							ctx.dbOps.saveRequest(
-								crypto.randomUUID(),
-								req.method,
-								url.pathname,
-								account.id,
-								429,
-								false,
-								reason,
-								responseTime,
-								failoverAttempts,
-								requestedModel ? { model: requestedModel } : undefined,
-								requestMeta.agentUsed ?? undefined,
-								apiKeyId ?? undefined,
-								apiKeyName ?? undefined,
-								requestMeta.project ?? null,
-								undefined,
-								requestMeta.comboName ?? null,
-								modelRewrite ? (requestMeta.originalModel ?? null) : null,
-								modelRewrite ? (requestMeta.appliedModel ?? null) : null,
-								requestMeta.projectAttributionSource ?? null,
-								requestMeta.agentAttributionSource ?? null,
-								null,
-								requestMeta.clientSessionId ?? null,
-							),
-						);
-						cancelDiscardedResponseBody(rawResponse);
-						return null;
-					}
+					const noFallback429Outcome = await classifyNoFallback429(
+						rawResponse,
+						requestedModel,
+					);
+					if (noFallback429Outcome !== NOT_CLASSIFIED)
+						return noFallback429Outcome;
 					// Model-not-found (404/400) is forwarded to the client so it can
 					// surface the real error. Strip content-encoding/content-length
 					// first: Bun's fetch already decompressed the body, so leaving the
@@ -1811,6 +1947,12 @@ export async function proxyWithAccount(
 			);
 		};
 
+		// True once either in-place retry loop has replaced `response` with the
+		// response a retry produced. The upstream-error classification chain ran
+		// on the FIRST response only, so a retry that answers 403/429 still has to
+		// be put through it — see the reclassification after the loops.
+		let retriedInPlace = false;
+
 		// In-place retry for reset-less 529 (overloaded_error) — bounded attempts with
 		// full-jitter exponential backoff before applying account cooldown. This prevents
 		// all accounts cooling simultaneously under concurrency spikes. Skipped for
@@ -1853,6 +1995,7 @@ export async function proxyWithAccount(
 						cancelDiscardedResponseBody(response);
 						const retryResponse = await reissueRequestInPlace();
 						response = retryResponse;
+						retriedInPlace = true;
 
 						// If credentials expired mid-retry, break out and let the 401
 						// failover guard below handle it (return null → try next account).
@@ -1964,6 +2107,7 @@ export async function proxyWithAccount(
 					cancelDiscardedResponseBody(response);
 					const retryResponse = await reissueRequestInPlace();
 					response = retryResponse;
+					retriedInPlace = true;
 					attemptsMade++;
 
 					// A 401 mid-retry means the credentials died, not the upstream:
@@ -2078,6 +2222,27 @@ export async function proxyWithAccount(
 			);
 			cancelDiscardedResponseBody(response);
 			return null;
+		}
+
+		// A retry can answer something the first attempt did not, and every
+		// upstream-error classification in this function ran before the loops.
+		// Without this, `500 → 403 permission_error` handed the client the 403
+		// with the account unbenched and still first in the priority order,
+		// while the identical 403 on the first attempt benched and failed over;
+		// `500 → 429 out_of_credits` took a generic quota bench with a streak
+		// bump instead of the model-scoped, bench-free handling it has earned.
+		//
+		// Statuses the loops themselves own are excluded by construction: a 5xx
+		// or a 529 in hand here is a response the loop already gave up on, and
+		// its own bench/cooldown is the classification. Nothing below can start
+		// another retry loop either — every handler in the chain returns.
+		if (
+			retriedInPlace &&
+			!isTransientServerErrorStatus(response.status) &&
+			response.status !== 529
+		) {
+			const retryOutcome = await classifyRetriedUpstreamResponse(response);
+			if (retryOutcome !== NOT_CLASSIFIED) return retryOutcome;
 		}
 
 		// Check for rate limit using account-specific provider.
