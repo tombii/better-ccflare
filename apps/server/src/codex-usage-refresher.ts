@@ -1,7 +1,9 @@
 import type { Logger } from "@better-ccflare/logger";
-import type {
-	CodexUsageRefreshFetchResult,
-	UsageData,
+import {
+	type CodexUsageRefreshFetchResult,
+	codexWindowRolledOver,
+	pickCodexRolloverSlot,
+	type UsageData,
 } from "@better-ccflare/providers";
 import type { CodexUsageRefreshOutcome } from "@better-ccflare/proxy";
 import type { Account } from "@better-ccflare/types";
@@ -41,6 +43,17 @@ export interface CodexUsageRefresherDeps {
 	/** `parseRateLimit(response).resetTime` of the codex provider, for the probe's headers. */
 	probeResetTime(response: Response): number | null;
 	cacheSet(accountId: string, data: UsageData): void;
+	/**
+	 * The payload the cache still holds — the rollover baseline. Read before
+	 * `cacheSet` replaces it, because afterwards there is nothing left to
+	 * compare against and the traffic path's own detector would be blinded by
+	 * the refreshed baseline too.
+	 */
+	getCachedUsage(accountId: string): UsageData | null;
+	/** `dbOps.resetAccountSession`, for a rollover this refresh discovered. */
+	resetSession(accountId: string): Promise<void>;
+	/** `CODEX_FIVE_HOUR_WINDOW_ENABLED`, for `pickCodexRolloverSlot`. */
+	pinFiveHour(): boolean;
 	/** `recordCodexUsageSnapshot` bound to dbOps. */
 	recordSnapshot(
 		accountId: string,
@@ -74,7 +87,30 @@ export function createCodexUsageRefresher(deps: CodexUsageRefresherDeps) {
 		data: UsageData,
 		options: { updateReset: boolean },
 	): Promise<void> {
+		// Evaluate the rollover against the baseline the cache still holds. A
+		// manual refresh is just another observation of the same window, so it
+		// must apply the same rule as the poller and the traffic path —
+		// otherwise it silently consumes the rollover: it replaces the
+		// baseline, and every later observer compares against an already
+		// advanced reset and never fires.
+		const previous = deps.getCachedUsage(account.id);
+		const slot = pickCodexRolloverSlot(data, deps.pinFiveHour());
+		const rolledOver = codexWindowRolledOver(previous, data, Date.now(), slot);
+
 		deps.cacheSet(account.id, data);
+		if (rolledOver) {
+			deps.log.info(
+				`Codex ${slot} window rolled over for '${account.name}' (manual refresh), resetting session`,
+			);
+			try {
+				await deps.resetSession(account.id);
+			} catch (error) {
+				deps.log.warn(
+					`Codex usage refresh: failed to reset the session for ${account.name}:`,
+					error,
+				);
+			}
+		}
 		const usage = data as unknown as Record<string, unknown>;
 		// Persist alongside the cache so the read outlives the 10-minute cache.
 		// `force` skips the traffic throttle — the operator asked for this read.
@@ -88,6 +124,24 @@ export function createCodexUsageRefresher(deps: CodexUsageRefresherDeps) {
 		if (!options.updateReset) return;
 		const earliest = deps.earliestResetMs(usage);
 		if (earliest === null) return;
+		// An elapsed `rate_limit_reset` is an unconsumed signal: both
+		// AutoRefreshScheduler's probe gate and `codexWindowHasReset` need to
+		// keep seeing it in the past until something acts on it. Writing the
+		// next deadline over it hides a reset that already happened. The one
+		// exception is a rollover we just handled ourselves — that value is
+		// spent, so the new deadline is the honest one.
+		const storedReset = Number(account.rate_limit_reset);
+		if (
+			!rolledOver &&
+			account.rate_limit_reset != null &&
+			Number.isFinite(storedReset) &&
+			storedReset <= Date.now()
+		) {
+			deps.log.debug(
+				`Codex usage refresh: keeping the elapsed rate_limit_reset for '${account.name}' — no rollover was detected and the scheduler has not consumed it yet`,
+			);
+			return;
+		}
 		try {
 			await deps.updateRateLimitReset(account.id, earliest);
 		} catch (error) {

@@ -37,6 +37,7 @@ function makeDeps(overrides: Partial<CodexUsageRefresherDeps> = {}) {
 			usage: unknown;
 		}>,
 		resets: [] as Array<{ accountId: string; resetMs: number }>,
+		sessionResets: [] as string[],
 	};
 	const deps: CodexUsageRefresherDeps = {
 		getAccount: async () => makeAccount(),
@@ -63,6 +64,11 @@ function makeDeps(overrides: Partial<CodexUsageRefresherDeps> = {}) {
 		updateRateLimitReset: async (accountId, resetMs) => {
 			calls.resets.push({ accountId, resetMs });
 		},
+		getCachedUsage: () => null,
+		resetSession: async (accountId) => {
+			calls.sessionResets.push(accountId);
+		},
+		pinFiveHour: () => false,
 		earliestResetMs: (usage) => {
 			const five = usage.five_hour as { resets_at?: string | null } | undefined;
 			const seven = usage.seven_day as
@@ -222,5 +228,94 @@ describe("createCodexUsageRefresher", () => {
 		expect(outcome.message).toContain("refresh_token_reused");
 		expect(calls.free).toBe(0);
 		expect(calls.probe).toEqual([]);
+	});
+});
+
+describe("createCodexUsageRefresher window rollovers", () => {
+	const elapsed = new Date(Date.now() - 60_000).toISOString();
+	const inFiveHours = new Date(Date.now() + 5 * 60 * 60_000).toISOString();
+
+	it("resets the session when the free payload shows a real rollover", async () => {
+		const fresh = { five_hour: { utilization: 5, resets_at: inFiveHours } };
+		const { deps, calls } = makeDeps({
+			getAccount: async () =>
+				makeAccount({ rate_limit_reset: Date.now() - 60_000 }),
+			getCachedUsage: () =>
+				({
+					five_hour: { utilization: 80, resets_at: elapsed },
+				}) as never,
+			fetchFromUsageEndpoint: async () => ({ data: fresh, status: 200 }),
+		});
+
+		const outcome = await createCodexUsageRefresher(deps)("acc-1");
+
+		expect(outcome.success).toBe(true);
+		expect(calls.sessionResets).toEqual(["acc-1"]);
+		// The stored reset has been consumed by this very rollover, so the
+		// next deadline may replace it.
+		expect(calls.resets).toEqual([
+			{ accountId: "acc-1", resetMs: new Date(inFiveHours).getTime() },
+		]);
+	});
+
+	it("does not reset the session when the 5-hour deadline merely slides forward", async () => {
+		const inTwoHours = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
+		const slid = { five_hour: { utilization: 25, resets_at: inTwoHours } };
+		const { deps, calls } = makeDeps({
+			getAccount: async () =>
+				makeAccount({ rate_limit_reset: Date.now() + 60 * 60_000 }),
+			getCachedUsage: () =>
+				({
+					five_hour: {
+						utilization: 20,
+						resets_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+					},
+				}) as never,
+			fetchFromUsageEndpoint: async () => ({ data: slid, status: 200 }),
+		});
+
+		await createCodexUsageRefresher(deps)("acc-1");
+
+		expect(calls.sessionResets).toEqual([]);
+		// The stored reset is still in the future — nothing to preserve.
+		expect(calls.resets).toEqual([
+			{ accountId: "acc-1", resetMs: new Date(inTwoHours).getTime() },
+		]);
+	});
+
+	it("keeps an elapsed rate_limit_reset that nothing has consumed yet", async () => {
+		// AutoRefreshScheduler's probe gate and codexWindowHasReset both read
+		// this column and both need the PAST value until they act on it.
+		const { deps, calls } = makeDeps({
+			getAccount: async () =>
+				makeAccount({ rate_limit_reset: Date.now() - 60_000 }),
+			getCachedUsage: () => null,
+		});
+
+		const outcome = await createCodexUsageRefresher(deps)("acc-1");
+
+		expect(outcome.success).toBe(true);
+		expect(calls.sessionResets).toEqual([]);
+		expect(calls.resets).toEqual([]);
+		expect(calls.cacheSet).toHaveLength(1);
+	});
+
+	it("runs the rollover check on the probe path and still writes its reset", async () => {
+		const { deps, calls } = makeDeps({
+			fetchFromUsageEndpoint: async () => ({ data: null, status: 403 }),
+			getCachedUsage: () =>
+				({
+					seven_day: { utilization: 80, resets_at: elapsed },
+				}) as never,
+			probeResetTime: () => 1_789_400_000_000,
+		});
+
+		const outcome = await createCodexUsageRefresher(deps)("acc-1");
+
+		expect(outcome.success).toBe(true);
+		expect(calls.sessionResets).toEqual(["acc-1"]);
+		expect(calls.resets).toEqual([
+			{ accountId: "acc-1", resetMs: 1_789_400_000_000 },
+		]);
 	});
 });

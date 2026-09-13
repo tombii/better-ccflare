@@ -1380,6 +1380,11 @@ export default async function startServer(options?: {
 			probeResetTime: (response) =>
 				getProvider("codex")?.parseRateLimit(response).resetTime ?? null,
 			cacheSet: (accountId, data) => usageCache.set(accountId, data),
+			getCachedUsage: (accountId) =>
+				(usageCache.get(accountId) as UsageData | null) ?? null,
+			resetSession: (accountId) =>
+				dbOps.resetAccountSession(accountId, Date.now()),
+			pinFiveHour: () => config.getCodexFiveHourWindowEnabled(),
 			recordSnapshot: (accountId, accountName, usage, now, force) =>
 				recordCodexUsageSnapshot(
 					dbOps,
