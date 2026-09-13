@@ -105,21 +105,25 @@ describe("issue #273 — Group A: helper contract", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Group B — call-site coverage. Static check that the 15 drain sites the
-// spec calls out (429/529/401/403 failover return-null + retry-loop overwrite)
-// are wired into proxy-operations.ts. The negative-control run removes
-// these lines; this check fails if any are missing.
+// Group B — call-site coverage. Static check that the 18 drain sites the
+// spec calls out (429/529/5xx/401/403 failover return-null + retry-loop
+// overwrite) are wired into proxy-operations.ts. The negative-control run
+// removes these lines; this check fails if any are missing.
 //
 // Went from 13 to 14 with the Zai 1305 overload retry path (discards the
 // stream peeked for the 1305 marker before retrying), then from 14 to 15
 // with the org_permission_denied branch (403 `permission_error`), which is a
-// new discard-then-return-null failover site.
+// new discard-then-return-null failover site. 16 arrived with the Codex
+// continuation recovery (99f5dce0), which discards the superseded response
+// before re-issuing. 17 and 18 are the transient-5xx path (500/502/503/504):
+// it discards each superseded retry response and the terminal one when it
+// fails over to the next account.
 // ---------------------------------------------------------------------------
 
-const EXPECTED_SITE_COUNT = 15;
+const EXPECTED_SITE_COUNT = 18;
 
 describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", () => {
-	it("proxy-operations.ts has exactly 15 cancelDiscardedResponseBody call sites", () => {
+	it("proxy-operations.ts has exactly 18 cancelDiscardedResponseBody call sites", () => {
 		const source = readFileSync(
 			"packages/proxy/src/handlers/proxy-operations.ts",
 			"utf-8",

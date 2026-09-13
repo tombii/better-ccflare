@@ -239,6 +239,89 @@ describe("mature cooldown re-entry — overload-reason gate (frozen 429 streak)"
 	});
 });
 
+describe("transient 5xx server-error cooldown", () => {
+	it("gates the single-flight probe on the reason alone, like the 529 overloads", () => {
+		Date.now = () => NOW;
+		const account = makeAccount({
+			consecutive_rate_limits: 0,
+			rate_limited_reason: "upstream_5xx_server_error",
+			rate_limited_until: NOW - 1,
+		});
+
+		expect(getRateLimitProbeAdmission(account)).toBe("admitted");
+		expect(getRateLimitProbeAdmission(account)).toBe("suppressed");
+	});
+
+	it("applies the fixed server-error cooldown and ignores the 429 streak depth", () => {
+		Date.now = () => NOW;
+		const account = makeAccount({ consecutive_rate_limits: 8 });
+		const { ctx, calls } = makeCtx({ rateLimited: false });
+
+		applyRateLimitCooldown(
+			account,
+			{ reason: "upstream_5xx_server_error" },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(
+			NOW + TIME_CONSTANTS.SERVER_ERROR_COOLDOWN_MS,
+		);
+		expect(account.consecutive_rate_limits).toBe(8);
+		expect(calls.markRateLimited[0]?.incrementStreak).toBe(false);
+	});
+
+	it("honors a Retry-After shorter than the fixed cooldown", () => {
+		Date.now = () => NOW;
+		const account = makeAccount();
+		const { ctx } = makeCtx({ rateLimited: false });
+
+		applyRateLimitCooldown(
+			account,
+			{ reason: "upstream_5xx_server_error", resetTime: NOW + 5_000 },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(NOW + 5_000);
+	});
+
+	it("caps a far-future Retry-After at the server-error cooldown", () => {
+		Date.now = () => NOW;
+		const account = makeAccount();
+		const { ctx } = makeCtx({ rateLimited: false });
+
+		applyRateLimitCooldown(
+			account,
+			{ reason: "upstream_5xx_server_error", resetTime: NOW + 3_600_000 },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(
+			NOW + TIME_CONSTANTS.SERVER_ERROR_COOLDOWN_MS,
+		);
+	});
+
+	it("never shortens a longer active 429 quota bench (forward guard)", () => {
+		Date.now = () => NOW;
+		const quotaBenchUntil = NOW + 5 * 60 * 1000;
+		const account = makeAccount({
+			consecutive_rate_limits: 3,
+			rate_limited_until: quotaBenchUntil,
+			rate_limited_reason: "upstream_429_with_reset",
+		});
+		const { ctx, calls } = makeCtx({ rateLimited: false });
+
+		applyRateLimitCooldown(
+			account,
+			{ reason: "upstream_5xx_server_error" },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(quotaBenchUntil);
+		expect(account.rate_limited_reason).toBe("upstream_429_with_reset");
+		expect(calls.markRateLimited).toHaveLength(0);
+	});
+});
+
 describe("529 overload cooldown separation", () => {
 	it("applies the fixed overload cooldown for a reset-less 529, ignoring the 429 streak depth", () => {
 		Date.now = () => NOW;

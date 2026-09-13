@@ -3,7 +3,11 @@ import {
 	computeOverloadCooldownMs,
 	computeOverloadWithResetCapMs,
 	computeRateLimitBackoffMs,
+	computeServerErrorCooldownMs,
 	getRateLimitResetStabilityMs,
+	getServerErrorRetryEnabled,
+	isOverloadReason,
+	isServerErrorReason,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 
@@ -13,6 +17,8 @@ const ENV_KEYS = [
 	"CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS",
 	"CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS",
 	"CCFLARE_RATE_LIMIT_RESET_STABILITY_MS",
+	"CCFLARE_SERVER_ERROR_COOLDOWN_MS",
+	"CCFLARE_SERVER_ERROR_RETRY_ENABLED",
 ] as const;
 
 let savedEnv: Record<string, string | undefined>;
@@ -101,5 +107,38 @@ describe("duration env overrides", () => {
 		const capUntil = now + computeOverloadWithResetCapMs();
 		expect(Math.min(threeHoursOut, capUntil)).toBe(capUntil);
 		expect(capUntil).toBeLessThan(threeHoursOut);
+	});
+});
+
+describe("transient upstream 5xx knobs", () => {
+	it("defaults the server-error cooldown to 60s and honors a positive override", () => {
+		expect(computeServerErrorCooldownMs()).toBe(
+			TIME_CONSTANTS.SERVER_ERROR_COOLDOWN_MS,
+		);
+		process.env.CCFLARE_SERVER_ERROR_COOLDOWN_MS = "15000";
+		expect(computeServerErrorCooldownMs()).toBe(15000);
+	});
+
+	it("falls back to the default for unparseable, zero, negative and non-finite values", () => {
+		for (const raw of ["not-a-number", "0", "-5000", "Infinity"]) {
+			process.env.CCFLARE_SERVER_ERROR_COOLDOWN_MS = raw;
+			expect(computeServerErrorCooldownMs()).toBe(
+				TIME_CONSTANTS.SERVER_ERROR_COOLDOWN_MS,
+			);
+		}
+	});
+
+	it("enables the 5xx retry unless the kill switch is set to the literal false", () => {
+		expect(getServerErrorRetryEnabled()).toBe(true);
+		process.env.CCFLARE_SERVER_ERROR_RETRY_ENABLED = "true";
+		expect(getServerErrorRetryEnabled()).toBe(true);
+		process.env.CCFLARE_SERVER_ERROR_RETRY_ENABLED = "false";
+		expect(getServerErrorRetryEnabled()).toBe(false);
+	});
+
+	it("keeps the 5xx reason distinct from the 529 overload reasons", () => {
+		expect(isServerErrorReason("upstream_5xx_server_error")).toBe(true);
+		expect(isServerErrorReason("upstream_529_overloaded_no_reset")).toBe(false);
+		expect(isOverloadReason("upstream_5xx_server_error")).toBe(false);
 	});
 });

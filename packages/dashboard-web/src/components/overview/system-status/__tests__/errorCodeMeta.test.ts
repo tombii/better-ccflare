@@ -59,6 +59,14 @@ describe("getErrorMeta", () => {
 		expect(meta.suggestion).toContain("automatically");
 	});
 
+	test("upstream_5xx_server_error describes the retry-then-bench 5xx path", () => {
+		const meta = getErrorMeta("upstream_5xx_server_error");
+		expect(meta.title).toBe("Provider server error (5xx)");
+		expect(meta.severity).toBe("warning");
+		expect(meta.description).toContain("500/502/503/504");
+		expect(meta.suggestion).toContain("CCFLARE_SERVER_ERROR_COOLDOWN_MS");
+	});
+
 	test("upstream_529_overloaded_no_reset returns provider overload (no Retry-After) warning", () => {
 		const meta = getErrorMeta("upstream_529_overloaded_no_reset");
 		expect(meta.title).toBe("Provider overload (no Retry-After)");

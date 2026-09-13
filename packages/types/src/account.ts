@@ -122,7 +122,17 @@ export type RateLimitReason =
 	 *  scoped to a model or surface, so it DOES count as a circuit failure.
 	 *  Not time-bounded: the bench will expire and the single-flight recovery
 	 *  probe will rediscover the 403 until the org setting actually changes. */
-	| "org_permission_denied";
+	| "org_permission_denied"
+	/** Transient upstream server error — HTTP 500/502/503/504 from any provider.
+	 *  Not a quota signal and not specific to the account, but in production a
+	 *  single organization returned 500 for a minute at a time while sibling
+	 *  accounts served the same traffic, so the request is re-issued once in
+	 *  place and, if the error survives that, the account is benched briefly
+	 *  (`CCFLARE_SERVER_ERROR_COOLDOWN_MS`, or a shorter upstream `Retry-After`)
+	 *  and the request fails over. Like the 529 reasons it leaves
+	 *  `consecutive_rate_limits` untouched; unlike them it DOES count as a
+	 *  circuit failure. */
+	| "upstream_5xx_server_error";
 
 export const REQUEST_TRANSFORMERS = [
 	"max-tokens-to-max-completion-tokens",

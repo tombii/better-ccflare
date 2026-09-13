@@ -4,6 +4,7 @@ import {
 	getModelFamily,
 	getModelList,
 	getOverloadRetryConfig,
+	getServerErrorRetryEnabled,
 	isUsageExhausted,
 	logError,
 	ProviderError,
@@ -142,6 +143,40 @@ export function extractCooldownUntil(
 
 	// 3. Last resort: 1 hour
 	return now + DEFAULT_COOLDOWN_MS;
+}
+
+/**
+ * HTTP statuses treated as a transient upstream server error: the upstream (or
+ * the organization behind the account) failed to serve the request, and a
+ * different account may well succeed. 529 is deliberately absent — Anthropic's
+ * overload has its own retry loop, cooldown and audit reason.
+ */
+const TRANSIENT_SERVER_ERROR_STATUSES = new Set([500, 502, 503, 504]);
+
+function isTransientServerErrorStatus(status: number): boolean {
+	return TRANSIENT_SERVER_ERROR_STATUSES.has(status);
+}
+
+/**
+ * Absolute epoch (ms) a `Retry-After` header asks us to wait until, for both
+ * RFC 7231 forms (delta-seconds and HTTP-date). Returns null when the header is
+ * absent, unparseable, or already in the past — a stale value must not shorten
+ * the caller's own cooldown to nothing.
+ */
+function parseRetryAfterUntil(
+	response: Response,
+	nowMs: number,
+): number | null {
+	const raw = response.headers.get("retry-after");
+	if (!raw) return null;
+	const seconds = Number(raw);
+	if (Number.isFinite(seconds)) {
+		if (seconds <= 0) return null;
+		return nowMs + seconds * 1000;
+	}
+	const dateMs = new Date(raw).getTime();
+	if (Number.isFinite(dateMs) && dateMs > nowMs) return dateMs;
+	return null;
 }
 
 /**
@@ -1847,13 +1882,112 @@ export async function proxyWithAccount(
 			}
 		}
 
-		// Re-check 401 after in-place retry — credentials might have been revoked
-		// between the initial 529 and a retry response. The guard above only covered
-		// the initial response; a retry 401 would have updated `response` and broken
-		// out of the loop, so we need to catch it here before forwarding to the client.
+		// Transient upstream server error (500/502/503/504) — retry once in place,
+		// then bench the account briefly and fail over. Production (2026-09-13):
+		// Anthropic returned 500 for one organization after 36-60s of processing,
+		// four times in 20 minutes, while a sibling account served the same
+		// traffic normally. Every one was forwarded straight to the client with
+		// failover_attempts=0, and because the session strategy pins a session to
+		// one account, every session of that operator kept landing on the broken
+		// org until they paused the account by hand.
+		//
+		// Status precedes the body, so nothing has reached the client yet: this
+		// is safe for streaming and non-streaming requests alike. Skipped for
+		// synthetic (keepalive / auto-refresh) requests, like the 529 path — a
+		// probe must not amplify an upstream outage into extra traffic, and its
+		// failure is not a client-visible request.
+		if (
+			isTransientServerErrorStatus(response.status) &&
+			!isSyntheticInternal &&
+			getServerErrorRetryEnabled()
+		) {
+			const retryCfg = getOverloadRetryConfig();
+			// `x-should-retry: false` is the upstream telling us this response is
+			// deterministic for this request. Anthropic sends it on the 500s that
+			// a replay cannot fix; re-issuing then just burns another 36-60s of
+			// upstream processing before the same answer comes back.
+			const upstreamForbidsRetry =
+				response.headers.get("x-should-retry") === "false";
+			let attemptsMade = 1;
+
+			if (
+				retryCfg.enabled &&
+				retryCfg.maxAttempts > 1 &&
+				!upstreamForbidsRetry
+			) {
+				for (let attempt = 1; attempt < retryCfg.maxAttempts; attempt++) {
+					// Full-jitter backoff, identical to the 529 loop: sleep in
+					// [0, min(base * 2^attempt, max)].
+					const cap = Math.min(retryCfg.baseMs * 2 ** attempt, retryCfg.maxMs);
+					const delayMs = Math.random() * cap;
+					await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+
+					log.info(
+						`Account ${account.name}: in-place retry ${attempt}/${retryCfg.maxAttempts - 1} after ${Math.round(delayMs)}ms for upstream ${response.status}`,
+					);
+
+					const retryResponse = await reissueRequestInPlace();
+					cancelDiscardedResponseBody(response);
+					response = retryResponse;
+					attemptsMade++;
+
+					// A 401 mid-retry means the credentials died, not the upstream:
+					// let the 401 guard below fail over without a server-error bench.
+					if (retryResponse.status === 401) break;
+
+					if (!isTransientServerErrorStatus(retryResponse.status)) {
+						log.info(
+							`Account ${account.name}: upstream server error resolved on retry ${attempt} (status ${retryResponse.status})`,
+						);
+						break;
+					}
+				}
+			}
+
+			if (isTransientServerErrorStatus(response.status)) {
+				// A Retry-After shorter than the fixed bench is honored literally;
+				// applyRateLimitCooldown clamps anything longer to the cooldown.
+				const retryAfterUntil = parseRetryAfterUntil(response, Date.now());
+				const reason: RateLimitReason = "upstream_5xx_server_error";
+				applyRateLimitCooldown(
+					account,
+					retryAfterUntil != null
+						? { reason, resetTime: retryAfterUntil }
+						: { reason },
+					ctx,
+				);
+				// Report the bench that was actually applied — the forward guard
+				// in applyRateLimitCooldown keeps a longer active cooldown instead
+				// of this one, and the log should say what is true.
+				const benchMs = Math.max(
+					0,
+					(account.rate_limited_until ?? Date.now()) - Date.now(),
+				);
+				log.warn(
+					`Account ${account.name}: upstream ${response.status} after ${attemptsMade} attempt(s), benching for ${benchMs} ms and failing over`,
+				);
+
+				// On the last candidate account, fall through instead of failing
+				// over: the account loop has nowhere left to go, and the client
+				// learns more from the real upstream status than from a synthetic
+				// pool_exhausted. Mirrors the terminal-529 handling below — the
+				// bench still applies, and response-processor.ts deliberately does
+				// not clear it on a 5xx.
+				if (!returnRateLimitedResponseOnExhaustion) {
+					cancelDiscardedResponseBody(response);
+					return null;
+				}
+			}
+		}
+
+		// Re-check 401 after an in-place retry — credentials might have been revoked
+		// between the initial 529/5xx and a retry response. The guard above only
+		// covered the initial response; a retry 401 would have updated `response` and
+		// broken out of the loop, so we need to catch it here before forwarding to
+		// the client.
 		if (response.status === 401) {
 			log.warn(
-				`Authentication failed (401) on 529 retry for account ${account.name}, failing over to next account`,
+				`Authentication failed (401) on in-place retry for account ${account.name}, failing over to next account`,
 			);
 			cancelDiscardedResponseBody(response);
 			return null;

@@ -61,6 +61,14 @@ const KNOWN_ERROR_META: Record<
 			"Cooldown defaults to 10s and pairs with a single-flight recovery probe (only one request re-probes the account once it expires, as long as another account is available to defer to — if every account is currently suppressed, the request runs ungated instead). Set `CCFLARE_OVERLOAD_COOLDOWN_MS` in your environment to change it.",
 		severity: "warning",
 	},
+	upstream_5xx_server_error: {
+		title: "Provider server error (5xx)",
+		description:
+			"Upstream returned 500/502/503/504; retried in place, then benched briefly and failed over. The account's own quota is fine — the provider (or the organization behind the account) failed to serve the request.",
+		suggestion:
+			"No action needed — the request was retried once on the same account and then moved to another one. The bench defaults to 60s, or a shorter upstream Retry-After when one is sent. Set `CCFLARE_SERVER_ERROR_COOLDOWN_MS` to change it, or `CCFLARE_SERVER_ERROR_RETRY_ENABLED=false` to forward these responses straight to the client again.",
+		severity: "warning",
+	},
 	out_of_credits: {
 		title: "Account out of credits",
 		description:

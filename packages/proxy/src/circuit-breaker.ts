@@ -214,6 +214,15 @@ interface CircuitEntry {
  * setting upstream. So it counts, on the same grounds as account-wide
  * exhaustion.
  *
+ * `upstream_5xx_server_error` (a 500/502/503/504 that outlived its in-place
+ * retry) counts too. It is not account-wide in origin — the upstream is what
+ * broke — but it is account-wide in effect: the account served nothing, and
+ * the production incident this path exists for had one organization returning
+ * 500 for minutes while a sibling account was healthy. Repeated server errors
+ * on the same (provider, account) key are exactly the health signal the
+ * breaker is meant to accumulate, and the key means a genuinely provider-wide
+ * outage cannot take a healthy account down with it.
+ *
  * What counting it does NOT do is change routing. Nothing in the request path
  * calls `shouldAllow` or `isProviderWideOpen` today — see the "Wiring is
  * deferred" note at the top of this file — so what actually takes the account
@@ -264,6 +273,9 @@ export function shouldCountAsCircuitFailure(kind: FailureKind): boolean {
 		// exhaustion here. The cooldown bench, not this, is what removes the
 		// account from rotation.
 		case "org_permission_denied":
+		// Transient in origin, but the account served nothing and a repeated
+		// run of them is a per-account health signal — see the doc comment.
+		case "upstream_5xx_server_error":
 			return true;
 		default:
 			return assertNever(kind);

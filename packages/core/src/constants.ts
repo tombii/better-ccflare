@@ -102,6 +102,24 @@ export const TIME_CONSTANTS = {
 	// value gets capped down to this bound.
 	// Override at runtime via CCFLARE_OVERLOAD_WITH_RESET_MAX_MS.
 	OVERLOAD_WITH_RESET_MAX_MS: 60 * 1000, // 60s
+
+	// Bench applied to an account after a transient upstream server error
+	// (HTTP 500/502/503/504) survived its in-place retry. Like the 529
+	// cooldowns this says nothing about the account's own quota, so it never
+	// ramps and never touches consecutive_rate_limits.
+	//
+	// Longer than OVERLOAD_COOLDOWN_MS (10s) on purpose. A 529 is Anthropic
+	// telling us it is momentarily out of capacity — usually seconds. The 500s
+	// this bench exists for were measured differently: one organization
+	// returned 500 after 36-60s of processing, four times across 20 minutes,
+	// while a sibling account served the same traffic normally. Ten seconds
+	// would have put every session straight back onto the broken org. 60s is
+	// the repo's established "no usable signal" answer
+	// (DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS above) and doubles as the cap on
+	// an upstream-supplied Retry-After, so a hostile or quota-shaped header
+	// cannot turn a transient server error into an hours-long bench.
+	// Override at runtime via CCFLARE_SERVER_ERROR_COOLDOWN_MS.
+	SERVER_ERROR_COOLDOWN_MS: 60 * 1000, // 60s
 } as const;
 
 /**
@@ -195,6 +213,47 @@ export function isOverloadReason(reason: RateLimitReason): boolean {
 		reason === "upstream_529_overloaded_with_reset" ||
 		reason === "upstream_529_overloaded_no_reset"
 	);
+}
+
+/**
+ * Read the cooldown (ms) applied after a transient upstream server error
+ * (500/502/503/504) outlives its in-place retry.
+ * Reads CCFLARE_SERVER_ERROR_COOLDOWN_MS from env.
+ *
+ * Doubles as the cap on an upstream `Retry-After`: the bench is
+ * `min(retryAfter, now + this)`, so an hour-long (or hostile) header cannot
+ * take an account out of rotation for longer than the fixed cooldown.
+ */
+export function computeServerErrorCooldownMs(): number {
+	return readDurationOverrideMs(
+		process.env.CCFLARE_SERVER_ERROR_COOLDOWN_MS,
+		TIME_CONSTANTS.SERVER_ERROR_COOLDOWN_MS,
+	);
+}
+
+/**
+ * Kill switch for the whole transient-5xx path (in-place retry, bench and
+ * failover). `CCFLARE_SERVER_ERROR_RETRY_ENABLED=false` restores the previous
+ * behaviour of forwarding a 500/502/503/504 straight to the client.
+ *
+ * The attempt count and backoff are deliberately NOT separate knobs — they
+ * reuse CCFLARE_OVERLOAD_RETRY_* (see getOverloadRetryConfig below), because
+ * both paths are "the upstream is transiently unwell, re-issue the same
+ * request once" and splitting them would let the two drift apart.
+ */
+export function getServerErrorRetryEnabled(): boolean {
+	return process.env.CCFLARE_SERVER_ERROR_RETRY_ENABLED !== "false";
+}
+
+/**
+ * True for the RateLimitReason that represents a transient upstream server
+ * error (HTTP 500/502/503/504). Kept separate from `isOverloadReason` because
+ * the two get different cooldown durations; callers that care about "upstream
+ * is transiently unwell, the account's own quota is fine" — the frozen streak,
+ * the forward guard, the single-flight recovery probe — must test for both.
+ */
+export function isServerErrorReason(reason: RateLimitReason): boolean {
+	return reason === "upstream_5xx_server_error";
 }
 
 /**
