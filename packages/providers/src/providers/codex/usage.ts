@@ -187,8 +187,11 @@ export function parseCodexUsageHeaders(
 		return null;
 	}
 
-	return {
-		five_hour: fiveHour ?? { utilization: defaultUtilization, resets_at: null },
-		seven_day: sevenDay ?? { utilization: defaultUtilization, resets_at: null },
-	};
+	// Only the windows the headers actually reported. A missing window is
+	// UNKNOWN, not 0%: since 2026-07-12 Pro accounts report only the weekly
+	// window, and a minted zero read downstream as "nothing used".
+	const usage: UsageData = {};
+	if (fiveHour) usage.five_hour = fiveHour;
+	if (sevenDay) usage.seven_day = sevenDay;
+	return usage;
 }

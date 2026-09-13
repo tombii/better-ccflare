@@ -134,7 +134,9 @@ export function collectWindows(
 		if (windows.length > 0) return windows;
 	}
 
-	if ("five_hour" in data && "seven_day" in data) {
+	// Either flat window is enough: Codex payloads carry only the windows the
+	// upstream reported (a Pro account has no five_hour at all).
+	if ("five_hour" in data || "seven_day" in data) {
 		const anthropicLike = data as {
 			five_hour?: { utilization?: number | null; resets_at?: string | null };
 			seven_day?: { utilization?: number | null; resets_at?: string | null };

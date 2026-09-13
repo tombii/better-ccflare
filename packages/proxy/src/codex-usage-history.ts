@@ -41,9 +41,10 @@ export function resetCodexUsageHistoryThrottle(): void {
 
 /**
  * Keep only windows that carry both a real percentage and a real reset.
- * `parseCodexUsageHeaders` fills a window missing from the headers with
- * `{ utilization: defaultUtilization, resets_at: null }`, so a `resets_at` of
- * null is the tell for a synthetic window. Recording those would poison the
+ * `parseCodexUsageHeaders` omits a window the headers did not report, and
+ * older cache/snapshot payloads may still carry the former
+ * `{ utilization: 0, resets_at: null }` placeholder, so a `resets_at` of null
+ * is the tell for a synthetic window. Recording those would poison the
  * history with zeros that read as "nothing was used this week".
  */
 function realWindows(usage: Record<string, unknown>): Record<string, unknown> {

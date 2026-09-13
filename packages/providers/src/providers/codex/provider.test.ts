@@ -4940,10 +4940,31 @@ describe("parseCodexUsageHeaders", () => {
 			"x-codex-primary-reset-at": "1e309",
 		});
 
-		expect(parseCodexUsageHeaders(headers)).toEqual({
+		const usage = parseCodexUsageHeaders(headers);
+
+		expect(usage).toEqual({
 			five_hour: { utilization: 12, resets_at: null },
-			seven_day: { utilization: 0, resets_at: null },
 		});
+		// An unreported window is omitted, never minted as 0%.
+		expect(Object.keys(usage ?? {})).toEqual(["five_hour"]);
+	});
+
+	it("omits the five_hour window when the headers carry only the weekly one", () => {
+		// Pro accounts have reported only a weekly window since 2026-07-12.
+		const headers = new Headers({
+			"x-codex-primary-used-percent": "43",
+			"x-codex-primary-window-minutes": "10080",
+			"x-codex-primary-reset-at": "1789806916",
+		});
+
+		const usage = parseCodexUsageHeaders(headers);
+
+		expect(Object.keys(usage ?? {})).toEqual(["seven_day"]);
+		expect(usage?.seven_day).toEqual({
+			utilization: 43,
+			resets_at: new Date(1789806916 * 1000).toISOString(),
+		});
+		expect(usage?.five_hour).toBeUndefined();
 	});
 });
 

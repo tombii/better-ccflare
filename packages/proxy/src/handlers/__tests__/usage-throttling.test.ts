@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Account } from "@better-ccflare/types";
 import {
+	collectWindows,
 	createUsageThrottledResponse,
 	getUsageThrottleStatus,
 	getUsageThrottleUntil,
@@ -368,5 +369,30 @@ describe("createUsageThrottledResponse", () => {
 		expect(body.error.type).toBe("overloaded_error");
 		expect(body.error.message).toContain("Codex A");
 		expect(body.error.message).toContain("Codex B");
+	});
+});
+
+describe("collectWindows with a single flat window", () => {
+	it("collects seven_day from a Codex payload that has no five_hour key", () => {
+		// parseCodexUsageHeaders omits a window the upstream did not report, so a
+		// Pro account's payload is { seven_day } alone. It must still throttle.
+		const resetsAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+		const windows = collectWindows({
+			seven_day: { utilization: 100, resets_at: resetsAt.toISOString() },
+		} as never);
+
+		expect(windows).toHaveLength(1);
+		expect(windows[0].window).toBe("seven_day");
+		expect(windows[0].utilization).toBe(100);
+		expect(windows[0].resetAtMs).toBe(resetsAt.getTime());
+	});
+
+	it("collects five_hour from a payload that has no seven_day key", () => {
+		const resetsAt = new Date(Date.now() + 60 * 60 * 1000);
+		const windows = collectWindows({
+			five_hour: { utilization: 50, resets_at: resetsAt.toISOString() },
+		} as never);
+
+		expect(windows.map((w) => w.window)).toEqual(["five_hour"]);
 	});
 });
