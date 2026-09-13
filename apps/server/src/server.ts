@@ -1316,7 +1316,10 @@ export default async function startServer(options?: {
 			return false;
 		}
 		if (!supportsUsagePollingForAccount(account)) {
-			log.warn(
+			// Debug, not warn: every account creation now asks to start polling,
+			// so this fires routinely for the many API-key providers that have
+			// no usage endpoint. That is the expected answer, not a problem.
+			log.debug(
 				`Cannot restart usage polling: account ${account.name} does not support usage polling (provider or custom endpoint)`,
 			);
 			return false;
