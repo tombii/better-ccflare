@@ -5,6 +5,7 @@ import { join } from "node:path";
 import * as cliCommands from "@better-ccflare/cli-commands";
 import type { Config } from "@better-ccflare/config";
 import {
+	parseUsagePauseThreshold,
 	patterns,
 	sanitizers,
 	validateAndSanitizeModelMappings,
@@ -317,6 +318,8 @@ export function createAccountsListHandler(
 			auto_refresh_enabled: 0 | 1;
 			auto_pause_on_overage_enabled: 0 | 1;
 			peak_hours_pause_enabled: 0 | 1;
+			usage_pause_five_hour_threshold: number | null;
+			usage_pause_weekly_threshold: number | null;
 			custom_endpoint: string | null;
 			model_mappings: string | null;
 			request_transformer: RequestTransformer | null;
@@ -355,6 +358,8 @@ export function createAccountsListHandler(
 					custom_endpoint,
 					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
 					COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
+					usage_pause_five_hour_threshold,
+					usage_pause_weekly_threshold,
 
 					model_mappings,
 					request_transformer,
@@ -748,6 +753,10 @@ export function createAccountsListHandler(
 					autoPauseOnOverageEnabled:
 						account.auto_pause_on_overage_enabled === 1,
 					peakHoursPauseEnabled: account.peak_hours_pause_enabled === 1,
+					usagePauseFiveHourThreshold:
+						account.usage_pause_five_hour_threshold ?? null,
+					usagePauseWeeklyThreshold:
+						account.usage_pause_weekly_threshold ?? null,
 					customEndpoint: account.custom_endpoint,
 					modelMappings,
 					requestTransformer: account.request_transformer,
@@ -3032,6 +3041,67 @@ export function createAccountAutoPauseOnOverageHandler(
 				error instanceof Error
 					? error
 					: new Error("Failed to toggle auto-pause-on-overage"),
+			);
+		}
+	};
+}
+
+/**
+ * Create a handler for the per-account usage-window pause thresholds.
+ *
+ * Body: `{ fiveHour: number | null, weekly: number | null }` — whole
+ * percentages, or null to switch a window's threshold off. Both windows are
+ * written together, so a body that omits one clears it; that keeps the stored
+ * pair and the form that submits it in step.
+ */
+export function createAccountUsagePauseThresholdsHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const parsed = (():
+				| { fiveHour: number | null; weekly: number | null }
+				| Response => {
+				try {
+					return {
+						fiveHour: parseUsagePauseThreshold(body.fiveHour),
+						weekly: parseUsagePauseThreshold(body.weekly),
+					};
+				} catch (err) {
+					return errorResponse(
+						BadRequest(err instanceof Error ? err.message : String(err)),
+					);
+				}
+			})();
+			if (parsed instanceof Response) return parsed;
+			const { fiveHour, weekly } = parsed;
+
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string }>(
+				"SELECT name FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			await dbOps.setUsagePauseThresholds(accountId, fiveHour, weekly);
+
+			return jsonResponse({
+				success: true,
+				message: `Usage pause thresholds updated for account '${account.name}'`,
+				usagePauseFiveHourThreshold: fiveHour,
+				usagePauseWeeklyThreshold: weekly,
+			});
+		} catch (error) {
+			log.error("Account usage pause thresholds error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to update usage pause thresholds"),
 			);
 		}
 	};

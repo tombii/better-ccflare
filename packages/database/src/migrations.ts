@@ -612,6 +612,8 @@ function collapseAccountDuplicatesPreservingState(db: Database): void {
 		   request_transformer = COALESCE(request_transformer, ${freshest("request_transformer")}),
 		   model_fallbacks = COALESCE(model_fallbacks, ${freshest("model_fallbacks")}),
 		   cross_region_mode = COALESCE(cross_region_mode, ${freshest("cross_region_mode")}),
+		   usage_pause_five_hour_threshold = COALESCE(usage_pause_five_hour_threshold, ${freshest("usage_pause_five_hour_threshold")}),
+		   usage_pause_weekly_threshold = COALESCE(usage_pause_weekly_threshold, ${freshest("usage_pause_weekly_threshold")}),
 		   billing_type = COALESCE(billing_type, ${freshest("billing_type")})
 		 WHERE rowid = $rowid`,
 	);
@@ -1046,6 +1048,26 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"ALTER TABLE accounts ADD COLUMN peak_hours_pause_enabled INTEGER NOT NULL DEFAULT 0",
 			).run();
 			log.info("Added peak_hours_pause_enabled column to accounts table");
+		}
+
+		// Add per-account usage-window pause thresholds. NULL = no threshold, so
+		// every existing account keeps its current behaviour until someone sets one.
+		if (
+			!initialAccountsColumnNames.includes("usage_pause_five_hour_threshold")
+		) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_threshold INTEGER",
+			).run();
+			log.info(
+				"Added usage_pause_five_hour_threshold column to accounts table",
+			);
+		}
+
+		if (!initialAccountsColumnNames.includes("usage_pause_weekly_threshold")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_threshold INTEGER",
+			).run();
+			log.info("Added usage_pause_weekly_threshold column to accounts table");
 		}
 
 		// Add pause_reason column to track why an account is paused (issue #139)

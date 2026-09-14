@@ -20,6 +20,7 @@ import {
 	createAccountRequestTransformerUpdateHandler,
 	createAccountResumeHandler,
 	createAccountsListHandler,
+	createAccountUsagePauseThresholdsHandler,
 	createAlibabaCodingPlanAccountAddHandler,
 	createAnthropicCompatibleAccountAddHandler,
 	createAwsProfilesListHandler,
@@ -698,6 +699,15 @@ export class APIRouter {
 					createAccountAutoPauseOnOverageHandler(this.context.dbOps);
 				return await this.wrapHandler((req) =>
 					autoPauseOnOverageHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account usage-window pause thresholds
+			if (path.endsWith("/usage-pause-thresholds") && method === "POST") {
+				const usagePauseThresholdsHandler =
+					createAccountUsagePauseThresholdsHandler(this.context.dbOps);
+				return await this.wrapHandler((req) =>
+					usagePauseThresholdsHandler(req, accountId),
 				)(req, url);
 			}
 

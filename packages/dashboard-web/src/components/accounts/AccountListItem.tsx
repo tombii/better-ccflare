@@ -25,6 +25,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
+import { UsagePauseThresholds } from "./UsagePauseThresholds";
 
 function formatTokenCount(n: number): string {
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -51,6 +52,11 @@ interface AccountListItemProps {
 	onBillingTypeToggle: (account: Account) => void;
 	onAutoPauseOnOverageToggle?: (account: Account) => void;
 	onPeakHoursPauseToggle?: (account: Account) => void;
+	onUsagePauseThresholdsChange?: (
+		account: Account,
+		fiveHour: number | null,
+		weekly: number | null,
+	) => Promise<void>;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
 	onRequestTransformerChange?: (account: Account) => void;
@@ -73,6 +79,7 @@ export function AccountListItem({
 	onBillingTypeToggle,
 	onAutoPauseOnOverageToggle,
 	onPeakHoursPauseToggle,
+	onUsagePauseThresholdsChange,
 	onCustomEndpointChange,
 	onModelMappingsChange,
 	onRequestTransformerChange,
@@ -198,6 +205,13 @@ export function AccountListItem({
 											title="Automatically pause account when overage usage is detected. Note: detection only happens when Anthropic API reports overage, so some overage usage may occur before pausing. Account resumes when usage window resets."
 										/>
 									</div>
+								)}
+							{providerShowsWeeklyUsage(account.provider) &&
+								onUsagePauseThresholdsChange && (
+									<UsagePauseThresholds
+										account={account}
+										onSave={onUsagePauseThresholdsChange}
+									/>
 								)}
 							{account.provider === "zai" && onPeakHoursPauseToggle && (
 								<div className="flex items-center gap-2">

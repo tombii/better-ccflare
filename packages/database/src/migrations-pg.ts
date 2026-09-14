@@ -98,6 +98,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			cross_region_mode TEXT DEFAULT 'geographic',
 			auto_pause_on_overage_enabled INTEGER DEFAULT 0,
 			peak_hours_pause_enabled INTEGER NOT NULL DEFAULT 0,
+			usage_pause_five_hour_threshold INTEGER,
+			usage_pause_weekly_threshold INTEGER,
 			pause_reason TEXT,
 			requires_reauth INTEGER DEFAULT 0,
 			billing_type TEXT DEFAULT NULL,
@@ -623,6 +625,8 @@ async function collapseAccountDuplicatesPreservingStatePg(
 			   request_transformer = COALESCE(request_transformer, ${pgFreshest("request_transformer")}),
 			   model_fallbacks = COALESCE(model_fallbacks, ${pgFreshest("model_fallbacks")}),
 			   cross_region_mode = COALESCE(cross_region_mode, ${pgFreshest("cross_region_mode")}),
+			   usage_pause_five_hour_threshold = COALESCE(usage_pause_five_hour_threshold, ${pgFreshest("usage_pause_five_hour_threshold")}),
+			   usage_pause_weekly_threshold = COALESCE(usage_pause_weekly_threshold, ${pgFreshest("usage_pause_weekly_threshold")}),
 			   billing_type = COALESCE(billing_type, ${pgFreshest("billing_type")})
 			 WHERE id = $8`,
 			[
@@ -789,6 +793,18 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			column: "peak_hours_pause_enabled",
 			definition:
 				"ALTER TABLE accounts ADD COLUMN peak_hours_pause_enabled INTEGER NOT NULL DEFAULT 0",
+		},
+		{
+			table: "accounts",
+			column: "usage_pause_five_hour_threshold",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_threshold INTEGER",
+		},
+		{
+			table: "accounts",
+			column: "usage_pause_weekly_threshold",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_threshold INTEGER",
 		},
 		{
 			table: "accounts",

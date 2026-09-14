@@ -1451,6 +1451,31 @@ class API extends HttpClient {
 		}
 	}
 
+	/**
+	 * Write the account's usage-window pause thresholds. Pass null for a window
+	 * to turn its threshold off; both windows are always sent together.
+	 */
+	async updateAccountUsagePauseThresholds(
+		accountId: string,
+		fiveHour: number | null,
+		weekly: number | null,
+	): Promise<void> {
+		const url = `/api/accounts/${accountId}/usage-pause-thresholds`;
+		this.logger.debug(`→ POST ${url}`, { fiveHour, weekly });
+		try {
+			await this.post(url, { fiveHour, weekly });
+			this.logger.debug(`← POST ${url} - 200`);
+		} catch (error) {
+			this.logger.error(`✗ POST ${url} - ERROR`, {
+				error: error instanceof Error ? error.message : String(error),
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async updateAccountAutoPauseOnOverage(
 		accountId: string,
 		enabled: boolean,

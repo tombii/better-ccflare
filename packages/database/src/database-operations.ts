@@ -1046,6 +1046,18 @@ OAuth tokens will need to be re-authenticated.
 		await this.accounts.setAutoPauseOnOverageEnabled(accountId, enabled);
 	}
 
+	/**
+	 * Set the account's usage-window pause thresholds (whole percentages, or
+	 * null to turn a window off).
+	 */
+	async setUsagePauseThresholds(
+		accountId: string,
+		fiveHour: number | null,
+		weekly: number | null,
+	): Promise<void> {
+		await this.accounts.setUsagePauseThresholds(accountId, fiveHour, weekly);
+	}
+
 	async setPeakHoursPauseEnabled(
 		accountId: string,
 		enabled: boolean,

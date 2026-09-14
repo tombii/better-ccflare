@@ -555,6 +555,19 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleUsagePauseThresholdsChange = async (
+		account: Account,
+		fiveHour: number | null,
+		weekly: number | null,
+	) => {
+		try {
+			await api.updateAccountUsagePauseThresholds(account.id, fiveHour, weekly);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handleCustomEndpointChange = (account: Account) => {
 		setCustomEndpointDialog({ isOpen: true, account });
 	};
@@ -716,6 +729,7 @@ export function AccountsTab() {
 						onBillingTypeToggle={handleBillingTypeToggle}
 						onAutoPauseOnOverageToggle={handleAutoPauseOnOverageToggle}
 						onPeakHoursPauseToggle={handlePeakHoursPauseToggle}
+						onUsagePauseThresholdsChange={handleUsagePauseThresholdsChange}
 						onCustomEndpointChange={handleCustomEndpointChange}
 						onModelMappingsChange={handleModelMappingsChange}
 						onRequestTransformerChange={handleRequestTransformerChange}

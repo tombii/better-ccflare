@@ -100,6 +100,8 @@ Options:
   --pause <name>       Pause an account
   --resume <name>      Resume an account
   --set-priority <name> <priority> Set account priority (0-100)
+  --set-usage-pause-thresholds <name> <5h%|off> <weekly%|off>
+                       Pause an account when a usage window reaches the given percentage
   --analyze            Analyze database performance
   --repair-db          Check and repair database integrity
   --reset-stats        Reset usage statistics
@@ -249,6 +251,44 @@ bun run cli --set-priority development-account 50
 # Set account to low priority (high number)
 bun run cli --set-priority backup-account 90
 ```
+
+### Usage Pause Thresholds
+
+#### `--set-usage-pause-thresholds <name> <5h> <weekly>`
+
+Pause an account once one of its usage windows reaches the given percentage, and resume it automatically once that window resets.
+
+This is the proactive counterpart to rate-limit failover. Without a threshold, an account keeps serving until the provider answers with a 429 and the window is already spent. With one, the account steps out of the rotation while it still has headroom left — useful when an account is shared with interactive work you do not want the proxy to exhaust.
+
+**Syntax:**
+```bash
+bun run cli --set-usage-pause-thresholds <name> <5h%|off> <weekly%|off>
+```
+
+**Parameters:**
+- `name`: Account name to update
+- `5h%`: Percentage (1-100) of the 5-hour window at which to pause, or `off`
+- `weekly%`: Percentage (1-100) of the weekly window at which to pause, or `off`
+
+**Behaviour:**
+- Thresholds are evaluated on each usage poll, so a pause lands within one poll interval of the account crossing the line
+- A threshold pause is recorded with `pause_reason = rate_limit_window`, and is lifted automatically once every configured window reads back below its threshold
+- Accounts you paused by hand, or that were paused for overage or refresh failures, are never touched by this rule
+- Both windows are written on every call: pass `off` for the one you do not want
+
+**Example:**
+```bash
+# Bench the account for the rest of the 5-hour window once it hits 80%
+bun run cli --set-usage-pause-thresholds work-account 80 off
+
+# Keep a fifth of the weekly quota in reserve, and leave the 5-hour window alone
+bun run cli --set-usage-pause-thresholds work-account off 80
+
+# Clear both thresholds
+bun run cli --set-usage-pause-thresholds work-account off off
+```
+
+The same setting is available per account in the dashboard's Accounts tab ("Pause at"), and over the API as `POST /api/accounts/:id/usage-pause-thresholds` with `{ "fiveHour": 80, "weekly": null }`.
 
 ### Statistics and History
 

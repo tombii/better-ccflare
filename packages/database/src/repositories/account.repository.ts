@@ -47,6 +47,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
 				COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
 				COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
+				usage_pause_five_hour_threshold,
+				usage_pause_weekly_threshold,
 				custom_endpoint,
 				model_mappings,
 				request_transformer,
@@ -78,6 +80,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
 				COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
 				COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
+				usage_pause_five_hour_threshold,
+				usage_pause_weekly_threshold,
 				custom_endpoint,
 				model_mappings,
 				request_transformer,
@@ -458,6 +462,22 @@ export class AccountRepository extends BaseRepository<Account> {
 		await this.run(
 			`UPDATE accounts SET auto_pause_on_overage_enabled = ? WHERE id = ?`,
 			[enabled ? 1 : 0, accountId],
+		);
+	}
+
+	/**
+	 * Set the per-window usage-pause thresholds (whole percentages, or null to
+	 * turn a window's threshold off). Both windows are written together so a
+	 * caller cannot leave the pair half-updated.
+	 */
+	async setUsagePauseThresholds(
+		accountId: string,
+		fiveHour: number | null,
+		weekly: number | null,
+	): Promise<void> {
+		await this.run(
+			`UPDATE accounts SET usage_pause_five_hour_threshold = ?, usage_pause_weekly_threshold = ? WHERE id = ?`,
+			[fiveHour, weekly, accountId],
 		);
 	}
 

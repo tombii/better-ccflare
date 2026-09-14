@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Config } from "@better-ccflare/config";
 import type { ModelMapping } from "@better-ccflare/core";
 import {
+	parseUsagePauseThreshold,
 	validateAndSanitizeModelFallbacks,
 	validateAndSanitizeModelMappings,
 	validateApiKey,
@@ -2161,6 +2162,65 @@ export async function setAccountPriority(
 	return {
 		success: true,
 		message: `Account '${name}' priority set to ${validatedPriority}`,
+	};
+}
+
+/**
+ * Set an account's usage-window pause thresholds by account name.
+ *
+ * Each argument is a whole percentage, or null to clear that window's
+ * threshold. Both windows are written on every call, so the CLI's view of the
+ * pair is always the stored one.
+ */
+export async function setUsagePauseThresholds(
+	dbOps: DatabaseOperations,
+	name: string,
+	fiveHour: number | null,
+	weekly: number | null,
+): Promise<{ success: boolean; message: string }> {
+	const adapter = dbOps.getAdapter();
+
+	const account = await adapter.get<{ id: string }>(
+		"SELECT id FROM accounts WHERE name = ?",
+		[name],
+	);
+
+	if (!account) {
+		return {
+			success: false,
+			message: `Account '${name}' not found`,
+		};
+	}
+
+	const validated = (():
+		| { fiveHour: number | null; weekly: number | null }
+		| string => {
+		try {
+			return {
+				fiveHour: parseUsagePauseThreshold(fiveHour),
+				weekly: parseUsagePauseThreshold(weekly),
+			};
+		} catch (err) {
+			return err instanceof Error ? err.message : String(err);
+		}
+	})();
+
+	if (typeof validated === "string") {
+		return { success: false, message: validated };
+	}
+
+	await dbOps.setUsagePauseThresholds(
+		account.id,
+		validated.fiveHour,
+		validated.weekly,
+	);
+
+	const describe = (value: number | null) =>
+		value === null ? "off" : `${value}%`;
+
+	return {
+		success: true,
+		message: `Account '${name}' usage pause thresholds set to 5h=${describe(validated.fiveHour)}, weekly=${describe(validated.weekly)}`,
 	};
 }
 
