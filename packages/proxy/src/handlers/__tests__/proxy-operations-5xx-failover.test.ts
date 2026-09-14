@@ -633,14 +633,17 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 		// `upstream_5xx_server_error` bench was overwritten by a quota
 		// cooldown, the 429 streak advanced, and proxyWithAccount returned null
 		// (pool_exhausted) instead of forwarding the real 500.
+		// Hoisted so both upstream calls carry the same reset value (an inline
+		// Date.now() can straddle a second boundary between them) and so the
+		// bookkeeping assertion below can name the exact millisecond the
+		// provider is expected to derive from it.
+		const resetSeconds = Math.floor((Date.now() + 3_600_000) / 1000);
 		let callCount = 0;
 		globalThis.fetch = mock(async () => {
 			callCount++;
 			return serverErrorResponse(500, {
 				"anthropic-ratelimit-unified-status": "rate_limited",
-				"anthropic-ratelimit-unified-reset": String(
-					Math.floor((Date.now() + 3_600_000) / 1000),
-				),
+				"anthropic-ratelimit-unified-reset": String(resetSeconds),
 			});
 		});
 		captureForwardedResponse();
@@ -672,6 +675,45 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 		expect(capturedForward?.status).toBe(500);
 		expect(await (capturedForward as Response).text()).toBe(serverErrorBody);
 		expect(result?.status).toBe(500);
+
+		// The `serverErrorBenchApplied` branch in processProxyResponse skips the
+		// cooldown and the streak — and nothing else. It still has to run
+		// `updateAccountMetadata` before returning false, exactly as the
+		// cooldown path below it does. Those are the only two writes that
+		// function performs which are observable through this context's fakes:
+		// `updateAccountUsage` (bypassSession is false — no bypass header on the
+		// request) and `updateAccountRateLimitMeta` (the provider found a status
+		// header). The Codex usage block is keyed off `account.provider ===
+		// "codex"` and the usage-extraction block only reaches `updateRequestUsage`
+		// when the body carries a `usage` object, so neither fires on an
+		// anthropic error body.
+		//
+		// Negative control: if that branch returned before
+		// `updateAccountMetadata`, both call counts below would be 0 — every
+		// other assertion in this test (bench, streak, forwarded status and
+		// body) would still pass, which is exactly why they are here.
+		const usageCalls = (ctx.dbOps.updateAccountUsage as ReturnType<typeof mock>)
+			.mock.calls as unknown as unknown[][];
+		expect(usageCalls).toHaveLength(1);
+		expect(usageCalls[0]).toEqual([account.id]);
+
+		// The parsed metadata, not just "something was written": the real
+		// AnthropicProvider turns the two headers above into
+		// statusHeader="rate_limited" and resetTime = reset seconds * 1000,
+		// with `remaining` undefined because no unified-remaining header rode
+		// along. Persisting the hard-limit status is what keeps the dashboard
+		// and the usage poller honest about an account the upstream is
+		// simultaneously failing to serve.
+		const metaCalls = (
+			ctx.dbOps.updateAccountRateLimitMeta as ReturnType<typeof mock>
+		).mock.calls as unknown as unknown[][];
+		expect(metaCalls).toHaveLength(1);
+		expect(metaCalls[0]).toEqual([
+			account.id,
+			"rate_limited",
+			resetSeconds * 1000,
+			undefined,
+		]);
 	});
 
 	it("retries a streaming request's 500 the same way as a non-streaming one", async () => {

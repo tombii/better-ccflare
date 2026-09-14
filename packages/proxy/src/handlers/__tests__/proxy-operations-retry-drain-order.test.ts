@@ -131,10 +131,28 @@ function makeProxyContext(): ProxyContext {
 }
 
 /**
- * A body whose consumption is observable: `closed` flips when the producer has
- * handed over every chunk (a full drain), `cancelled` when the consumer tore
- * the stream down instead. Either one means the backing store was released;
- * neither means the response was abandoned intact.
+ * A body whose consumption is observable, at the granularity the leak fix
+ * actually needs.
+ *
+ * `cancelDiscardedResponseBody` (handlers/discard-body-cancel.ts) does exactly
+ * one thing: it hands the body to `drainBody`, which takes a default reader and
+ * loops on `reader.read()` until `done`. It never calls `body.cancel()` — on
+ * every released Bun `cancel()` is a measured no-op that leaks the whole
+ * off-heap backing store (issue #273; ~78-83 KB/req, indistinguishable from
+ * abandoning the response). So "the body was disposed of" is not the contract
+ * worth pinning; "the producer was pulled to completion" is.
+ *
+ * The three counters separate the three outcomes cleanly. Measured on this
+ * fixture with `chunkCount = 4`:
+ *
+ *   full drain (the helper):  pulls = 5 (4 chunks + the pull that closes),
+ *                             closed = true,  cancelled = false
+ *   bare `body.cancel()`:     pulls = 0,  closed = false, cancelled = true
+ *   response abandoned:       pulls = 1,  closed = false, cancelled = false
+ *
+ * `expectFullyDrained` below asserts the first row and therefore fails on the
+ * other two — which is the point: an assertion that accepted `cancelled` would
+ * pass on a regression that swapped the drain for `body.cancel()`.
  */
 function observableBody(chunkCount: number) {
 	const state = { pulls: 0, closed: false, cancelled: false };
@@ -152,7 +170,23 @@ function observableBody(chunkCount: number) {
 			state.cancelled = true;
 		},
 	});
-	return { stream, state };
+	return { stream, state, chunkCount };
+}
+
+/**
+ * The drain contract, asserted precisely: every chunk pulled, the producer run
+ * to completion, and `cancel()` never used as a shortcut.
+ */
+function expectFullyDrained(body: ReturnType<typeof observableBody>): void {
+	// The producer reached its close() — the stream was read to `done`, which
+	// is what actually releases the native source on stock Bun.
+	expect(body.state.closed).toBe(true);
+	// Every chunk was pulled, plus the final pull that closes the stream.
+	// A drain that stopped early would release nothing but the chunks read.
+	expect(body.state.pulls).toBe(body.chunkCount + 1);
+	// And it got there by reading, not by tearing the stream down: a
+	// `body.cancel()` regression would flip this and leave `closed` false.
+	expect(body.state.cancelled).toBe(false);
 }
 
 /**
@@ -204,12 +238,12 @@ describe("in-place retry loops drain the superseded response before re-issuing",
 	});
 
 	it("drains a 500 body even when the re-issue rejects with a connection reset", async () => {
-		const { stream, state } = observableBody(4);
+		const discarded = observableBody(4);
 		let callCount = 0;
 		globalThis.fetch = mock(async () => {
 			callCount++;
 			if (callCount === 1) {
-				return new Response(stream, {
+				return new Response(discarded.stream, {
 					status: 500,
 					headers: { "content-type": "application/json" },
 				});
@@ -225,17 +259,19 @@ describe("in-place retry loops drain the superseded response before re-issuing",
 		// The re-issue failure is a failover, not a client-visible throw.
 		expect(callCount).toBe(2);
 		expect(result).toBeNull();
-		// And the response we had already decided to discard was disposed of.
-		expect(state.closed || state.cancelled).toBe(true);
+		// And the response we had already decided to discard was read to `done`
+		// — not cancelled, not abandoned. See `observableBody` for the three
+		// outcomes these counters tell apart.
+		expectFullyDrained(discarded);
 	});
 
 	it("drains a 529 body even when the re-issue rejects with a connection reset", async () => {
-		const { stream, state } = observableBody(4);
+		const discarded = observableBody(4);
 		let callCount = 0;
 		globalThis.fetch = mock(async () => {
 			callCount++;
 			if (callCount === 1) {
-				return new Response(stream, {
+				return new Response(discarded.stream, {
 					status: 529,
 					headers: { "content-type": "application/json" },
 				});
@@ -250,6 +286,46 @@ describe("in-place retry loops drain the superseded response before re-issuing",
 
 		expect(callCount).toBe(2);
 		expect(result).toBeNull();
-		expect(state.closed || state.cancelled).toBe(true);
+		expectFullyDrained(discarded);
+	});
+});
+
+/**
+ * Negative control for the two assertions above, kept in the suite rather than
+ * run once by hand: it pins the fixture semantics so `expectFullyDrained`
+ * cannot be quietly weakened back into "disposed of somehow".
+ *
+ * If the production helper ever regressed from `drainBody` to `body.cancel()`,
+ * the leak would come straight back (cancel() frees nothing on released Bun)
+ * while the stream still looked "handled". These cases show the counters tell
+ * the two apart.
+ */
+describe("the drain assertions reject a cancel-only or abandoned disposal", () => {
+	it("body.cancel() leaves the producer unfinished and fails expectFullyDrained", async () => {
+		const discarded = observableBody(4);
+		const response = new Response(discarded.stream, { status: 500 });
+		await response.body?.cancel();
+		await settleDrain();
+
+		// The source's cancel() ran, so the old `closed || cancelled` assertion
+		// would have passed here — on a body whose backing store Bun never
+		// released.
+		expect(discarded.state.cancelled).toBe(true);
+		// But nothing was ever read: the producer never reached close().
+		expect(discarded.state.closed).toBe(false);
+		expect(discarded.state.pulls).toBeLessThan(discarded.chunkCount + 1);
+		expect(() => expectFullyDrained(discarded)).toThrow();
+	});
+
+	it("an abandoned response fails expectFullyDrained too", async () => {
+		const discarded = observableBody(4);
+		// Constructed and dropped on the floor — the pre-fix behaviour when the
+		// re-issue threw before the drain could run.
+		void new Response(discarded.stream, { status: 500 });
+		await settleDrain();
+
+		expect(discarded.state.closed).toBe(false);
+		expect(discarded.state.cancelled).toBe(false);
+		expect(() => expectFullyDrained(discarded)).toThrow();
 	});
 });
