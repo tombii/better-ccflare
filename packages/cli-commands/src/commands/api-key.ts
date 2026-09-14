@@ -2,6 +2,7 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	type ApiKeyGenerationResult,
 	type ApiKeyResponse,
+	type ApiKeyRestrictions,
 	type ApiKeyRole,
 	NodeCryptoUtils,
 	toApiKeyResponse,
@@ -14,6 +15,7 @@ export async function generateApiKey(
 	dbOps: DatabaseOperations,
 	name: string,
 	role: ApiKeyRole = "api-only",
+	restrictions?: Partial<ApiKeyRestrictions>,
 ): Promise<ApiKeyGenerationResult> {
 	// Validate name
 	if (!name || name.trim().length === 0) {
@@ -59,6 +61,7 @@ export async function generateApiKey(
 		createdAt: now,
 		isActive: true,
 		role,
+		restrictions,
 	});
 
 	return {
@@ -279,6 +282,66 @@ export async function updateApiKeyRole(
 }
 
 /**
+ * Replace an API key's account / model / provider restrictions.
+ *
+ * Accepts an id or a name, like the other admin operations reached through
+ * `/api/api-keys/:idOrName/...`.
+ *
+ * No lockout guard here, deliberately, unlike `updateApiKeyRole`: these
+ * restrictions only narrow which upstream accounts and models a key may route
+ * to. Dashboard access is decided by `role` alone, so restricting a key — even
+ * the caller's own, even the last admin key — cannot lock anyone out.
+ */
+export async function updateApiKeyRestrictions(
+	dbOps: DatabaseOperations,
+	idOrName: string,
+	restrictions: ApiKeyRestrictions,
+): Promise<boolean> {
+	const apiKey =
+		(await dbOps.getApiKey(idOrName)) ??
+		(await dbOps.getApiKeyByName(idOrName));
+	if (!apiKey) {
+		throw new Error("API key not found");
+	}
+
+	const success = await dbOps.updateApiKeyRestrictions(apiKey.id, restrictions);
+	if (!success) {
+		throw new Error("Failed to update API key restrictions");
+	}
+
+	return true;
+}
+
+/**
+ * Describe a key's restrictions in one short line, for CLI and dashboard
+ * summaries. `null` reads as unrestricted; `[]` reads as a deny-all, which is
+ * a legitimate but drastic setting and must never look like "unrestricted".
+ */
+export function formatApiKeyRestrictions(apiKey: ApiKeyResponse): string {
+	const parts: string[] = [];
+	const describe = (
+		list: string[] | null,
+		singular: string,
+		plural: string,
+	) => {
+		if (list === null) return;
+		if (list.length === 0) {
+			parts.push(`no ${plural} (denies all requests)`);
+			return;
+		}
+		parts.push(
+			list.length === 1
+				? `1 ${singular}: ${list[0]}`
+				: `${list.length} ${plural}`,
+		);
+	};
+	describe(apiKey.allowedAccounts, "account", "accounts");
+	describe(apiKey.allowedModels, "model", "models");
+	describe(apiKey.allowedProviders, "provider", "providers");
+	return parts.length === 0 ? "unrestricted" : parts.join(", ");
+}
+
+/**
  * Get API key statistics
  */
 export async function getApiKeyStats(dbOps: DatabaseOperations): Promise<{
@@ -310,6 +373,7 @@ export function formatApiKeyForDisplay(apiKey: ApiKeyResponse): string {
 	return `  ${apiKey.name} (${apiKey.prefixLast8})
     Status: ${status}
     Role: ${role}
+    Restrictions: ${formatApiKeyRestrictions(apiKey)}
     Created: ${new Date(apiKey.createdAt).toLocaleDateString()}
     Last Used: ${lastUsed}
     Usage Count: ${apiKey.usageCount}`;

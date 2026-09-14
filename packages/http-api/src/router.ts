@@ -64,6 +64,7 @@ import {
 	createApiKeysGenerateHandler,
 	createApiKeysListHandler,
 	createApiKeysStatsHandler,
+	createApiKeyUpdateRestrictionsHandler,
 	createApiKeyUpdateRoleHandler,
 } from "./handlers/api-keys";
 import {
@@ -955,6 +956,25 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					updateRoleHandler(req, keyIdOrName, authResult.apiKeyId),
+				)(req, url);
+			}
+
+			// API key restrictions update - Only admin keys can change which
+			// accounts, models and providers another key may use. Same gate,
+			// same 401-not-403 house style, as the role update above.
+			if (path.endsWith("/restrictions") && method === "PATCH") {
+				if (authResult.role !== "admin") {
+					return errorResponse(
+						Unauthorized(
+							"Only admin keys can update API key restrictions. Your key has api-only access.",
+						),
+					);
+				}
+				const updateRestrictionsHandler = createApiKeyUpdateRestrictionsHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					updateRestrictionsHandler(req, keyIdOrName),
 				)(req, url);
 			}
 

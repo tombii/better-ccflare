@@ -244,7 +244,10 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			last_used BIGINT,
 			usage_count INTEGER DEFAULT 0,
 			is_active INTEGER DEFAULT 1,
-			role TEXT NOT NULL DEFAULT 'api-only'
+			role TEXT NOT NULL DEFAULT 'api-only',
+			allowed_accounts TEXT,
+			allowed_models TEXT,
+			allowed_providers TEXT
 		)
 	`);
 
@@ -1355,6 +1358,24 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			column: "role",
 			definition:
 				"ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'api-only'",
+		},
+		// Per-key restrictions. Mirrors the SQLite ALTERs in migrations.ts —
+		// nullable, no default, because NULL is what "unrestricted" means and
+		// every pre-existing key must survive the upgrade unrestricted.
+		{
+			table: "api_keys",
+			column: "allowed_accounts",
+			definition: "ALTER TABLE api_keys ADD COLUMN allowed_accounts TEXT",
+		},
+		{
+			table: "api_keys",
+			column: "allowed_models",
+			definition: "ALTER TABLE api_keys ADD COLUMN allowed_models TEXT",
+		},
+		{
+			table: "api_keys",
+			column: "allowed_providers",
+			definition: "ALTER TABLE api_keys ADD COLUMN allowed_providers TEXT",
 		},
 		{
 			table: "requests",

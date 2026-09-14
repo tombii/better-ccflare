@@ -1,3 +1,5 @@
+import type { ApiKeyRestrictions } from "@better-ccflare/types";
+
 // ============================================================
 // REQUEST TYPES (what codex sends to /v1/responses)
 // ============================================================
@@ -352,5 +354,11 @@ export type HandleProxyFn = (
 	ctx: unknown,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
-	options?: { trustedNativeResponses?: boolean },
+	options?: {
+		trustedNativeResponses?: boolean;
+		/** The calling API key's restrictions, forwarded verbatim so the
+		 * /v1/responses path enforces them exactly like /v1/messages does.
+		 * Omitting it here would make the Codex endpoint a bypass. */
+		restrictions?: ApiKeyRestrictions | null;
+	},
 ) => Promise<Response>;

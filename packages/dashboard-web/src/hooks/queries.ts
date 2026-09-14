@@ -1,5 +1,5 @@
 import { getModelDisplayName } from "@better-ccflare/core";
-import type { AgentUpdatePayload } from "@better-ccflare/types";
+import type { AgentUpdatePayload, ApiKeyResponse } from "@better-ccflare/types";
 import { COMMON_MODELS } from "@better-ccflare/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type RequestPayload, type RequestSummary } from "../api";
@@ -133,29 +133,26 @@ export const useAgents = () => {
 	});
 };
 
-interface ApiKeyListItem {
-	id: string;
-	name: string;
-	prefixLast8: string;
-	createdAt: string;
-	lastUsed: string | null;
-	usageCount: number;
-	isActive: boolean;
-}
-
 interface ApiKeysListResponse {
 	success: boolean;
-	data: ApiKeyListItem[];
+	data: ApiKeyResponse[];
 	count: number;
 }
 
-export const useApiKeys = () => {
+/**
+ * The one reader of queryKeys.apiKeys(). Every consumer goes through it so the
+ * cache under that key always holds the same shape: ApiKeysTab used to keep a
+ * second query on a bare ["api-keys"] key returning the whole envelope, which
+ * meant two different shapes depending on which tab had loaded last.
+ */
+export const useApiKeys = (options?: { enabled?: boolean }) => {
 	return useQuery({
 		queryKey: queryKeys.apiKeys(),
 		queryFn: async () => {
 			const res = await api.get<ApiKeysListResponse>("/api/api-keys");
 			return res.data ?? [];
 		},
+		enabled: options?.enabled ?? true,
 		staleTime: 60000,
 		gcTime: 5 * 60 * 1000,
 	});

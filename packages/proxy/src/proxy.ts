@@ -16,7 +16,7 @@ import {
 	type RequestObservation,
 	usageCache,
 } from "@better-ccflare/providers";
-import type { Account } from "@better-ccflare/types";
+import type { Account, ApiKeyRestrictions } from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
 import {
 	createModelFamilyExhaustedResponse,
@@ -24,6 +24,7 @@ import {
 	createRequestMetadata,
 	createUsageThrottledResponse,
 	ERROR_MESSAGES,
+	getApiKeyRestrictionDenial,
 	getAccountUsageThrottleUntil,
 	getComboSlotInfo,
 	getDeferredCandidates,
@@ -32,6 +33,7 @@ import {
 	isComboSessionFallbackDisabled,
 	isForceAccountModelEnabled,
 	isInternalProbe,
+	isModelAllowedForApiKey,
 	isRefreshTokenLikelyExpired,
 	isVisionUnsupported,
 	markTrustedNativeResponses,
@@ -45,6 +47,7 @@ import {
 	recordXaiAffinitySuccess,
 	requestCarriesImageContent,
 	resolveEffectiveModel,
+	restrictsModels,
 	selectAccountsForRequest,
 	setXaiConvId,
 	validateProviderPath,
@@ -122,6 +125,42 @@ function createForceAccountModelResponse(model: string): Response {
 	);
 }
 
+/**
+ * The Anthropic-compatible envelope for a refusal caused by an API key's own
+ * restrictions.
+ *
+ * 403 with `type: "permission_error"`: that is the type the Anthropic Messages
+ * API uses for 403, and these responses go straight back to Claude Code
+ * clients, which read the envelope. (The repo's other 403, at
+ * apps/server/src/server.ts, says `authorization_error` — but that one sits on
+ * the management/authorization path guarding dashboard endpoints by key role,
+ * not on `/v1/messages`, where the promise is to look like Anthropic.)
+ *
+ * 403 and not 503: nothing about this is temporary and no retry will change it,
+ * so it must not carry the retry semantics the capacity refusals carry.
+ */
+function createApiKeyRestrictionResponse(
+	code: "api_key_model_restricted" | "api_key_account_restricted",
+	message: string,
+	extra: Record<string, unknown> = {},
+): Response {
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "permission_error",
+				code,
+				message,
+				...extra,
+			},
+		}),
+		{
+			status: 403,
+			headers: { "Content-Type": "application/json" },
+		},
+	);
+}
+
 // ===== USAGE COLLECTOR MANAGEMENT =====
 
 export async function initProxy(
@@ -190,7 +229,17 @@ export function handleProxy(
 	ctx: ProxyContext,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
-	options?: { trustedNativeResponses?: boolean },
+	options?: {
+		trustedNativeResponses?: boolean;
+		/**
+		 * The authenticated API key's account / model / provider allowlists,
+		 * resolved by the caller (apps/server/src/server.ts) from the key
+		 * record it already holds, so enforcement costs no extra DB read on the
+		 * hot path. `null`/absent means unrestricted — which is also what
+		 * zero-keys mode produces, since no key record exists there at all.
+		 */
+		restrictions?: ApiKeyRestrictions | null;
+	},
 ): Promise<Response> {
 	let observation: RequestObservation | undefined;
 	try {
@@ -249,7 +298,10 @@ async function handleProxyRequest(
 	ctx: ProxyContext,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
-	options?: { trustedNativeResponses?: boolean },
+	options?: {
+		trustedNativeResponses?: boolean;
+		restrictions?: ApiKeyRestrictions | null;
+	},
 	observation?: RequestObservation,
 ): Promise<Response> {
 	// 0. Silently ignore Claude Code internal endpoints (non-critical, not supported by all providers)
@@ -284,6 +336,36 @@ async function handleProxyRequest(
 	const requestModel = requestBodyContext.getModel();
 	const { project, projectAttributionSource } =
 		extractProjectAttributionFromRequest(req.headers, parsedBody);
+
+	// Seam 5 — per-API-key model allowlist, EVALUATED HERE.
+	//
+	// This is the last point at which the model is the one the client actually
+	// asked for: the agent interceptor below rewrites it (agent preference),
+	// and combo slots override it again during selection. Enforcing on the
+	// client-requested model is the whole promise — it is the only thing a key
+	// holder can reason about, and a key restricted to "haiku" must not be
+	// denied because an agent preference silently upgraded the request to opus.
+	// Server-side rewrites are explicitly OUT OF SCOPE of this restriction.
+	//
+	// Internal probes are exempt: the schedulers send a compiled-in list of
+	// Claude model ids with no API key at all, and a probe answered with a
+	// refusal counts as a refresh failure — five of those pause a healthy
+	// account. `isInternalProbe` verifies the process-local probe secret.
+	// (Sibling of the exemptions in usage throttling and the forced-account
+	// model check.)
+	//
+	// The refusal itself is EMITTED further down, at the first point where
+	// `returnRefusal` is in scope: a refusal that vanishes without being
+	// recorded would leave the dashboard showing a quiet, healthy proxy while
+	// clients get 403s. Nothing between here and there contacts an upstream
+	// (the local web_search interception is skipped for a denied request).
+	const keyRestrictions =
+		options?.restrictions && !isInternalProbe(req.headers, ctx)
+			? options.restrictions
+			: null;
+	const modelRestrictionDenied =
+		restrictsModels(keyRestrictions) &&
+		!isModelAllowedForApiKey(requestModel, keyRestrictions);
 
 	// 3a. Validate request body for /v1/messages endpoint
 	if (url.pathname === "/v1/messages" && requestBodyBuffer) {
@@ -323,7 +405,11 @@ async function handleProxyRequest(
 	// 3d. Serve `web_search` helper requests locally when a provider is configured.
 	// A null result means "not a search request" or "no provider could serve it",
 	// and the request continues upstream unchanged.
-	if (parsedBody) {
+	//
+	// Skipped when the API key may not use the requested model (seam 5): the
+	// local search path would otherwise serve — and spend search-provider
+	// quota on — a request the key is about to be refused for.
+	if (parsedBody && !modelRestrictionDenied) {
 		const webSearchResponse = await maybeInterceptWebSearch({
 			body: parsedBody,
 			pathname: url.pathname,
@@ -413,17 +499,6 @@ async function handleProxyRequest(
 			return buildSessionRejectResponse(verdict);
 		}
 	}
-
-	// 6. Select accounts. Route on the model that will actually be sent
-	// upstream (post-interceptor-rewrite), not the model the client asked
-	// for — otherwise combo routing and family-based selection see a model
-	// that no longer matches the outgoing request.
-	const effectiveModel = resolveEffectiveModel(appliedModel, requestModel);
-	const selectedAccounts = await selectAccountsForRequest(
-		requestMeta,
-		ctx,
-		effectiveModel ?? undefined,
-	);
 
 	const applyUsageThrottling = (accounts: Account[]) => {
 		const settings = {
@@ -584,6 +659,44 @@ async function handleProxyRequest(
 			comboName,
 		);
 
+	// Seam 5, emitted. Decided above on the un-rewritten client model; recorded
+	// through returnRefusal so it lands in request history and the dashboard
+	// fail-rate rather than silently vanishing.
+	//
+	// This sits immediately BEFORE account selection, not after: a request the
+	// key may not make should cost no routing work at all — no account read, no
+	// strategy run, and certainly no upstream contact. It could not be emitted
+	// at its decision point further up because `returnRefusal` needs the
+	// request metadata and the interceptor's applied/original model to record
+	// the request, and those do not exist yet there.
+	if (modelRestrictionDenied) {
+		log.warn(
+			`API key restrictions: refusing model "${requestModel}" — key ${apiKeyName ?? apiKeyId ?? "(unknown)"} is limited to a model allowlist`,
+		);
+		return await returnRefusal(
+			createApiKeyRestrictionResponse(
+				"api_key_model_restricted",
+				`This API key is not permitted to use the model "${requestModel}".`,
+				{ model: requestModel ?? null },
+			),
+			"api_key_model_restricted",
+			0,
+			null,
+		);
+	}
+
+	// 6. Select accounts. Route on the model that will actually be sent
+	// upstream (post-interceptor-rewrite), not the model the client asked
+	// for — otherwise combo routing and family-based selection see a model
+	// that no longer matches the outgoing request.
+	const effectiveModel = resolveEffectiveModel(appliedModel, requestModel);
+	const selectedAccounts = await selectAccountsForRequest(
+		requestMeta,
+		ctx,
+		effectiveModel ?? undefined,
+		{ restrictions: keyRestrictions },
+	);
+
 	const { available: accounts, throttled: throttledAccounts } =
 		applyUsageThrottling(selectedAccounts);
 
@@ -591,6 +704,32 @@ async function handleProxyRequest(
 	if (accounts.length === 0) {
 		if (requestMeta.comboName && isComboSessionFallbackDisabled(ctx)) {
 			return await returnComboSessionFallbackDisabled(requestMeta.comboName, 0);
+		}
+
+		// The API key's own account / provider allowlist emptied the pool
+		// (recorded by account-selector.ts — seams 1 and 2). This is a policy
+		// decision, not capacity, so it gets its own branch and must not fall
+		// through to the pool_exhausted 503 below: that answer advertises a
+		// Retry-After and invites a retry that can never succeed.
+		//
+		// It comes FIRST among the distinct branches on purpose. When the pool
+		// was emptied by policy, every other diagnosis below is wrong by
+		// construction — there was no capacity question to answer.
+		const restrictionDenial = getApiKeyRestrictionDenial(requestMeta);
+		if (restrictionDenial) {
+			const detail =
+				restrictionDenial.scope === "forced account"
+					? `The account requested via x-better-ccflare-account-id (${restrictionDenial.forcedAccountName ?? "unknown"}) is not permitted for this API key.`
+					: `This API key is restricted to specific ${restrictionDenial.scope}, and none of them can serve this request.`;
+			log.warn(`API key restrictions: ${detail}`);
+			return await returnRefusal(
+				createApiKeyRestrictionResponse("api_key_account_restricted", detail, {
+					restricted_by: restrictionDenial.scope,
+				}),
+				"api_key_account_restricted",
+				0,
+				null,
+			);
 		}
 
 		// Model-scoped capacity filter (account-selector.ts) emptied the
@@ -1360,7 +1499,10 @@ async function handleProxyRequest(
 			requestMeta,
 			ctx,
 			effectiveModel ?? undefined,
-			{ skipCombo: true },
+			// The key's allowlist has to be repeated here: this re-selection is
+			// what actually serves the request when a combo falls back, and
+			// dropping it would make a combo failure a restriction bypass.
+			{ skipCombo: true, restrictions: keyRestrictions },
 		);
 		const {
 			available: filteredFallbackAccounts,

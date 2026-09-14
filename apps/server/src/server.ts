@@ -100,6 +100,7 @@ import {
 	type RetentionStatus,
 	StrategyName,
 	type StrategyStore,
+	toApiKeyRestrictions,
 } from "@better-ccflare/types";
 import { serve } from "bun";
 import { createCodexUsageRefresher } from "./codex-usage-refresher";
@@ -1984,6 +1985,17 @@ export default async function startServer(options?: {
 						}
 					}
 
+					// Per-API-key restrictions travel down as an explicit argument
+					// rather than being re-read inside the proxy: the full key
+					// record is already in hand here, so enforcement costs no
+					// extra DB read on the hot path. `toApiKeyRestrictions`
+					// returns null for a key with all three columns NULL, and
+					// there is no key at all in zero-keys mode (auth disabled) —
+					// both of which make every downstream check a no-op.
+					const apiKeyRestrictions = authResult.apiKey
+						? toApiKeyRestrictions(authResult.apiKey)
+						: null;
+
 					try {
 						// Codex CLI first tries WebSocket transport for /v1/responses.
 						// We only support HTTP — reject the upgrade cleanly so Codex
@@ -2021,6 +2033,7 @@ export default async function startServer(options?: {
 								proxyContext,
 								authResult.apiKeyId,
 								authResult.apiKeyName,
+								apiKeyRestrictions,
 							);
 						}
 						return trackStreamForShutdown(
@@ -2030,6 +2043,7 @@ export default async function startServer(options?: {
 								proxyContext,
 								authResult.apiKeyId,
 								authResult.apiKeyName,
+								{ restrictions: apiKeyRestrictions },
 							),
 						);
 					} catch (proxyError) {

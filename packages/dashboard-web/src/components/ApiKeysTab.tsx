@@ -1,3 +1,8 @@
+import type {
+	ApiKeyGenerationResult,
+	ApiKeyResponse,
+	ApiKeyRestrictions,
+} from "@better-ccflare/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -5,13 +10,22 @@ import {
 	ChevronDown,
 	Plus,
 	Shield,
+	SlidersHorizontal,
 	ToggleLeft,
 	ToggleRight,
 	Trash2,
 	X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { useAccounts, useApiKeys } from "../hooks/queries";
+import { queryKeys } from "../lib/query-keys";
+import { ApiKeyRestrictionsEditor } from "./api-keys/ApiKeyRestrictionsEditor";
+import { ApiKeyRestrictionsSummary } from "./api-keys/ApiKeyRestrictionsSummary";
+import {
+	restrictionsOf,
+	UNRESTRICTED_RESTRICTIONS,
+} from "./api-keys/restrictions";
 import { CopyButton } from "./CopyButton";
 import { Button } from "./ui/button";
 import {
@@ -34,27 +48,11 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-
-interface ApiKey {
-	id: string;
-	name: string;
-	prefixLast8: string;
-	createdAt: string;
-	lastUsed: string | null;
-	usageCount: number;
-	isActive: boolean;
-	role: "admin" | "api-only";
-}
-
-interface ApiKeysResponse {
-	success: boolean;
-	data: ApiKey[];
-	count: number;
-}
 
 interface ApiKeyStatsResponse {
 	success: boolean;
@@ -67,25 +65,43 @@ interface ApiKeyStatsResponse {
 
 interface ApiKeyGenerationResponse {
 	success: boolean;
-	data: {
-		id: string;
-		name: string;
-		apiKey: string; // Full API key shown only once
-		prefixLast8: string;
-		createdAt: string;
-		role: "admin" | "api-only";
-	};
+	data: ApiKeyGenerationResult;
+}
+
+interface RestrictionsUpdateResponse {
+	success: boolean;
+	message: string;
 }
 
 export function ApiKeysTab() {
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 	const [newKeyName, setNewKeyName] = useState("");
-	const [selectedKey, setSelectedKey] = useState<ApiKey | null>(null);
+	const [selectedKey, setSelectedKey] = useState<ApiKeyResponse | null>(null);
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
 	const [isAdminKey, setIsAdminKey] = useState(false);
+	const [showNewKeyRestrictions, setShowNewKeyRestrictions] = useState(false);
+	const [newKeyRestrictions, setNewKeyRestrictions] =
+		useState<ApiKeyRestrictions>(UNRESTRICTED_RESTRICTIONS);
+	// The key whose restrictions are being edited, plus the draft it is edited
+	// into. Null closes the dialog.
+	const [restrictionsKey, setRestrictionsKey] = useState<ApiKeyResponse | null>(
+		null,
+	);
+	const [restrictionsDraft, setRestrictionsDraft] =
+		useState<ApiKeyRestrictions>(UNRESTRICTED_RESTRICTIONS);
 
 	const queryClient = useQueryClient();
+
+	// Names for the account ids held in allowedAccounts. An id with no entry
+	// here belongs to a deleted account and is rendered as such rather than
+	// dropped.
+	const { data: accounts } = useAccounts();
+	const accountNames = useMemo(
+		() =>
+			new Map((accounts ?? []).map((account) => [account.id, account.name])),
+		[accounts],
+	);
 
 	// Fetch API key statistics - only when not showing the generated key dialog
 	const { data: statsResponse, error: statsError } =
@@ -104,28 +120,26 @@ export function ApiKeysTab() {
 		}
 	}, [statsResponse]);
 
-	// Fetch API keys - only when not showing the generated key dialog
+	// Fetch API keys - only when not showing the generated key dialog.
+	// Goes through the shared hook so this tab and every other consumer read
+	// and write the same cache entry (queryKeys.apiKeys()) in the same shape.
 	const {
-		data: apiKeysResponse,
+		data: apiKeysData,
 		isLoading: isLoadingKeys,
 		error: keysError,
-	} = useQuery<ApiKeysResponse>({
-		queryKey: ["api-keys"],
-		queryFn: async () => {
-			return api.get<ApiKeysResponse>("/api/api-keys");
-		},
-		enabled: !generatedKey, // Don't fetch while showing generated key
-	});
+	} = useApiKeys({ enabled: !generatedKey });
 
 	// Generate API key mutation
 	const generateKeyMutation = useMutation({
 		mutationFn: async (params: {
 			name: string;
 			role: "admin" | "api-only";
+			restrictions: ApiKeyRestrictions;
 		}) => {
 			const result = await api.post<ApiKeyGenerationResponse>("/api/api-keys", {
 				name: params.name,
 				role: params.role,
+				...params.restrictions,
 			});
 			return result.data;
 		},
@@ -133,6 +147,8 @@ export function ApiKeysTab() {
 			setGeneratedKey(data.apiKey);
 			setNewKeyName("");
 			setIsAdminKey(false);
+			setNewKeyRestrictions(UNRESTRICTED_RESTRICTIONS);
+			setShowNewKeyRestrictions(false);
 			setIsCreateDialogOpen(false);
 			// Don't invalidate queries here - wait until user authenticates
 			// This prevents 401 errors if the stored key is invalid
@@ -158,7 +174,7 @@ export function ApiKeysTab() {
 			return api.post(endpoint);
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys() });
 			queryClient.invalidateQueries({ queryKey: ["api-keys-stats"] });
 		},
 		onError: (error: Error) => {
@@ -174,7 +190,7 @@ export function ApiKeysTab() {
 		onSuccess: () => {
 			setSelectedKey(null);
 			setIsDeleteDialogOpen(false);
-			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys() });
 			queryClient.invalidateQueries({ queryKey: ["api-keys-stats"] });
 		},
 		onError: (error: Error) => {
@@ -194,7 +210,7 @@ export function ApiKeysTab() {
 			return api.updateApiKeyRole(keyId, role);
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys() });
 			queryClient.invalidateQueries({ queryKey: ["api-keys-stats"] });
 		},
 		onError: (error: Error) => {
@@ -202,18 +218,65 @@ export function ApiKeysTab() {
 		},
 	});
 
+	// Update per-key restrictions. All three fields are always sent: the
+	// endpoint replaces the triple wholesale, so omitting one would be
+	// indistinguishable from clearing it.
+	const updateRestrictionsMutation = useMutation({
+		mutationFn: async ({
+			keyId,
+			restrictions,
+		}: {
+			keyId: string;
+			restrictions: ApiKeyRestrictions;
+		}) => {
+			return api.patch<RestrictionsUpdateResponse>(
+				`/api/api-keys/${encodeURIComponent(keyId)}/restrictions`,
+				{
+					allowedAccounts: restrictions.allowedAccounts,
+					allowedModels: restrictions.allowedModels,
+					allowedProviders: restrictions.allowedProviders,
+				},
+			);
+		},
+		onSuccess: () => {
+			setRestrictionsKey(null);
+			queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys() });
+		},
+		onError: (error: Error) => {
+			console.error("Failed to update API key restrictions:", error);
+		},
+	});
+
 	const handleGenerateKey = () => {
 		if (!newKeyName.trim()) return;
 		const isFirstKey = !stats || stats.active === 0;
 		const role = isFirstKey || isAdminKey ? "admin" : "api-only";
-		generateKeyMutation.mutate({ name: newKeyName.trim(), role });
+		generateKeyMutation.mutate({
+			name: newKeyName.trim(),
+			role,
+			restrictions: newKeyRestrictions,
+		});
 	};
 
-	const handleToggleKey = (key: ApiKey, enable: boolean) => {
+	const handleEditRestrictions = (key: ApiKeyResponse) => {
+		setRestrictionsDraft(restrictionsOf(key));
+		setRestrictionsKey(key);
+		updateRestrictionsMutation.reset();
+	};
+
+	const confirmRestrictions = () => {
+		if (!restrictionsKey) return;
+		updateRestrictionsMutation.mutate({
+			keyId: restrictionsKey.id,
+			restrictions: restrictionsDraft,
+		});
+	};
+
+	const handleToggleKey = (key: ApiKeyResponse, enable: boolean) => {
 		toggleKeyMutation.mutate({ name: key.name, enable });
 	};
 
-	const handleDeleteKey = (key: ApiKey) => {
+	const handleDeleteKey = (key: ApiKeyResponse) => {
 		setSelectedKey(key);
 		setIsDeleteDialogOpen(true);
 	};
@@ -224,13 +287,16 @@ export function ApiKeysTab() {
 		}
 	};
 
-	const handleUpdateRole = (key: ApiKey, newRole: "admin" | "api-only") => {
+	const handleUpdateRole = (
+		key: ApiKeyResponse,
+		newRole: "admin" | "api-only",
+	) => {
 		if (key.role === newRole) return;
 		updateRoleMutation.mutate({ keyId: key.id, role: newRole });
 	};
 
 	// Determine if a key's role can be changed
-	const canChangeRole = (key: ApiKey) => {
+	const canChangeRole = (key: ApiKeyResponse) => {
 		// Cannot change the first key (oldest by creation date)
 		const sortedKeys = [...apiKeys].sort(
 			(a, b) =>
@@ -254,7 +320,7 @@ export function ApiKeysTab() {
 	};
 
 	const stats = statsResponse?.data;
-	const apiKeys = apiKeysResponse?.data || [];
+	const apiKeys = apiKeysData ?? [];
 
 	if (keysError || statsError) {
 		return (
@@ -389,6 +455,35 @@ export function ApiKeysTab() {
 									</>
 								);
 							})()}
+							<div className="space-y-2 border-t pt-4">
+								<button
+									type="button"
+									onClick={() => setShowNewKeyRestrictions((open) => !open)}
+									className="flex w-full items-center justify-between text-sm font-medium hover:opacity-80"
+									aria-expanded={showNewKeyRestrictions}
+								>
+									<span className="flex items-center gap-2">
+										<SlidersHorizontal className="h-4 w-4" />
+										Restrictions (optional)
+									</span>
+									<ChevronDown
+										className={`h-4 w-4 transition-transform ${showNewKeyRestrictions ? "rotate-180" : ""}`}
+									/>
+								</button>
+								{showNewKeyRestrictions ? (
+									<ApiKeyRestrictionsEditor
+										idPrefix="new-key"
+										value={newKeyRestrictions}
+										onChange={setNewKeyRestrictions}
+										disabled={generateKeyMutation.isPending}
+									/>
+								) : (
+									<ApiKeyRestrictionsSummary
+										restrictions={newKeyRestrictions}
+										accountNames={accountNames}
+									/>
+								)}
+							</div>
 							{generateKeyMutation.isError && (
 								<div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
 									<div className="flex items-start gap-2 text-destructive">
@@ -488,50 +583,59 @@ export function ApiKeysTab() {
 											>
 												{key.isActive ? "Active" : "Disabled"}
 											</div>
-											{canChangeRole(key) ? (
-												<DropdownMenu>
-													<DropdownMenuTrigger asChild>
-														<button
-															type="button"
-															className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium cursor-pointer hover:opacity-80 ${
-																key.role === "admin"
-																	? "bg-amber-100 text-amber-800"
-																	: "bg-blue-100 text-blue-800"
-															}`}
-															disabled={updateRoleMutation.isPending}
-														>
-															{key.role === "admin" ? "Admin" : "API-only"}
-															<ChevronDown className="h-3 w-3" />
-														</button>
-													</DropdownMenuTrigger>
-													<DropdownMenuContent align="start">
-														<DropdownMenuItem
-															onClick={() => handleUpdateRole(key, "admin")}
-															disabled={key.role === "admin"}
-														>
-															<Shield className="h-4 w-4 mr-2" />
-															Admin (dashboard access)
-														</DropdownMenuItem>
-														<DropdownMenuItem
-															onClick={() => handleUpdateRole(key, "api-only")}
-															disabled={key.role === "api-only"}
-														>
-															API-only (proxy access)
-														</DropdownMenuItem>
-													</DropdownMenuContent>
-												</DropdownMenu>
-											) : (
-												<div
-													className={`px-2 py-1 rounded text-xs font-medium ${
-														key.role === "admin"
-															? "bg-amber-100 text-amber-800"
-															: "bg-blue-100 text-blue-800"
-													}`}
-													title="First API key must remain admin"
-												>
-													{key.role === "admin" ? "Admin" : "API-only"}
-												</div>
-											)}
+											{/*
+											 * One menu per row. The role items are disabled for the
+											 * first key (which must stay admin), but the menu itself
+											 * is always rendered so that key can still have its
+											 * restrictions edited.
+											 */}
+											<DropdownMenu>
+												<DropdownMenuTrigger asChild>
+													<button
+														type="button"
+														className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium cursor-pointer hover:opacity-80 ${
+															key.role === "admin"
+																? "bg-amber-100 text-amber-800"
+																: "bg-blue-100 text-blue-800"
+														}`}
+														disabled={updateRoleMutation.isPending}
+													>
+														{key.role === "admin" ? "Admin" : "API-only"}
+														<ChevronDown className="h-3 w-3" />
+													</button>
+												</DropdownMenuTrigger>
+												<DropdownMenuContent align="start">
+													<DropdownMenuItem
+														onClick={() => handleUpdateRole(key, "admin")}
+														disabled={
+															key.role === "admin" || !canChangeRole(key)
+														}
+													>
+														<Shield className="h-4 w-4 mr-2" />
+														Admin (dashboard access)
+													</DropdownMenuItem>
+													<DropdownMenuItem
+														onClick={() => handleUpdateRole(key, "api-only")}
+														disabled={
+															key.role === "api-only" || !canChangeRole(key)
+														}
+														title={
+															canChangeRole(key)
+																? undefined
+																: "First API key must remain admin"
+														}
+													>
+														API-only (proxy access)
+													</DropdownMenuItem>
+													<DropdownMenuSeparator />
+													<DropdownMenuItem
+														onClick={() => handleEditRestrictions(key)}
+													>
+														<SlidersHorizontal className="h-4 w-4 mr-2" />
+														Edit restrictions
+													</DropdownMenuItem>
+												</DropdownMenuContent>
+											</DropdownMenu>
 										</div>
 										<div className="text-sm text-muted-foreground mt-1">
 											Key ends with:{" "}
@@ -554,6 +658,12 @@ export function ApiKeysTab() {
 											)}
 											{" • "}Used {key.usageCount} time
 											{key.usageCount !== 1 ? "s" : ""}
+										</div>
+										<div className="mt-2">
+											<ApiKeyRestrictionsSummary
+												restrictions={restrictionsOf(key)}
+												accountNames={accountNames}
+											/>
 										</div>
 									</div>
 									<div className="flex items-center gap-2">
@@ -691,6 +801,67 @@ export function ApiKeysTab() {
 							disabled={deleteKeyMutation.isPending}
 						>
 							{deleteKeyMutation.isPending ? "Deleting..." : "Delete Key"}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			{/* Edit Restrictions Dialog */}
+			<Dialog
+				open={!!restrictionsKey}
+				onOpenChange={(open) => {
+					if (!open) {
+						setRestrictionsKey(null);
+						updateRestrictionsMutation.reset();
+					}
+				}}
+			>
+				<DialogContent className="max-h-[85vh] overflow-y-auto">
+					<DialogHeader>
+						<DialogTitle>
+							Restrictions for "{restrictionsKey?.name}"
+						</DialogTitle>
+						<DialogDescription>
+							Limit which accounts, models and providers this key may route to.
+							Requires an admin key.
+						</DialogDescription>
+					</DialogHeader>
+					<div className="space-y-4 py-4">
+						<ApiKeyRestrictionsEditor
+							idPrefix={`key-${restrictionsKey?.id ?? "none"}`}
+							value={restrictionsDraft}
+							onChange={setRestrictionsDraft}
+							disabled={updateRestrictionsMutation.isPending}
+						/>
+						{updateRestrictionsMutation.isError && (
+							<div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+								<div className="flex items-start gap-2 text-destructive">
+									<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+									<span className="text-sm">
+										{updateRestrictionsMutation.error?.message ??
+											"Failed to update restrictions."}
+									</span>
+								</div>
+							</div>
+						)}
+					</div>
+					<DialogFooter>
+						<Button
+							onClick={() => {
+								setRestrictionsKey(null);
+								updateRestrictionsMutation.reset();
+							}}
+							variant="outline"
+						>
+							Cancel
+						</Button>
+						<Button
+							onClick={confirmRestrictions}
+							disabled={updateRestrictionsMutation.isPending}
+						>
+							{updateRestrictionsMutation.isPending
+								? "Saving..."
+								: "Save restrictions"}
 						</Button>
 					</DialogFooter>
 				</DialogContent>

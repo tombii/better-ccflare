@@ -3,6 +3,25 @@
 // API key role types
 export type ApiKeyRole = "admin" | "api-only";
 
+/**
+ * Per-key restrictions on which accounts, models and providers a key may use.
+ *
+ * `null` on a field means UNRESTRICTED; `[]` means DENY-ALL. The distinction is
+ * load-bearing and is the reason these are three nullable JSON-array TEXT
+ * columns rather than a join table: with a join table, deleting the last
+ * allowed account would empty the list and silently promote a restricted key
+ * back to unrestricted. A dangling id left behind by a deleted account simply
+ * matches nothing, which is the safe failure direction.
+ */
+export interface ApiKeyRestrictions {
+	/** Account IDs this key may route to. null = any account. */
+	allowedAccounts: string[] | null;
+	/** Model IDs and/or family names ("opus") this key may request. null = any. */
+	allowedModels: string[] | null;
+	/** Provider names this key may route to. null = any provider. */
+	allowedProviders: string[] | null;
+}
+
 // Database row type that matches actual database schema
 export interface ApiKeyRow {
 	id: string;
@@ -14,6 +33,42 @@ export interface ApiKeyRow {
 	usage_count: number;
 	is_active: boolean | number;
 	role: ApiKeyRole;
+	/** JSON array of account IDs, or NULL for unrestricted. */
+	allowed_accounts?: string | null;
+	/** JSON array of model IDs / family names, or NULL for unrestricted. */
+	allowed_models?: string | null;
+	/** JSON array of provider names, or NULL for unrestricted. */
+	allowed_providers?: string | null;
+}
+
+/**
+ * Parse one restriction column into its domain form.
+ *
+ * Deliberately fails CLOSED: a column that is present but unreadable (corrupt
+ * JSON, a JSON scalar instead of an array) becomes `[]` — deny-all — not
+ * `null`. Returning `null` there would turn an unreadable restriction into a
+ * silent privilege escalation, which is the one outcome this feature must
+ * never produce. Non-string entries are dropped; they can only ever match
+ * nothing anyway.
+ */
+export function parseRestrictionList(
+	raw: string | null | undefined,
+): string[] | null {
+	if (raw == null) return null;
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (!Array.isArray(parsed)) return [];
+		return parsed.filter((entry): entry is string => typeof entry === "string");
+	} catch {
+		return [];
+	}
+}
+
+/** Serialize one restriction list back to its TEXT column form. */
+export function serializeRestrictionList(
+	list: string[] | null | undefined,
+): string | null {
+	return list == null ? null : JSON.stringify(list);
 }
 
 // Domain model - used throughout the application
@@ -27,6 +82,9 @@ export interface ApiKey {
 	usageCount: number;
 	isActive: boolean;
 	role: ApiKeyRole;
+	allowedAccounts: string[] | null;
+	allowedModels: string[] | null;
+	allowedProviders: string[] | null;
 }
 
 // API response type - what clients receive (excluding sensitive data)
@@ -39,6 +97,38 @@ export interface ApiKeyResponse {
 	usageCount: number;
 	isActive: boolean;
 	role: ApiKeyRole;
+	allowedAccounts: string[] | null;
+	allowedModels: string[] | null;
+	allowedProviders: string[] | null;
+}
+
+/**
+ * Narrow an API key down to just its restrictions, or `null` when the key
+ * carries none at all.
+ *
+ * Returning `null` for a fully-unrestricted key is deliberate: it is the value
+ * the proxy hot path checks first, so a key with all three columns NULL costs
+ * one identity comparison and behaves exactly as it did before this feature
+ * existed.
+ */
+export function toApiKeyRestrictions(
+	apiKey: Pick<
+		ApiKey,
+		"allowedAccounts" | "allowedModels" | "allowedProviders"
+	>,
+): ApiKeyRestrictions | null {
+	if (
+		apiKey.allowedAccounts == null &&
+		apiKey.allowedModels == null &&
+		apiKey.allowedProviders == null
+	) {
+		return null;
+	}
+	return {
+		allowedAccounts: apiKey.allowedAccounts,
+		allowedModels: apiKey.allowedModels,
+		allowedProviders: apiKey.allowedProviders,
+	};
 }
 
 // API key generation result
@@ -55,6 +145,7 @@ export interface ApiKeyGenerationResult {
 export interface CreateApiKeyInput {
 	name: string;
 	role?: ApiKeyRole; // Optional, defaults to 'api-only'
+	restrictions?: Partial<ApiKeyRestrictions>; // Optional, all-null = unrestricted
 }
 
 // Validation result
@@ -144,6 +235,9 @@ export function toApiKey(row: ApiKeyRow): ApiKey {
 		usageCount: Number(row.usage_count) || 0,
 		isActive: !!row.is_active,
 		role: row.role,
+		allowedAccounts: parseRestrictionList(row.allowed_accounts),
+		allowedModels: parseRestrictionList(row.allowed_models),
+		allowedProviders: parseRestrictionList(row.allowed_providers),
 	};
 }
 
@@ -157,5 +251,8 @@ export function toApiKeyResponse(apiKey: ApiKey): ApiKeyResponse {
 		usageCount: apiKey.usageCount,
 		isActive: apiKey.isActive,
 		role: apiKey.role,
+		allowedAccounts: apiKey.allowedAccounts,
+		allowedModels: apiKey.allowedModels,
+		allowedProviders: apiKey.allowedProviders,
 	};
 }
