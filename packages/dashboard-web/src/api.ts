@@ -1598,6 +1598,32 @@ class API extends HttpClient {
 		}
 	}
 
+	async updateAccountPlanPrice(
+		accountId: string,
+		planMonthlyUsd: number | null,
+	): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/accounts/${accountId}/plan-price`;
+
+		this.logger.debug(`→ POST ${url}`, { planMonthlyUsd });
+
+		try {
+			await this.post(url, { planMonthlyUsd });
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async updateAccountAutoPauseOnOverage(
 		accountId: string,
 		enabled: boolean,

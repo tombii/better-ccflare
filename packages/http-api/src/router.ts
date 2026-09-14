@@ -14,6 +14,7 @@ import {
 	createAccountNightWindowHandler,
 	createAccountPauseHandler,
 	createAccountPeakHoursPauseHandler,
+	createAccountPlanPriceHandler,
 	createAccountPriorityUpdateHandler,
 	createAccountRefreshUsageHandler,
 	createAccountReloadHandler,
@@ -822,6 +823,16 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					billingTypeHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account monthly plan price
+			if (path.endsWith("/plan-price") && method === "POST") {
+				const planPriceHandler = createAccountPlanPriceHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					planPriceHandler(req, accountId),
 				)(req, url);
 			}
 

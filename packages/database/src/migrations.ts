@@ -173,7 +173,8 @@ export function ensureSchema(db: Database): void {
 			requires_reauth INTEGER DEFAULT 0,
 			last_manual_reauth_at INTEGER,
 			request_transformer TEXT,
-			night_window_enabled INTEGER NOT NULL DEFAULT 0
+			night_window_enabled INTEGER NOT NULL DEFAULT 0,
+			plan_monthly_usd REAL
 		)
 	`);
 
@@ -1929,6 +1930,28 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			).run();
 
 			log.info("Removed account_tier column from accounts table");
+		}
+
+		// Add plan_monthly_usd: the real dollar price of the account's monthly
+		// subscription (NULL = unknown / not a paid plan). Distinct from
+		// plan_cost_usd on requests, which is a counterfactual "what this plan
+		// traffic would have cost at API rates".
+		//
+		// This block sits AFTER both accounts-table rebuilds on purpose (the
+		// "make refresh_token nullable" rebuild and the account_tier removal
+		// directly above), and re-reads PRAGMA table_info instead of using
+		// initialAccountsColumnNames, which was captured before any DDL ran.
+		// Both rebuilds now carry the live column list, but adding the column
+		// last, against the live schema, keeps it immune to any rebuild that
+		// regresses to a fixed list — and keeps the check idempotent.
+		const accountsColumnsAfterRebuilds = (
+			db.prepare("PRAGMA table_info(accounts)").all() as Array<{
+				name: string;
+			}>
+		).map((col) => col.name);
+		if (!accountsColumnsAfterRebuilds.includes("plan_monthly_usd")) {
+			db.prepare("ALTER TABLE accounts ADD COLUMN plan_monthly_usd REAL").run();
+			log.info("Added plan_monthly_usd column to accounts table");
 		}
 
 		// Drop tier column from oauth_sessions table if it exists

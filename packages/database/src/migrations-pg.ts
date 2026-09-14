@@ -110,7 +110,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			last_manual_reauth_at BIGINT,
 			rate_limited_reason TEXT,
 			rate_limited_at BIGINT,
-			consecutive_rate_limits INTEGER NOT NULL DEFAULT 0
+			consecutive_rate_limits INTEGER NOT NULL DEFAULT 0,
+			plan_monthly_usd REAL
 		)
 	`);
 
@@ -1288,6 +1289,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			column: "billing_type",
 			definition:
 				"ALTER TABLE accounts ADD COLUMN billing_type TEXT DEFAULT NULL",
+		},
+		{
+			table: "accounts",
+			column: "plan_monthly_usd",
+			definition: "ALTER TABLE accounts ADD COLUMN plan_monthly_usd REAL",
 		},
 		{
 			table: "accounts",

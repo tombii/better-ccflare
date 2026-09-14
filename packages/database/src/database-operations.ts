@@ -1327,6 +1327,13 @@ OAuth tokens will need to be re-authenticated.
 		await this.accounts.setBillingType(accountId, billingType);
 	}
 
+	async setAccountPlanMonthlyUsd(
+		accountId: string,
+		planMonthlyUsd: number | null,
+	): Promise<void> {
+		await this.accounts.setPlanMonthlyUsd(accountId, planMonthlyUsd);
+	}
+
 	async updateAccountRequestCount(
 		accountId: string,
 		count: number,
