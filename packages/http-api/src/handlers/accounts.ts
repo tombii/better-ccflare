@@ -86,6 +86,9 @@ const RATE_LIMIT_REASONS = new Set<RateLimitReason>([
 	// 403 permission_error: the account's organization forbids the request. This
 	// one IS written to accounts.rate_limited_reason — the account is benched.
 	"org_permission_denied",
+	// Transient upstream 500/502/503/504 that outlived its in-place retry. Also
+	// written to accounts.rate_limited_reason — the account is benched briefly.
+	"upstream_5xx_server_error",
 ]);
 
 function toRateLimitReason(v: string | null): RateLimitReason | null {

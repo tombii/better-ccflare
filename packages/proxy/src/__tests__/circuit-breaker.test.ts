@@ -525,6 +525,17 @@ describe("F2: FailureKind ↔ RateLimitReason parity", () => {
 		expect(cb.getState(KEY_A)).toBe("open");
 	});
 
+	test("the upstream literal `upstream_5xx_server_error` DOES open the circuit", () => {
+		// A transient 5xx is upstream-caused but account-wide in effect: the
+		// account served nothing, so a run of them is a health signal the
+		// breaker must accumulate.
+		const cb = new CircuitBreaker();
+		for (let i = 0; i < 5; i++) {
+			cb.recordFailure(KEY_A, "upstream_5xx_server_error", T0 + i);
+		}
+		expect(cb.getState(KEY_A)).toBe("open");
+	});
+
 	test("the breaker accepts every variant of the upstream RateLimitReason enum", () => {
 		// Exhaustiveness contract: every variant of `RateLimitReason` must
 		// be accepted by `shouldCountAsCircuitFailure` (an exhaustive switch

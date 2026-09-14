@@ -39,6 +39,9 @@
  * - `windowless_429` — 429 reporting no rate-limit window at all; measured
  *   as request-scoped, so the account is never benched. Does NOT trip the
  *   breaker.
+ * - `upstream_5xx_server_error` — transient upstream server error
+ *   (500/502/503/504) that survived an in-place retry. The account is
+ *   benched briefly and the request fails over. Counts as a circuit failure.
  * - `org_permission_denied` — 403 `permission_error`: the account's
  *   organization forbids the request (OAuth disabled org-wide, Claude Code
  *   subscription access turned off). Account-wide and not quota-related, but
@@ -59,6 +62,7 @@ export const RATE_LIMIT_REASONS: readonly RateLimitReason[] = [
 	"extra_usage_exhausted",
 	"windowless_429",
 	"org_permission_denied",
+	"upstream_5xx_server_error",
 ] as const;
 
 export function isRateLimitReason(value: string): value is RateLimitReason {

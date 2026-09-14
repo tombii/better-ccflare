@@ -102,6 +102,24 @@ export const TIME_CONSTANTS = {
 	// value gets capped down to this bound.
 	// Override at runtime via CCFLARE_OVERLOAD_WITH_RESET_MAX_MS.
 	OVERLOAD_WITH_RESET_MAX_MS: 60 * 1000, // 60s
+
+	// Bench applied to an account after a transient upstream server error
+	// (HTTP 500/502/503/504) survived its in-place retry. Like the 529
+	// cooldowns this says nothing about the account's own quota, so it never
+	// ramps and never touches consecutive_rate_limits.
+	//
+	// Longer than OVERLOAD_COOLDOWN_MS (10s) on purpose. A 529 is Anthropic
+	// telling us it is momentarily out of capacity — usually seconds. The 500s
+	// this bench exists for were measured differently: one organization
+	// returned 500 after 36-60s of processing, four times across 20 minutes,
+	// while a sibling account served the same traffic normally. Ten seconds
+	// would have put every session straight back onto the broken org. 60s is
+	// the repo's established "no usable signal" answer
+	// (DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS above) and doubles as the cap on
+	// an upstream-supplied Retry-After, so a hostile or quota-shaped header
+	// cannot turn a transient server error into an hours-long bench.
+	// Override at runtime via CCFLARE_SERVER_ERROR_COOLDOWN_MS.
+	SERVER_ERROR_COOLDOWN_MS: 60 * 1000, // 60s
 } as const;
 
 /**
@@ -198,12 +216,78 @@ export function isOverloadReason(reason: RateLimitReason): boolean {
 }
 
 /**
+ * Read the cooldown (ms) applied after a transient upstream server error
+ * (500/502/503/504) outlives its in-place retry.
+ * Reads CCFLARE_SERVER_ERROR_COOLDOWN_MS from env.
+ *
+ * Doubles as the cap on an upstream `Retry-After`: the bench is
+ * `min(retryAfter, now + this)`, so an hour-long (or hostile) header cannot
+ * take an account out of rotation for longer than the fixed cooldown.
+ */
+export function computeServerErrorCooldownMs(): number {
+	return readDurationOverrideMs(
+		process.env.CCFLARE_SERVER_ERROR_COOLDOWN_MS,
+		TIME_CONSTANTS.SERVER_ERROR_COOLDOWN_MS,
+	);
+}
+
+/**
+ * Kill switch for the whole transient-5xx path (in-place retry, bench and
+ * failover). `CCFLARE_SERVER_ERROR_RETRY_ENABLED=false` restores the previous
+ * behaviour of forwarding a 500/502/503/504 straight to the client.
+ *
+ * The attempt count and backoff are deliberately NOT separate knobs — they
+ * reuse CCFLARE_OVERLOAD_RETRY_* (see getOverloadRetryConfig below), because
+ * both paths are "the upstream is transiently unwell, re-issue the same
+ * request once" and splitting them would let the two drift apart.
+ */
+export function getServerErrorRetryEnabled(): boolean {
+	return process.env.CCFLARE_SERVER_ERROR_RETRY_ENABLED !== "false";
+}
+
+/**
+ * True for the RateLimitReason that represents a transient upstream server
+ * error (HTTP 500/502/503/504). Kept separate from `isOverloadReason` because
+ * the two get different cooldown durations; callers that care about "upstream
+ * is transiently unwell, the account's own quota is fine" — the frozen streak,
+ * the forward guard, the single-flight recovery probe — must test for both.
+ */
+export function isServerErrorReason(reason: RateLimitReason): boolean {
+	return reason === "upstream_5xx_server_error";
+}
+
+const OVERLOAD_RETRY_MAX_ATTEMPTS_DEFAULT = 2;
+const OVERLOAD_RETRY_MAX_ATTEMPTS_CAP = 10;
+
+/**
+ * Parse CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS into a finite integer in
+ * [1, OVERLOAD_RETRY_MAX_ATTEMPTS_CAP].
+ *
+ * The retry loops in the proxy spin on `attempt < maxAttempts` while the
+ * upstream keeps returning 529/5xx, so an unclamped value is not a tuning
+ * knob: "Infinity" parses truthy and retries forever against a sick upstream,
+ * and a fractional value gives a surprising count. 0 and negatives are not a
+ * way to disable the retry either — they would silently skip it, while the
+ * documented kill switch is CCFLARE_OVERLOAD_RETRY_ENABLED=false. Anything
+ * outside the range falls back to the default rather than being honored.
+ */
+function readRetryMaxAttempts(raw: string | undefined): number {
+	if (raw === undefined || raw.trim() === "")
+		return OVERLOAD_RETRY_MAX_ATTEMPTS_DEFAULT;
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed)) return OVERLOAD_RETRY_MAX_ATTEMPTS_DEFAULT;
+	const truncated = Math.trunc(parsed);
+	if (truncated < 1) return OVERLOAD_RETRY_MAX_ATTEMPTS_DEFAULT;
+	return Math.min(truncated, OVERLOAD_RETRY_MAX_ATTEMPTS_CAP);
+}
+
+/**
  * Configuration for in-place retry of reset-less 529 (overloaded_error) responses.
  * Used by proxyWithAccount before applying account cooldown.
  *
  * Env knobs:
  *   CCFLARE_OVERLOAD_RETRY_ENABLED      — set to "false" to disable (default: true)
- *   CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS — max in-place attempts (default: 2)
+ *   CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS — max in-place attempts, integer 1-10 (default: 2)
  *   CCFLARE_OVERLOAD_RETRY_BASE_MS      — jitter backoff base delay ms (default: 750)
  *   CCFLARE_OVERLOAD_RETRY_MAX_MS       — jitter backoff ceiling ms (default: 3000)
  */
@@ -214,9 +298,9 @@ export function getOverloadRetryConfig(): {
 	maxMs: number;
 } {
 	const enabled = process.env.CCFLARE_OVERLOAD_RETRY_ENABLED !== "false";
-	// maxAttempts: 0 is not useful (use ENABLED=false to disable), so || is correct.
-	const maxAttempts =
-		Number(process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS) || 2;
+	const maxAttempts = readRetryMaxAttempts(
+		process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS,
+	);
 	// baseMs/maxMs: 0 is valid (zero delay for tests), so use explicit finite check.
 	const rawBase = Number(process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS);
 	const rawMax = Number(process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS);

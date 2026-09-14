@@ -165,6 +165,51 @@ describe("AccountRepository.markAccountRateLimited — 529 forward guard (delta-
 		expect(row.rate_limited_until).toBe(until);
 	});
 
+	it("guards a transient 5xx write behind a longer active cooldown", async () => {
+		// `upstream_5xx_server_error` is written with incrementStreak=false, so
+		// it takes the same guarded path as a 529: a 60s server-error bench must
+		// never shorten a running 429 quota bench.
+		insertAccount(db, "acc-6");
+		const X = Date.now() + 5 * 60 * 1000;
+		await repo.markAccountRateLimited(
+			"acc-6",
+			X,
+			"upstream_429_with_reset",
+			true,
+		);
+
+		const result = await repo.markAccountRateLimited(
+			"acc-6",
+			X - 60_000,
+			"upstream_5xx_server_error",
+			false,
+		);
+
+		expect(result.applied).toBe(false);
+		const row = getAudit(db, "acc-6");
+		expect(row.rate_limited_reason).toBe("upstream_429_with_reset");
+		expect(row.rate_limited_until).toBe(X);
+	});
+
+	it("applies a transient 5xx write when no cooldown is active", async () => {
+		insertAccount(db, "acc-7");
+		const until = Date.now() + 60_000;
+
+		const result = await repo.markAccountRateLimited(
+			"acc-7",
+			until,
+			"upstream_5xx_server_error",
+			false,
+		);
+
+		expect(result.applied).toBe(true);
+		const row = getAudit(db, "acc-7");
+		expect(row.rate_limited_reason).toBe("upstream_5xx_server_error");
+		expect(row.rate_limited_until).toBe(until);
+		// The streak stays frozen — a server error is not quota exhaustion.
+		expect(result.consecutiveRateLimits).toBe(0);
+	});
+
 	it("reports applied=true for the 429 (incrementStreak) path unconditionally", async () => {
 		insertAccount(db, "acc-4");
 		const until = Date.now() + 30_000;
