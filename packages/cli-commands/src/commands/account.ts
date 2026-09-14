@@ -2168,15 +2168,16 @@ export async function setAccountPriority(
 /**
  * Set an account's usage-window pause thresholds by account name.
  *
- * Each argument is a whole percentage, or null to clear that window's
- * threshold. Both windows are written on every call, so the CLI's view of the
- * pair is always the stored one.
+ * Each argument is a whole percentage (as a number, or the raw CLI token so
+ * malformed input like "80.5" or "80junk" is rejected rather than truncated),
+ * or null to clear that window's threshold. Both windows are written on every
+ * call, so the CLI's view of the pair is always the stored one.
  */
 export async function setUsagePauseThresholds(
 	dbOps: DatabaseOperations,
 	name: string,
-	fiveHour: number | null,
-	weekly: number | null,
+	fiveHour: string | number | null,
+	weekly: string | number | null,
 ): Promise<{ success: boolean; message: string }> {
 	const adapter = dbOps.getAdapter();
 

@@ -1047,6 +1047,28 @@ OAuth tokens will need to be re-authenticated.
 	}
 
 	/**
+	 * Pause an account for a usage threshold only while it is still running,
+	 * so a manual or overage pause written in the meantime is not overwritten.
+	 */
+	async pauseAccountForUsageThreshold(
+		accountId: string,
+		reason: string,
+	): Promise<void> {
+		await this.accounts.pauseForUsageThreshold(accountId, reason);
+	}
+
+	/**
+	 * Resume an account only while it is still paused for the given
+	 * usage-threshold reason.
+	 */
+	async resumeAccountFromUsageThreshold(
+		accountId: string,
+		reason: string,
+	): Promise<void> {
+		await this.accounts.resumeFromUsageThreshold(accountId, reason);
+	}
+
+	/**
 	 * Set the account's usage-window pause thresholds (whole percentages, or
 	 * null to turn a window off).
 	 */

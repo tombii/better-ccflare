@@ -266,17 +266,27 @@ export async function applyUsagePauseThresholds(
 			pauseReason: account.pause_reason ?? null,
 		});
 
+		// Both writes are guarded on the state this decision was made from: a
+		// manual or overage pause can land between the read above and the write
+		// below, and it must win rather than have its reason overwritten (pause)
+		// or cleared outright (resume).
 		if (decision.action === "pause") {
 			const window = decision.window === "five_hour" ? "5-hour" : "weekly";
 			logger.info(
 				`Pausing account '${account.name}' (${accountId}): ${window} usage at ${decision.utilization}% reached the configured ${decision.threshold}% threshold`,
 			);
-			await dbOps.pauseAccount(accountId, USAGE_THRESHOLD_PAUSE_REASON);
+			await dbOps.pauseAccountForUsageThreshold(
+				accountId,
+				USAGE_THRESHOLD_PAUSE_REASON,
+			);
 		} else if (decision.action === "resume") {
 			logger.info(
 				`Resuming account '${account.name}' (${accountId}): usage is back below its pause threshold`,
 			);
-			await dbOps.resumeAccount(accountId);
+			await dbOps.resumeAccountFromUsageThreshold(
+				accountId,
+				USAGE_THRESHOLD_PAUSE_REASON,
+			);
 		}
 	} catch (err) {
 		logger.warn(

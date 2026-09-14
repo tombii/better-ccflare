@@ -1050,26 +1050,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added peak_hours_pause_enabled column to accounts table");
 		}
 
-		// Add per-account usage-window pause thresholds. NULL = no threshold, so
-		// every existing account keeps its current behaviour until someone sets one.
-		if (
-			!initialAccountsColumnNames.includes("usage_pause_five_hour_threshold")
-		) {
-			db.prepare(
-				"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_threshold INTEGER",
-			).run();
-			log.info(
-				"Added usage_pause_five_hour_threshold column to accounts table",
-			);
-		}
-
-		if (!initialAccountsColumnNames.includes("usage_pause_weekly_threshold")) {
-			db.prepare(
-				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_threshold INTEGER",
-			).run();
-			log.info("Added usage_pause_weekly_threshold column to accounts table");
-		}
-
 		// Add pause_reason column to track why an account is paused (issue #139)
 		// Possible values: null (not paused), 'manual' (user paused via CLI/API),
 		// 'failure_threshold' (auto-refresh failures), 'overage' (billing overage)
@@ -1192,6 +1172,36 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			).run();
 
 			log.info("Made refresh_token nullable in accounts table");
+		}
+
+		// Add per-account usage-window pause thresholds. NULL = no threshold, so
+		// every existing account keeps its current behaviour until someone sets one.
+		//
+		// Deliberately placed AFTER the refresh_token rebuild above and read from
+		// a fresh PRAGMA rather than `initialAccountsColumnNames`: that rebuild
+		// copies a fixed column list into `accounts_new`, so any column added
+		// before it is dropped when the new table replaces the old one.
+		const accountsColumnsBeforeThresholds = db
+			.prepare("PRAGMA table_info(accounts)")
+			.all() as Array<{ name: string }>;
+		const thresholdColumnNames = accountsColumnsBeforeThresholds.map(
+			(col) => col.name,
+		);
+
+		if (!thresholdColumnNames.includes("usage_pause_five_hour_threshold")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_threshold INTEGER",
+			).run();
+			log.info(
+				"Added usage_pause_five_hour_threshold column to accounts table",
+			);
+		}
+
+		if (!thresholdColumnNames.includes("usage_pause_weekly_threshold")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_threshold INTEGER",
+			).run();
+			log.info("Added usage_pause_weekly_threshold column to accounts table");
 		}
 
 		// Add UNIQUE index on (name, provider, COALESCE(custom_endpoint,'')) to

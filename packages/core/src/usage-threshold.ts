@@ -23,12 +23,19 @@ export type UsagePauseWindow = "five_hour" | "weekly";
 /**
  * The reason written to `accounts.pause_reason` for a threshold pause.
  *
- * `rate_limit_window` was reserved by the load balancer for exactly this case
- * and is already on its auto-unpause allowlist, so a threshold-paused account
- * is also picked back up by the existing window-reset paths rather than being
- * stranded if the poller stops.
+ * Deliberately NOT one of the load balancer's auto-unpause reasons. Those
+ * paths resume an account as soon as its stored `rate_limit_reset` has
+ * elapsed, and that timestamp describes one window — for Codex, whichever
+ * window the provider reported. A five-hour reset would then return an
+ * account to rotation while the weekly threshold it was benched for is still
+ * exceeded, and it would serve traffic until the next poll benched it again.
+ *
+ * Resuming is therefore owned solely by the usage poller, which is the only
+ * place that sees every configured window at once. The cost is that an
+ * account stays benched if usage polling stops entirely; unpausing by hand
+ * clears it, and polling is what the feature depends on in any case.
  */
-export const USAGE_THRESHOLD_PAUSE_REASON = "rate_limit_window";
+export const USAGE_THRESHOLD_PAUSE_REASON = "usage_threshold";
 
 /** Per-account pause thresholds, as whole percentages. `null` disables one. */
 export interface UsagePauseThresholds {

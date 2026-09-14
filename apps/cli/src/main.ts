@@ -101,7 +101,7 @@ interface ParsedArgs {
 	pause: string | null;
 	resume: string | null;
 	setPriority: [string, number] | null;
-	setUsagePauseThresholds: [string, number | null, number | null] | null;
+	setUsagePauseThresholds: [string, string | null, string | null] | null;
 	reauthenticate: string | null;
 	analyze: boolean;
 	repairDb: boolean;
@@ -749,8 +749,11 @@ function parseArgs(args: string[]): ParsedArgs {
 					fastExit(1);
 				}
 				const name = args[++i];
-				const toThreshold = (raw: string): number | null =>
-					raw === "off" || raw === "none" ? null : parseInt(raw, 10);
+				// Hand the raw token on untouched. parseInt would read "80.5" and
+				// "80junk" as 80 and store a threshold nobody asked for; the shared
+				// parser rejects both.
+				const toThreshold = (raw: string): string | null =>
+					raw === "off" || raw === "none" ? null : raw;
 				const fiveHour = toThreshold(args[++i]);
 				const weekly = toThreshold(args[++i]);
 				parsed.setUsagePauseThresholds = [name, fiveHour, weekly];
@@ -1345,16 +1348,6 @@ Examples:
 
 	if (parsed.setUsagePauseThresholds) {
 		const [name, fiveHour, weekly] = parsed.setUsagePauseThresholds;
-
-		if (
-			(fiveHour !== null && Number.isNaN(fiveHour)) ||
-			(weekly !== null && Number.isNaN(weekly))
-		) {
-			console.error(
-				"❌ Usage pause thresholds must be whole numbers between 1 and 100, or 'off'",
-			);
-			await exitGracefully(1);
-		}
 
 		const result = await setUsagePauseThresholds(dbOps, name, fiveHour, weekly);
 		console.log(result.message);

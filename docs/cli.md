@@ -272,7 +272,7 @@ bun run cli --set-usage-pause-thresholds <name> <5h%|off> <weekly%|off>
 
 **Behaviour:**
 - Thresholds are evaluated on each usage poll, so a pause lands within one poll interval of the account crossing the line
-- A threshold pause is recorded with `pause_reason = rate_limit_window`, and is lifted automatically once every configured window reads back below its threshold
+- A threshold pause is recorded with `pause_reason = usage_threshold`, and is lifted by the poller once every configured window reads back below its threshold. It is deliberately not one of the load balancer's auto-unpause reasons: those resume on a single stored window reset, which could return an account to rotation while another configured window is still over
 - Accounts you paused by hand, or that were paused for overage or refresh failures, are never touched by this rule
 - Both windows are written on every call: pass `off` for the one you do not want
 

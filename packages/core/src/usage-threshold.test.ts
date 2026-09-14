@@ -157,6 +157,25 @@ describe("evaluateUsagePause", () => {
 		).toStrictEqual({ action: "none" });
 	});
 
+	it("uses a reason the load balancer will not auto-unpause", () => {
+		// The load balancer resumes `overage`, `rate_limit_window` and unset
+		// reasons once the stored rate_limit_reset elapses. That timestamp covers
+		// one window, so an account benched for its weekly threshold could be
+		// resumed by a 5-hour reset. Resuming is the poller's job alone.
+		expect(USAGE_THRESHOLD_PAUSE_REASON).toBe("usage_threshold");
+	});
+
+	it("leaves a rate_limit_window pause to the load balancer", () => {
+		expect(
+			evaluateUsagePause({
+				thresholds: { fiveHour: 80, weekly: null },
+				utilization: { fiveHour: 3, weekly: null },
+				paused: true,
+				pauseReason: "rate_limit_window",
+			}),
+		).toStrictEqual({ action: "none" });
+	});
+
 	it("leaves an overage pause to the overage logic", () => {
 		expect(
 			evaluateUsagePause({

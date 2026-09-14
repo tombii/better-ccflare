@@ -1074,11 +1074,23 @@ describe("applyUsagePauseThresholds", () => {
 							usage_pause_weekly_threshold: null,
 							...account,
 						} as Account),
-			pauseAccount: async (accountId: string, reason: string) => {
+			pauseAccountForUsageThreshold: async (
+				accountId: string,
+				reason: string,
+			) => {
 				paused.push({ accountId, reason });
 			},
-			resumeAccount: async (accountId: string) => {
-				resumed.push(accountId);
+			resumeAccountFromUsageThreshold: async (
+				accountId: string,
+				reason: string,
+			) => {
+				resumed.push(`${accountId}:${reason}`);
+			},
+			pauseAccount: async () => {
+				throw new Error("must use the guarded pause write");
+			},
+			resumeAccount: async () => {
+				throw new Error("must use the guarded resume write");
 			},
 		} as unknown as DatabaseOperations;
 		return { dbOps, paused, resumed };
@@ -1097,7 +1109,7 @@ describe("applyUsagePauseThresholds", () => {
 		);
 
 		expect(paused).toStrictEqual([
-			{ accountId: "acc-1", reason: "rate_limit_window" },
+			{ accountId: "acc-1", reason: "usage_threshold" },
 		]);
 		expect(resumed).toStrictEqual([]);
 	});
@@ -1120,7 +1132,7 @@ describe("applyUsagePauseThresholds", () => {
 		const { dbOps, paused, resumed } = makeDbOps({
 			usage_pause_five_hour_threshold: 80,
 			paused: true,
-			pause_reason: "rate_limit_window",
+			pause_reason: "usage_threshold",
 		});
 
 		await applyUsagePauseThresholds(
@@ -1130,7 +1142,7 @@ describe("applyUsagePauseThresholds", () => {
 			logger,
 		);
 
-		expect(resumed).toStrictEqual(["acc-1"]);
+		expect(resumed).toStrictEqual(["acc-1:usage_threshold"]);
 		expect(paused).toStrictEqual([]);
 	});
 
@@ -1164,7 +1176,7 @@ describe("applyUsagePauseThresholds", () => {
 		);
 
 		expect(paused).toStrictEqual([
-			{ accountId: "acc-1", reason: "rate_limit_window" },
+			{ accountId: "acc-1", reason: "usage_threshold" },
 		]);
 	});
 

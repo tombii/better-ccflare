@@ -466,6 +466,43 @@ export class AccountRepository extends BaseRepository<Account> {
 	}
 
 	/**
+	 * Pause an account for a usage threshold, but only while it is still
+	 * running.
+	 *
+	 * The decision to pause is made from an account row read moments earlier.
+	 * A manual or overage pause landing in between must win: without the
+	 * `paused = 0` guard this write would overwrite that pause_reason and the
+	 * account would later be auto-resumed as if the threshold had paused it.
+	 */
+	async pauseForUsageThreshold(
+		accountId: string,
+		reason: string,
+	): Promise<void> {
+		await this.run(
+			`UPDATE accounts SET paused = 1, pause_reason = ? WHERE id = ? AND COALESCE(paused, 0) = 0`,
+			[reason, accountId],
+		);
+	}
+
+	/**
+	 * Resume an account that is still paused for the given usage-threshold
+	 * reason.
+	 *
+	 * The reason guard is what keeps a manual or overage pause written between
+	 * the read and this write from being cleared — that would hand an
+	 * intentionally benched account straight back to traffic.
+	 */
+	async resumeFromUsageThreshold(
+		accountId: string,
+		reason: string,
+	): Promise<void> {
+		await this.run(
+			`UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ? AND COALESCE(paused, 0) = 1 AND pause_reason = ?`,
+			[accountId, reason],
+		);
+	}
+
+	/**
 	 * Set the per-window usage-pause thresholds (whole percentages, or null to
 	 * turn a window's threshold off). Both windows are written together so a
 	 * caller cannot leave the pair half-updated.
