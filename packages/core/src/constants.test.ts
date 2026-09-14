@@ -4,6 +4,7 @@ import {
 	computeOverloadWithResetCapMs,
 	computeRateLimitBackoffMs,
 	computeServerErrorCooldownMs,
+	getOverloadRetryConfig,
 	getRateLimitResetStabilityMs,
 	getServerErrorRetryEnabled,
 	isOverloadReason,
@@ -13,6 +14,7 @@ import {
 
 const ENV_KEYS = [
 	"CCFLARE_OVERLOAD_COOLDOWN_MS",
+	"CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS",
 	"CCFLARE_OVERLOAD_WITH_RESET_MAX_MS",
 	"CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS",
 	"CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS",
@@ -140,5 +142,44 @@ describe("transient upstream 5xx knobs", () => {
 		expect(isServerErrorReason("upstream_5xx_server_error")).toBe(true);
 		expect(isServerErrorReason("upstream_529_overloaded_no_reset")).toBe(false);
 		expect(isOverloadReason("upstream_5xx_server_error")).toBe(false);
+	});
+});
+
+describe("overload retry attempt count", () => {
+	it("defaults to 2 and honors a valid integer override", () => {
+		expect(getOverloadRetryConfig().maxAttempts).toBe(2);
+		process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS = "3";
+		expect(getOverloadRetryConfig().maxAttempts).toBe(3);
+		process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS = " 4 ";
+		expect(getOverloadRetryConfig().maxAttempts).toBe(4);
+	});
+
+	it("truncates a fractional attempt count", () => {
+		process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS = "2.9";
+		expect(getOverloadRetryConfig().maxAttempts).toBe(2);
+	});
+
+	// The three retry loops in proxy-operations spin on `attempt < maxAttempts`
+	// while the upstream keeps returning 5xx/529, so a non-finite count is an
+	// unbounded retry loop against a sick upstream, not a generous one.
+	it("falls back to the default for non-finite and unparseable values", () => {
+		for (const raw of ["Infinity", "-Infinity", "NaN", "abc"]) {
+			process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS = raw;
+			expect(getOverloadRetryConfig().maxAttempts).toBe(2);
+		}
+	});
+
+	// 0 and negatives would silently disable the retry; the documented way to
+	// turn it off is CCFLARE_OVERLOAD_RETRY_ENABLED=false.
+	it("falls back to the default for zero and negative counts", () => {
+		for (const raw of ["0", "-4"]) {
+			process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS = raw;
+			expect(getOverloadRetryConfig().maxAttempts).toBe(2);
+		}
+	});
+
+	it("clamps an oversized attempt count to 10", () => {
+		process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS = "50";
+		expect(getOverloadRetryConfig().maxAttempts).toBe(10);
 	});
 });

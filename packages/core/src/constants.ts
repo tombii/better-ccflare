@@ -256,13 +256,38 @@ export function isServerErrorReason(reason: RateLimitReason): boolean {
 	return reason === "upstream_5xx_server_error";
 }
 
+const OVERLOAD_RETRY_MAX_ATTEMPTS_DEFAULT = 2;
+const OVERLOAD_RETRY_MAX_ATTEMPTS_CAP = 10;
+
+/**
+ * Parse CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS into a finite integer in
+ * [1, OVERLOAD_RETRY_MAX_ATTEMPTS_CAP].
+ *
+ * The retry loops in the proxy spin on `attempt < maxAttempts` while the
+ * upstream keeps returning 529/5xx, so an unclamped value is not a tuning
+ * knob: "Infinity" parses truthy and retries forever against a sick upstream,
+ * and a fractional value gives a surprising count. 0 and negatives are not a
+ * way to disable the retry either — they would silently skip it, while the
+ * documented kill switch is CCFLARE_OVERLOAD_RETRY_ENABLED=false. Anything
+ * outside the range falls back to the default rather than being honored.
+ */
+function readRetryMaxAttempts(raw: string | undefined): number {
+	if (raw === undefined || raw.trim() === "")
+		return OVERLOAD_RETRY_MAX_ATTEMPTS_DEFAULT;
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed)) return OVERLOAD_RETRY_MAX_ATTEMPTS_DEFAULT;
+	const truncated = Math.trunc(parsed);
+	if (truncated < 1) return OVERLOAD_RETRY_MAX_ATTEMPTS_DEFAULT;
+	return Math.min(truncated, OVERLOAD_RETRY_MAX_ATTEMPTS_CAP);
+}
+
 /**
  * Configuration for in-place retry of reset-less 529 (overloaded_error) responses.
  * Used by proxyWithAccount before applying account cooldown.
  *
  * Env knobs:
  *   CCFLARE_OVERLOAD_RETRY_ENABLED      — set to "false" to disable (default: true)
- *   CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS — max in-place attempts (default: 2)
+ *   CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS — max in-place attempts, integer 1-10 (default: 2)
  *   CCFLARE_OVERLOAD_RETRY_BASE_MS      — jitter backoff base delay ms (default: 750)
  *   CCFLARE_OVERLOAD_RETRY_MAX_MS       — jitter backoff ceiling ms (default: 3000)
  */
@@ -273,9 +298,9 @@ export function getOverloadRetryConfig(): {
 	maxMs: number;
 } {
 	const enabled = process.env.CCFLARE_OVERLOAD_RETRY_ENABLED !== "false";
-	// maxAttempts: 0 is not useful (use ENABLED=false to disable), so || is correct.
-	const maxAttempts =
-		Number(process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS) || 2;
+	const maxAttempts = readRetryMaxAttempts(
+		process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS,
+	);
 	// baseMs/maxMs: 0 is valid (zero delay for tests), so use explicit finite check.
 	const rawBase = Number(process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS);
 	const rawMax = Number(process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS);
