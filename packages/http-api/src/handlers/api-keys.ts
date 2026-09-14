@@ -199,7 +199,7 @@ function validateEnum<T extends string>(
  * and fixes a broken key; it must not 500 because a spend total could not be
  * computed.
  */
-async function withSpendUsage(
+export async function withSpendUsage(
 	dbOps: DatabaseOperations,
 	apiKeys: ApiKeyResponse[],
 ): Promise<ApiKeyResponse[]> {

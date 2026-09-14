@@ -272,6 +272,25 @@ export const useUsageHistory = (account: string, range: string) => {
 	});
 };
 
+/**
+ * One key's usage over one window, for the API Key Usage page.
+ *
+ * Same cadence as useUsageHistory: this drives a chart-heavy page that an
+ * operator leaves open, and the underlying query is index-served per key
+ * rather than a scan, so a 60s refresh is cheap.
+ */
+export const useApiKeyUsage = (keyId: string, range: string) => {
+	return useQuery({
+		queryKey: queryKeys.apiKeyUsage(keyId, range),
+		queryFn: () => api.getApiKeyUsage(keyId, range),
+		staleTime: 45000,
+		refetchInterval: 60000,
+		refetchIntervalInBackground: false,
+		gcTime: 15 * 60 * 1000,
+		enabled: !!keyId,
+	});
+};
+
 export const useContextInsights = (timeRange: string) => {
 	return useQuery({
 		queryKey: queryKeys.insightsContext(timeRange),

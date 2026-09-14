@@ -4,6 +4,7 @@ import {
 	BarChart3,
 	Bot,
 	FileText,
+	Gauge,
 	GitBranch,
 	History,
 	Key,
@@ -88,6 +89,12 @@ export function Navigation({ onLogout }: NavigationProps = {}) {
 			{ label: "Accounts", icon: Users, path: "/accounts" },
 			{ label: "Usage History", icon: History, path: "/usage-history" },
 		];
+
+		baseItems.push({
+			label: "API Key Usage",
+			icon: Gauge,
+			path: "/api-key-usage",
+		});
 
 		baseItems.push({ label: "Combos", icon: Zap, path: "/combos" });
 		baseItems.push({

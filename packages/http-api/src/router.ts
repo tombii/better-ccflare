@@ -57,6 +57,7 @@ import {
 	createAlertsStreamHandler,
 } from "./handlers/alerts";
 import { createAnalyticsHandler } from "./handlers/analytics";
+import { createApiKeyUsageHandler } from "./handlers/api-key-usage";
 import {
 	createApiKeyDeleteHandler,
 	createApiKeyDisableHandler,
@@ -941,6 +942,17 @@ export class APIRouter {
 		if (path.startsWith("/api/api-keys/")) {
 			const parts = path.split("/");
 			const keyIdOrName = decodeURIComponent(parts[3]); // Decode URL-encoded IDs/names
+
+			// API key usage - the per-key monitoring page's single read.
+			// NOT admin-gated: it is a read, and the sibling reads
+			// (GET /api/api-keys, GET /api/api-keys/stats) are not gated
+			// either. The write routes below are, and stay that way.
+			if (path.endsWith("/usage") && method === "GET") {
+				const usageHandler = createApiKeyUsageHandler(this.context);
+				return await this.wrapHandler((_req, reqUrl) =>
+					usageHandler(keyIdOrName, reqUrl.searchParams),
+				)(req, url);
+			}
 
 			// API key role update - Only admin keys can update roles
 			if (path.endsWith("/role") && method === "PATCH") {

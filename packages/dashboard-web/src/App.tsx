@@ -41,6 +41,11 @@ const LazyUsageHistoryTab = lazy(() =>
 		default: m.UsageHistoryTab,
 	})),
 );
+const LazyApiKeyUsageTab = lazy(() =>
+	import("./components/api-key-usage/ApiKeyUsageTab").then((m) => ({
+		default: m.ApiKeyUsageTab,
+	})),
+);
 const LoadingSkeleton = () => (
 	<div className="space-y-6 p-6">
 		<div className="animate-pulse">
@@ -117,6 +122,17 @@ export function App() {
 				),
 				title: "Usage History",
 				subtitle: "Per-account usage windows over time, with limit prediction",
+			},
+			{
+				path: "/api-key-usage",
+				element: (
+					<Suspense fallback={<LoadingSkeleton />}>
+						<LazyApiKeyUsageTab />
+					</Suspense>
+				),
+				title: "API Key Usage",
+				subtitle:
+					"Per-key cost, plan efficiency and limits for one API key at a time",
 			},
 			{
 				path: "/agents",

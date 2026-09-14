@@ -6,6 +6,7 @@ export * from "./alerts";
 // Keep existing exports for backward compatibility
 export * from "./api";
 export * from "./api-key";
+export * from "./api-key-usage";
 export * from "./combo";
 export * from "./constants";
 export * from "./context";

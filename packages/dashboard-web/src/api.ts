@@ -10,6 +10,7 @@ import type {
 	AgentWorkspace,
 	AnalyticsResponse,
 	AnomalyInsightsResponse,
+	ApiKeyUsageResponse,
 	CacheInsightsResponse,
 	Combo,
 	ComboFamilyAssignment,
@@ -1281,6 +1282,21 @@ class API extends HttpClient {
 		const params = new URLSearchParams({ account, range });
 		return this.get<UsageHistoryResponse>(
 			`/api/usage-history?${params.toString()}`,
+		);
+	}
+
+	/**
+	 * Per-key usage for the monitoring page. `keyIdOrName` is sent as the id;
+	 * the endpoint accepts either, but the id is what the dropdown holds and
+	 * what the requests table is indexed on.
+	 */
+	async getApiKeyUsage(
+		keyIdOrName: string,
+		range = "24h",
+	): Promise<ApiKeyUsageResponse> {
+		const params = new URLSearchParams({ range });
+		return this.get<ApiKeyUsageResponse>(
+			`/api/api-keys/${encodeURIComponent(keyIdOrName)}/usage?${params.toString()}`,
 		);
 	}
 
