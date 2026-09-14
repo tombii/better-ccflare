@@ -8,7 +8,9 @@ import { TIME_CONSTANTS } from "@better-ccflare/core";
 import type {
 	Account,
 	AgentAttributionSource,
+	ApiKey,
 	ApiKeyRestrictions,
+	ApiKeySpendLimit,
 	Combo,
 	ComboFamily,
 	ComboFamilyAssignment,
@@ -2743,6 +2745,7 @@ OAuth tokens will need to be re-authenticated.
 		isActive: boolean;
 		role?: "admin" | "api-only";
 		restrictions?: Partial<ApiKeyRestrictions>;
+		spendLimit?: ApiKeySpendLimit | null;
 	}): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -2766,6 +2769,12 @@ OAuth tokens will need to be re-authenticated.
 					allowed_providers: serializeRestrictionList(
 						apiKey.restrictions?.allowedProviders ?? null,
 					),
+					// An omitted spend limit is NULL (no limit). The window and
+					// enforcement columns only travel with a limit — storing them
+					// alone would describe a budget that does not exist.
+					limit_usd: apiKey.spendLimit?.limitUsd ?? null,
+					limit_window: apiKey.spendLimit?.limitWindow ?? null,
+					limit_enforce: apiKey.spendLimit?.limitEnforce ?? null,
 				}),
 			this.retryConfig,
 			"createApiKey",
@@ -2828,6 +2837,82 @@ OAuth tokens will need to be re-authenticated.
 			this.retryConfig,
 			"updateApiKeyRestrictions",
 		);
+	}
+
+	/**
+	 * Replace an API key's spend limit. `null` clears it entirely.
+	 */
+	async updateApiKeySpendLimit(
+		id: string,
+		spendLimit: ApiKeySpendLimit | null,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.updateSpendLimit(id, spendLimit),
+			this.retryConfig,
+			"updateApiKeySpendLimit",
+		);
+	}
+
+	/** Every active key that carries a spend limit — the counter's seed set. */
+	async listApiKeysWithSpendLimits(): Promise<ApiKey[]> {
+		return withDatabaseRetry(
+			() => this.apiKeys.listWithSpendLimits(),
+			this.retryConfig,
+			"listApiKeysWithSpendLimits",
+		);
+	}
+
+	/**
+	 * Total API-cost-equivalent spend attributed to one API key since
+	 * `sinceMs`, plus the timestamp of the OLDEST request in that total.
+	 *
+	 * This is the spend counter's seed and resync query, and the only new SQL
+	 * this feature adds. Notes on its shape, all deliberate:
+	 *
+	 *  - `timestamp > ?` with an absolute epoch-ms bound computed in
+	 *    JavaScript. No SQL date function: the two backends disagree on all of
+	 *    them and this must answer identically on both.
+	 *  - No `billing_type` predicate AT ALL. Every request in this codebase is
+	 *    priced at public pay-per-token rates regardless of whether the account
+	 *    is on a subscription, so `cost_usd` already IS the API-cost-equivalent
+	 *    the limit is expressed in. Filtering on billing_type would both change
+	 *    the meaning of the limit and walk into the `billing_type IS NULL` trap
+	 *    that a plain `= 'x'` / `!= 'x'` comparison hides. (The existing
+	 *    analytics queries are a separate question and are out of scope here.)
+	 *  - `cost_usd IS NOT NULL` so MIN(timestamp) reports the oldest row that
+	 *    actually CONTRIBUTES to the total: a zero-cost row ageing out relieves
+	 *    nothing, and reporting it would promise a reset that does not happen.
+	 *  - Served by the existing idx_requests_api_key_timestamp. Measured at
+	 *    ~264ms against a key with 282k requests in 30 days, which is why the
+	 *    caller runs this once at startup and then on a TTL, never per request.
+	 */
+	async getApiKeySpendSince(
+		apiKeyId: string,
+		sinceMs: number,
+	): Promise<{ totalUsd: number; oldestMs: number | null }> {
+		const row = await withDatabaseRetry(
+			() =>
+				this.adapter.get<{
+					total: number | string | null;
+					oldest: number | string | null;
+				}>(
+					`SELECT SUM(cost_usd) AS total, MIN(timestamp) AS oldest
+					 FROM requests
+					 WHERE api_key_id = ? AND timestamp > ? AND cost_usd IS NOT NULL`,
+					[apiKeyId, sinceMs],
+				),
+			this.retryConfig,
+			"getApiKeySpendSince",
+		);
+
+		// SUM() over no rows is SQL NULL, and PostgreSQL hands numerics back as
+		// strings, so both values are coerced rather than trusted.
+		const total = row?.total != null ? Number(row.total) : 0;
+		const oldest = row?.oldest != null ? Number(row.oldest) : null;
+		return {
+			totalUsd: Number.isFinite(total) ? total : 0,
+			oldestMs: oldest != null && Number.isFinite(oldest) ? oldest : null,
+		};
 	}
 
 	async countActiveApiKeys(): Promise<number> {

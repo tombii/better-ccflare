@@ -7,6 +7,8 @@ import {
 	getModelRates,
 	type RequestEvt,
 	requestEvents,
+	type SpendLimitExceededEvt,
+	spendLimitEvents,
 } from "@better-ccflare/core";
 import type { BunSqlAdapter } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
@@ -283,6 +285,7 @@ export class AlertService {
 	private readonly config: Config;
 	private readonly requestListener: (event: RequestEvt) => void;
 	private readonly authFailureListener: (event: AuthFailureEvt) => void;
+	private readonly spendLimitListener: (event: SpendLimitExceededEvt) => void;
 	private readonly configChangeListener: ({ key }: { key: string }) => void;
 	private readonly getAccounts: () => Promise<Account[]>;
 	private anomalyTimer: ReturnType<typeof setInterval> | null = null;
@@ -327,6 +330,16 @@ export class AlertService {
 				);
 			});
 		};
+		// Same catch-and-log rationale as the two listeners above: this is
+		// invoked from an async event handler, so an unhandled rejection would
+		// take the proxy down with exit code 1.
+		this.spendLimitListener = (event) => {
+			this.handleSpendLimitExceeded(event).catch((error) => {
+				log.error(
+					`Spend-limit alert evaluation failed for key ${event.apiKeyId}: ${(error as Error).message}`,
+				);
+			});
+		};
 		this.configChangeListener = ({ key }: { key: string }) => {
 			if (
 				key === "alert_anomaly_enabled" ||
@@ -342,6 +355,7 @@ export class AlertService {
 		requestEvents.on("event", this.requestListener);
 		this.config.on("change", this.configChangeListener);
 		authFailureEvents.on("event", this.authFailureListener);
+		spendLimitEvents.on("event", this.spendLimitListener);
 		this.restartAnomalyTimer();
 		this.restartReauthDeadlineTimer();
 		// Perform an initial check immediately rather than waiting a full hour
@@ -359,6 +373,7 @@ export class AlertService {
 		requestEvents.off("event", this.requestListener);
 		this.config.off("change", this.configChangeListener);
 		authFailureEvents.off("event", this.authFailureListener);
+		spendLimitEvents.off("event", this.spendLimitListener);
 		if (this.anomalyTimer) {
 			clearInterval(this.anomalyTimer);
 			this.anomalyTimer = null;
@@ -367,6 +382,49 @@ export class AlertService {
 			clearInterval(this.reauthDeadlineTimer);
 			this.reauthDeadlineTimer = null;
 		}
+	}
+
+	/**
+	 * A WARN-mode API key has gone past its spend limit.
+	 *
+	 * Only warn-mode keys reach here: a block-mode key is refused by the proxy
+	 * and the refusal is already a recorded, failed request. Warn mode refuses
+	 * nothing, so without this the overage would be visible only to whoever
+	 * happened to open the dashboard.
+	 *
+	 * "warning", not "critical": nothing is broken and nothing is being
+	 * refused. The operator chose warn-only, and this reports what they asked
+	 * to be told. Cooldown-bucketed by key through the shared
+	 * `buildThresholdAlertId`, so a key that is over budget and busy raises one
+	 * alert per cooldown window rather than one per request.
+	 */
+	private async handleSpendLimitExceeded(
+		event: SpendLimitExceededEvt,
+	): Promise<void> {
+		const timestamp = Date.now();
+		const config = getAlertsConfig(this.config);
+		const name = event.apiKeyName ?? event.apiKeyId;
+		const alert: AlertEvent = {
+			id: buildThresholdAlertId(
+				"api_key_spend_limit",
+				event.apiKeyId,
+				timestamp,
+				config.cooldownMinutes,
+			),
+			timestamp,
+			type: "api_key_spend_limit",
+			severity: "warning",
+			title: "API key over its spend limit",
+			message: `API key ${name} has spent $${event.spentUsd.toFixed(4)} against its $${event.limitUsd} ${event.window} limit. The limit is set to warn only, so requests are still being served.`,
+			value: event.spentUsd,
+			threshold: event.limitUsd,
+			account: null,
+			model: null,
+			project: null,
+			requestId: null,
+			acknowledged: false,
+		};
+		await this.persistAndEmit(alert, config.webhookUrl);
 	}
 
 	private async handleAuthFailure(event: AuthFailureEvt): Promise<void> {

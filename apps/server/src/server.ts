@@ -101,6 +101,7 @@ import {
 	StrategyName,
 	type StrategyStore,
 	toApiKeyRestrictions,
+	toApiKeySpendLimit,
 } from "@better-ccflare/types";
 import { serve } from "bun";
 import { createCodexUsageRefresher } from "./codex-usage-refresher";
@@ -1996,6 +1997,14 @@ export default async function startServer(options?: {
 						? toApiKeyRestrictions(authResult.apiKey)
 						: null;
 
+					// Same reasoning for the key's spend limit: resolved once from
+					// the record already in hand, so the counter check on the proxy
+					// path costs no key lookup. Null for a key with no limit and
+					// null in zero-keys mode, both of which make it a no-op.
+					const apiKeySpendLimit = authResult.apiKey
+						? toApiKeySpendLimit(authResult.apiKey)
+						: null;
+
 					try {
 						// Codex CLI first tries WebSocket transport for /v1/responses.
 						// We only support HTTP — reject the upgrade cleanly so Codex
@@ -2034,6 +2043,7 @@ export default async function startServer(options?: {
 								authResult.apiKeyId,
 								authResult.apiKeyName,
 								apiKeyRestrictions,
+								apiKeySpendLimit,
 							);
 						}
 						return trackStreamForShutdown(
@@ -2043,7 +2053,10 @@ export default async function startServer(options?: {
 								proxyContext,
 								authResult.apiKeyId,
 								authResult.apiKeyName,
-								{ restrictions: apiKeyRestrictions },
+								{
+									restrictions: apiKeyRestrictions,
+									spendLimit: apiKeySpendLimit,
+								},
 							),
 						);
 					} catch (proxyError) {

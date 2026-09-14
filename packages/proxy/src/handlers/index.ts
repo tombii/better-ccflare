@@ -36,6 +36,14 @@ export {
 	summarizeAccountRestrictionScope,
 } from "./api-key-restrictions";
 export {
+	ApiKeySpendCounter,
+	getApiKeySpendCounter,
+	resetApiKeySpendCounter,
+	SPEND_RESYNC_TTL_MS,
+	type SpendSnapshot,
+	tryGetApiKeySpendCounter,
+} from "./api-key-spend";
+export {
 	clearFamilyExhaustionForAccount,
 	createModelFamilyExhaustedResponse,
 	type FamilyExhaustionOrigin,

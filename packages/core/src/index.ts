@@ -114,6 +114,18 @@ export {
 } from "./pricing";
 export * from "./probe-backoff";
 export * from "./request-events";
+export {
+	type SpendLimitExceededEvt,
+	spendLimitEvents,
+} from "./spend-limit-events";
+export {
+	calendarMonthEndMs,
+	calendarMonthStartMs,
+	computeSpendWindowResetMs,
+	computeSpendWindowStartMs,
+	ROLLING_SPEND_WINDOW_DURATION_MS,
+	spendWindowInstanceKey,
+} from "./spend-window";
 export * from "./strategy";
 export {
 	computeWindowStartMs,

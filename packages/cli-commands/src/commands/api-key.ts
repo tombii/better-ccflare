@@ -4,6 +4,7 @@ import {
 	type ApiKeyResponse,
 	type ApiKeyRestrictions,
 	type ApiKeyRole,
+	type ApiKeySpendLimit,
 	NodeCryptoUtils,
 	toApiKeyResponse,
 } from "@better-ccflare/types";
@@ -16,6 +17,7 @@ export async function generateApiKey(
 	name: string,
 	role: ApiKeyRole = "api-only",
 	restrictions?: Partial<ApiKeyRestrictions>,
+	spendLimit?: ApiKeySpendLimit | null,
 ): Promise<ApiKeyGenerationResult> {
 	// Validate name
 	if (!name || name.trim().length === 0) {
@@ -62,6 +64,7 @@ export async function generateApiKey(
 		isActive: true,
 		role,
 		restrictions,
+		spendLimit,
 	});
 
 	return {
@@ -313,6 +316,53 @@ export async function updateApiKeyRestrictions(
 }
 
 /**
+ * Replace an API key's spend limit. `null` clears it.
+ *
+ * Accepts an id or a name, like the other admin operations reached through
+ * `/api/api-keys/:idOrName/...`. No lockout guard, for the same reason
+ * `updateApiKeyRestrictions` has none: dashboard access is decided by `role`
+ * alone, so a budget — even a caller's own, even the last admin key's —
+ * cannot lock anyone out of the dashboard.
+ *
+ * Returns the key's id so the caller can drop its cached spend total: the
+ * in-memory counter is keyed by id, and leaving a stale entry behind would
+ * keep measuring a window the operator has just replaced.
+ */
+export async function updateApiKeySpendLimit(
+	dbOps: DatabaseOperations,
+	idOrName: string,
+	spendLimit: ApiKeySpendLimit | null,
+): Promise<string> {
+	const apiKey =
+		(await dbOps.getApiKey(idOrName)) ??
+		(await dbOps.getApiKeyByName(idOrName));
+	if (!apiKey) {
+		throw new Error("API key not found");
+	}
+
+	const success = await dbOps.updateApiKeySpendLimit(apiKey.id, spendLimit);
+	if (!success) {
+		throw new Error("Failed to update API key spend limit");
+	}
+
+	return apiKey.id;
+}
+
+/**
+ * Describe a key's spend limit in one short line, for CLI summaries.
+ *
+ * "warn only" is said out loud: a limit that never refuses looks identical to
+ * one that does in every other field, and that is the one thing an operator
+ * reading this line most needs to know.
+ */
+export function formatApiKeySpendLimit(apiKey: ApiKeyResponse): string {
+	if (apiKey.limitUsd == null) return "none";
+	const window = apiKey.limitWindow ?? "rolling_30d";
+	const enforce = apiKey.limitEnforce ?? "block";
+	return `$${apiKey.limitUsd} per ${window}${enforce === "warn" ? " (warn only)" : ""}`;
+}
+
+/**
  * Describe a key's restrictions in one short line, for CLI and dashboard
  * summaries. `null` reads as unrestricted; `[]` reads as a deny-all, which is
  * a legitimate but drastic setting and must never look like "unrestricted".
@@ -374,6 +424,7 @@ export function formatApiKeyForDisplay(apiKey: ApiKeyResponse): string {
     Status: ${status}
     Role: ${role}
     Restrictions: ${formatApiKeyRestrictions(apiKey)}
+    Spend limit: ${formatApiKeySpendLimit(apiKey)}
     Created: ${new Date(apiKey.createdAt).toLocaleDateString()}
     Last Used: ${lastUsed}
     Usage Count: ${apiKey.usageCount}`;

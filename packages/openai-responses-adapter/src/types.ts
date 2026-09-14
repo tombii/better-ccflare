@@ -1,4 +1,7 @@
-import type { ApiKeyRestrictions } from "@better-ccflare/types";
+import type {
+	ApiKeyRestrictions,
+	ApiKeySpendLimit,
+} from "@better-ccflare/types";
 
 // ============================================================
 // REQUEST TYPES (what codex sends to /v1/responses)
@@ -360,5 +363,7 @@ export type HandleProxyFn = (
 		 * /v1/responses path enforces them exactly like /v1/messages does.
 		 * Omitting it here would make the Codex endpoint a bypass. */
 		restrictions?: ApiKeyRestrictions | null;
+		/** The calling API key's spend limit, forwarded for the same reason. */
+		spendLimit?: ApiKeySpendLimit | null;
 	},
 ) => Promise<Response>;

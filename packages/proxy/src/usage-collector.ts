@@ -20,6 +20,7 @@ import {
 import { toStreamTerminalState } from "@better-ccflare/types/request";
 import { formatCost } from "@better-ccflare/ui-common";
 import { cacheBodyStore } from "./cache-body-store";
+import { tryGetApiKeySpendCounter } from "./handlers/api-key-spend";
 import {
 	extractGatewayHintHeadersFromParts,
 	type GatewayHintHeaders,
@@ -849,6 +850,25 @@ export class UsageCollector {
 				}
 				throw error;
 			}
+
+			// Per-API-key spend counter: the request's cost has just become
+			// known, and this is the only place in the process where that is
+			// true. The api key id is already on the StartMessage, so the
+			// increment costs one Map lookup and no query.
+			//
+			// It runs BEFORE the row is enqueued for the async writer, on
+			// purpose: the counter is the thing the proxy enforces against and
+			// must not lag behind a write that may be queued, delayed or (under
+			// backpressure) dropped. The periodic resync is what reconciles the
+			// two afterwards.
+			//
+			// `tryGet...` and never `get...`: a key with no limit has no counter
+			// entry and a deployment with no limits at all has no counter, and
+			// neither may pay for this feature.
+			tryGetApiKeySpendCounter()?.record(
+				startMessage.apiKeyId,
+				state.usage.costUsd,
+			);
 
 			// Calculate tokens per second - zai specific vs other providers
 			if (finalOutputTokens > 0) {

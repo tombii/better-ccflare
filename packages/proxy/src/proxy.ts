@@ -4,6 +4,8 @@ import {
 	runForceAccountModelExempt,
 	ServiceUnavailableError,
 	splitModelRouting,
+	type SpendLimitExceededEvt,
+	spendLimitEvents,
 	trackClientVersion,
 } from "@better-ccflare/core";
 import { DatabaseFactory } from "@better-ccflare/database";
@@ -16,7 +18,11 @@ import {
 	type RequestObservation,
 	usageCache,
 } from "@better-ccflare/providers";
-import type { Account, ApiKeyRestrictions } from "@better-ccflare/types";
+import type {
+	Account,
+	ApiKeyRestrictions,
+	ApiKeySpendLimit,
+} from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
 import {
 	createModelFamilyExhaustedResponse,
@@ -26,6 +32,7 @@ import {
 	ERROR_MESSAGES,
 	getApiKeyRestrictionDenial,
 	getAccountUsageThrottleUntil,
+	getApiKeySpendCounter,
 	getComboSlotInfo,
 	getDeferredCandidates,
 	getModelFamilyExhaustionInfo,
@@ -48,6 +55,7 @@ import {
 	requestCarriesImageContent,
 	resolveEffectiveModel,
 	restrictsModels,
+	type SpendSnapshot,
 	selectAccountsForRequest,
 	setXaiConvId,
 	validateProviderPath,
@@ -161,18 +169,89 @@ function createApiKeyRestrictionResponse(
 	);
 }
 
+// Same numbers, same meaning, as handlers/model-capacity.ts's
+// DEFAULT_RETRY_AFTER_SECONDS / MAX_RETRY_AFTER_SECONDS, which are module-
+// private there. Re-declared rather than exported across the module boundary
+// so the two refusals can be read side by side; if either moves, both should.
+const SPEND_LIMIT_DEFAULT_RETRY_AFTER_SECONDS = 60;
+const SPEND_LIMIT_MAX_RETRY_AFTER_SECONDS = 3600;
+
+/**
+ * The Anthropic-compatible envelope for a refusal caused by an API key's own
+ * spend limit.
+ *
+ * 429 with `type: "rate_limit_error"`, NOT the 403 `permission_error` its
+ * sibling above uses: a spend limit is a rate that resets, and a client that
+ * waits does eventually get served again — which is exactly what 429 plus
+ * Retry-After tells it. A 403 would tell a client to stop trying forever.
+ *
+ * The clamp on Retry-After is lifted verbatim from
+ * handlers/model-capacity.ts's `createModelFamilyExhaustedResponse`, which
+ * reuses those two constants: at least 1 second, at most an hour, and the
+ * 60-second default when no reset is known. The upper clamp matters here —
+ * a calendar-month window can be four weeks out, and handing a client a
+ * `Retry-After: 2419200` is not a useful instruction.
+ */
+function createApiKeySpendLimitResponse(info: {
+	limitUsd: number;
+	spentUsd: number;
+	window: string;
+	resetMs: number | null;
+}): Response {
+	const retryAfterSeconds =
+		info.resetMs != null && info.resetMs > Date.now()
+			? Math.max(
+					1,
+					Math.min(
+						SPEND_LIMIT_MAX_RETRY_AFTER_SECONDS,
+						Math.ceil((info.resetMs - Date.now()) / 1000),
+					),
+				)
+			: SPEND_LIMIT_DEFAULT_RETRY_AFTER_SECONDS;
+
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "rate_limit_error",
+				code: "api_key_limit_exceeded",
+				message: `This API key has exceeded its spend limit of $${info.limitUsd} over its ${info.window} window ($${info.spentUsd.toFixed(4)} spent).`,
+				limit_usd: info.limitUsd,
+				spent_usd: info.spentUsd,
+				window: info.window,
+				resets_at:
+					info.resetMs != null ? new Date(info.resetMs).toISOString() : null,
+			},
+		}),
+		{
+			status: 429,
+			headers: {
+				"Content-Type": "application/json",
+				"Retry-After": String(retryAfterSeconds),
+			},
+		},
+	);
+}
+
 // ===== USAGE COLLECTOR MANAGEMENT =====
 
 export async function initProxy(
 	getStorePayloads: () => boolean,
 ): Promise<void> {
+	const dbOps = DatabaseFactory.getInstance();
 	await initUsageCollector(
 		getStorePayloads,
 		(summary) => {
 			requestEvents.emit("event", { type: "summary", payload: summary });
 		},
-		DatabaseFactory.getInstance(),
+		dbOps,
 	);
+	// Seed one spend total per key that has a limit, so the very first request
+	// after a restart is checked against the real spend rather than zero. Keys
+	// with no limit are not listed and get no counter. Failures inside seedAll
+	// are logged and swallowed — a key that could not be seeded here seeds
+	// lazily (and synchronously) the first time it is checked.
+	await getApiKeySpendCounter(dbOps).seedAll();
 }
 
 export async function drainUsageCollector(): Promise<void> {
@@ -239,6 +318,13 @@ export function handleProxy(
 		 * zero-keys mode produces, since no key record exists there at all.
 		 */
 		restrictions?: ApiKeyRestrictions | null;
+		/**
+		 * The authenticated API key's spend limit, resolved by the caller from
+		 * the same key record for the same reason. `null`/absent means no limit
+		 * — which is also what zero-keys mode produces, since there is no key
+		 * there at all and so nothing to charge a budget to.
+		 */
+		spendLimit?: ApiKeySpendLimit | null;
 	},
 ): Promise<Response> {
 	let observation: RequestObservation | undefined;
@@ -301,6 +387,7 @@ async function handleProxyRequest(
 	options?: {
 		trustedNativeResponses?: boolean;
 		restrictions?: ApiKeyRestrictions | null;
+		spendLimit?: ApiKeySpendLimit | null;
 	},
 	observation?: RequestObservation,
 ): Promise<Response> {
@@ -367,6 +454,46 @@ async function handleProxyRequest(
 		restrictsModels(keyRestrictions) &&
 		!isModelAllowedForApiKey(requestModel, keyRestrictions);
 
+	// Per-API-key spend limit — EVALUATED HERE, for the same reasons the model
+	// allowlist above is: this is before any upstream contact and before any
+	// routing work, and the refusal is EMITTED further down where
+	// `returnRefusal` is in scope so it is recorded as a request.
+	//
+	// The same two carve-outs apply, verbatim:
+	//   - internal probes are exempt (`keyRestrictions` is gated on
+	//     `isInternalProbe` above; this reuses the same gate). A probe carries
+	//     no API key, and refusing one counts as a refresh failure — five of
+	//     those pause a healthy account.
+	//   - zero-key mode is a no-op: with no active keys there is no auth, no
+	//     key record and no `spendLimit`, so this is `null` and nothing runs.
+	//
+	// This awaits the counter, which awaits the database ONLY on the first
+	// call for a key (see SPEND_RESYNC_TTL_MS). Every later call is answered
+	// from memory with any refresh fired into the background.
+	const keySpendLimit =
+		options?.spendLimit && !isInternalProbe(req.headers, ctx)
+			? options.spendLimit
+			: null;
+	let spendSnapshot: SpendSnapshot | null = null;
+	if (keySpendLimit && apiKeyId) {
+		try {
+			spendSnapshot = await getApiKeySpendCounter(ctx.dbOps).getSnapshot(
+				apiKeyId,
+				keySpendLimit,
+			);
+		} catch (error) {
+			// Fail OPEN on a counter error, unlike the restriction checks which
+			// fail closed. A spend limit is a budget control, not an access
+			// control: a database hiccup must not turn into a proxy-wide outage
+			// for every key that has a budget. The next request re-tries the
+			// sync, and the overshoot is bounded by how long the failure lasts.
+			log.warn(
+				`Spend limit check failed for key ${apiKeyName ?? apiKeyId}; allowing the request: ${(error as Error).message}`,
+			);
+		}
+	}
+	const spendLimitExceeded = spendSnapshot?.exceeded === true;
+
 	// 3a. Validate request body for /v1/messages endpoint
 	if (url.pathname === "/v1/messages" && requestBodyBuffer) {
 		if (parsedBody) {
@@ -406,10 +533,14 @@ async function handleProxyRequest(
 	// A null result means "not a search request" or "no provider could serve it",
 	// and the request continues upstream unchanged.
 	//
-	// Skipped when the API key may not use the requested model (seam 5): the
-	// local search path would otherwise serve — and spend search-provider
-	// quota on — a request the key is about to be refused for.
-	if (parsedBody && !modelRestrictionDenied) {
+	// Skipped when the API key may not use the requested model (seam 5) or is
+	// over a blocking spend limit: the local search path would otherwise
+	// serve — and spend search-provider quota on — a request the key is about
+	// to be refused for.
+	const keyRefusalPending =
+		modelRestrictionDenied ||
+		(spendLimitExceeded && keySpendLimit?.limitEnforce === "block");
+	if (parsedBody && !keyRefusalPending) {
 		const webSearchResponse = await maybeInterceptWebSearch({
 			body: parsedBody,
 			pathname: url.pathname,
@@ -683,6 +814,56 @@ async function handleProxyRequest(
 			0,
 			null,
 		);
+	}
+
+	// Spend limit, emitted. Decided above from the in-memory counter; recorded
+	// through returnRefusal so a refused request lands in request history and
+	// the dashboard fail-rate rather than silently vanishing.
+	//
+	// It sits AFTER the model allowlist and BEFORE account selection. After,
+	// because a model this key may never use is the more fundamental denial
+	// and reporting a budget problem for it would send the caller after the
+	// wrong fix; before, because a request that is over budget should cost no
+	// routing work at all.
+	//
+	// `warn` NEVER refuses. It falls through to the alert below and the
+	// request proceeds exactly as it would with no limit set.
+	if (spendLimitExceeded && spendSnapshot) {
+		if (keySpendLimit?.limitEnforce === "block") {
+			log.warn(
+				`API key spend limit: refusing request — key ${apiKeyName ?? apiKeyId ?? "(unknown)"} has spent ${spendSnapshot.spentUsd.toFixed(4)} of its ${spendSnapshot.limitUsd} limit`,
+			);
+			return await returnRefusal(
+				createApiKeySpendLimitResponse({
+					limitUsd: spendSnapshot.limitUsd,
+					spentUsd: spendSnapshot.spentUsd,
+					window: keySpendLimit.limitWindow,
+					resetMs: spendSnapshot.resetMs,
+				}),
+				"api_key_limit_exceeded",
+				0,
+				null,
+			);
+		}
+		// warn mode. The overage still has to be VISIBLE, or "warn" means
+		// "silently ignore": the dashboard gauge shows it on every key row, and
+		// this raises an alert through the existing alerts subsystem. The event
+		// bus is the established seam for exactly this (auth-failure-events.ts
+		// does the same thing from the refresh scheduler) — the alert service
+		// lives in http-api, which depends on this package and not the other
+		// way round, so the proxy emits and AlertService listens. No new
+		// notification mechanism, and AlertService's own cooldown bucketing
+		// stops a busy key from emitting one alert per request.
+		log.warn(
+			`API key spend limit exceeded (warn only) — key ${apiKeyName ?? apiKeyId ?? "(unknown)"} has spent ${spendSnapshot.spentUsd.toFixed(4)} of its ${spendSnapshot.limitUsd} limit`,
+		);
+		spendLimitEvents.emit("event", {
+			apiKeyId: apiKeyId ?? "",
+			apiKeyName: apiKeyName ?? null,
+			spentUsd: spendSnapshot.spentUsd,
+			limitUsd: spendSnapshot.limitUsd,
+			window: keySpendLimit?.limitWindow ?? "rolling_30d",
+		} satisfies SpendLimitExceededEvt);
 	}
 
 	// 6. Select accounts. Route on the model that will actually be sent

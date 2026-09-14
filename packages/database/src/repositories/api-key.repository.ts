@@ -2,6 +2,7 @@ import {
 	type ApiKey,
 	type ApiKeyRestrictions,
 	type ApiKeyRow,
+	type ApiKeySpendLimit,
 	serializeRestrictionList,
 	toApiKey,
 } from "@better-ccflare/types";
@@ -16,7 +17,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
-				allowed_accounts, allowed_models, allowed_providers
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce
 			FROM api_keys
 			ORDER BY created_at DESC
 		`);
@@ -31,7 +33,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
-				allowed_accounts, allowed_models, allowed_providers
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce
 			FROM api_keys
 			WHERE is_active = 1
 			ORDER BY created_at DESC
@@ -48,7 +51,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
-				allowed_accounts, allowed_models, allowed_providers
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce
 			FROM api_keys
 			WHERE id = ?
 		`,
@@ -67,7 +71,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
-				allowed_accounts, allowed_models, allowed_providers
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce
 			FROM api_keys
 			WHERE hashed_key = ? AND is_active = 1
 		`,
@@ -86,7 +91,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
-				allowed_accounts, allowed_models, allowed_providers
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce
 			FROM api_keys
 			WHERE name = ?
 		`,
@@ -121,8 +127,9 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			INSERT INTO api_keys (
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, is_active, role,
-				allowed_accounts, allowed_models, allowed_providers
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			[
 				apiKey.id,
@@ -139,6 +146,11 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				apiKey.allowed_accounts ?? null,
 				apiKey.allowed_models ?? null,
 				apiKey.allowed_providers ?? null,
+				// Same `?? null` reasoning: a key created without a limit must
+				// land as SQL NULL, not as 0 (which would deny every request).
+				apiKey.limit_usd ?? null,
+				apiKey.limit_window ?? null,
+				apiKey.limit_enforce ?? null,
 			],
 		);
 	}
@@ -250,6 +262,59 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		);
 
 		return changes > 0;
+	}
+
+	/**
+	 * Replace an API key's spend limit.
+	 *
+	 * `null` clears the limit, and clears the window and enforcement columns
+	 * with it: leaving a stale window behind on a key with no budget would
+	 * make a later "set a limit of $50" silently inherit a window the operator
+	 * set months ago and has no reason to remember.
+	 */
+	async updateSpendLimit(
+		id: string,
+		spendLimit: ApiKeySpendLimit | null,
+	): Promise<boolean> {
+		const changes = await this.runWithChanges(
+			`
+			UPDATE api_keys
+			SET limit_usd = ?,
+				limit_window = ?,
+				limit_enforce = ?
+			WHERE id = ?
+		`,
+			[
+				spendLimit?.limitUsd ?? null,
+				spendLimit?.limitWindow ?? null,
+				spendLimit?.limitEnforce ?? null,
+				id,
+			],
+		);
+
+		return changes > 0;
+	}
+
+	/**
+	 * Every ACTIVE key that carries a spend limit.
+	 *
+	 * The seed set for the in-memory spend counter at startup: a key with no
+	 * limit needs no counter at all, and an inactive key cannot make a request
+	 * to spend against one.
+	 */
+	async listWithSpendLimits(): Promise<ApiKey[]> {
+		const rows = await this.query<ApiKeyRow>(`
+			SELECT
+				id, name, hashed_key, prefix_last_8, created_at,
+				last_used, usage_count, is_active, role,
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce
+			FROM api_keys
+			WHERE is_active = 1 AND limit_usd IS NOT NULL
+			ORDER BY created_at DESC
+		`);
+
+		return rows.map(toApiKey);
 	}
 
 	/**

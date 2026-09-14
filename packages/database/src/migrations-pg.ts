@@ -247,7 +247,10 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			role TEXT NOT NULL DEFAULT 'api-only',
 			allowed_accounts TEXT,
 			allowed_models TEXT,
-			allowed_providers TEXT
+			allowed_providers TEXT,
+			limit_usd REAL,
+			limit_window TEXT,
+			limit_enforce TEXT
 		)
 	`);
 
@@ -1376,6 +1379,25 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			table: "api_keys",
 			column: "allowed_providers",
 			definition: "ALTER TABLE api_keys ADD COLUMN allowed_providers TEXT",
+		},
+		// Per-key spend limits. Mirrors the SQLite ALTERs in migrations.ts —
+		// all three nullable with no default, because NULL on limit_usd is what
+		// "no limit" means and the window/enforcement defaults are applied on
+		// read rather than in either schema.
+		{
+			table: "api_keys",
+			column: "limit_usd",
+			definition: "ALTER TABLE api_keys ADD COLUMN limit_usd REAL",
+		},
+		{
+			table: "api_keys",
+			column: "limit_window",
+			definition: "ALTER TABLE api_keys ADD COLUMN limit_window TEXT",
+		},
+		{
+			table: "api_keys",
+			column: "limit_enforce",
+			definition: "ALTER TABLE api_keys ADD COLUMN limit_enforce TEXT",
 		},
 		{
 			table: "requests",

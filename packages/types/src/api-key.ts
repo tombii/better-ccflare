@@ -39,6 +39,12 @@ export interface ApiKeyRow {
 	allowed_models?: string | null;
 	/** JSON array of provider names, or NULL for unrestricted. */
 	allowed_providers?: string | null;
+	/** REAL dollar ceiling, or NULL for no limit. */
+	limit_usd?: number | null;
+	/** One of API_KEY_SPEND_WINDOWS, or NULL (defaults applied on read). */
+	limit_window?: string | null;
+	/** One of API_KEY_LIMIT_ENFORCEMENTS, or NULL (defaults applied on read). */
+	limit_enforce?: string | null;
 }
 
 /**
@@ -71,6 +77,113 @@ export function serializeRestrictionList(
 	return list == null ? null : JSON.stringify(list);
 }
 
+/**
+ * The window a per-key spend limit is measured over.
+ *
+ * Two rolling windows and one calendar window, because those are the two
+ * things people actually mean by "a monthly budget": a moving 30-day trailing
+ * total, or the bill that starts fresh on the 1st. The calendar window is NOT
+ * a 30-day approximation of the rolling one and is not interchangeable with it.
+ */
+export type ApiKeySpendWindow = "rolling_7d" | "rolling_30d" | "calendar_month";
+
+/** Every legal `limit_window` value, for validation and for the UI's select. */
+export const API_KEY_SPEND_WINDOWS: readonly ApiKeySpendWindow[] = [
+	"rolling_7d",
+	"rolling_30d",
+	"calendar_month",
+] as const;
+
+/** What happens when a key is over its limit. */
+export type ApiKeyLimitEnforcement = "block" | "warn";
+
+/** Every legal `limit_enforce` value. */
+export const API_KEY_LIMIT_ENFORCEMENTS: readonly ApiKeyLimitEnforcement[] = [
+	"block",
+	"warn",
+] as const;
+
+/**
+ * Applied when a limit is set but its window / enforcement column is NULL.
+ *
+ * NULL is legal in both columns and is not a validation failure: the limit
+ * amount is the only thing a caller must supply. `rolling_30d` and `block` are
+ * the defaults because a limit that quietly failed to block would be worse
+ * than no limit at all, and 30 days is the window people mean by "budget".
+ */
+export const DEFAULT_SPEND_WINDOW: ApiKeySpendWindow = "rolling_30d";
+export const DEFAULT_LIMIT_ENFORCEMENT: ApiKeyLimitEnforcement = "block";
+
+/**
+ * A key's resolved spend limit — the shape the proxy enforces against.
+ *
+ * Only ever constructed for a key that HAS a limit, so `limitUsd` is a plain
+ * number here and the window/enforcement have already had their defaults
+ * applied. A key with `limit_usd IS NULL` produces `null` instead (see
+ * {@link toApiKeySpendLimit}), which is the value every hot path checks first.
+ */
+export interface ApiKeySpendLimit {
+	/** Dollar ceiling, API-cost-equivalent. Always finite and > 0. */
+	limitUsd: number;
+	limitWindow: ApiKeySpendWindow;
+	limitEnforce: ApiKeyLimitEnforcement;
+}
+
+/**
+ * Narrow a stored window value, falling back to the default.
+ *
+ * Fails SOFT rather than closed, unlike {@link parseRestrictionList}: an
+ * unreadable window is a measurement question, not a permission one, and the
+ * safe answer is "measure over the default 30 days" rather than "deny".
+ */
+export function parseSpendWindow(
+	raw: string | null | undefined,
+): ApiKeySpendWindow {
+	return API_KEY_SPEND_WINDOWS.includes(raw as ApiKeySpendWindow)
+		? (raw as ApiKeySpendWindow)
+		: DEFAULT_SPEND_WINDOW;
+}
+
+/**
+ * Narrow a stored enforcement value, falling back to the default.
+ *
+ * Unreadable resolves to `block`: a limit whose enforcement column got
+ * corrupted must not silently degrade into a limit that never refuses.
+ */
+export function parseLimitEnforcement(
+	raw: string | null | undefined,
+): ApiKeyLimitEnforcement {
+	return API_KEY_LIMIT_ENFORCEMENTS.includes(raw as ApiKeyLimitEnforcement)
+		? (raw as ApiKeyLimitEnforcement)
+		: DEFAULT_LIMIT_ENFORCEMENT;
+}
+
+/**
+ * Is this a usable limit amount?
+ *
+ * Shared by the row->domain coercion and the management API so a value that
+ * could never be enforced can also never be stored. Zero is rejected on
+ * purpose: "spend nothing" is what disabling the key means, and accepting it
+ * as a limit would make a fat-fingered 0 look like a budget.
+ */
+export function isValidSpendLimitUsd(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * Row value -> usable limit, or null.
+ *
+ * `Number(...)` first because a driver may hand a REAL column back as a
+ * string (Bun.SQL does this for PostgreSQL NUMERIC); `isValidSpendLimitUsd`
+ * then rejects everything that could not be enforced. Storage-layer only —
+ * the management API deliberately does NOT coerce strings (see its handler).
+ */
+export function coerceSpendLimitUsd(value: unknown): number | null {
+	if (value == null) return null;
+	const numeric = Number(value);
+	return isValidSpendLimitUsd(numeric) ? numeric : null;
+}
+
 // Domain model - used throughout the application
 export interface ApiKey {
 	id: string;
@@ -85,6 +198,12 @@ export interface ApiKey {
 	allowedAccounts: string[] | null;
 	allowedModels: string[] | null;
 	allowedProviders: string[] | null;
+	/** Spend ceiling in API-cost-equivalent dollars. null = no limit. */
+	limitUsd: number | null;
+	/** Window the limit is measured over. null only when limitUsd is null. */
+	limitWindow: ApiKeySpendWindow | null;
+	/** Block or warn. null only when limitUsd is null. */
+	limitEnforce: ApiKeyLimitEnforcement | null;
 }
 
 // API response type - what clients receive (excluding sensitive data)
@@ -100,6 +219,24 @@ export interface ApiKeyResponse {
 	allowedAccounts: string[] | null;
 	allowedModels: string[] | null;
 	allowedProviders: string[] | null;
+	limitUsd: number | null;
+	limitWindow: ApiKeySpendWindow | null;
+	limitEnforce: ApiKeyLimitEnforcement | null;
+	/**
+	 * Spend so far in the current window, in the same dollars as `limitUsd`.
+	 *
+	 * OPTIONAL and computed, not stored: it is attached by the list endpoint
+	 * from the live in-memory counter so the dashboard gauge needs no second
+	 * round trip. Absent for a key with no limit, and absent from every other
+	 * surface that builds an ApiKeyResponse.
+	 */
+	spentUsd?: number;
+	/**
+	 * ISO time at which this window's spend next falls — the start of next
+	 * month for `calendar_month`, and the moment the oldest counted request
+	 * ages out for the rolling windows. null when nothing is known to age out.
+	 */
+	windowResetsAt?: string | null;
 }
 
 /**
@@ -131,6 +268,27 @@ export function toApiKeyRestrictions(
 	};
 }
 
+/**
+ * Narrow an API key down to its spend limit, or `null` when it has none.
+ *
+ * Same contract as {@link toApiKeyRestrictions} and for the same reason: this
+ * is what the proxy hot path checks first, so a key with `limit_usd IS NULL`
+ * costs one identity comparison and behaves exactly as it did before this
+ * feature existed. A stored limit that is not a usable number (0, negative,
+ * NaN from a hand-edited row) also reads as "no limit" rather than as a
+ * ceiling nothing could ever satisfy.
+ */
+export function toApiKeySpendLimit(
+	apiKey: Pick<ApiKey, "limitUsd" | "limitWindow" | "limitEnforce">,
+): ApiKeySpendLimit | null {
+	if (!isValidSpendLimitUsd(apiKey.limitUsd)) return null;
+	return {
+		limitUsd: apiKey.limitUsd,
+		limitWindow: apiKey.limitWindow ?? DEFAULT_SPEND_WINDOW,
+		limitEnforce: apiKey.limitEnforce ?? DEFAULT_LIMIT_ENFORCEMENT,
+	};
+}
+
 // API key generation result
 export interface ApiKeyGenerationResult {
 	id: string;
@@ -146,6 +304,7 @@ export interface CreateApiKeyInput {
 	name: string;
 	role?: ApiKeyRole; // Optional, defaults to 'api-only'
 	restrictions?: Partial<ApiKeyRestrictions>; // Optional, all-null = unrestricted
+	spendLimit?: ApiKeySpendLimit | null; // Optional, null = no limit
 }
 
 // Validation result
@@ -238,6 +397,19 @@ export function toApiKey(row: ApiKeyRow): ApiKey {
 		allowedAccounts: parseRestrictionList(row.allowed_accounts),
 		allowedModels: parseRestrictionList(row.allowed_models),
 		allowedProviders: parseRestrictionList(row.allowed_providers),
+		// A limit that is not a usable number reads as "no limit": see
+		// toApiKeySpendLimit. The window/enforcement columns are only
+		// meaningful alongside a limit, so they stay null without one rather
+		// than materialising defaults for a key that has no budget.
+		limitUsd: coerceSpendLimitUsd(row.limit_usd),
+		limitWindow:
+			coerceSpendLimitUsd(row.limit_usd) != null
+				? parseSpendWindow(row.limit_window)
+				: null,
+		limitEnforce:
+			coerceSpendLimitUsd(row.limit_usd) != null
+				? parseLimitEnforcement(row.limit_enforce)
+				: null,
 	};
 }
 
@@ -254,5 +426,8 @@ export function toApiKeyResponse(apiKey: ApiKey): ApiKeyResponse {
 		allowedAccounts: apiKey.allowedAccounts,
 		allowedModels: apiKey.allowedModels,
 		allowedProviders: apiKey.allowedProviders,
+		limitUsd: apiKey.limitUsd,
+		limitWindow: apiKey.limitWindow,
+		limitEnforce: apiKey.limitEnforce,
 	};
 }

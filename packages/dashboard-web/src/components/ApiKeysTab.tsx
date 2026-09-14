@@ -8,6 +8,7 @@ import { formatDistanceToNow } from "date-fns";
 import {
 	AlertTriangle,
 	ChevronDown,
+	Gauge,
 	Plus,
 	Shield,
 	SlidersHorizontal,
@@ -22,10 +23,18 @@ import { useAccounts, useApiKeys } from "../hooks/queries";
 import { queryKeys } from "../lib/query-keys";
 import { ApiKeyRestrictionsEditor } from "./api-keys/ApiKeyRestrictionsEditor";
 import { ApiKeyRestrictionsSummary } from "./api-keys/ApiKeyRestrictionsSummary";
+import { ApiKeySpendGauge } from "./api-keys/ApiKeySpendGauge";
+import { ApiKeySpendLimitEditor } from "./api-keys/ApiKeySpendLimitEditor";
 import {
 	restrictionsOf,
 	UNRESTRICTED_RESTRICTIONS,
 } from "./api-keys/restrictions";
+import {
+	NO_SPEND_LIMIT,
+	type SpendLimitDraft,
+	serializeSpendLimit,
+	spendLimitDraftOf,
+} from "./api-keys/spend-limit";
 import { CopyButton } from "./CopyButton";
 import { Button } from "./ui/button";
 import {
@@ -73,6 +82,11 @@ interface RestrictionsUpdateResponse {
 	message: string;
 }
 
+interface SpendLimitUpdateResponse {
+	success: boolean;
+	message: string;
+}
+
 export function ApiKeysTab() {
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -90,6 +104,18 @@ export function ApiKeysTab() {
 	);
 	const [restrictionsDraft, setRestrictionsDraft] =
 		useState<ApiKeyRestrictions>(UNRESTRICTED_RESTRICTIONS);
+	const [showNewKeySpendLimit, setShowNewKeySpendLimit] = useState(false);
+	const [newKeySpendLimit, setNewKeySpendLimit] =
+		useState<SpendLimitDraft>(NO_SPEND_LIMIT);
+	// The key whose spend limit is being edited, plus its draft. Null closes.
+	const [spendLimitKey, setSpendLimitKey] = useState<ApiKeyResponse | null>(
+		null,
+	);
+	const [spendLimitDraft, setSpendLimitDraft] =
+		useState<SpendLimitDraft>(NO_SPEND_LIMIT);
+	// Client-side validation message for the limit amount, so a bad value is
+	// reported before the round trip. The server is still the authority.
+	const [spendLimitError, setSpendLimitError] = useState<string | null>(null);
 
 	const queryClient = useQueryClient();
 
@@ -135,11 +161,17 @@ export function ApiKeysTab() {
 			name: string;
 			role: "admin" | "api-only";
 			restrictions: ApiKeyRestrictions;
+			spendLimit: {
+				limitUsd: number | null;
+				limitWindow: string | null;
+				limitEnforce: string | null;
+			};
 		}) => {
 			const result = await api.post<ApiKeyGenerationResponse>("/api/api-keys", {
 				name: params.name,
 				role: params.role,
 				...params.restrictions,
+				...params.spendLimit,
 			});
 			return result.data;
 		},
@@ -149,6 +181,8 @@ export function ApiKeysTab() {
 			setIsAdminKey(false);
 			setNewKeyRestrictions(UNRESTRICTED_RESTRICTIONS);
 			setShowNewKeyRestrictions(false);
+			setNewKeySpendLimit(NO_SPEND_LIMIT);
+			setShowNewKeySpendLimit(false);
 			setIsCreateDialogOpen(false);
 			// Don't invalidate queries here - wait until user authenticates
 			// This prevents 401 errors if the stored key is invalid
@@ -247,14 +281,73 @@ export function ApiKeysTab() {
 		},
 	});
 
+	// Update (or clear) a key's spend limit. All three fields are always sent:
+	// the endpoint replaces the limit wholesale, and `limitUsd: null` is the
+	// documented way to clear it.
+	const updateSpendLimitMutation = useMutation({
+		mutationFn: async ({
+			keyId,
+			body,
+		}: {
+			keyId: string;
+			body: {
+				limitUsd: number | null;
+				limitWindow: string | null;
+				limitEnforce: string | null;
+			};
+		}) => {
+			return api.patch<SpendLimitUpdateResponse>(
+				`/api/api-keys/${encodeURIComponent(keyId)}/limit`,
+				body,
+			);
+		},
+		onSuccess: () => {
+			setSpendLimitKey(null);
+			queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys() });
+		},
+		onError: (error: Error) => {
+			console.error("Failed to update API key spend limit:", error);
+		},
+	});
+
 	const handleGenerateKey = () => {
 		if (!newKeyName.trim()) return;
+		const limit = serializeSpendLimit(newKeySpendLimit);
+		if (!limit.ok) {
+			setSpendLimitError(limit.error);
+			// Open the section so the operator can see the field they must fix.
+			setShowNewKeySpendLimit(true);
+			return;
+		}
+		setSpendLimitError(null);
 		const isFirstKey = !stats || stats.active === 0;
 		const role = isFirstKey || isAdminKey ? "admin" : "api-only";
 		generateKeyMutation.mutate({
 			name: newKeyName.trim(),
 			role,
 			restrictions: newKeyRestrictions,
+			spendLimit: limit.body,
+		});
+	};
+
+	const handleEditSpendLimit = (key: ApiKeyResponse) => {
+		setSpendLimitDraft(spendLimitDraftOf(key));
+		setSpendLimitError(null);
+		setSpendLimitKey(key);
+		updateSpendLimitMutation.reset();
+	};
+
+	const confirmSpendLimit = () => {
+		if (!spendLimitKey) return;
+		const limit = serializeSpendLimit(spendLimitDraft);
+		if (!limit.ok) {
+			setSpendLimitError(limit.error);
+			return;
+		}
+		setSpendLimitError(null);
+		updateSpendLimitMutation.mutate({
+			keyId: spendLimitKey.id,
+			body: limit.body,
 		});
 	};
 
@@ -484,6 +577,42 @@ export function ApiKeysTab() {
 									/>
 								)}
 							</div>
+							<div className="space-y-2 border-t pt-4">
+								<button
+									type="button"
+									onClick={() => setShowNewKeySpendLimit((open) => !open)}
+									className="flex w-full items-center justify-between text-sm font-medium hover:opacity-80"
+									aria-expanded={showNewKeySpendLimit}
+								>
+									<span className="flex items-center gap-2">
+										<Gauge className="h-4 w-4" />
+										Spend limit (optional)
+									</span>
+									<ChevronDown
+										className={`h-4 w-4 transition-transform ${showNewKeySpendLimit ? "rotate-180" : ""}`}
+									/>
+								</button>
+								{showNewKeySpendLimit ? (
+									<ApiKeySpendLimitEditor
+										idPrefix="new-key"
+										value={newKeySpendLimit}
+										onChange={(next) => {
+											setNewKeySpendLimit(next);
+											setSpendLimitError(null);
+										}}
+										disabled={generateKeyMutation.isPending}
+									/>
+								) : (
+									<p className="text-xs text-muted-foreground">
+										{newKeySpendLimit.limitUsd.trim() === ""
+											? "No spend limit."
+											: `$${newKeySpendLimit.limitUsd} per ${newKeySpendLimit.limitWindow}`}
+									</p>
+								)}
+								{spendLimitError && !spendLimitKey ? (
+									<p className="text-sm text-destructive">{spendLimitError}</p>
+								) : null}
+							</div>
 							{generateKeyMutation.isError && (
 								<div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
 									<div className="flex items-start gap-2 text-destructive">
@@ -634,6 +763,12 @@ export function ApiKeysTab() {
 														<SlidersHorizontal className="h-4 w-4 mr-2" />
 														Edit restrictions
 													</DropdownMenuItem>
+													<DropdownMenuItem
+														onClick={() => handleEditSpendLimit(key)}
+													>
+														<Gauge className="h-4 w-4 mr-2" />
+														Edit spend limit
+													</DropdownMenuItem>
 												</DropdownMenuContent>
 											</DropdownMenu>
 										</div>
@@ -665,6 +800,8 @@ export function ApiKeysTab() {
 												accountNames={accountNames}
 											/>
 										</div>
+										{/* Renders nothing for a key with no limit. */}
+										<ApiKeySpendGauge apiKey={key} className="mt-3" />
 									</div>
 									<div className="flex items-center gap-2">
 										<CopyButton
@@ -862,6 +999,81 @@ export function ApiKeysTab() {
 							{updateRestrictionsMutation.isPending
 								? "Saving..."
 								: "Save restrictions"}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			{/* Edit Spend Limit Dialog */}
+			<Dialog
+				open={!!spendLimitKey}
+				onOpenChange={(open) => {
+					if (!open) {
+						setSpendLimitKey(null);
+						setSpendLimitError(null);
+						updateSpendLimitMutation.reset();
+					}
+				}}
+			>
+				<DialogContent className="max-h-[85vh] overflow-y-auto">
+					<DialogHeader>
+						<DialogTitle>Spend limit for "{spendLimitKey?.name}"</DialogTitle>
+						<DialogDescription>
+							Cap what this key may spend over a window, in API-cost-equivalent
+							dollars. Clear the amount to remove the limit. Requires an admin
+							key.
+						</DialogDescription>
+					</DialogHeader>
+					<div className="space-y-4 py-4">
+						<ApiKeySpendLimitEditor
+							idPrefix={`key-${spendLimitKey?.id ?? "none"}`}
+							value={spendLimitDraft}
+							onChange={(next) => {
+								setSpendLimitDraft(next);
+								setSpendLimitError(null);
+							}}
+							disabled={updateSpendLimitMutation.isPending}
+						/>
+						{spendLimitError ? (
+							<div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+								<div className="flex items-start gap-2 text-destructive">
+									<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+									<span className="text-sm">{spendLimitError}</span>
+								</div>
+							</div>
+						) : null}
+						{updateSpendLimitMutation.isError ? (
+							<div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+								<div className="flex items-start gap-2 text-destructive">
+									<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+									<span className="text-sm">
+										{updateSpendLimitMutation.error?.message ??
+											"Failed to update spend limit."}
+									</span>
+								</div>
+							</div>
+						) : null}
+					</div>
+					<DialogFooter>
+						<Button
+							onClick={() => {
+								setSpendLimitKey(null);
+								setSpendLimitError(null);
+								updateSpendLimitMutation.reset();
+							}}
+							variant="outline"
+						>
+							Cancel
+						</Button>
+						<Button
+							onClick={confirmSpendLimit}
+							disabled={updateSpendLimitMutation.isPending}
+						>
+							{updateSpendLimitMutation.isPending
+								? "Saving..."
+								: spendLimitDraft.limitUsd.trim() === ""
+									? "Remove limit"
+									: "Save limit"}
 						</Button>
 					</DialogFooter>
 				</DialogContent>

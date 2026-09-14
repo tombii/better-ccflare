@@ -317,7 +317,10 @@ export function ensureSchema(db: Database): void {
 			is_active INTEGER DEFAULT 1,
 			allowed_accounts TEXT,
 			allowed_models TEXT,
-			allowed_providers TEXT
+			allowed_providers TEXT,
+			limit_usd REAL,
+			limit_window TEXT,
+			limit_enforce TEXT
 		)
 	`);
 
@@ -1881,6 +1884,44 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		]) {
 			if (!apiKeysColumnsNow.includes(column)) {
 				db.prepare(`ALTER TABLE api_keys ADD COLUMN ${column} TEXT`).run();
+				log.info(`Added ${column} column to api_keys table`);
+			}
+		}
+
+		// Add the per-key spend-limit columns to api_keys if they don't exist.
+		//
+		// All three nullable with no DEFAULT, for the same reason the
+		// restriction columns above are: NULL on limit_usd is what "no limit"
+		// means, and every key that predates this migration must come out of it
+		// with no limit. A DEFAULT of any kind would give every existing key a
+		// budget it never asked for.
+		//
+		// limit_window and limit_enforce are ALSO nullable rather than
+		// NOT NULL DEFAULT: they are only meaningful alongside a limit, and the
+		// defaults ('rolling_30d' / 'block') are applied on READ in
+		// packages/types/src/api-key.ts so the two backends cannot drift on
+		// what a NULL there means.
+		//
+		// Note for future readers: the table-rebuild paths in this function
+		// rebuild `accounts` and `oauth_sessions`; none touches `api_keys`, so
+		// placement here — beside the restriction columns, against the same
+		// fresh PRAGMA read — is safe and idempotent.
+		//
+		// No new index. The counter's rollup query
+		// (SUM(cost_usd) WHERE api_key_id = ? AND timestamp > ?) is already
+		// served by idx_requests_api_key_timestamp, and it runs once per limited
+		// key at startup plus once per resync TTL — not per request — so a
+		// covering index on the largest table in the schema would buy a rare
+		// query a little latency at the cost of write amplification on every
+		// request.
+		const SPEND_LIMIT_COLUMNS: Array<[string, string]> = [
+			["limit_usd", "REAL"],
+			["limit_window", "TEXT"],
+			["limit_enforce", "TEXT"],
+		];
+		for (const [column, type] of SPEND_LIMIT_COLUMNS) {
+			if (!apiKeysColumnsNow.includes(column)) {
+				db.prepare(`ALTER TABLE api_keys ADD COLUMN ${column} ${type}`).run();
 				log.info(`Added ${column} column to api_keys table`);
 			}
 		}
