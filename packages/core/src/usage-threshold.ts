@@ -221,3 +221,28 @@ export function parseUsagePauseThreshold(value: unknown): number | null {
 	}
 	return parsed;
 }
+
+/**
+ * Providers whose usage poller actually evaluates pause thresholds today
+ * (`applyUsagePauseThresholds` in apps/server/src/server.ts, wired into
+ * `startUsagePollingWithRefresh`'s `onSnapshot` callback).
+ *
+ * Several other providers (zai, nanogpt, alibaba-coding-plan, minimax) also
+ * report a usage percentage and show a weekly usage bar in the dashboard, but
+ * their polling call sites don't yet pass a snapshot callback that calls
+ * `evaluateUsagePause`/`readUsageUtilization` — which only understands the
+ * Anthropic-shaped payload (`five_hour`/`seven_day` flat fields or a
+ * `limits[]` array) in any case. Until each provider's payload shape is
+ * threaded through, setting a threshold on one of those accounts would be
+ * accepted and stored but would never actually pause anything — worse than
+ * not offering the control at all. Keep this list in lockstep with
+ * `supportsUsagePollingForAccount` in apps/server/src/server.ts.
+ *
+ * Tracked follow-up to extend this to the other providers:
+ * https://github.com/tombii/better-ccflare/issues/467
+ */
+export function supportsUsagePauseThreshold(
+	provider: string | null | undefined,
+): boolean {
+	return provider === "anthropic" || provider === "codex" || provider === "xai";
+}

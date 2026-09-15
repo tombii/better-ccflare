@@ -6,6 +6,7 @@ import type { Config } from "@better-ccflare/config";
 import type { ModelMapping } from "@better-ccflare/core";
 import {
 	parseUsagePauseThreshold,
+	supportsUsagePauseThreshold,
 	type UsagePauseSetting,
 	validateAndSanitizeModelFallbacks,
 	validateAndSanitizeModelMappings,
@@ -2185,10 +2186,11 @@ export async function setUsagePauseThresholds(
 
 	const account = await adapter.get<{
 		id: string;
+		provider: string | null;
 		usage_pause_five_hour_threshold: number | null;
 		usage_pause_weekly_threshold: number | null;
 	}>(
-		"SELECT id, usage_pause_five_hour_threshold, usage_pause_weekly_threshold FROM accounts WHERE name = ?",
+		"SELECT id, provider, usage_pause_five_hour_threshold, usage_pause_weekly_threshold FROM accounts WHERE name = ?",
 		[name],
 	);
 
@@ -2196,6 +2198,13 @@ export async function setUsagePauseThresholds(
 		return {
 			success: false,
 			message: `Account '${name}' not found`,
+		};
+	}
+
+	if (!supportsUsagePauseThreshold(account.provider)) {
+		return {
+			success: false,
+			message: `Usage pause thresholds are not supported for provider '${account.provider}'`,
 		};
 	}
 

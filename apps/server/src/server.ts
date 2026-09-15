@@ -22,6 +22,7 @@ import {
 	setForceAccountModel,
 	setPricingLogger,
 	shutdown,
+	supportsUsagePauseThreshold,
 	TIME_CONSTANTS,
 	USAGE_THRESHOLD_PAUSE_REASON,
 } from "@better-ccflare/core";
@@ -152,10 +153,16 @@ const MEMORY_MONITOR_INTERVAL_MS = 60 * 1000;
 const MEMORY_GROWTH_WARN_BYTES = 512 * 1024 * 1024;
 const MEMORY_GROWTH_ERROR_BYTES = 1024 * 1024 * 1024;
 
+/**
+ * Also the set of providers whose usage poller evaluates pause thresholds
+ * (`applyUsagePauseThresholds` below) — kept as one function,
+ * `supportsUsagePauseThreshold` in @better-ccflare/core, so the dashboard/CLI/API
+ * threshold controls and the poller that actually acts on them can't drift apart.
+ */
 export function supportsRefreshBackedUsagePolling(
 	provider: string | null | undefined,
 ): boolean {
-	return provider === "anthropic" || provider === "xai" || provider === "codex";
+	return supportsUsagePauseThreshold(provider);
 }
 
 /**

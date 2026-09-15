@@ -109,6 +109,7 @@ export {
 	evaluateUsagePause,
 	parseUsagePauseThreshold,
 	readUsageUtilization,
+	supportsUsagePauseThreshold,
 	USAGE_THRESHOLD_PAUSE_REASON,
 	type UsagePauseDecision,
 	type UsagePauseInput,

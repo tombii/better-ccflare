@@ -1,3 +1,4 @@
+import { supportsUsagePauseThreshold } from "@better-ccflare/core";
 import { AccountPresenter } from "@better-ccflare/ui-common";
 import {
 	AlertCircle,
@@ -378,7 +379,7 @@ export function AccountListItem({
 							/>
 						</Button>
 					)}
-					{providerShowsWeeklyUsage(account.provider) &&
+					{supportsUsagePauseThreshold(account.provider) &&
 						onUsageThresholdsChange && (
 							<Button
 								variant="ghost"
@@ -575,11 +576,13 @@ export function AccountListItem({
 					provider={account.provider}
 					showWeekly={providerShowsWeeklyUsage(account.provider)}
 					pauseThresholdFiveHour={
+						supportsUsagePauseThreshold(account.provider) &&
 						account.usagePauseFiveHourEnabled
 							? account.usagePauseFiveHourThreshold
 							: null
 					}
 					pauseThresholdWeekly={
+						supportsUsagePauseThreshold(account.provider) &&
 						account.usagePauseWeeklyEnabled
 							? account.usagePauseWeeklyThreshold
 							: null

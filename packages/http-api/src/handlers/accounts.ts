@@ -8,6 +8,7 @@ import {
 	parseUsagePauseThreshold,
 	patterns,
 	sanitizers,
+	supportsUsagePauseThreshold,
 	type UsagePauseSetting,
 	validateAndSanitizeModelMappings,
 	validateNumber,
@@ -3077,15 +3078,24 @@ export function createAccountUsagePauseThresholdsHandler(
 			const db = dbOps.getAdapter();
 			const account = await db.get<{
 				name: string;
+				provider: string | null;
 				usage_pause_five_hour_threshold: number | null;
 				usage_pause_weekly_threshold: number | null;
 			}>(
-				"SELECT name, usage_pause_five_hour_threshold, usage_pause_weekly_threshold FROM accounts WHERE id = ?",
+				"SELECT name, provider, usage_pause_five_hour_threshold, usage_pause_weekly_threshold FROM accounts WHERE id = ?",
 				[accountId],
 			);
 
 			if (!account) {
 				return errorResponse(NotFound("Account not found"));
+			}
+
+			if (!supportsUsagePauseThreshold(account.provider)) {
+				return errorResponse(
+					BadRequest(
+						`Usage pause thresholds are not supported for provider '${account.provider}'`,
+					),
+				);
 			}
 
 			// A window may arrive as the object the dialog sends, or as a bare
