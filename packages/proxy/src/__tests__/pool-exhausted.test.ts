@@ -10,6 +10,7 @@ import {
 import { logBus } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
+import { INTERNAL_PROBE_SECRET_HEADER } from "../handlers/proxy-types";
 import { handleProxy } from "../proxy";
 import * as usageCollectorModule from "../usage-collector";
 
@@ -326,6 +327,37 @@ describe("pool exhausted — 503 response", () => {
 });
 
 describe("pool exhausted — CCFLARE_PASSTHROUGH_ON_EMPTY_POOL=1 escape hatch", () => {
+	// An internal probe is exempt from the escape hatch. Passing it through
+	// unauthenticated earns a 401 from upstream, which the auto-refresh
+	// scheduler reads as "this account's tokens are dead" — a verdict about an
+	// account the request never carried.
+	it("keeps an internal auto-refresh probe on the 503 answer even with the flag set", async () => {
+		process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL = "1";
+
+		const ctx = makeContext([]);
+		(
+			ctx as ProxyContext & { internalProbeSecret?: string }
+		).internalProbeSecret = "test-secret";
+
+		const request = makeRequest();
+		request.headers.set("x-better-ccflare-auto-refresh", "true");
+		request.headers.set("x-better-ccflare-bypass-session", "true");
+		request.headers.set(INTERNAL_PROBE_SECRET_HEADER, "test-secret");
+
+		const response = await handleProxy(
+			request,
+			new URL("https://proxy.local/v1/messages"),
+			ctx,
+		);
+
+		// proxyUnauthenticated never produces this body, so a pool_exhausted 503
+		// is proof the passthrough branch was skipped.
+		expect(response.status).toBe(503);
+		const body = (await response.json()) as Record<string, unknown>;
+		const error = body.error as Record<string, unknown>;
+		expect(error.type).toBe("pool_exhausted");
+	});
+
 	it("does NOT return 503 when CCFLARE_PASSTHROUGH_ON_EMPTY_POOL=1 and pool is empty", async () => {
 		process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL = "1";
 

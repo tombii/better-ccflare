@@ -596,8 +596,14 @@ async function handleProxyRequest(
 			);
 		}
 
-		// Check feature flag for backwards compatibility
-		if (process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL === "1") {
+		// Check feature flag for backwards compatibility. Internal probes are
+		// exempt: passing one through unauthenticated earns a 401 from upstream,
+		// which the auto-refresh scheduler reads as dead credentials for an
+		// account this request never carried. A probe always gets the 503.
+		if (
+			process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL === "1" &&
+			!isInternalProbe(req.headers, ctx)
+		) {
 			log.warn(ERROR_MESSAGES.NO_ACCOUNTS);
 			return proxyUnauthenticated(
 				req,

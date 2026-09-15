@@ -506,17 +506,17 @@ export async function selectAccountsForRequest(
 	if (meta.headers) {
 		const forcedAccountId = meta.headers.get("x-better-ccflare-account-id");
 		if (forcedAccountId) {
+			// A verified internal auto-refresh probe — the secret-gated marker
+			// the scheduler sends, never a header a client can set.
+			const isInternalAutoRefreshProbe = isInternalProbe(
+				meta.headers,
+				ctx,
+				"auto-refresh",
+			);
 			try {
 				const allAccounts = await ctx.dbOps.getAllAccounts();
 				const forcedAccount = allAccounts.find(
 					(acc) => acc.id === forcedAccountId,
-				);
-				// A verified internal auto-refresh probe — the secret-gated
-				// marker the scheduler sends, never a header a client can set.
-				const isInternalAutoRefreshProbe = isInternalProbe(
-					meta.headers,
-					ctx,
-					"auto-refresh",
 				);
 				if (forcedAccount) {
 					// With "force account model" on, a header naming an account
@@ -652,6 +652,17 @@ export async function selectAccountsForRequest(
 					"Failed to get accounts from database for forced account lookup:",
 					error,
 				);
+				// The invariant holds even when the lookup is what broke: normal
+				// selection below would hand the probe to whichever account is
+				// healthy, and its 200 would be recorded as a success for the
+				// account named here — which this code never managed to read.
+				// A failed probe is the honest outcome of a failed lookup.
+				if (isInternalAutoRefreshProbe) {
+					log.warn(
+						`Auto-refresh probe for account ${forcedAccountId} refused: the account lookup failed, and falling back to normal selection would probe a different account`,
+					);
+					return [];
+				}
 				console.error("\n❌ DATABASE ERROR DETECTED");
 				console.error("═".repeat(50));
 				console.error(

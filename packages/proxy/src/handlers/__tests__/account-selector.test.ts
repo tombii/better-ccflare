@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import type {
 	Account,
 	ComboWithSlots,
@@ -297,6 +297,60 @@ describe("selectAccountsForRequest — x-better-ccflare-account-id header", () =
 
 		const result = await selectAccountsForRequest(meta, ctx);
 		expect(result).toEqual([]);
+	});
+
+	// A DB hiccup on the forced-account lookup alone: the second read (normal
+	// selection) succeeds, so the fall-through really can hand the probe to
+	// another account — which is the case being closed here.
+	function makeFlakyLookupCtx(healthy: Account[]): ProxyContext {
+		let calls = 0;
+		return {
+			strategy: { select: mock(() => healthy) },
+			dbOps: {
+				getAllAccounts: mock(async () => {
+					calls += 1;
+					if (calls === 1) throw new Error("database is locked");
+					return healthy;
+				}),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+			internalProbeSecret: PROBE_SECRET,
+		} as unknown as ProxyContext;
+	}
+
+	it("refuses a probe when the forced-account lookup itself fails", async () => {
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx = makeFlakyLookupCtx([activeAcc]);
+		const meta = makeRequestMeta({ headers: probeHeaders("acc-ft") });
+
+		const consoleError = spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const result = await selectAccountsForRequest(meta, ctx);
+			expect(result).toEqual([]);
+		} finally {
+			consoleError.mockRestore();
+		}
+	});
+
+	it("still falls back to normal selection on a lookup failure for ordinary traffic", async () => {
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx = makeFlakyLookupCtx([activeAcc]);
+		const meta = makeRequestMeta({
+			headers: new Headers({ "x-better-ccflare-account-id": "acc-ft" }),
+		});
+
+		const consoleError = spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const result = await selectAccountsForRequest(meta, ctx);
+			expect(result.map((a) => a.id)).toEqual(["acc-active"]);
+			// The operator-facing repair banner still prints for ordinary traffic.
+			expect(consoleError).toHaveBeenCalled();
+		} finally {
+			consoleError.mockRestore();
+		}
 	});
 
 	it("keeps the fall-through for ordinary traffic naming a manually paused account", async () => {
