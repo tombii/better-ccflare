@@ -80,8 +80,15 @@ function currentScopedPercentForFamily(
  * Determines the absolute epoch timestamp (ms since epoch) until which an account
  * should be marked rate-limited after model exhaustion. Priority:
  *   1. retry-after / x-ratelimit-reset response header (actual upstream backoff)
- *   2. getRateLimitedUntil — usage-window reset time if known
- *   3. probe-cooldown default (TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS,
+ *   2. providerResetTime — the reset the account's own provider parsed out of
+ *      this response (provider.parseRateLimit). It ranks above the usage-API
+ *      marker because it describes THIS refusal: a Codex 429 names the reset of
+ *      the window it just refused on, which can be days out while the usage
+ *      cache still holds the other window's reset (or nothing at all). Capped at
+ *      MAX_PROVIDER_RESET_COOLDOWN_MS so a garbage header cannot bench an
+ *      account for months.
+ *   3. getRateLimitedUntil — usage-window reset time if known
+ *   4. probe-cooldown default (TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS,
  *      60s by default, overridable via CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) as
  *      last resort. Was a 1-hour ban prior to v3.5.x — that locked accounts
  *      out unnecessarily when upstream returned a transient 429 without a
@@ -100,8 +107,13 @@ export function extractCooldownUntil(
 	response: Response,
 	accountId: string,
 	getRateLimitedUntil: (accountId: string) => number | null,
+	providerResetTime?: number | null,
 ): number {
 	const MIN_COOLDOWN_MS = 60 * 1000; // 60 seconds floor
+	// A weekly window plus slack: the longest reset any supported provider
+	// reports today is seven days out, so anything beyond this is a malformed
+	// or hostile header rather than a real window.
+	const MAX_PROVIDER_RESET_COOLDOWN_MS = 8 * 24 * 60 * 60 * 1000;
 	// Use `||` (not `??`) so empty-string and non-numeric env values
 	// (Number("") === 0, Number("abc") === NaN) fall through to the
 	// default — `??` would coalesce the empty string to 0 and silently
@@ -135,13 +147,26 @@ export function extractCooldownUntil(
 		}
 	}
 
-	// 2. Fall back to usage-window reset time if available
+	// 2. Honor the reset the provider parsed out of this very response
+	if (
+		typeof providerResetTime === "number" &&
+		Number.isFinite(providerResetTime) &&
+		providerResetTime > now
+	) {
+		const capped = Math.min(
+			providerResetTime,
+			now + MAX_PROVIDER_RESET_COOLDOWN_MS,
+		);
+		return Math.max(capped, now + MIN_COOLDOWN_MS);
+	}
+
+	// 3. Fall back to usage-window reset time if available
 	const rateLimitedUntil = getRateLimitedUntil(accountId);
 	if (rateLimitedUntil !== null && rateLimitedUntil > now) {
 		return Math.max(rateLimitedUntil, now + MIN_COOLDOWN_MS);
 	}
 
-	// 3. Last resort: 1 hour
+	// 4. Last resort: the probe-cooldown default
 	return now + DEFAULT_COOLDOWN_MS;
 }
 
@@ -1589,10 +1614,19 @@ export async function proxyWithAccount(
 				log.warn(
 					`Account ${account.name} rate-limited (429), no model fallbacks — failing over to next account`,
 				);
+				// The provider's own read of this response outranks the usage-API
+				// marker and the default: it names the window that just refused
+				// the request. No clone — parseRateLimit is synchronous and reads
+				// only headers and status (providers/types.ts), see the 529 path.
+				const providerRateLimit = provider.parseRateLimit(rawResponse);
+				const providerResetTime = providerRateLimit.isRateLimited
+					? (providerRateLimit.resetTime ?? null)
+					: null;
 				const cooldownUntil = extractCooldownUntil(
 					rawResponse,
 					account.id,
 					usageCache.getRateLimitedUntil.bind(usageCache),
+					providerResetTime,
 				);
 				const reason: RateLimitReason = "model_fallback_429";
 				applyRateLimitCooldown(
@@ -1924,10 +1958,18 @@ export async function proxyWithAccount(
 							`Keepalive replay for ${account.name} got 429 (post-model-list) — skipping cooldown`,
 						);
 					} else {
+						// Same precedence as the no-fallback 429 above: the window
+						// the provider parsed off this response beats the usage-API
+						// marker and the 60s default.
+						const providerRateLimit = provider.parseRateLimit(rawResponse);
+						const providerResetTime = providerRateLimit.isRateLimited
+							? (providerRateLimit.resetTime ?? null)
+							: null;
 						const cooldownUntil = extractCooldownUntil(
 							rawResponse,
 							account.id,
 							usageCache.getRateLimitedUntil.bind(usageCache),
+							providerResetTime,
 						);
 						const reason: RateLimitReason = "all_models_exhausted_429";
 						applyRateLimitCooldown(

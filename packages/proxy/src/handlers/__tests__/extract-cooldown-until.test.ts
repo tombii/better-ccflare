@@ -98,4 +98,112 @@ describe("extractCooldownUntil", () => {
 		);
 		expect(result).toBeGreaterThanOrEqual(before + MIN_COOLDOWN_MS);
 	});
+
+	describe("provider-parsed reset", () => {
+		const FOUR_DAYS_MS = 4 * 24 * 60 * 60 * 1000;
+		const MAX_PROVIDER_RESET_COOLDOWN_MS = 8 * 24 * 60 * 60 * 1000;
+
+		it("prefers an explicit retry-after over the provider reset", () => {
+			const before = Date.now();
+			const result = extractCooldownUntil(
+				makeResponse({ "retry-after": "300" }),
+				ACCOUNT_ID,
+				noCache,
+				before + FOUR_DAYS_MS,
+			);
+			expect(result).toBeGreaterThanOrEqual(before + 300 * 1000);
+			expect(result).toBeLessThan(before + 300 * 1000 + 5000);
+		});
+
+		it("prefers the provider reset over the usage-API marker", () => {
+			const before = Date.now();
+			const providerReset = before + FOUR_DAYS_MS;
+			const result = extractCooldownUntil(
+				makeResponse(),
+				ACCOUNT_ID,
+				() => before + 30 * 60 * 1000,
+				providerReset,
+			);
+			expect(result).toBe(providerReset);
+		});
+
+		it("prefers the provider reset over the probe-cooldown default", () => {
+			const before = Date.now();
+			const providerReset = before + FOUR_DAYS_MS;
+			const result = extractCooldownUntil(
+				makeResponse(),
+				ACCOUNT_ID,
+				noCache,
+				providerReset,
+			);
+			expect(result).toBe(providerReset);
+		});
+
+		it("clamps an imminent provider reset to MIN_COOLDOWN_MS", () => {
+			const before = Date.now();
+			const result = extractCooldownUntil(
+				makeResponse(),
+				ACCOUNT_ID,
+				noCache,
+				before + 1000,
+			);
+			expect(result).toBeGreaterThanOrEqual(before + MIN_COOLDOWN_MS);
+			expect(result).toBeLessThan(before + MIN_COOLDOWN_MS + 5000);
+		});
+
+		it("ignores a provider reset already in the past", () => {
+			const cacheReset = Date.now() + 30 * 60 * 1000;
+			const result = extractCooldownUntil(
+				makeResponse(),
+				ACCOUNT_ID,
+				() => cacheReset,
+				Date.now() - 60 * 1000,
+			);
+			expect(result).toBe(cacheReset);
+		});
+
+		it("ignores a non-finite provider reset", () => {
+			const before = Date.now();
+			const result = extractCooldownUntil(
+				makeResponse(),
+				ACCOUNT_ID,
+				noCache,
+				Number.NaN,
+			);
+			const expected = Math.max(PROBE_COOLDOWN_MS, MIN_COOLDOWN_MS);
+			expect(result).toBeGreaterThanOrEqual(before + expected);
+			expect(result).toBeLessThan(before + expected + 5000);
+		});
+
+		it("caps an absurd provider reset at eight days", () => {
+			const before = Date.now();
+			const result = extractCooldownUntil(
+				makeResponse(),
+				ACCOUNT_ID,
+				noCache,
+				before + 30 * 24 * 60 * 60 * 1000,
+			);
+			expect(result).toBeGreaterThanOrEqual(
+				before + MAX_PROVIDER_RESET_COOLDOWN_MS,
+			);
+			expect(result).toBeLessThan(
+				before + MAX_PROVIDER_RESET_COOLDOWN_MS + 5000,
+			);
+		});
+
+		it("keeps today's behaviour when no provider reset is passed", () => {
+			const before = Date.now();
+			const expected = Math.max(PROBE_COOLDOWN_MS, MIN_COOLDOWN_MS);
+			for (const providerReset of [undefined, null]) {
+				const result = extractCooldownUntil(
+					makeResponse(),
+					ACCOUNT_ID,
+					noCache,
+					providerReset,
+				);
+				expect(result).toBeGreaterThanOrEqual(before + expected);
+				expect(result).toBeLessThan(before + expected + 5000);
+			}
+		});
+	});
 });
