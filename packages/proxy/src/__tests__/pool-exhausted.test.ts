@@ -8,6 +8,7 @@ import {
 	spyOn,
 } from "bun:test";
 import { logBus } from "@better-ccflare/logger";
+import type { Provider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
 import { INTERNAL_PROBE_SECRET_HEADER } from "../handlers/proxy-types";
@@ -57,7 +58,10 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 	};
 }
 
-function makeContext(accounts: Account[]): ProxyContext {
+function makeContext(
+	accounts: Account[],
+	providerOverrides: Partial<Provider> = {},
+): ProxyContext {
 	return {
 		strategy: {
 			select: (accs: Account[]) => {
@@ -84,6 +88,7 @@ function makeContext(accounts: Account[]): ProxyContext {
 		provider: {
 			name: "codex",
 			canHandle: () => true,
+			...providerOverrides,
 		} as never,
 		refreshInFlight: new Map(),
 		asyncWriter: { enqueue: mock(() => {}) } as never,
@@ -358,29 +363,89 @@ describe("pool exhausted — CCFLARE_PASSTHROUGH_ON_EMPTY_POOL=1 escape hatch", 
 		expect(error.type).toBe("pool_exhausted");
 	});
 
-	it("does NOT return 503 when CCFLARE_PASSTHROUGH_ON_EMPTY_POOL=1 and pool is empty", async () => {
+	// The escape hatch only earns its name if the request actually leaves the
+	// proxy, so this asserts the dispatch itself. proxyUnauthenticated reaches
+	// upstream through the provider's buildUrl/prepareHeaders, which a
+	// `{ name, canHandle }` stub does not have: it threw "buildUrl is not a
+	// function" before any fetch, and a try/catch around the call swallowed
+	// that into a green, assertion-free pass.
+	it("forwards upstream without credentials and returns the upstream answer", async () => {
 		process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL = "1";
 
-		const ctx = makeContext([]);
-		// proxyUnauthenticated will try to make a real request and fail —
-		// we just check it doesn't return 503 with our pool_exhausted body.
-		// It will throw or return a different status.
+		const outbound: {
+			url: string;
+			method: string;
+			headers: Headers;
+			body: string;
+		}[] = [];
+		const realFetch = globalThis.fetch;
+		globalThis.fetch = (async (
+			input: string | URL | Request,
+			init?: RequestInit,
+		) => {
+			const asRequest = input instanceof Request ? input : null;
+			const rawBody = asRequest ? asRequest.body : (init?.body ?? null);
+			outbound.push({
+				url: asRequest ? asRequest.url : String(input),
+				method: asRequest ? asRequest.method : (init?.method ?? "GET"),
+				headers: new Headers(asRequest ? asRequest.headers : init?.headers),
+				body:
+					rawBody instanceof ReadableStream
+						? await new Response(rawBody).text()
+						: typeof rawBody === "string"
+							? rawBody
+							: "",
+			});
+			return new Response(
+				JSON.stringify({
+					type: "error",
+					error: {
+						type: "authentication_error",
+						message: "marker-from-upstream",
+					},
+				}),
+				{ status: 401, headers: { "content-type": "application/json" } },
+			);
+		}) as typeof globalThis.fetch;
+
 		try {
+			const ctx = makeContext([], {
+				buildUrl: (path, query) => `https://upstream.test${path}${query}`,
+				prepareHeaders: (headers) => {
+					// A token-less dispatch: the caller's own credential must not
+					// be reused as if it were an account's.
+					const prepared = new Headers(headers);
+					prepared.delete("authorization");
+					return prepared;
+				},
+			});
+			const request = makeRequest();
+			request.headers.set("authorization", "Bearer caller-token");
+
 			const response = await handleProxy(
-				makeRequest(),
+				request,
 				new URL("https://proxy.local/v1/messages"),
 				ctx,
 			);
-			// If it returns, it should NOT be our 503 pool_exhausted
-			if (response.status === 503) {
-				const body = (await response.json()) as Record<string, unknown>;
-				const error = body.error as Record<string, unknown> | undefined;
-				expect(error?.type).not.toBe("pool_exhausted");
-			}
-			// Any other status means passthrough was attempted
-		} catch {
-			// Expected: proxyUnauthenticated throws when no real provider configured
-			// This is fine — it means we went through the passthrough path
+
+			expect(outbound.length).toBe(1);
+			expect(outbound[0].url).toStartWith("https://upstream.test/v1/messages");
+			expect(outbound[0].method).toBe("POST");
+			expect(outbound[0].headers.get("authorization")).toBeNull();
+			expect(JSON.parse(outbound[0].body)).toMatchObject({
+				model: "claude-sonnet-4-5",
+				messages: [{ role: "user", content: "hello" }],
+			});
+
+			// The client gets upstream's own answer, not our local refusal.
+			expect(response.status).toBe(401);
+			const body = (await response.json()) as Record<string, unknown>;
+			const error = body.error as Record<string, unknown>;
+			expect(error.type).toBe("authentication_error");
+			expect(error.type).not.toBe("pool_exhausted");
+			expect(error.message).toBe("marker-from-upstream");
+		} finally {
+			globalThis.fetch = realFetch;
 		}
 	});
 });
