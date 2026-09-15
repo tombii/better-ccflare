@@ -232,6 +232,38 @@ describe("usage-pause threshold columns", () => {
 		).toStrictEqual({ pct: 80, on_: 0 });
 	});
 
+	it("backfills only the flag it adds when a database has one and not the other", () => {
+		// The two flags are added independently, so a partially migrated database
+		// can arrive with one of them. The flag being added must be backfilled
+		// from its percentage, while the one already there keeps what it holds —
+		// including a deliberate "off".
+		db = makeModernDb();
+		db.run(
+			"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_threshold INTEGER",
+		);
+		db.run(
+			"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_threshold INTEGER",
+		);
+		db.run(
+			"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_enabled INTEGER NOT NULL DEFAULT 0",
+		);
+		db.run(
+			`INSERT INTO accounts (id, name, created_at, usage_pause_five_hour_threshold, usage_pause_five_hour_enabled, usage_pause_weekly_threshold)
+			 VALUES ('acc-partial', 'partial', ?, 80, 0, 90)`,
+			[Date.now()],
+		);
+
+		runMigrations(db);
+
+		expect(
+			db
+				.query(
+					"SELECT usage_pause_five_hour_enabled AS five, usage_pause_weekly_enabled AS week FROM accounts WHERE id = ?",
+				)
+				.get("acc-partial"),
+		).toStrictEqual({ five: 0, week: 1 });
+	});
+
 	it("is idempotent across repeated runs", () => {
 		db = makeModernDb();
 
