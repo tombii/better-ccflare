@@ -58,6 +58,26 @@ function computeExpectedPct(
  * friends) share the weekly page but not the setting, so marking them would
  * promise a pause that never comes.
  */
+/**
+ * The sentence under the threshold tooltip's heading: what the marker means,
+ * and where this window stands against it right now.
+ */
+function thresholdTooltipDetail(
+	windowLabel: string,
+	percentage: number | null | undefined,
+	threshold: number,
+): string {
+	const window = windowLabel.toLowerCase();
+	if (percentage === null || percentage === undefined) {
+		return `This account pauses when ${window} usage reaches ${threshold}%, and resumes when the window resets.`;
+	}
+	const current = Math.round(percentage);
+	if (current >= threshold) {
+		return `${window.charAt(0).toUpperCase()}${window.slice(1)} usage is ${current}% — past the threshold, so this account is paused until the window resets.`;
+	}
+	return `${window.charAt(0).toUpperCase()}${window.slice(1)} usage is ${current}%; this account pauses at ${threshold}% and resumes when the window resets.`;
+}
+
 function thresholdForWindow(
 	window: string | null,
 	fiveHour: number | null,
@@ -729,7 +749,7 @@ export function RateLimitProgress({
 									</div>
 									<div className="group relative">
 										<div
-											className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover:block"
+											className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover:block [&:has(~_.threshold-marker:hover)]:!hidden"
 											style={{ left: `clamp(10%, ${expectedPct ?? 50}%, 90%)` }}
 										>
 											<div className="mb-1 font-medium">
@@ -780,25 +800,42 @@ export function RateLimitProgress({
 											/>
 										)}
 										{pauseThreshold !== null && (
-											// Sits on top of the bar's own fill as often as beside it,
-											// so it needs contrast against the fill colour AND against
-											// the pale track — and it must not read as the thin white
-											// pace marker above. A foreground-coloured post with a
-											// halo and a flag head does both, in either theme.
+											// Sits on top of the bar's own fill as often as beside
+											// it, so it needs contrast against the fill colour AND
+											// against the pale track — and it must not read as the
+											// thin white pacing marker above. A foreground-coloured
+											// post with a flag head and a halo does both, in either
+											// theme.
 											<div
-												className="absolute pointer-events-none"
-												title={`Pauses this account at ${pauseThreshold}%`}
+												className="threshold-marker group/threshold absolute"
 												style={{
 													left: `${pauseThreshold}%`,
 													top: "-7px",
 													zIndex: 11,
 												}}
 											>
+												{/* The post itself is 2px wide, which is nothing to
+												    aim at; this widens what the pointer has to hit
+												    without changing what is drawn. */}
+												<div className="absolute -left-2 -top-1 h-8 w-5" />
+												<div className="pointer-events-none absolute bottom-full z-20 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover/threshold:block">
+													<div className="mb-1 font-medium">
+														Pause threshold · {pauseThreshold}%
+													</div>
+													<div className="text-muted-foreground">
+														{thresholdTooltipDetail(
+															windowLabel,
+															percentage,
+															pauseThreshold,
+														)}
+													</div>
+												</div>
 												{/* The theme variables hold plain colour literals, so
 												    they are read here directly: this build generates no
 												    `bg-foreground` utility, and using one paints nothing
 												    at all. */}
 												<div
+													className="pointer-events-none"
 													style={{
 														width: "2px",
 														height: "22px",
@@ -807,7 +844,7 @@ export function RateLimitProgress({
 													}}
 												/>
 												<div
-													className="absolute"
+													className="pointer-events-none absolute"
 													style={{
 														top: 0,
 														left: "2px",

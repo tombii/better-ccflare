@@ -100,6 +100,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			peak_hours_pause_enabled INTEGER NOT NULL DEFAULT 0,
 			usage_pause_five_hour_threshold INTEGER,
 			usage_pause_weekly_threshold INTEGER,
+			usage_pause_five_hour_enabled INTEGER NOT NULL DEFAULT 0,
+			usage_pause_weekly_enabled INTEGER NOT NULL DEFAULT 0,
 			pause_reason TEXT,
 			requires_reauth INTEGER DEFAULT 0,
 			billing_type TEXT DEFAULT NULL,
@@ -627,6 +629,8 @@ async function collapseAccountDuplicatesPreservingStatePg(
 			   cross_region_mode = COALESCE(cross_region_mode, ${pgFreshest("cross_region_mode")}),
 			   usage_pause_five_hour_threshold = COALESCE(usage_pause_five_hour_threshold, ${pgFreshest("usage_pause_five_hour_threshold")}),
 			   usage_pause_weekly_threshold = COALESCE(usage_pause_weekly_threshold, ${pgFreshest("usage_pause_weekly_threshold")}),
+			   usage_pause_five_hour_enabled = (SELECT MAX(COALESCE(usage_pause_five_hour_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   usage_pause_weekly_enabled = (SELECT MAX(COALESCE(usage_pause_weekly_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
 			   billing_type = COALESCE(billing_type, ${pgFreshest("billing_type")})
 			 WHERE id = $8`,
 			[
@@ -805,6 +809,18 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			column: "usage_pause_weekly_threshold",
 			definition:
 				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_threshold INTEGER",
+		},
+		{
+			table: "accounts",
+			column: "usage_pause_five_hour_enabled",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_enabled INTEGER NOT NULL DEFAULT 0",
+		},
+		{
+			table: "accounts",
+			column: "usage_pause_weekly_enabled",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_enabled INTEGER NOT NULL DEFAULT 0",
 		},
 		{
 			table: "accounts",
@@ -1081,6 +1097,21 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	} catch (_error) {
 		// Indexes may already exist
 	}
+
+	// A usage-pause threshold written before the enabled flags existed was in
+	// force by virtue of being set at all; keep it that way (mirrors SQLite).
+	await adapter.unsafe(`
+		UPDATE accounts
+		SET usage_pause_five_hour_enabled = 1
+		WHERE usage_pause_five_hour_threshold IS NOT NULL
+		  AND COALESCE(usage_pause_five_hour_enabled, 0) = 0
+	`);
+	await adapter.unsafe(`
+		UPDATE accounts
+		SET usage_pause_weekly_enabled = 1
+		WHERE usage_pause_weekly_threshold IS NOT NULL
+		  AND COALESCE(usage_pause_weekly_enabled, 0) = 0
+	`);
 
 	// Backfill pause_reason for existing paused accounts (mirrors SQLite migration)
 	await adapter.unsafe(`

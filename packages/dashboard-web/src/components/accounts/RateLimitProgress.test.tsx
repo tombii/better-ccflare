@@ -635,8 +635,11 @@ describe("RateLimitProgress — usage pause threshold marker", () => {
 			/>,
 		);
 
-		expect(html).toContain("Pauses this account at 80%");
+		expect(html).toContain("Pause threshold · 80%");
 		expect(html).toContain("left:80%");
+		// The tooltip says where this window stands against the threshold.
+		expect(html).toContain("usage is 62%");
+		expect(html).toContain("pauses at 80%");
 	});
 
 	it("marks the weekly bar at its own threshold", () => {
@@ -653,7 +656,7 @@ describe("RateLimitProgress — usage pause threshold marker", () => {
 			/>,
 		);
 
-		expect(html).toContain("Pauses this account at 90%");
+		expect(html).toContain("Pause threshold · 90%");
 		expect(html).toContain("left:90%");
 	});
 
@@ -669,7 +672,7 @@ describe("RateLimitProgress — usage pause threshold marker", () => {
 			/>,
 		);
 
-		expect(html).not.toContain("Pauses this account at");
+		expect(html).not.toContain("Pause threshold ·");
 	});
 
 	it("does not mark per-model weekly caps, which carry no threshold of their own", () => {
@@ -693,7 +696,53 @@ describe("RateLimitProgress — usage pause threshold marker", () => {
 		);
 
 		// Exactly one marker: the all-models weekly bar, not the Opus sub-cap.
-		expect(html.split("Pauses this account at").length - 1).toBe(1);
-		expect(html).toContain("Pauses this account at 90%");
+		expect(html.split("Pause threshold ·").length - 1).toBe(1);
+		expect(html).toContain("Pause threshold · 90%");
+	});
+});
+
+describe("RateLimitProgress — threshold tooltip wording", () => {
+	const usage = {
+		five_hour: {
+			utilization: 94,
+			resets_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+		},
+	};
+
+	it("says the account is already paused when usage is past the threshold", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={null}
+				usageUtilization={94}
+				usageWindow="five_hour"
+				usageData={usage}
+				provider="anthropic"
+				pauseThresholdFiveHour={90}
+			/>,
+		);
+
+		expect(html).toContain("past the threshold");
+		expect(html).toContain("paused until the window resets");
+	});
+
+	it("says where the window stands while it is still below the threshold", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={null}
+				usageUtilization={20}
+				usageWindow="five_hour"
+				usageData={{
+					five_hour: {
+						utilization: 20,
+						resets_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+					},
+				}}
+				provider="anthropic"
+				pauseThresholdFiveHour={90}
+			/>,
+		);
+
+		expect(html).toContain("usage is 20%");
+		expect(html).not.toContain("past the threshold");
 	});
 });

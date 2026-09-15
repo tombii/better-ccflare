@@ -274,7 +274,7 @@ bun run cli --set-usage-pause-thresholds <name> <5h%|off> <weekly%|off>
 - Thresholds are evaluated on each usage poll, so a pause lands within one poll interval of the account crossing the line
 - A threshold pause is recorded with `pause_reason = usage_threshold`, and is lifted by the poller once every configured window reads back below its threshold. It is deliberately not one of the load balancer's auto-unpause reasons: those resume on a single stored window reset, which could return an account to rotation while another configured window is still over
 - Accounts you paused by hand, or that were paused for overage or refresh failures, are never touched by this rule
-- Both windows are written on every call: pass `off` for the one you do not want
+- Both windows are written on every call: pass `off` for the one you do not want. Switching a window off keeps the percentage already stored for it, so turning it back on does not mean typing the number again
 
 **Example:**
 ```bash
@@ -288,7 +288,7 @@ bun run cli --set-usage-pause-thresholds work-account off 80
 bun run cli --set-usage-pause-thresholds work-account off off
 ```
 
-The same setting is available per account in the dashboard: the gauge button on the account row opens a "Usage Pause Thresholds" dialog, and a configured threshold is drawn as a marker on the matching usage bar. It is also available over the API as `POST /api/accounts/:id/usage-pause-thresholds` with `{ "fiveHour": 80, "weekly": null }`.
+The same setting is available per account in the dashboard: the gauge button on the account row opens a "Usage Pause Thresholds" dialog, where each window has its own switch and keeps its percentage when switched off. A threshold that is on is drawn as a marker on the matching usage bar, with a tooltip saying where that window stands against it. It is also available over the API as `POST /api/accounts/:id/usage-pause-thresholds` with `{ "fiveHour": 80, "weekly": null }`.
 
 ### Statistics and History
 

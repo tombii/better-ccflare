@@ -1069,13 +1069,13 @@ OAuth tokens will need to be re-authenticated.
 	}
 
 	/**
-	 * Set the account's usage-window pause thresholds (whole percentages, or
-	 * null to turn a window off).
+	 * Set the account's usage-window pause settings: the chosen percentage and
+	 * whether that window is currently in force.
 	 */
 	async setUsagePauseThresholds(
 		accountId: string,
-		fiveHour: number | null,
-		weekly: number | null,
+		fiveHour: { enabled: boolean; percent: number | null },
+		weekly: { enabled: boolean; percent: number | null },
 	): Promise<void> {
 		await this.accounts.setUsagePauseThresholds(accountId, fiveHour, weekly);
 	}

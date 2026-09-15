@@ -153,6 +153,61 @@ describe("usage-pause threshold columns", () => {
 		).toStrictEqual({ fiveHour: null, weekly: null });
 	});
 
+	it("switches an existing threshold on, since setting one used to mean it was in force", () => {
+		// A database from the revision that had the percentages but not yet the
+		// on/off flags.
+		db = makeModernDb();
+		db.run(
+			"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_threshold INTEGER",
+		);
+		db.run(
+			"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_threshold INTEGER",
+		);
+		db.run(
+			`INSERT INTO accounts (id, name, created_at, usage_pause_five_hour_threshold) VALUES ('acc-set', 'had-threshold', ?, 80)`,
+			[Date.now()],
+		);
+		db.run(
+			`INSERT INTO accounts (id, name, created_at) VALUES ('acc-unset', 'no-threshold', ?)`,
+			[Date.now()],
+		);
+
+		runMigrations(db);
+
+		expect(
+			db
+				.query(
+					"SELECT usage_pause_five_hour_threshold AS pct, usage_pause_five_hour_enabled AS five, usage_pause_weekly_enabled AS week FROM accounts WHERE id = ?",
+				)
+				.get("acc-set"),
+		).toStrictEqual({ pct: 80, five: 1, week: 0 });
+		expect(
+			db
+				.query(
+					"SELECT usage_pause_five_hour_enabled AS five, usage_pause_weekly_enabled AS week FROM accounts WHERE id = ?",
+				)
+				.get("acc-unset"),
+		).toStrictEqual({ five: 0, week: 0 });
+	});
+
+	it("defaults the enabled flags to off for a database that never had a threshold", () => {
+		db = makeModernDb();
+		db.run(
+			`INSERT INTO accounts (id, name, created_at) VALUES ('acc-1', 'fresh', ?)`,
+			[Date.now()],
+		);
+
+		runMigrations(db);
+
+		expect(
+			db
+				.query(
+					"SELECT usage_pause_five_hour_enabled AS five, usage_pause_weekly_enabled AS week FROM accounts WHERE id = ?",
+				)
+				.get("acc-1"),
+		).toStrictEqual({ five: 0, week: 0 });
+	});
+
 	it("is idempotent across repeated runs", () => {
 		db = makeModernDb();
 

@@ -49,6 +49,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
 				usage_pause_five_hour_threshold,
 				usage_pause_weekly_threshold,
+				COALESCE(usage_pause_five_hour_enabled, 0) as usage_pause_five_hour_enabled,
+				COALESCE(usage_pause_weekly_enabled, 0) as usage_pause_weekly_enabled,
 				custom_endpoint,
 				model_mappings,
 				request_transformer,
@@ -82,6 +84,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
 				usage_pause_five_hour_threshold,
 				usage_pause_weekly_threshold,
+				COALESCE(usage_pause_five_hour_enabled, 0) as usage_pause_five_hour_enabled,
+				COALESCE(usage_pause_weekly_enabled, 0) as usage_pause_weekly_enabled,
 				custom_endpoint,
 				model_mappings,
 				request_transformer,
@@ -503,18 +507,26 @@ export class AccountRepository extends BaseRepository<Account> {
 	}
 
 	/**
-	 * Set the per-window usage-pause thresholds (whole percentages, or null to
-	 * turn a window's threshold off). Both windows are written together so a
-	 * caller cannot leave the pair half-updated.
+	 * Set the per-window usage-pause settings.
+	 *
+	 * The percentage and the on/off flag are stored separately, so a window
+	 * that is switched off keeps its number for next time. Both windows are
+	 * written together so a caller cannot leave the pair half-updated.
 	 */
 	async setUsagePauseThresholds(
 		accountId: string,
-		fiveHour: number | null,
-		weekly: number | null,
+		fiveHour: { enabled: boolean; percent: number | null },
+		weekly: { enabled: boolean; percent: number | null },
 	): Promise<void> {
 		await this.run(
-			`UPDATE accounts SET usage_pause_five_hour_threshold = ?, usage_pause_weekly_threshold = ? WHERE id = ?`,
-			[fiveHour, weekly, accountId],
+			`UPDATE accounts SET usage_pause_five_hour_threshold = ?, usage_pause_five_hour_enabled = ?, usage_pause_weekly_threshold = ?, usage_pause_weekly_enabled = ? WHERE id = ?`,
+			[
+				fiveHour.percent,
+				fiveHour.enabled ? 1 : 0,
+				weekly.percent,
+				weekly.enabled ? 1 : 0,
+				accountId,
+			],
 		);
 	}
 

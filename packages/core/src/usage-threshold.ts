@@ -37,10 +37,32 @@ export type UsagePauseWindow = "five_hour" | "weekly";
  */
 export const USAGE_THRESHOLD_PAUSE_REASON = "usage_threshold";
 
-/** Per-account pause thresholds, as whole percentages. `null` disables one. */
+/**
+ * One window's setting: the percentage its owner chose, and whether it is
+ * currently in force.
+ *
+ * The two are stored separately so switching a window off keeps the number
+ * rather than making someone type it again when they switch it back on. A
+ * window with `enabled: false`, or with no percent yet, is simply not
+ * considered.
+ */
+export interface UsagePauseSetting {
+	enabled: boolean;
+	percent: number | null;
+}
+
+/** Per-account pause settings, one per window. */
 export interface UsagePauseThresholds {
-	fiveHour: number | null;
-	weekly: number | null;
+	fiveHour: UsagePauseSetting;
+	weekly: UsagePauseSetting;
+}
+
+/** The percentage a window will actually pause at, or null when it will not. */
+export function effectiveThreshold(
+	setting: UsagePauseSetting | null | undefined,
+): number | null {
+	if (!setting?.enabled) return null;
+	return setting.percent ?? null;
 }
 
 /**
@@ -96,7 +118,7 @@ export function evaluateUsagePause(input: UsagePauseInput): UsagePauseDecision {
 
 	const configured = WINDOWS.map(({ window, key }) => ({
 		window,
-		threshold: thresholds[key],
+		threshold: effectiveThreshold(thresholds[key]),
 		utilization: utilization[key],
 	})).filter(
 		(entry): entry is typeof entry & { threshold: number } =>

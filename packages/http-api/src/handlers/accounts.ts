@@ -8,6 +8,7 @@ import {
 	parseUsagePauseThreshold,
 	patterns,
 	sanitizers,
+	type UsagePauseSetting,
 	validateAndSanitizeModelMappings,
 	validateNumber,
 	validatePriority,
@@ -320,6 +321,8 @@ export function createAccountsListHandler(
 			peak_hours_pause_enabled: 0 | 1;
 			usage_pause_five_hour_threshold: number | null;
 			usage_pause_weekly_threshold: number | null;
+			usage_pause_five_hour_enabled: 0 | 1;
+			usage_pause_weekly_enabled: 0 | 1;
 			custom_endpoint: string | null;
 			model_mappings: string | null;
 			request_transformer: RequestTransformer | null;
@@ -360,6 +363,8 @@ export function createAccountsListHandler(
 					COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
 					usage_pause_five_hour_threshold,
 					usage_pause_weekly_threshold,
+					COALESCE(usage_pause_five_hour_enabled, 0) as usage_pause_five_hour_enabled,
+					COALESCE(usage_pause_weekly_enabled, 0) as usage_pause_weekly_enabled,
 
 					model_mappings,
 					request_transformer,
@@ -757,6 +762,9 @@ export function createAccountsListHandler(
 						account.usage_pause_five_hour_threshold ?? null,
 					usagePauseWeeklyThreshold:
 						account.usage_pause_weekly_threshold ?? null,
+					usagePauseFiveHourEnabled:
+						account.usage_pause_five_hour_enabled === 1,
+					usagePauseWeeklyEnabled: account.usage_pause_weekly_enabled === 1,
 					customEndpoint: account.custom_endpoint,
 					modelMappings,
 					requestTransformer: account.request_transformer,
@@ -3049,10 +3057,12 @@ export function createAccountAutoPauseOnOverageHandler(
 /**
  * Create a handler for the per-account usage-window pause thresholds.
  *
- * Body: `{ fiveHour: number | null, weekly: number | null }` — whole
- * percentages, or null to switch a window's threshold off. Both windows are
- * written together, so a body that omits one clears it; that keeps the stored
- * pair and the form that submits it in step.
+ * Body: `{ fiveHour: { enabled, percent }, weekly: { enabled, percent } }`.
+ * `percent` is a whole percentage or null, and `enabled` says whether that
+ * window is in force — the two are separate so switching a window off keeps
+ * its number. Both windows are written together, so a body that omits one
+ * switches it off; that keeps the stored pair and the form that submits it in
+ * step.
  */
 export function createAccountUsagePauseThresholdsHandler(
 	dbOps: DatabaseOperations,
@@ -3061,13 +3071,28 @@ export function createAccountUsagePauseThresholdsHandler(
 		try {
 			const body = await req.json();
 
+			const readWindow = (raw: unknown): UsagePauseSetting => {
+				// A window may arrive as the object the dialog sends, or as a bare
+				// percentage/null from a simpler client; a bare percentage means
+				// "switch this window on at N".
+				if (typeof raw === "object" && raw !== null) {
+					const value = raw as { enabled?: unknown; percent?: unknown };
+					return {
+						enabled: value.enabled === true || value.enabled === 1,
+						percent: parseUsagePauseThreshold(value.percent),
+					};
+				}
+				const percent = parseUsagePauseThreshold(raw);
+				return { enabled: percent !== null, percent };
+			};
+
 			const parsed = (():
-				| { fiveHour: number | null; weekly: number | null }
+				| { fiveHour: UsagePauseSetting; weekly: UsagePauseSetting }
 				| Response => {
 				try {
 					return {
-						fiveHour: parseUsagePauseThreshold(body.fiveHour),
-						weekly: parseUsagePauseThreshold(body.weekly),
+						fiveHour: readWindow(body.fiveHour),
+						weekly: readWindow(body.weekly),
 					};
 				} catch (err) {
 					return errorResponse(
@@ -3093,8 +3118,10 @@ export function createAccountUsagePauseThresholdsHandler(
 			return jsonResponse({
 				success: true,
 				message: `Usage pause thresholds updated for account '${account.name}'`,
-				usagePauseFiveHourThreshold: fiveHour,
-				usagePauseWeeklyThreshold: weekly,
+				usagePauseFiveHourThreshold: fiveHour.percent,
+				usagePauseFiveHourEnabled: fiveHour.enabled,
+				usagePauseWeeklyThreshold: weekly.percent,
+				usagePauseWeeklyEnabled: weekly.enabled,
 			});
 		} catch (error) {
 			log.error("Account usage pause thresholds error:", error);

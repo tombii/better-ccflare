@@ -315,6 +315,8 @@ export interface AccountRow {
 	peak_hours_pause_enabled?: boolean | number | null;
 	usage_pause_five_hour_threshold?: number | null;
 	usage_pause_weekly_threshold?: number | null;
+	usage_pause_five_hour_enabled?: boolean | number | null;
+	usage_pause_weekly_enabled?: boolean | number | null;
 	custom_endpoint?: string | null;
 	model_mappings?: string | null; // JSON string for OpenAI-compatible providers
 	request_transformer?: RequestTransformer | null;
@@ -355,10 +357,14 @@ export interface Account {
 	auto_refresh_enabled: boolean;
 	auto_pause_on_overage_enabled: boolean;
 	peak_hours_pause_enabled: boolean;
-	/** Pause the account when 5-hour utilization reaches this percent. null = off. */
+	/** Pause the account when 5-hour utilization reaches this percent. null = unset. */
 	usage_pause_five_hour_threshold: number | null;
-	/** Pause the account when weekly utilization reaches this percent. null = off. */
+	/** Pause the account when weekly utilization reaches this percent. null = unset. */
 	usage_pause_weekly_threshold: number | null;
+	/** Whether the 5-hour threshold above is in force. */
+	usage_pause_five_hour_enabled: boolean;
+	/** Whether the weekly threshold above is in force. */
+	usage_pause_weekly_enabled: boolean;
 	custom_endpoint: string | null;
 	model_mappings: string | null; // JSON string for OpenAI-compatible providers
 	request_transformer: RequestTransformer | null;
@@ -408,8 +414,10 @@ export interface AccountResponse {
 	autoRefreshEnabled: boolean;
 	autoPauseOnOverageEnabled?: boolean;
 	peakHoursPauseEnabled?: boolean;
-	usagePauseFiveHourThreshold: number | null; // Pause at this 5-hour utilization percent; null = off
-	usagePauseWeeklyThreshold: number | null; // Pause at this weekly utilization percent; null = off
+	usagePauseFiveHourThreshold: number | null; // Stored 5-hour percentage; null = never set
+	usagePauseWeeklyThreshold: number | null; // Stored weekly percentage; null = never set
+	usagePauseFiveHourEnabled: boolean; // Whether the 5-hour threshold is in force
+	usagePauseWeeklyEnabled: boolean; // Whether the weekly threshold is in force
 	customEndpoint: string | null;
 	modelMappings: { [key: string]: string | string[] } | null; // Parsed model mappings (arrays = cycling models)
 	requestTransformer: RequestTransformer | null;
@@ -562,6 +570,8 @@ export function toAccount(row: AccountRow): Account {
 			row.usage_pause_five_hour_threshold,
 		),
 		usage_pause_weekly_threshold: toNumOrNull(row.usage_pause_weekly_threshold),
+		usage_pause_five_hour_enabled: !!row.usage_pause_five_hour_enabled,
+		usage_pause_weekly_enabled: !!row.usage_pause_weekly_enabled,
 		custom_endpoint: row.custom_endpoint || null,
 		model_mappings: row.model_mappings || null,
 		request_transformer: row.request_transformer ?? null,
@@ -669,6 +679,8 @@ export function toAccountResponse(account: Account): AccountResponse {
 		peakHoursPauseEnabled: account.peak_hours_pause_enabled,
 		usagePauseFiveHourThreshold: account.usage_pause_five_hour_threshold,
 		usagePauseWeeklyThreshold: account.usage_pause_weekly_threshold,
+		usagePauseFiveHourEnabled: account.usage_pause_five_hour_enabled,
+		usagePauseWeeklyEnabled: account.usage_pause_weekly_enabled,
 		customEndpoint: account.custom_endpoint,
 		modelMappings,
 		requestTransformer: account.request_transformer,

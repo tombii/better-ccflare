@@ -8,6 +8,7 @@ import {
 import {
 	CACHE,
 	DEFAULT_STRATEGY,
+	effectiveThreshold,
 	evaluateUsagePause,
 	getVersion,
 	HTTP_STATUS,
@@ -246,14 +247,20 @@ export async function applyUsagePauseThresholds(
 		if (!account) return;
 
 		const thresholds = {
-			fiveHour: account.usage_pause_five_hour_threshold ?? null,
-			weekly: account.usage_pause_weekly_threshold ?? null,
+			fiveHour: {
+				enabled: account.usage_pause_five_hour_enabled,
+				percent: account.usage_pause_five_hour_threshold ?? null,
+			},
+			weekly: {
+				enabled: account.usage_pause_weekly_enabled,
+				percent: account.usage_pause_weekly_threshold ?? null,
+			},
 		};
-		// Nothing configured and nothing of ours to lift — the common case, and
-		// not worth a read of the payload.
+		// Nothing in force and nothing of ours to lift — the common case, and not
+		// worth a read of the payload.
 		if (
-			thresholds.fiveHour === null &&
-			thresholds.weekly === null &&
+			effectiveThreshold(thresholds.fiveHour) === null &&
+			effectiveThreshold(thresholds.weekly) === null &&
 			!account.paused
 		) {
 			return;

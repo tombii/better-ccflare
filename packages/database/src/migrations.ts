@@ -614,6 +614,8 @@ function collapseAccountDuplicatesPreservingState(db: Database): void {
 		   cross_region_mode = COALESCE(cross_region_mode, ${freshest("cross_region_mode")}),
 		   usage_pause_five_hour_threshold = COALESCE(usage_pause_five_hour_threshold, ${freshest("usage_pause_five_hour_threshold")}),
 		   usage_pause_weekly_threshold = COALESCE(usage_pause_weekly_threshold, ${freshest("usage_pause_weekly_threshold")}),
+		   usage_pause_five_hour_enabled = ${agg("MAX", "usage_pause_five_hour_enabled")},
+		   usage_pause_weekly_enabled = ${agg("MAX", "usage_pause_weekly_enabled")},
 		   billing_type = COALESCE(billing_type, ${freshest("billing_type")})
 		 WHERE rowid = $rowid`,
 	);
@@ -1202,6 +1204,36 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_threshold INTEGER",
 			).run();
 			log.info("Added usage_pause_weekly_threshold column to accounts table");
+		}
+
+		// The percentage and whether it is in force are stored separately, so
+		// switching a window off keeps the number the owner chose instead of
+		// making them type it again when they switch it back on.
+		if (!thresholdColumnNames.includes("usage_pause_five_hour_enabled")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_enabled INTEGER NOT NULL DEFAULT 0",
+			).run();
+			log.info("Added usage_pause_five_hour_enabled column to accounts table");
+		}
+
+		if (!thresholdColumnNames.includes("usage_pause_weekly_enabled")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_enabled INTEGER NOT NULL DEFAULT 0",
+			).run();
+			log.info("Added usage_pause_weekly_enabled column to accounts table");
+		}
+
+		// A threshold written before this pair existed was in force by virtue of
+		// being set at all; keep it that way rather than silently switching it off.
+		if (
+			!thresholdColumnNames.includes("usage_pause_five_hour_enabled") ||
+			!thresholdColumnNames.includes("usage_pause_weekly_enabled")
+		) {
+			db.prepare(
+				`UPDATE accounts
+				 SET usage_pause_five_hour_enabled = CASE WHEN usage_pause_five_hour_threshold IS NOT NULL THEN 1 ELSE 0 END,
+				     usage_pause_weekly_enabled = CASE WHEN usage_pause_weekly_threshold IS NOT NULL THEN 1 ELSE 0 END`,
+			).run();
 		}
 
 		// Add UNIQUE index on (name, provider, COALESCE(custom_endpoint,'')) to

@@ -11,6 +11,7 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Switch } from "../ui/switch";
 
 interface AccountUsageThresholdsDialogProps {
 	account: Account | null;
@@ -18,8 +19,8 @@ interface AccountUsageThresholdsDialogProps {
 	onOpenChange: (open: boolean) => void;
 	onUpdateThresholds: (
 		accountId: string,
-		fiveHour: number | null,
-		weekly: number | null,
+		fiveHour: { enabled: boolean; percent: number | null },
+		weekly: { enabled: boolean; percent: number | null },
 	) => Promise<void>;
 }
 
@@ -59,33 +60,54 @@ export function AccountUsageThresholdsDialog({
 	const [weekly, setWeekly] = useState(() =>
 		toField(account?.usagePauseWeeklyThreshold),
 	);
+	const [fiveHourOn, setFiveHourOn] = useState(
+		() => account?.usagePauseFiveHourEnabled ?? false,
+	);
+	const [weeklyOn, setWeeklyOn] = useState(
+		() => account?.usagePauseWeeklyEnabled ?? false,
+	);
 	const [isUpdating, setIsUpdating] = useState(false);
 
 	// Reset the fields whenever the dialog is pointed at another account.
 	useEffect(() => {
 		setFiveHour(toField(account?.usagePauseFiveHourThreshold));
-		setWeekly(toField(account?.usagePauseWeeklyThreshold));
+		setFiveHourOn(account?.usagePauseFiveHourEnabled ?? false);
 	}, [
 		account?.usagePauseFiveHourThreshold,
-		account?.usagePauseWeeklyThreshold,
+		account?.usagePauseFiveHourEnabled,
 	]);
+	useEffect(() => {
+		setWeekly(toField(account?.usagePauseWeeklyThreshold));
+		setWeeklyOn(account?.usagePauseWeeklyEnabled ?? false);
+	}, [account?.usagePauseWeeklyThreshold, account?.usagePauseWeeklyEnabled]);
 
 	const parsedFiveHour = fromField(fiveHour);
 	const parsedWeekly = fromField(weekly);
-	const hasError = parsedFiveHour === "invalid" || parsedWeekly === "invalid";
+	const badNumber = parsedFiveHour === "invalid" || parsedWeekly === "invalid";
+	// A window switched on with no percentage would pause at nothing; say so
+	// rather than saving a setting that quietly does not work.
+	const onWithoutPercent =
+		(fiveHourOn && parsedFiveHour === null) ||
+		(weeklyOn && parsedWeekly === null);
+	const hasError = badNumber || onWithoutPercent;
 
 	const handleUpdate = async () => {
 		if (
 			!account ||
 			parsedFiveHour === "invalid" ||
-			parsedWeekly === "invalid"
+			parsedWeekly === "invalid" ||
+			onWithoutPercent
 		) {
 			return;
 		}
 
 		setIsUpdating(true);
 		try {
-			await onUpdateThresholds(account.id, parsedFiveHour, parsedWeekly);
+			await onUpdateThresholds(
+				account.id,
+				{ enabled: fiveHourOn, percent: parsedFiveHour },
+				{ enabled: weeklyOn, percent: parsedWeekly },
+			);
 			onOpenChange(false);
 		} catch (error) {
 			console.error("Failed to update usage pause thresholds:", error);
@@ -96,54 +118,45 @@ export function AccountUsageThresholdsDialog({
 
 	return (
 		<Dialog open={isOpen} onOpenChange={onOpenChange}>
-			<DialogContent className="sm:max-w-[480px]">
+			<DialogContent className="sm:max-w-[520px]">
 				<DialogHeader>
 					<DialogTitle>Usage Pause Thresholds</DialogTitle>
 					<DialogDescription>
-						Pause {account?.name} once a usage window reaches the given
-						percentage, and resume it automatically when that window resets.
-						Leave a field empty for no threshold.
+						Pause {account?.name} once a usage window reaches its percentage,
+						and resume it automatically when that window resets. Each window is
+						switched on separately; a window that is off keeps its percentage
+						for next time.
 					</DialogDescription>
 				</DialogHeader>
 				<div className="grid gap-4 py-4">
-					<div className="grid grid-cols-4 items-center gap-4">
-						<Label htmlFor="usage-threshold-5h" className="text-right">
-							5-hour
-						</Label>
-						<Input
-							id="usage-threshold-5h"
-							type="number"
-							min="1"
-							max="100"
-							placeholder="off"
-							value={fiveHour}
-							onChange={(e) => setFiveHour(e.target.value)}
-							className="col-span-3"
-						/>
-					</div>
-					<div className="grid grid-cols-4 items-center gap-4">
-						<Label htmlFor="usage-threshold-weekly" className="text-right">
-							Weekly
-						</Label>
-						<Input
-							id="usage-threshold-weekly"
-							type="number"
-							min="1"
-							max="100"
-							placeholder="off"
-							value={weekly}
-							onChange={(e) => setWeekly(e.target.value)}
-							className="col-span-3"
-						/>
-					</div>
-					{hasError ? (
+					<ThresholdRow
+						id="usage-threshold-5h"
+						label="5-hour"
+						enabled={fiveHourOn}
+						onEnabledChange={setFiveHourOn}
+						value={fiveHour}
+						onValueChange={setFiveHour}
+					/>
+					<ThresholdRow
+						id="usage-threshold-weekly"
+						label="Weekly"
+						enabled={weeklyOn}
+						onEnabledChange={setWeeklyOn}
+						value={weekly}
+						onValueChange={setWeekly}
+					/>
+					{badNumber ? (
 						<div className="text-sm text-destructive">
-							Thresholds must be whole numbers between 1 and 100, or empty.
+							Percentages must be whole numbers between 1 and 100.
+						</div>
+					) : onWithoutPercent ? (
+						<div className="text-sm text-destructive">
+							A window that is switched on needs a percentage.
 						</div>
 					) : (
 						<div className="text-sm text-muted-foreground">
 							A pause from a threshold is lifted by the usage poller once every
-							configured window is back below its percentage. Pausing the
+							window that is on is back below its percentage. Pausing the
 							account by hand is never overridden.
 						</div>
 					)}
@@ -166,5 +179,61 @@ export function AccountUsageThresholdsDialog({
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+interface ThresholdRowProps {
+	id: string;
+	label: string;
+	enabled: boolean;
+	onEnabledChange: (next: boolean) => void;
+	value: string;
+	onValueChange: (next: string) => void;
+}
+
+/**
+ * One window: a switch that says whether it is in force, and the percentage
+ * it pauses at.
+ *
+ * The percentage stays editable while the switch is off, so a number can be
+ * written down before the window is switched on — and the one already stored
+ * stays visible instead of disappearing when the window is turned off.
+ */
+function ThresholdRow({
+	id,
+	label,
+	enabled,
+	onEnabledChange,
+	value,
+	onValueChange,
+}: ThresholdRowProps) {
+	return (
+		<div className="grid grid-cols-[1fr_auto_auto] items-center gap-3">
+			<Label htmlFor={id} className={enabled ? "" : "text-muted-foreground"}>
+				{label}
+			</Label>
+			<div className="flex items-center gap-1">
+				<Input
+					id={id}
+					type="number"
+					min="1"
+					max="100"
+					placeholder="—"
+					value={value}
+					onChange={(e) => onValueChange(e.target.value)}
+					className="w-24"
+				/>
+				<span
+					className={`text-sm ${enabled ? "text-muted-foreground" : "text-muted-foreground/60"}`}
+				>
+					%
+				</span>
+			</div>
+			<Switch
+				checked={enabled}
+				onCheckedChange={onEnabledChange}
+				title={`Pause on the ${label.toLowerCase()} window`}
+			/>
+		</div>
 	);
 }

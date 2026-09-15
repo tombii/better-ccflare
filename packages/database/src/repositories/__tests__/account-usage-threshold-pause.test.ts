@@ -27,7 +27,9 @@ function makeDb(): { db: Database; repo: AccountRepository } {
 			paused INTEGER DEFAULT 0,
 			pause_reason TEXT,
 			usage_pause_five_hour_threshold INTEGER,
-			usage_pause_weekly_threshold INTEGER
+			usage_pause_weekly_threshold INTEGER,
+			usage_pause_five_hour_enabled INTEGER NOT NULL DEFAULT 0,
+			usage_pause_weekly_enabled INTEGER NOT NULL DEFAULT 0
 		)
 	`);
 	return { db, repo: new AccountRepository(new BunSqlAdapter(db)) };
@@ -150,10 +152,14 @@ describe("AccountRepository — usage-threshold pause guards", () => {
 	});
 
 	describe("setUsagePauseThresholds", () => {
-		it("writes both windows together and clears them with null", async () => {
+		it("writes both windows together and keeps a percentage when a window is switched off", async () => {
 			insertAccount(db, "acc-1");
 
-			await repo.setUsagePauseThresholds("acc-1", 80, 90);
+			await repo.setUsagePauseThresholds(
+				"acc-1",
+				{ enabled: true, percent: 80 },
+				{ enabled: true, percent: 90 },
+			);
 			expect(
 				db.query("SELECT * FROM accounts WHERE id = ?").get("acc-1") as Record<
 					string,
@@ -164,15 +170,32 @@ describe("AccountRepository — usage-threshold pause guards", () => {
 				usage_pause_weekly_threshold: 90,
 			});
 
-			await repo.setUsagePauseThresholds("acc-1", null, null);
 			expect(
 				db.query("SELECT * FROM accounts WHERE id = ?").get("acc-1") as Record<
 					string,
 					unknown
 				>,
 			).toMatchObject({
-				usage_pause_five_hour_threshold: null,
+				usage_pause_five_hour_enabled: 1,
+				usage_pause_weekly_enabled: 1,
+			});
+
+			// Switching a window off keeps its number for next time.
+			await repo.setUsagePauseThresholds(
+				"acc-1",
+				{ enabled: false, percent: 80 },
+				{ enabled: false, percent: null },
+			);
+			expect(
+				db.query("SELECT * FROM accounts WHERE id = ?").get("acc-1") as Record<
+					string,
+					unknown
+				>,
+			).toMatchObject({
+				usage_pause_five_hour_threshold: 80,
+				usage_pause_five_hour_enabled: 0,
 				usage_pause_weekly_threshold: null,
+				usage_pause_weekly_enabled: 0,
 			});
 		});
 	});
