@@ -14,7 +14,7 @@ import { Logger } from "@better-ccflare/logger";
 import {
 	fetchUsageData,
 	getProvider,
-	getRepresentativeUsageSnapshot,
+	getRepresentativeUsageSnapshotForProvider,
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -1619,7 +1619,7 @@ export class AutoRefreshScheduler {
 		// cached snapshot is over ten minutes old, and when the provider has no
 		// utilization surface at all. No snapshot means no opinion: the account
 		// is probed exactly as it was before.
-		const snapshot = getRepresentativeUsageSnapshot(
+		const snapshot = getRepresentativeUsageSnapshotForProvider(
 			usageCache.get(account.id),
 			account.provider,
 		);

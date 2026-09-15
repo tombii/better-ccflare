@@ -7,7 +7,7 @@ import {
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
-	getRepresentativeUsageSnapshot,
+	getRepresentativeUsageSnapshotForProvider,
 	isOfficialXaiEndpoint,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -58,9 +58,14 @@ export type { ModelFamilyExhaustionInfo } from "./model-capacity";
  * reset and MUST NOT count as exhausted) — same predicate the
  * rateLimitStatus display and /health usage_exhausted counter share, so
  * the surfaces cannot diverge.
+ *
+ * The snapshot helper pairs the utilization with the reset of the SAME window
+ * it came from, which is what makes that staleness guard meaningful for zai
+ * too: a stale 100% `time_limit` reading is cleared by its own reset rather
+ * than held open by an unrelated token window's future one.
  */
 function usageSnapshot(account: Account): AccountUsageSnapshot | null {
-	return getRepresentativeUsageSnapshot(
+	return getRepresentativeUsageSnapshotForProvider(
 		usageCache.get(account.id),
 		account.provider ?? "anthropic",
 	);

@@ -212,6 +212,41 @@ describe("AutoRefreshScheduler.shouldRefreshAccount — an exhausted usage windo
 		).toBe(false);
 	});
 
+	it("probes a zai account whose winning window has already reset", async () => {
+		// Greptile P1 on PR #468: the gate used to take zai's utilization from
+		// max(time_limit, tokens_limit, tokens_limit_weekly) but its reset from
+		// the winning TOKEN window only. A stale 100% time_limit whose reset has
+		// passed then paired with a future tokens_limit reset, so the staleness
+		// guard could not clear it and valid probes stayed suppressed until an
+		// unrelated window reset.
+		const now = Date.now();
+		const scheduler = await makeScheduler(makeDb());
+		usageCache.set(ACCOUNT_ID, {
+			time_limit: {
+				used: 100,
+				remaining: 0,
+				percentage: 100,
+				resetAt: now - HOUR,
+				type: "time_limit",
+			},
+			tokens_limit: {
+				used: 40,
+				remaining: 60,
+				percentage: 40,
+				resetAt: now + 2 * HOUR,
+				type: "tokens_limit",
+			},
+			tokens_limit_weekly: null,
+		} as never);
+
+		expect(
+			scheduler.shouldRefreshAccount(
+				makeAccountRow({ provider: "zai", name: "Zai" }),
+				now,
+			),
+		).toBe(true);
+	});
+
 	it("also skips the 10-minute liveness re-probe of a failure_threshold pause", async () => {
 		const now = Date.now();
 		const scheduler = await makeScheduler(makeDb());

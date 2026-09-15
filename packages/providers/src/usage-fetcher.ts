@@ -452,9 +452,11 @@ export function getRepresentativeWindow(
  * account isn't actually available again until every exhausted window
  * clears, so picking the earlier one would report recovery too soon.
  */
-function getWinningZaiTokenWindow(usage: ZaiUsageData): ZaiUsageWindow | null {
-	const candidates = [usage.tokens_limit, usage.tokens_limit_weekly].filter(
-		(window): window is ZaiUsageWindow => window !== null,
+function pickWinningZaiWindow(
+	windows: ReadonlyArray<ZaiUsageWindow | null>,
+): ZaiUsageWindow | null {
+	const candidates = windows.filter(
+		(window): window is ZaiUsageWindow => window != null,
 	);
 	if (candidates.length === 0) return null;
 	return candidates.reduce((prev, current) => {
@@ -466,6 +468,10 @@ function getWinningZaiTokenWindow(usage: ZaiUsageData): ZaiUsageWindow | null {
 		}
 		return current.resetAt > prev.resetAt ? current : prev;
 	});
+}
+
+function getWinningZaiTokenWindow(usage: ZaiUsageData): ZaiUsageWindow | null {
+	return pickWinningZaiWindow([usage.tokens_limit, usage.tokens_limit_weekly]);
 }
 
 function utilizationForProvider(
@@ -717,10 +723,26 @@ export function getRepresentativeUsageResetMs(
 }
 
 /**
- * The plain pairing of {@link getRepresentativeUtilizationForProvider} with
- * {@link getRepresentativeUsageResetMs} for one account's cached payload, in
- * the one shape every admission-gating caller wants: a snapshot, or null when
- * there is nothing to say.
+ * The representative usage snapshot for one account's cached payload: the
+ * utilization of the window that is closest to its cap, paired with THAT
+ * window's own reset. The single helper for every consumer — account
+ * selection, the auto-refresh probe skip, the /health usage_exhausted counter
+ * and the pool-exhausted response body — so no two surfaces can disagree about
+ * whether an account is exhausted or when it comes back.
+ *
+ * Utilization and reset must always come from the same window. Pairing them
+ * across windows breaks `isUsageExhausted`'s staleness guard in both
+ * directions: a stale 100% whose window has since rolled over is held against
+ * the account because some other window's reset is still in the future, and a
+ * genuinely capped window is cleared early because an unrelated window reset.
+ *
+ * Zai is the provider where those two can differ. Its utilization is the max
+ * of `time_limit`, `tokens_limit` and `tokens_limit_weekly`, while
+ * {@link getRepresentativeUsageResetMs} deliberately looks at the token
+ * windows only (the display label "five_hour" maps to the `tokens_limit`
+ * payload key). So the zai branch here picks the winning window across all
+ * three and takes its `resetAt`. On a tie the LATER reset wins: the account is
+ * not available again until every capped window clears.
  *
  * Null means "no opinion" in two distinct cases the callers treat alike —
  * nothing was ever polled (or the cache dropped a stale entry), and the
@@ -729,64 +751,42 @@ export function getRepresentativeUsageResetMs(
  *
  * `provider` is taken as given: callers holding a nullable `account.provider`
  * apply their own `?? "anthropic"` default before calling.
- *
- * NOTE the sibling below: {@link getRepresentativeUsageSnapshotForProvider}
- * adds zai's cross-window pairing on top of this. Surfaces that report an
- * account's recovery time to clients want that one; the admission gates share
- * this one, which stays in lockstep with the two helpers it composes.
  */
-export function getRepresentativeUsageSnapshot(
+export function getRepresentativeUsageSnapshotForProvider(
 	data: AnyUsageData | null | undefined,
 	provider: string,
 ): AccountUsageSnapshot | null {
 	if (!data) return null;
+	if (provider === "zai") {
+		const zai = data as ZaiUsageData;
+		const winning = pickWinningZaiWindow([
+			zai.time_limit,
+			zai.tokens_limit,
+			zai.tokens_limit_weekly,
+		]);
+		if (!winning) return null;
+		return { utilization: winning.percentage, resetMs: winning.resetAt };
+	}
+	return plainUsageSnapshot(data, provider);
+}
+
+/**
+ * The straight pairing of {@link getRepresentativeUtilizationForProvider} with
+ * {@link getRepresentativeUsageResetMs}, for every provider whose two helpers
+ * already agree on the representative window. Not exported: callers must go
+ * through {@link getRepresentativeUsageSnapshotForProvider} so zai's
+ * cross-window rule can never be skipped by accident.
+ */
+function plainUsageSnapshot(
+	data: AnyUsageData,
+	provider: string,
+): AccountUsageSnapshot | null {
 	const utilization = getRepresentativeUtilizationForProvider(data, provider);
 	if (utilization === null) return null;
 	return {
 		utilization,
 		resetMs: getRepresentativeUsageResetMs(data, provider),
 	};
-}
-
-/**
- * Representative utilization paired with the reset that belongs to the same
- * winning window. Zai needs special handling because its utilization is the
- * max of time_limit and tokens_limit while getRepresentativeUsageResetMs is
- * intentionally tokens_limit-only for display surfaces. Other providers keep
- * their existing representative-reset behavior unchanged.
- */
-export function getRepresentativeUsageSnapshotForProvider(
-	data: AnyUsageData,
-	provider: string,
-): { utilization: number; resetMs: number | null } | null {
-	if (provider === "zai") {
-		const zai = data as ZaiUsageData;
-		const candidates = [
-			zai.time_limit,
-			zai.tokens_limit,
-			zai.tokens_limit_weekly,
-		].filter((window): window is NonNullable<typeof window> => window !== null);
-		if (candidates.length === 0) return null;
-		// On a tie (both windows equally exhausted), prefer the LATER reset —
-		// the account isn't actually available again until every exhausted
-		// window clears, so picking the earlier one would tell clients to
-		// retry while the other window is still capped.
-		const winning = candidates.reduce((prev, current) => {
-			if (current.percentage !== prev.percentage) {
-				return current.percentage > prev.percentage ? current : prev;
-			}
-			if (current.resetAt === null || prev.resetAt === null) {
-				return prev.resetAt === null ? prev : current;
-			}
-			return current.resetAt > prev.resetAt ? current : prev;
-		});
-		return {
-			utilization: winning.percentage,
-			resetMs: winning.resetAt,
-		};
-	}
-
-	return getRepresentativeUsageSnapshot(data, provider);
 }
 
 /**

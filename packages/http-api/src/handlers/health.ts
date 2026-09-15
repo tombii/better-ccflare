@@ -3,7 +3,7 @@ import { isAccountAvailable, TtlCache } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
 import {
-	getRepresentativeUsageSnapshot,
+	getRepresentativeUsageSnapshotForProvider,
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -25,13 +25,14 @@ export interface AccountUsageInfo {
 }
 export type AccountUsageInfoFn = (account: Account) => AccountUsageInfo | null;
 
-// The shared snapshot helper pairs the representative utilization with the
-// provider-aware reset derivation, so the staleness guard sees identical
+// The one shared snapshot helper, so the staleness guard sees identical
 // inputs here, in the accounts handler and in account selection (PR #299
 // review finding: guarding only anthropic-shaped payloads recreated the
-// /health vs accounts split-brain for the other providers).
+// /health vs accounts split-brain for the other providers). It pairs the
+// utilization with the reset of the same window, which for zai means the
+// winning window's own reset rather than the token window's.
 const usageCacheUsageInfo: AccountUsageInfoFn = (account) =>
-	getRepresentativeUsageSnapshot(
+	getRepresentativeUsageSnapshotForProvider(
 		usageCache.get(account.id),
 		account.provider ?? "anthropic",
 	);
