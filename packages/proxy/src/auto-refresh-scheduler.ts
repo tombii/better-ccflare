@@ -790,6 +790,50 @@ export class AutoRefreshScheduler {
 				return false;
 			}
 
+			// An account the proxy refused because it is benched is not a broken
+			// endpoint, and counting it as one is how the 2026-09-15 probe loop
+			// started: a Codex account with an exhausted weekly window answered
+			// every probe with our own 503 ("All accounts failed"), five of those
+			// paused it with pause_reason='failure_threshold', the 10-minute
+			// liveness re-probe was then served by a DIFFERENT account, read as a
+			// success and auto-resumed it — ten hours and 329 probes of that cycle.
+			// The row this method was handed is a snapshot from the top of the
+			// tick, so ask the database what the bench says now.
+			let benchedUntil: number | null = null;
+			let benchedReason: string | null = null;
+			try {
+				const rows = await this.db.query<{
+					rate_limited_until: number | null;
+					rate_limited_reason: string | null;
+				}>(
+					"SELECT rate_limited_until, rate_limited_reason FROM accounts WHERE id = ?",
+					[accountRow.id],
+				);
+				const until = Number(rows[0]?.rate_limited_until);
+				if (Number.isFinite(until) && until > Date.now()) {
+					benchedUntil = until;
+					benchedReason = rows[0]?.rate_limited_reason ?? null;
+				}
+			} catch (dbErr) {
+				// A database hiccup must never buy the account a free pass out of
+				// the failure accounting — fall through to the counting path.
+				log.debug(
+					`Could not re-read the rate-limit state for ${accountRow.name} after a failed probe:`,
+					dbErr,
+				);
+			}
+
+			if (benchedUntil !== null) {
+				log.warn(
+					`Auto-refresh probe for ${accountRow.name} was refused while the account is rate-limited (${benchedReason ?? "unknown reason"}) until ${new Date(benchedUntil).toISOString()} — the endpoint is not broken, so not counting toward the ${this.FAILURE_THRESHOLD}-failure pause threshold`,
+				);
+				// Same reasoning as the 529 branch: an uncounted failure never
+				// pauses the account, so without a hold-off it is eligible again on
+				// the next 60s tick — and every probe spends a prompt for good.
+				this.recordUncountedProbeFailure(accountRow.id, accountRow.name);
+				return false;
+			}
+
 			// Track consecutive failures for this account (for non-401 errors too)
 			await this.recordRefreshFailure(
 				accountRow.id,
