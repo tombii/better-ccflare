@@ -3060,9 +3060,12 @@ export function createAccountAutoPauseOnOverageHandler(
  * Body: `{ fiveHour: { enabled, percent }, weekly: { enabled, percent } }`.
  * `percent` is a whole percentage or null, and `enabled` says whether that
  * window is in force — the two are separate so switching a window off keeps
- * its number. Both windows are written together, so a body that omits one
- * switches it off; that keeps the stored pair and the form that submits it in
- * step.
+ * its number. Omitting `percent` keeps the value already stored for that
+ * window (the dialog always resends it, but a raw API caller that only wants
+ * to flip `enabled` should not have to look the number up first); sending
+ * `percent: null` explicitly still clears it. Both windows are written
+ * together, so a body that omits one switches it off; that keeps the stored
+ * pair and the form that submits it in step.
  */
 export function createAccountUsagePauseThresholdsHandler(
 	dbOps: DatabaseOperations,
@@ -3071,15 +3074,40 @@ export function createAccountUsagePauseThresholdsHandler(
 		try {
 			const body = await req.json();
 
-			const readWindow = (raw: unknown): UsagePauseSetting => {
-				// A window may arrive as the object the dialog sends, or as a bare
-				// percentage/null from a simpler client; a bare percentage means
-				// "switch this window on at N".
+			const db = dbOps.getAdapter();
+			const account = await db.get<{
+				name: string;
+				usage_pause_five_hour_threshold: number | null;
+				usage_pause_weekly_threshold: number | null;
+			}>(
+				"SELECT name, usage_pause_five_hour_threshold, usage_pause_weekly_threshold FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			// A window may arrive as the object the dialog sends, or as a bare
+			// percentage/null from a simpler client; a bare percentage means
+			// "switch this window on at N". When `percent` is omitted entirely
+			// (not even sent as null), keep the value already stored for that
+			// window — otherwise disabling a window from the raw API, without
+			// resending its number, would silently erase it. This mirrors the
+			// CLI's `setUsagePauseThresholds` fallback.
+			const readWindow = (
+				raw: unknown,
+				storedPercent: number | null,
+			): UsagePauseSetting => {
 				if (typeof raw === "object" && raw !== null) {
 					const value = raw as { enabled?: unknown; percent?: unknown };
+					const percent =
+						value.percent === undefined
+							? storedPercent
+							: parseUsagePauseThreshold(value.percent);
 					return {
 						enabled: value.enabled === true || value.enabled === 1,
-						percent: parseUsagePauseThreshold(value.percent),
+						percent,
 					};
 				}
 				const percent = parseUsagePauseThreshold(raw);
@@ -3091,8 +3119,14 @@ export function createAccountUsagePauseThresholdsHandler(
 				| Response => {
 				try {
 					return {
-						fiveHour: readWindow(body.fiveHour),
-						weekly: readWindow(body.weekly),
+						fiveHour: readWindow(
+							body.fiveHour,
+							account.usage_pause_five_hour_threshold,
+						),
+						weekly: readWindow(
+							body.weekly,
+							account.usage_pause_weekly_threshold,
+						),
 					};
 				} catch (err) {
 					return errorResponse(
@@ -3102,16 +3136,6 @@ export function createAccountUsagePauseThresholdsHandler(
 			})();
 			if (parsed instanceof Response) return parsed;
 			const { fiveHour, weekly } = parsed;
-
-			const db = dbOps.getAdapter();
-			const account = await db.get<{ name: string }>(
-				"SELECT name FROM accounts WHERE id = ?",
-				[accountId],
-			);
-
-			if (!account) {
-				return errorResponse(NotFound("Account not found"));
-			}
 
 			await dbOps.setUsagePauseThresholds(accountId, fiveHour, weekly);
 
