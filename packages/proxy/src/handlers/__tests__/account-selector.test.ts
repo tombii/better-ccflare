@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import type {
 	Account,
 	ComboWithSlots,
@@ -10,7 +10,10 @@ import {
 	selectAccountsForRequest,
 	setComboSlotInfo,
 } from "../account-selector";
-import type { ProxyContext } from "../proxy-types";
+import {
+	INTERNAL_PROBE_SECRET_HEADER,
+	type ProxyContext,
+} from "../proxy-types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -202,6 +205,194 @@ describe("selectAccountsForRequest — x-better-ccflare-account-id header", () =
 		// Rate-limited forced account is skipped; falls back to strategy.select which returns activeAcc
 		expect(result).toHaveLength(1);
 		expect(result[0]?.id).toBe("acc-active");
+	});
+
+	// ── internal auto-refresh probes ──────────────────────────────────────────
+	//
+	// A probe names the one account it wants to learn about. Serving it from a
+	// different account manufactures a success for an account that was never
+	// touched — which is how an exhausted account gets auto-resumed and its
+	// bench cleared while it is still exhausted.
+
+	const PROBE_SECRET = "probe-secret";
+
+	function probeHeaders(accountId: string): Headers {
+		return new Headers({
+			"x-better-ccflare-account-id": accountId,
+			"x-better-ccflare-bypass-session": "true",
+			"x-better-ccflare-auto-refresh": "true",
+			[INTERNAL_PROBE_SECRET_HEADER]: PROBE_SECRET,
+		});
+	}
+
+	function makeProbeCtx(
+		allAccounts: Account[],
+		selectable: Account[],
+		opts: { withSecret?: boolean } = {},
+	): ProxyContext {
+		return {
+			strategy: { select: mock(() => selectable) },
+			dbOps: {
+				getAllAccounts: mock(async () => allAccounts),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+			internalProbeSecret: opts.withSecret === false ? undefined : PROBE_SECRET,
+		} as unknown as ProxyContext;
+	}
+
+	it("lets a verified auto-refresh probe reach a failure_threshold-paused account", async () => {
+		const pausedAcc = makeAccount({
+			id: "acc-ft",
+			name: "failure-threshold",
+			paused: true,
+			pause_reason: "failure_threshold",
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx = makeProbeCtx([pausedAcc, activeAcc], [activeAcc]);
+		const meta = makeRequestMeta({ headers: probeHeaders("acc-ft") });
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		expect(result.map((a) => a.id)).toEqual(["acc-ft"]);
+	});
+
+	it("refuses a probe for a failure_threshold-paused account that needs reauth", async () => {
+		const pausedAcc = makeAccount({
+			id: "acc-ft-reauth",
+			name: "failure-threshold-reauth",
+			paused: true,
+			pause_reason: "failure_threshold",
+			requires_reauth: true,
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx = makeProbeCtx([pausedAcc, activeAcc], [activeAcc]);
+		const meta = makeRequestMeta({ headers: probeHeaders("acc-ft-reauth") });
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		expect(result).toEqual([]);
+	});
+
+	it("refuses a probe for a manually paused account instead of routing it elsewhere", async () => {
+		const pausedAcc = makeAccount({
+			id: "acc-manual",
+			name: "manually-paused",
+			paused: true,
+			pause_reason: "manual",
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx = makeProbeCtx([pausedAcc, activeAcc], [activeAcc]);
+		const meta = makeRequestMeta({ headers: probeHeaders("acc-manual") });
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		expect(result).toEqual([]);
+	});
+
+	it("ignores probe headers when the proxy has no probe secret configured", async () => {
+		// The gate is the secret, not the markers: with ctx.internalProbeSecret
+		// unset, isInternalProbe returns false for every request and a paused
+		// account named by the header falls through to normal selection, exactly
+		// as it does for client traffic.
+		const pausedAcc = makeAccount({
+			id: "acc-manual",
+			name: "manually-paused",
+			paused: true,
+			pause_reason: "manual",
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx = makeProbeCtx([pausedAcc, activeAcc], [activeAcc], {
+			withSecret: false,
+		});
+		const meta = makeRequestMeta({ headers: probeHeaders("acc-manual") });
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		expect(result.map((a) => a.id)).toEqual(["acc-active"]);
+	});
+
+	it("refuses a probe whose forced account id matches no account", async () => {
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx = makeProbeCtx([activeAcc], [activeAcc]);
+		const meta = makeRequestMeta({ headers: probeHeaders("acc-gone") });
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		expect(result).toEqual([]);
+	});
+
+	// A DB hiccup on the forced-account lookup alone: the second read (normal
+	// selection) succeeds, so the fall-through really can hand the probe to
+	// another account — which is the case being closed here.
+	function makeFlakyLookupCtx(healthy: Account[]): ProxyContext {
+		let calls = 0;
+		return {
+			strategy: { select: mock(() => healthy) },
+			dbOps: {
+				getAllAccounts: mock(async () => {
+					calls += 1;
+					if (calls === 1) throw new Error("database is locked");
+					return healthy;
+				}),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+			internalProbeSecret: PROBE_SECRET,
+		} as unknown as ProxyContext;
+	}
+
+	it("refuses a probe when the forced-account lookup itself fails", async () => {
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx = makeFlakyLookupCtx([activeAcc]);
+		const meta = makeRequestMeta({ headers: probeHeaders("acc-ft") });
+
+		const consoleError = spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const result = await selectAccountsForRequest(meta, ctx);
+			expect(result).toEqual([]);
+		} finally {
+			consoleError.mockRestore();
+		}
+	});
+
+	it("still falls back to normal selection on a lookup failure for ordinary traffic", async () => {
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx = makeFlakyLookupCtx([activeAcc]);
+		const meta = makeRequestMeta({
+			headers: new Headers({ "x-better-ccflare-account-id": "acc-ft" }),
+		});
+
+		const consoleError = spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const result = await selectAccountsForRequest(meta, ctx);
+			expect(result.map((a) => a.id)).toEqual(["acc-active"]);
+			// The operator-facing repair banner still prints for ordinary traffic.
+			expect(consoleError).toHaveBeenCalled();
+		} finally {
+			consoleError.mockRestore();
+		}
+	});
+
+	it("keeps the fall-through for ordinary traffic naming a manually paused account", async () => {
+		const pausedAcc = makeAccount({
+			id: "acc-manual",
+			name: "manually-paused",
+			paused: true,
+			pause_reason: "manual",
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx = makeProbeCtx([pausedAcc, activeAcc], [activeAcc]);
+		// No probe secret header: an ordinary client cannot claim to be a probe.
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				"x-better-ccflare-account-id": "acc-manual",
+				"x-better-ccflare-bypass-session": "true",
+				"x-better-ccflare-auto-refresh": "true",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		expect(result.map((a) => a.id)).toEqual(["acc-active"]);
 	});
 });
 

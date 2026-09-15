@@ -73,6 +73,8 @@ function createComboSessionFallbackDisabledResponse(
 		JSON.stringify({
 			type: "error",
 			error: {
+				// Listed in LOCAL_REFUSAL_ERROR_TYPES — the auto-refresh scheduler
+				// recognises this shape as a local refusal, so keep the two in sync.
 				type: "service_unavailable_error",
 				message: "Service temporarily unavailable. Please try again later.",
 				code: "combo_session_fallback_disabled",
@@ -100,6 +102,8 @@ function createForceAccountModelResponse(model: string): Response {
 		JSON.stringify({
 			type: "error",
 			error: {
+				// Listed in LOCAL_REFUSAL_ERROR_TYPES — the auto-refresh scheduler
+				// recognises this shape as a local refusal, so keep the two in sync.
 				type: "service_unavailable_error",
 				message: `No available account can serve "${model}", and forcing the account model is enabled so no substitute was used.`,
 				code: "force_account_model_no_account",
@@ -596,8 +600,14 @@ async function handleProxyRequest(
 			);
 		}
 
-		// Check feature flag for backwards compatibility
-		if (process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL === "1") {
+		// Check feature flag for backwards compatibility. Internal probes are
+		// exempt: passing one through unauthenticated earns a 401 from upstream,
+		// which the auto-refresh scheduler reads as dead credentials for an
+		// account this request never carried. A probe always gets the 503.
+		if (
+			process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL === "1" &&
+			!isInternalProbe(req.headers, ctx)
+		) {
 			log.warn(ERROR_MESSAGES.NO_ACCOUNTS);
 			return proxyUnauthenticated(
 				req,
