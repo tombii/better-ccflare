@@ -511,6 +511,13 @@ export async function selectAccountsForRequest(
 				const forcedAccount = allAccounts.find(
 					(acc) => acc.id === forcedAccountId,
 				);
+				// A verified internal auto-refresh probe — the secret-gated
+				// marker the scheduler sends, never a header a client can set.
+				const isInternalAutoRefreshProbe = isInternalProbe(
+					meta.headers,
+					ctx,
+					"auto-refresh",
+				);
 				if (forcedAccount) {
 					// With "force account model" on, a header naming an account
 					// does not get to skip the one rule the setting exists for.
@@ -557,11 +564,20 @@ export async function selectAccountsForRequest(
 					// or to probe accounts that are rate-limited (to detect when the window has reset).
 					// For those requests we must allow through an overage-paused or rate-limited account
 					// so the scheduler can hit the real endpoint and trigger the window-reset + auto-resume logic.
-					// Only an overage pause qualifies: a manual pause (pause_reason='manual') or a
-					// failure-threshold / peak_hours pause must still win even when the overage feature
-					// flag is enabled, because the auto-resume guard would never un-pause those accounts.
-					// This mirrors the scheduler eligibility query and the sendDummyMessage resume guard
+					// Only an overage pause qualifies for the bypass header: a manual pause
+					// (pause_reason='manual') or a peak_hours pause must still win even when the
+					// overage feature flag is enabled, because the auto-resume guard would never
+					// un-pause those accounts. This mirrors the scheduler eligibility query and the
+					// sendDummyMessage resume guard
 					// (auto_pause_on_overage_enabled=1 AND pause_reason IN (NULL,'overage')).
+					//
+					// A failure_threshold pause is the one exception, and only for a
+					// secret-verified auto-refresh probe. The scheduler's eligibility SQL
+					// deliberately keeps re-probing those accounts (every 10 min) so a
+					// transiently broken account can prove itself healthy again and be
+					// auto-resumed (#262) — a probe that never reaches the account it names
+					// can never do that. The bypass header alone must NOT unlock it: only
+					// the scheduler holds the process-local probe secret.
 					const isAutoRefreshBypass =
 						meta.headers.get("x-better-ccflare-bypass-session") === "true";
 					const forcedUsage = usageSnapshot(forcedAccount);
@@ -589,16 +605,48 @@ export async function selectAccountsForRequest(
 						!forcedAccount.paused &&
 						!forcedAccount.rate_limited_until &&
 						forcedUsage !== null;
+					const isFailureThresholdPaused =
+						!!forcedAccount.paused &&
+						forcedAccount.pause_reason === "failure_threshold";
 					const allowThrough =
 						available ||
 						(isAutoRefreshBypass &&
 							!forcedAccount.requires_reauth &&
-							(isOveragePaused || isRateLimited || isUsageCapped));
+							(isOveragePaused || isRateLimited || isUsageCapped)) ||
+						(isInternalAutoRefreshProbe &&
+							!forcedAccount.requires_reauth &&
+							isFailureThresholdPaused);
 					if (allowThrough) {
 						return [forcedAccount];
 					}
+					// A probe is a question about one named account, so it must
+					// never be answered by a different one. Falling through to
+					// normal selection here would send the dummy message to a
+					// healthy account, and the 200 it returns is read by the
+					// scheduler as "this account is fine": it logs the refresh as
+					// sent, auto-resumes the named account and clears its
+					// rate_limited_until while that account is still exhausted —
+					// while quietly spending a real request on the substitute
+					// (probe traffic is not written to `requests`, so the cost is
+					// invisible). Refusing yields an empty selection, which
+					// proxy.ts answers as pool_exhausted (503) and the scheduler
+					// counts as the failed probe it actually was.
+					if (isInternalAutoRefreshProbe) {
+						log.warn(
+							`Auto-refresh probe for ${forcedAccount.name} (${forcedAccount.id}) refused rather than routed to another account (paused=${!!forcedAccount.paused}, pause_reason=${forcedAccount.pause_reason ?? "none"}, rate_limited_until=${forcedAccount.rate_limited_until ?? "none"}, requires_reauth=${!!forcedAccount.requires_reauth})`,
+						);
+						return [];
+					}
+				} else if (isInternalAutoRefreshProbe) {
+					// Same rule for an id that matches nothing: probing some other
+					// account would report a success for an account that is gone.
+					log.warn(
+						`Auto-refresh probe names account ${forcedAccountId}, which no longer exists — refusing rather than probing a different account`,
+					);
+					return [];
 				}
-				// If forced account not found or unavailable (paused/rate-limited), fall back to normal selection
+				// If forced account not found or unavailable (paused/rate-limited), ordinary
+				// client traffic falls back to normal selection (probes returned above)
 			} catch (error) {
 				log.error(
 					"Failed to get accounts from database for forced account lookup:",
