@@ -1,4 +1,7 @@
-import { CLAUDE_CLI_VERSION } from "@better-ccflare/core";
+import {
+	type AccountUsageSnapshot,
+	CLAUDE_CLI_VERSION,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { supportsUsageTracking } from "@better-ccflare/types";
 import {
@@ -714,6 +717,38 @@ export function getRepresentativeUsageResetMs(
 }
 
 /**
+ * The plain pairing of {@link getRepresentativeUtilizationForProvider} with
+ * {@link getRepresentativeUsageResetMs} for one account's cached payload, in
+ * the one shape every admission-gating caller wants: a snapshot, or null when
+ * there is nothing to say.
+ *
+ * Null means "no opinion" in two distinct cases the callers treat alike —
+ * nothing was ever polled (or the cache dropped a stale entry), and the
+ * provider exposes no utilization surface at all. Callers must fall back to
+ * the usage-free check rather than read null as "not exhausted by telemetry".
+ *
+ * `provider` is taken as given: callers holding a nullable `account.provider`
+ * apply their own `?? "anthropic"` default before calling.
+ *
+ * NOTE the sibling below: {@link getRepresentativeUsageSnapshotForProvider}
+ * adds zai's cross-window pairing on top of this. Surfaces that report an
+ * account's recovery time to clients want that one; the admission gates share
+ * this one, which stays in lockstep with the two helpers it composes.
+ */
+export function getRepresentativeUsageSnapshot(
+	data: AnyUsageData | null | undefined,
+	provider: string,
+): AccountUsageSnapshot | null {
+	if (!data) return null;
+	const utilization = getRepresentativeUtilizationForProvider(data, provider);
+	if (utilization === null) return null;
+	return {
+		utilization,
+		resetMs: getRepresentativeUsageResetMs(data, provider),
+	};
+}
+
+/**
  * Representative utilization paired with the reset that belongs to the same
  * winning window. Zai needs special handling because its utilization is the
  * max of time_limit and tokens_limit while getRepresentativeUsageResetMs is
@@ -751,12 +786,7 @@ export function getRepresentativeUsageSnapshotForProvider(
 		};
 	}
 
-	const utilization = getRepresentativeUtilizationForProvider(data, provider);
-	if (utilization === null) return null;
-	return {
-		utilization,
-		resetMs: getRepresentativeUsageResetMs(data, provider),
-	};
+	return getRepresentativeUsageSnapshot(data, provider);
 }
 
 /**

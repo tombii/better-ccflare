@@ -287,7 +287,27 @@ describe("selectAccountsForRequest — x-better-ccflare-account-id header", () =
 
 		const result = await selectAccountsForRequest(meta, ctx);
 		expect(result).toEqual([]);
-		expect(result.some((a) => a.id === "acc-active")).toBe(false);
+	});
+
+	it("ignores probe headers when the proxy has no probe secret configured", async () => {
+		// The gate is the secret, not the markers: with ctx.internalProbeSecret
+		// unset, isInternalProbe returns false for every request and a paused
+		// account named by the header falls through to normal selection, exactly
+		// as it does for client traffic.
+		const pausedAcc = makeAccount({
+			id: "acc-manual",
+			name: "manually-paused",
+			paused: true,
+			pause_reason: "manual",
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx = makeProbeCtx([pausedAcc, activeAcc], [activeAcc], {
+			withSecret: false,
+		});
+		const meta = makeRequestMeta({ headers: probeHeaders("acc-manual") });
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		expect(result.map((a) => a.id)).toEqual(["acc-active"]);
 	});
 
 	it("refuses a probe whose forced account id matches no account", async () => {

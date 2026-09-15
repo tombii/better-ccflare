@@ -7,8 +7,7 @@ import {
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
-	getRepresentativeUsageResetMs,
-	getRepresentativeUtilizationForProvider,
+	getRepresentativeUsageSnapshot,
 	isOfficialXaiEndpoint,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -61,15 +60,10 @@ export type { ModelFamilyExhaustionInfo } from "./model-capacity";
  * the surfaces cannot diverge.
  */
 function usageSnapshot(account: Account): AccountUsageSnapshot | null {
-	const data = usageCache.get(account.id);
-	if (!data) return null;
-	const provider = account.provider ?? "anthropic";
-	const utilization = getRepresentativeUtilizationForProvider(data, provider);
-	if (utilization === null) return null;
-	return {
-		utilization,
-		resetMs: getRepresentativeUsageResetMs(data, provider),
-	};
+	return getRepresentativeUsageSnapshot(
+		usageCache.get(account.id),
+		account.provider ?? "anthropic",
+	);
 }
 
 // Module-level WeakMap to store model-family exhaustion info per RequestMeta,

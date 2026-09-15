@@ -1971,9 +1971,10 @@ export class CodexProvider extends BaseProvider {
 	 * On a 429 the account is refused because ONE of its usage windows is
 	 * exhausted, and it stays unusable until THAT window resets — which can be
 	 * days out (a spent weekly window) while the other window is empty and
-	 * resets within the hour. So an exhausted window decides the answer, and
-	 * when both are exhausted the LATER of the two does: the account is
-	 * routable again only once every exhausted window has rolled over.
+	 * resets within the hour. So a window the response reports as exhausted
+	 * (`used-percent >= 100`) decides the answer, and when both are exhausted
+	 * the LATER of the two does: the account is routable again only once every
+	 * exhausted window has rolled over.
 	 *
 	 * The `Math.min` over the raw reset headers is only the fallback for a 429
 	 * that reports reset times without any `x-codex-*-used-percent` header
@@ -1983,10 +1984,6 @@ export class CodexProvider extends BaseProvider {
 	 * Non-429 responses keep returning the sooner reset unchanged. That value
 	 * feeds `rate_limit_reset` window tracking, where the next window boundary
 	 * is exactly what is wanted.
-	 *
-	 * Fixes the probe loop where a Codex account with a 100 %, 4-days-out
-	 * weekly window was benched for the empty 5-hour window's reset instead and
-	 * re-probed every minute for 10 hours.
 	 */
 	parseRateLimit(response: Response): RateLimitInfo {
 		// Parse reset time from Codex usage headers (present on all responses)

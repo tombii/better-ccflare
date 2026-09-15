@@ -3,7 +3,7 @@ import { isAccountAvailable, TtlCache } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
 import {
-	getRepresentativeUtilizationForProvider,
+	getRepresentativeUsageSnapshot,
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -13,10 +13,7 @@ import type {
 	PoolStatus,
 	RetentionStatus,
 } from "../types";
-import {
-	getRepresentativeUsageResetMs,
-	isUsageExhausted,
-} from "./rate-limit-status";
+import { isUsageExhausted } from "./rate-limit-status";
 
 /**
  * Usage snapshot for exhaustion accounting: representative utilization
@@ -28,21 +25,16 @@ export interface AccountUsageInfo {
 }
 export type AccountUsageInfoFn = (account: Account) => AccountUsageInfo | null;
 
-const usageCacheUsageInfo: AccountUsageInfoFn = (account) => {
-	const data = usageCache.get(account.id);
-	if (!data) return null;
-	const provider = account.provider ?? "anthropic";
-	const utilization = getRepresentativeUtilizationForProvider(data, provider);
-	if (utilization === null) return null;
-	// Same provider-aware reset derivation as the accounts handler, so the
-	// staleness guard sees identical inputs on both surfaces (PR #299 review
-	// finding: guarding only anthropic-shaped payloads recreated the /health
-	// vs accounts split-brain for the other providers).
-	return {
-		utilization,
-		resetMs: getRepresentativeUsageResetMs(data, provider),
-	};
-};
+// The shared snapshot helper pairs the representative utilization with the
+// provider-aware reset derivation, so the staleness guard sees identical
+// inputs here, in the accounts handler and in account selection (PR #299
+// review finding: guarding only anthropic-shaped payloads recreated the
+// /health vs accounts split-brain for the other providers).
+const usageCacheUsageInfo: AccountUsageInfoFn = (account) =>
+	getRepresentativeUsageSnapshot(
+		usageCache.get(account.id),
+		account.provider ?? "anthropic",
+	);
 
 type AsyncWriterHealthFn = () => {
 	healthy: boolean;

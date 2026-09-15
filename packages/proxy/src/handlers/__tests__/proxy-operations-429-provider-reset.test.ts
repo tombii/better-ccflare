@@ -158,11 +158,22 @@ async function runProxy(
 	);
 }
 
+const BACKOFF_ENV_VARS = [
+	"CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS",
+	"CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS",
+] as const;
+
 describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () => {
 	let originalFetch: typeof globalThis.fetch;
+	// A developer may have these exported in their own shell; restore whatever
+	// was there rather than deleting the variables outright.
+	let originalBackoffEnv: Record<string, string | undefined> = {};
 
 	beforeEach(() => {
 		originalFetch = globalThis.fetch;
+		originalBackoffEnv = Object.fromEntries(
+			BACKOFF_ENV_VARS.map((name) => [name, process.env[name]]),
+		);
 		// The exponential 429 ramp (`min(resetTime, now + backoff)` in
 		// applyRateLimitCooldown) would otherwise clamp every bench here to
 		// 30s-5min and hide the difference this test is about. Widening it past
@@ -178,8 +189,14 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
-		delete process.env.CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS;
-		delete process.env.CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS;
+		for (const name of BACKOFF_ENV_VARS) {
+			const previous = originalBackoffEnv[name];
+			if (previous === undefined) {
+				delete process.env[name];
+			} else {
+				process.env[name] = previous;
+			}
+		}
 		resetRateLimitProbeGatesForTests();
 	});
 

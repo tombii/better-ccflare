@@ -95,9 +95,20 @@ function currentScopedPercentForFamily(
  *      reset hint, draining small pools to zero routable accounts on a
  *      single burst. Aligns with the same default used in
  *      response-processor.ts when 429s arrive without a reset header.
+ *      Unreachable for a provider whose parseRateLimit always yields a reset on
+ *      a 429 — Codex falls back to now+1h itself, so priority 2 never comes up
+ *      empty there — and it stays the floor for the providers that can.
  *
  * The result is always clamped to at least 60 seconds in the future to avoid a
  * zero or negative value when a parsed timestamp is already in the past.
+ *
+ * What comes back is a CEILING, not the bench length. applyRateLimitCooldown
+ * (rate-limit-cooldown.ts) still clamps an ordinary 429 to
+ * min(reset, now + backoff) on its 30s->5min ramp, so a long provider reset
+ * never stretches a bench beyond the ramp — it only stops the bench ending
+ * EARLIER than the window that caused the refusal. The long exclusion of a
+ * genuinely exhausted account comes from the usage-aware strategy over the
+ * usage cache, not from this value.
  *
  * NOTE: getRateLimitedUntil is injected rather than called directly on usageCache
  * so that callers in production pass usageCache.getRateLimitedUntil.bind(usageCache)

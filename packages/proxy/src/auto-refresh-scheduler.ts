@@ -14,8 +14,7 @@ import { Logger } from "@better-ccflare/logger";
 import {
 	fetchUsageData,
 	getProvider,
-	getRepresentativeUsageResetMs,
-	getRepresentativeUtilizationForProvider,
+	getRepresentativeUsageSnapshot,
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -1616,17 +1615,17 @@ export class AutoRefreshScheduler {
 		account: { id: string; name: string; provider: string },
 		now: number,
 	): boolean {
-		// Synchronous, and null both when nothing was ever polled and when the
-		// snapshot is over ten minutes old. No snapshot means no opinion: the
-		// account is probed exactly as it was before.
-		const data = usageCache.get(account.id);
-		if (!data) return false;
-
-		const utilization = getRepresentativeUtilizationForProvider(
-			data,
+		// Synchronous, and null both when nothing was ever polled, when the
+		// cached snapshot is over ten minutes old, and when the provider has no
+		// utilization surface at all. No snapshot means no opinion: the account
+		// is probed exactly as it was before.
+		const snapshot = getRepresentativeUsageSnapshot(
+			usageCache.get(account.id),
 			account.provider,
 		);
-		const resetMs = getRepresentativeUsageResetMs(data, account.provider);
+		if (!snapshot) return false;
+
+		const { utilization, resetMs } = snapshot;
 		// The same predicate the selector and /health use, staleness guard
 		// included: a 100% reading whose reset has already passed is the poller
 		// lagging behind a rollover, not an exhausted window.
