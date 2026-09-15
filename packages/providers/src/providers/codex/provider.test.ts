@@ -5327,3 +5327,127 @@ describe("fetchCodexUsageOnDemand", () => {
 		expect(called).toBe(false);
 	});
 });
+
+describe("CodexProvider.parseRateLimit", () => {
+	const epochSeconds = (ms: number) => String(Math.floor(ms / 1000));
+
+	const rateLimitResponse = (status: number, headers: Record<string, string>) =>
+		new Response(null, { status, headers });
+
+	it("benches until the exhausted weekly window resets, not the empty 5h one", () => {
+		const now = Date.now();
+		const fiveHourReset = now + 60 * 60 * 1000;
+		const weeklyReset = now + 4 * 24 * 60 * 60 * 1000;
+		const provider = new CodexProvider();
+
+		const info = provider.parseRateLimit(
+			rateLimitResponse(429, {
+				"x-codex-primary-window-minutes": "300",
+				"x-codex-primary-used-percent": "0",
+				"x-codex-primary-reset-at": epochSeconds(fiveHourReset),
+				"x-codex-secondary-window-minutes": "10080",
+				"x-codex-secondary-used-percent": "100",
+				"x-codex-secondary-reset-at": epochSeconds(weeklyReset),
+			}),
+		);
+
+		expect(info.isRateLimited).toBe(true);
+		expect(info.resetTime).toBeGreaterThanOrEqual(weeklyReset - 1000);
+		expect(info.resetTime).toBeLessThanOrEqual(weeklyReset + 1000);
+	});
+
+	it("takes the later reset when both windows are exhausted", () => {
+		const now = Date.now();
+		const fiveHourReset = now + 60 * 60 * 1000;
+		const weeklyReset = now + 4 * 24 * 60 * 60 * 1000;
+		const provider = new CodexProvider();
+
+		const info = provider.parseRateLimit(
+			rateLimitResponse(429, {
+				"x-codex-primary-window-minutes": "300",
+				"x-codex-primary-used-percent": "100",
+				"x-codex-primary-reset-at": epochSeconds(fiveHourReset),
+				"x-codex-secondary-window-minutes": "10080",
+				"x-codex-secondary-used-percent": "100",
+				"x-codex-secondary-reset-at": epochSeconds(weeklyReset),
+			}),
+		);
+
+		expect(info.isRateLimited).toBe(true);
+		expect(info.resetTime).toBeGreaterThanOrEqual(weeklyReset - 1000);
+		expect(info.resetTime).toBeLessThanOrEqual(weeklyReset + 1000);
+	});
+
+	it("uses the exhausted 5h window even when the weekly one resets later", () => {
+		const now = Date.now();
+		const fiveHourReset = now + 2 * 60 * 60 * 1000;
+		const weeklyReset = now + 4 * 24 * 60 * 60 * 1000;
+		const provider = new CodexProvider();
+
+		const info = provider.parseRateLimit(
+			rateLimitResponse(429, {
+				"x-codex-primary-window-minutes": "300",
+				"x-codex-primary-used-percent": "100",
+				"x-codex-primary-reset-at": epochSeconds(fiveHourReset),
+				"x-codex-secondary-window-minutes": "10080",
+				"x-codex-secondary-used-percent": "30",
+				"x-codex-secondary-reset-at": epochSeconds(weeklyReset),
+			}),
+		);
+
+		expect(info.isRateLimited).toBe(true);
+		expect(info.resetTime).toBeGreaterThanOrEqual(fiveHourReset - 1000);
+		expect(info.resetTime).toBeLessThanOrEqual(fiveHourReset + 1000);
+	});
+
+	it("keeps the sooner reset when no used-percent header says which window is exhausted", () => {
+		const now = Date.now();
+		const fiveHourReset = now + 60 * 60 * 1000;
+		const weeklyReset = now + 4 * 24 * 60 * 60 * 1000;
+		const provider = new CodexProvider();
+
+		const info = provider.parseRateLimit(
+			rateLimitResponse(429, {
+				"x-codex-primary-reset-at": epochSeconds(fiveHourReset),
+				"x-codex-secondary-reset-at": epochSeconds(weeklyReset),
+			}),
+		);
+
+		expect(info.isRateLimited).toBe(true);
+		expect(info.resetTime).toBeGreaterThanOrEqual(fiveHourReset - 1000);
+		expect(info.resetTime).toBeLessThanOrEqual(fiveHourReset + 1000);
+	});
+
+	it("falls back to one hour when the 429 carries no codex headers", () => {
+		const before = Date.now();
+		const provider = new CodexProvider();
+
+		const info = provider.parseRateLimit(rateLimitResponse(429, {}));
+
+		expect(info.isRateLimited).toBe(true);
+		expect(info.resetTime).toBeGreaterThanOrEqual(before + 60 * 60 * 1000);
+		expect(info.resetTime).toBeLessThan(before + 60 * 60 * 1000 + 5000);
+	});
+
+	it("keeps the sooner reset on a non-429 response", () => {
+		const now = Date.now();
+		const fiveHourReset = now + 60 * 60 * 1000;
+		const weeklyReset = now + 4 * 24 * 60 * 60 * 1000;
+		const provider = new CodexProvider();
+
+		const info = provider.parseRateLimit(
+			rateLimitResponse(200, {
+				"x-codex-primary-window-minutes": "300",
+				"x-codex-primary-used-percent": "0",
+				"x-codex-primary-reset-at": epochSeconds(fiveHourReset),
+				"x-codex-secondary-window-minutes": "10080",
+				"x-codex-secondary-used-percent": "100",
+				"x-codex-secondary-reset-at": epochSeconds(weeklyReset),
+			}),
+		);
+
+		expect(info.isRateLimited).toBe(false);
+		expect(info.resetTime).toBeGreaterThanOrEqual(fiveHourReset - 1000);
+		expect(info.resetTime).toBeLessThanOrEqual(fiveHourReset + 1000);
+	});
+});
