@@ -2,6 +2,7 @@ import { AccountPresenter } from "@better-ccflare/ui-common";
 import {
 	AlertCircle,
 	Edit2,
+	Gauge,
 	Globe,
 	Hash,
 	KeyRound,
@@ -51,6 +52,7 @@ interface AccountListItemProps {
 	onBillingTypeToggle: (account: Account) => void;
 	onAutoPauseOnOverageToggle?: (account: Account) => void;
 	onPeakHoursPauseToggle?: (account: Account) => void;
+	onUsageThresholdsChange?: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
 	onRequestTransformerChange?: (account: Account) => void;
@@ -73,6 +75,7 @@ export function AccountListItem({
 	onBillingTypeToggle,
 	onAutoPauseOnOverageToggle,
 	onPeakHoursPauseToggle,
+	onUsageThresholdsChange,
 	onCustomEndpointChange,
 	onModelMappingsChange,
 	onRequestTransformerChange,
@@ -122,6 +125,16 @@ export function AccountListItem({
 		}
 		bedrockCrossRegionMode = account.crossRegionMode || "geographic";
 	}
+
+	const activeUsageThresholds = [
+		account.usagePauseFiveHourEnabled && account.usagePauseFiveHourThreshold
+			? `${account.usagePauseFiveHourThreshold}% of the 5-hour window`
+			: null,
+		account.usagePauseWeeklyEnabled && account.usagePauseWeeklyThreshold
+			? `${account.usagePauseWeeklyThreshold}% of the weekly window`
+			: null,
+	].filter((entry): entry is string => entry !== null);
+	const hasUsageThreshold = activeUsageThresholds.length > 0;
 
 	return (
 		<div
@@ -365,6 +378,31 @@ export function AccountListItem({
 							/>
 						</Button>
 					)}
+					{providerShowsWeeklyUsage(account.provider) &&
+						onUsageThresholdsChange && (
+							<Button
+								variant="ghost"
+								size="sm"
+								// The tint goes on the button, not on the icon: this theme
+								// sets --accent to the same orange as --primary, so a
+								// primary-coloured icon disappears into the ghost button's
+								// hover background and the control reads as a solid orange
+								// square. On the button, the hover's accent-foreground wins.
+								className={
+									hasUsageThreshold
+										? "text-primary hover:text-accent-foreground"
+										: ""
+								}
+								onClick={() => onUsageThresholdsChange(account)}
+								title={
+									hasUsageThreshold
+										? `Pauses at ${activeUsageThresholds.join(", ")}`
+										: "Set usage pause thresholds"
+								}
+							>
+								<Gauge className="h-4 w-4" />
+							</Button>
+						)}
 					{onModelMappingsChange && (
 						<Button
 							variant="ghost"
@@ -536,6 +574,16 @@ export function AccountListItem({
 					usageThrottledWindows={account.usageThrottledWindows}
 					provider={account.provider}
 					showWeekly={providerShowsWeeklyUsage(account.provider)}
+					pauseThresholdFiveHour={
+						account.usagePauseFiveHourEnabled
+							? account.usagePauseFiveHourThreshold
+							: null
+					}
+					pauseThresholdWeekly={
+						account.usagePauseWeeklyEnabled
+							? account.usagePauseWeeklyThreshold
+							: null
+					}
 				/>
 			)}
 		</div>

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { Config } from "@better-ccflare/config";
 import type { ModelMapping } from "@better-ccflare/core";
 import {
+	parseUsagePauseThreshold,
+	type UsagePauseSetting,
 	validateAndSanitizeModelFallbacks,
 	validateAndSanitizeModelMappings,
 	validateApiKey,
@@ -2161,6 +2163,84 @@ export async function setAccountPriority(
 	return {
 		success: true,
 		message: `Account '${name}' priority set to ${validatedPriority}`,
+	};
+}
+
+/**
+ * Set an account's usage-window pause settings by account name.
+ *
+ * Each argument is a whole percentage (as a number, or the raw CLI token so
+ * malformed input like "80.5" or "80junk" is rejected rather than truncated),
+ * or null to switch that window off. Switching a window off keeps the
+ * percentage already stored for it, so turning it back on does not mean typing
+ * the number again. Both windows are written on every call.
+ */
+export async function setUsagePauseThresholds(
+	dbOps: DatabaseOperations,
+	name: string,
+	fiveHour: string | number | null,
+	weekly: string | number | null,
+): Promise<{ success: boolean; message: string }> {
+	const adapter = dbOps.getAdapter();
+
+	const account = await adapter.get<{
+		id: string;
+		usage_pause_five_hour_threshold: number | null;
+		usage_pause_weekly_threshold: number | null;
+	}>(
+		"SELECT id, usage_pause_five_hour_threshold, usage_pause_weekly_threshold FROM accounts WHERE name = ?",
+		[name],
+	);
+
+	if (!account) {
+		return {
+			success: false,
+			message: `Account '${name}' not found`,
+		};
+	}
+
+	const validated = (():
+		| { fiveHour: UsagePauseSetting; weekly: UsagePauseSetting }
+		| string => {
+		try {
+			const five = parseUsagePauseThreshold(fiveHour);
+			const week = parseUsagePauseThreshold(weekly);
+			return {
+				fiveHour: {
+					enabled: five !== null,
+					// Keep the stored number when switching the window off.
+					percent: five ?? account.usage_pause_five_hour_threshold ?? null,
+				},
+				weekly: {
+					enabled: week !== null,
+					percent: week ?? account.usage_pause_weekly_threshold ?? null,
+				},
+			};
+		} catch (err) {
+			return err instanceof Error ? err.message : String(err);
+		}
+	})();
+
+	if (typeof validated === "string") {
+		return { success: false, message: validated };
+	}
+
+	await dbOps.setUsagePauseThresholds(
+		account.id,
+		validated.fiveHour,
+		validated.weekly,
+	);
+
+	const describe = (setting: UsagePauseSetting) =>
+		setting.enabled && setting.percent !== null
+			? `${setting.percent}%`
+			: setting.percent !== null
+				? `off (${setting.percent}% remembered)`
+				: "off";
+
+	return {
+		success: true,
+		message: `Account '${name}' usage pause thresholds set to 5h=${describe(validated.fiveHour)}, weekly=${describe(validated.weekly)}`,
 	};
 }
 

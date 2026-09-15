@@ -8,18 +8,22 @@ import {
 import {
 	CACHE,
 	DEFAULT_STRATEGY,
+	effectiveThreshold,
+	evaluateUsagePause,
 	getVersion,
 	HTTP_STATUS,
 	initializeNanoGPTPricingIfAccountsExist,
 	installOutboundProxy,
 	intervalManager,
 	NETWORK,
+	readUsageUtilization,
 	registerCleanup,
 	registerDisposable,
 	setForceAccountModel,
 	setPricingLogger,
 	shutdown,
 	TIME_CONSTANTS,
+	USAGE_THRESHOLD_PAUSE_REASON,
 } from "@better-ccflare/core";
 import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
 import type { DatabaseOperations } from "@better-ccflare/database";
@@ -207,6 +211,7 @@ export function createUsageSnapshotRecorder(
 					`Failed to record Codex usage snapshot for account ${accountId}: ${err}`,
 				);
 			}
+			await applyUsagePauseThresholds(accountId, usage, dbOps, logger);
 			return;
 		}
 		try {
@@ -216,7 +221,85 @@ export function createUsageSnapshotRecorder(
 				`Failed to record usage snapshot for account ${accountId}: ${err}`,
 			);
 		}
+		await applyUsagePauseThresholds(accountId, data, dbOps, logger);
 	};
+}
+
+/**
+ * Pause or resume an account according to its usage-window thresholds.
+ *
+ * Runs on every usage snapshot, for whichever provider produced it — the
+ * thresholds are a property of the account, not of Anthropic. Reads the
+ * account back from the database rather than trusting the cached row the
+ * poller was started with, so a threshold edited in the dashboard takes effect
+ * on the next poll instead of at the next restart.
+ *
+ * Never throws: a failure here must not cost the caller its usage snapshot.
+ */
+export async function applyUsagePauseThresholds(
+	accountId: string,
+	data: unknown,
+	dbOps: DatabaseOperations,
+	logger: Logger,
+): Promise<void> {
+	try {
+		const account = await dbOps.getAccount(accountId);
+		if (!account) return;
+
+		const thresholds = {
+			fiveHour: {
+				enabled: account.usage_pause_five_hour_enabled,
+				percent: account.usage_pause_five_hour_threshold ?? null,
+			},
+			weekly: {
+				enabled: account.usage_pause_weekly_enabled,
+				percent: account.usage_pause_weekly_threshold ?? null,
+			},
+		};
+		// Nothing in force and nothing of ours to lift — the common case, and not
+		// worth a read of the payload.
+		if (
+			effectiveThreshold(thresholds.fiveHour) === null &&
+			effectiveThreshold(thresholds.weekly) === null &&
+			!account.paused
+		) {
+			return;
+		}
+
+		const decision = evaluateUsagePause({
+			thresholds,
+			utilization: readUsageUtilization(data),
+			paused: account.paused,
+			pauseReason: account.pause_reason ?? null,
+		});
+
+		// Both writes are guarded on the state this decision was made from: a
+		// manual or overage pause can land between the read above and the write
+		// below, and it must win rather than have its reason overwritten (pause)
+		// or cleared outright (resume).
+		if (decision.action === "pause") {
+			const window = decision.window === "five_hour" ? "5-hour" : "weekly";
+			logger.info(
+				`Pausing account '${account.name}' (${accountId}): ${window} usage at ${decision.utilization}% reached the configured ${decision.threshold}% threshold`,
+			);
+			await dbOps.pauseAccountForUsageThreshold(
+				accountId,
+				USAGE_THRESHOLD_PAUSE_REASON,
+			);
+		} else if (decision.action === "resume") {
+			logger.info(
+				`Resuming account '${account.name}' (${accountId}): usage is back below its pause threshold`,
+			);
+			await dbOps.resumeAccountFromUsageThreshold(
+				accountId,
+				USAGE_THRESHOLD_PAUSE_REASON,
+			);
+		}
+	} catch (err) {
+		logger.warn(
+			`Failed to apply usage pause thresholds for account ${accountId}: ${err}`,
+		);
+	}
 }
 
 /**

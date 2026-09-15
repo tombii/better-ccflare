@@ -6,6 +6,7 @@ import { Logger, logBus } from "@better-ccflare/logger";
 import { resetCodexUsageHistoryThrottle } from "@better-ccflare/proxy";
 import type { Account, LogEvent } from "@better-ccflare/types";
 import {
+	applyUsagePauseThresholds,
 	bootstrapMinimaxUsagePolling,
 	createRefreshBackedTokenProvider,
 	createUsageSnapshotRecorder,
@@ -1046,5 +1047,206 @@ describe("createRefreshBackedTokenProvider", () => {
 
 		await expect(provider()).rejects.toThrow("db offline");
 		expect(tokenCalls).toBe(0);
+	});
+});
+
+describe("applyUsagePauseThresholds", () => {
+	const logger = new Logger("test");
+
+	/**
+	 * A DatabaseOperations stand-in that serves one account row and records the
+	 * pause/resume calls made against it.
+	 */
+	function makeDbOps(account: Partial<Account> | null) {
+		const paused: Array<{ accountId: string; reason: string }> = [];
+		const resumed: string[] = [];
+		const dbOps = {
+			getAccount: async () =>
+				account === null
+					? null
+					: ({
+							id: "acc-1",
+							name: "Primary",
+							provider: "anthropic",
+							paused: false,
+							pause_reason: null,
+							usage_pause_five_hour_threshold: null,
+							usage_pause_weekly_threshold: null,
+							usage_pause_five_hour_enabled: false,
+							usage_pause_weekly_enabled: false,
+							...account,
+						} as Account),
+			pauseAccountForUsageThreshold: async (
+				accountId: string,
+				reason: string,
+			) => {
+				paused.push({ accountId, reason });
+			},
+			resumeAccountFromUsageThreshold: async (
+				accountId: string,
+				reason: string,
+			) => {
+				resumed.push(`${accountId}:${reason}`);
+			},
+			pauseAccount: async () => {
+				throw new Error("must use the guarded pause write");
+			},
+			resumeAccount: async () => {
+				throw new Error("must use the guarded resume write");
+			},
+		} as unknown as DatabaseOperations;
+		return { dbOps, paused, resumed };
+	}
+
+	it("pauses the account once a configured window reaches its threshold", async () => {
+		const { dbOps, paused, resumed } = makeDbOps({
+			usage_pause_five_hour_threshold: 80,
+			usage_pause_five_hour_enabled: true,
+		});
+
+		await applyUsagePauseThresholds(
+			"acc-1",
+			{ five_hour: { utilization: 84, resets_at: null } },
+			dbOps,
+			logger,
+		);
+
+		expect(paused).toStrictEqual([
+			{ accountId: "acc-1", reason: "usage_threshold" },
+		]);
+		expect(resumed).toStrictEqual([]);
+	});
+
+	it("leaves an account with no thresholds alone", async () => {
+		const { dbOps, paused, resumed } = makeDbOps({});
+
+		await applyUsagePauseThresholds(
+			"acc-1",
+			{ five_hour: { utilization: 99, resets_at: null } },
+			dbOps,
+			logger,
+		);
+
+		expect(paused).toStrictEqual([]);
+		expect(resumed).toStrictEqual([]);
+	});
+
+	it("resumes an account it paused once the window has rolled over", async () => {
+		const { dbOps, paused, resumed } = makeDbOps({
+			usage_pause_five_hour_threshold: 80,
+			usage_pause_five_hour_enabled: true,
+			paused: true,
+			pause_reason: "usage_threshold",
+		});
+
+		await applyUsagePauseThresholds(
+			"acc-1",
+			{ five_hour: { utilization: 0, resets_at: null } },
+			dbOps,
+			logger,
+		);
+
+		expect(resumed).toStrictEqual(["acc-1:usage_threshold"]);
+		expect(paused).toStrictEqual([]);
+	});
+
+	it("does not resume an account someone paused by hand", async () => {
+		const { dbOps, resumed } = makeDbOps({
+			usage_pause_five_hour_threshold: 80,
+			usage_pause_five_hour_enabled: true,
+			paused: true,
+			pause_reason: "manual",
+		});
+
+		await applyUsagePauseThresholds(
+			"acc-1",
+			{ five_hour: { utilization: 0, resets_at: null } },
+			dbOps,
+			logger,
+		);
+
+		expect(resumed).toStrictEqual([]);
+	});
+
+	it("reads thresholds from the database, not from the cached poller row", async () => {
+		const { dbOps, paused } = makeDbOps({
+			usage_pause_weekly_threshold: 50,
+			usage_pause_weekly_enabled: true,
+		});
+
+		await applyUsagePauseThresholds(
+			"acc-1",
+			{ limits: [{ kind: "weekly_all", percent: 61, resets_at: null }] },
+			dbOps,
+			logger,
+		);
+
+		expect(paused).toStrictEqual([
+			{ accountId: "acc-1", reason: "usage_threshold" },
+		]);
+	});
+
+	it("swallows database failures so the snapshot path keeps working", async () => {
+		const dbOps = {
+			getAccount: async () => {
+				throw new Error("db offline");
+			},
+		} as unknown as DatabaseOperations;
+
+		expect(
+			applyUsagePauseThresholds("acc-1", {}, dbOps, logger),
+		).resolves.toBeUndefined();
+	});
+
+	it("does nothing for an account that no longer exists", async () => {
+		const { dbOps, paused, resumed } = makeDbOps(null);
+
+		await applyUsagePauseThresholds(
+			"acc-gone",
+			{ five_hour: { utilization: 99, resets_at: null } },
+			dbOps,
+			logger,
+		);
+
+		expect(paused).toStrictEqual([]);
+		expect(resumed).toStrictEqual([]);
+	});
+});
+
+describe("applyUsagePauseThresholds — switched-off windows", () => {
+	const logger = new Logger("test");
+
+	it("does not pause on a percentage whose window is switched off", async () => {
+		const paused: Array<{ accountId: string; reason: string }> = [];
+		const dbOps = {
+			getAccount: async () =>
+				({
+					id: "acc-1",
+					name: "Primary",
+					provider: "anthropic",
+					paused: false,
+					pause_reason: null,
+					// The number is remembered, but the window is off.
+					usage_pause_five_hour_threshold: 10,
+					usage_pause_five_hour_enabled: false,
+					usage_pause_weekly_threshold: null,
+					usage_pause_weekly_enabled: false,
+				}) as unknown as Account,
+			pauseAccountForUsageThreshold: async (
+				accountId: string,
+				reason: string,
+			) => {
+				paused.push({ accountId, reason });
+			},
+		} as unknown as DatabaseOperations;
+
+		await applyUsagePauseThresholds(
+			"acc-1",
+			{ five_hour: { utilization: 99, resets_at: null } },
+			dbOps,
+			logger,
+		);
+
+		expect(paused).toStrictEqual([]);
 	});
 });

@@ -612,6 +612,10 @@ function collapseAccountDuplicatesPreservingState(db: Database): void {
 		   request_transformer = COALESCE(request_transformer, ${freshest("request_transformer")}),
 		   model_fallbacks = COALESCE(model_fallbacks, ${freshest("model_fallbacks")}),
 		   cross_region_mode = COALESCE(cross_region_mode, ${freshest("cross_region_mode")}),
+		   usage_pause_five_hour_threshold = COALESCE(usage_pause_five_hour_threshold, ${freshest("usage_pause_five_hour_threshold")}),
+		   usage_pause_weekly_threshold = COALESCE(usage_pause_weekly_threshold, ${freshest("usage_pause_weekly_threshold")}),
+		   usage_pause_five_hour_enabled = ${agg("MAX", "usage_pause_five_hour_enabled")},
+		   usage_pause_weekly_enabled = ${agg("MAX", "usage_pause_weekly_enabled")},
 		   billing_type = COALESCE(billing_type, ${freshest("billing_type")})
 		 WHERE rowid = $rowid`,
 	);
@@ -1170,6 +1174,74 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			).run();
 
 			log.info("Made refresh_token nullable in accounts table");
+		}
+
+		// Add per-account usage-window pause thresholds. NULL = no threshold, so
+		// every existing account keeps its current behaviour until someone sets one.
+		//
+		// Deliberately placed AFTER the refresh_token rebuild above and read from
+		// a fresh PRAGMA rather than `initialAccountsColumnNames`: that rebuild
+		// copies a fixed column list into `accounts_new`, so any column added
+		// before it is dropped when the new table replaces the old one.
+		const accountsColumnsBeforeThresholds = db
+			.prepare("PRAGMA table_info(accounts)")
+			.all() as Array<{ name: string }>;
+		const thresholdColumnNames = accountsColumnsBeforeThresholds.map(
+			(col) => col.name,
+		);
+
+		if (!thresholdColumnNames.includes("usage_pause_five_hour_threshold")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_threshold INTEGER",
+			).run();
+			log.info(
+				"Added usage_pause_five_hour_threshold column to accounts table",
+			);
+		}
+
+		if (!thresholdColumnNames.includes("usage_pause_weekly_threshold")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_threshold INTEGER",
+			).run();
+			log.info("Added usage_pause_weekly_threshold column to accounts table");
+		}
+
+		// The percentage and whether it is in force are stored separately, so
+		// switching a window off keeps the number the owner chose instead of
+		// making them type it again when they switch it back on.
+		if (!thresholdColumnNames.includes("usage_pause_five_hour_enabled")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_enabled INTEGER NOT NULL DEFAULT 0",
+			).run();
+			log.info("Added usage_pause_five_hour_enabled column to accounts table");
+		}
+
+		if (!thresholdColumnNames.includes("usage_pause_weekly_enabled")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_enabled INTEGER NOT NULL DEFAULT 0",
+			).run();
+			log.info("Added usage_pause_weekly_enabled column to accounts table");
+		}
+
+		// A threshold written before this pair existed was in force by virtue of
+		// being set at all; keep it that way rather than silently switching it
+		// off. Each flag is backfilled only on the run that adds it: afterwards,
+		// `enabled = 0` with a percentage still stored is a deliberate "off",
+		// and rewriting it would switch a window back on behind its owner.
+		if (!thresholdColumnNames.includes("usage_pause_five_hour_enabled")) {
+			db.prepare(
+				`UPDATE accounts
+				 SET usage_pause_five_hour_enabled = 1
+				 WHERE usage_pause_five_hour_threshold IS NOT NULL`,
+			).run();
+		}
+
+		if (!thresholdColumnNames.includes("usage_pause_weekly_enabled")) {
+			db.prepare(
+				`UPDATE accounts
+				 SET usage_pause_weekly_enabled = 1
+				 WHERE usage_pause_weekly_threshold IS NOT NULL`,
+			).run();
 		}
 
 		// Add UNIQUE index on (name, provider, COALESCE(custom_endpoint,'')) to

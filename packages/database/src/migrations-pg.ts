@@ -98,6 +98,10 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			cross_region_mode TEXT DEFAULT 'geographic',
 			auto_pause_on_overage_enabled INTEGER DEFAULT 0,
 			peak_hours_pause_enabled INTEGER NOT NULL DEFAULT 0,
+			usage_pause_five_hour_threshold INTEGER,
+			usage_pause_weekly_threshold INTEGER,
+			usage_pause_five_hour_enabled INTEGER NOT NULL DEFAULT 0,
+			usage_pause_weekly_enabled INTEGER NOT NULL DEFAULT 0,
 			pause_reason TEXT,
 			requires_reauth INTEGER DEFAULT 0,
 			billing_type TEXT DEFAULT NULL,
@@ -623,6 +627,10 @@ async function collapseAccountDuplicatesPreservingStatePg(
 			   request_transformer = COALESCE(request_transformer, ${pgFreshest("request_transformer")}),
 			   model_fallbacks = COALESCE(model_fallbacks, ${pgFreshest("model_fallbacks")}),
 			   cross_region_mode = COALESCE(cross_region_mode, ${pgFreshest("cross_region_mode")}),
+			   usage_pause_five_hour_threshold = COALESCE(usage_pause_five_hour_threshold, ${pgFreshest("usage_pause_five_hour_threshold")}),
+			   usage_pause_weekly_threshold = COALESCE(usage_pause_weekly_threshold, ${pgFreshest("usage_pause_weekly_threshold")}),
+			   usage_pause_five_hour_enabled = (SELECT MAX(COALESCE(usage_pause_five_hour_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   usage_pause_weekly_enabled = (SELECT MAX(COALESCE(usage_pause_weekly_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
 			   billing_type = COALESCE(billing_type, ${pgFreshest("billing_type")})
 			 WHERE id = $8`,
 			[
@@ -792,6 +800,30 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		},
 		{
 			table: "accounts",
+			column: "usage_pause_five_hour_threshold",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_threshold INTEGER",
+		},
+		{
+			table: "accounts",
+			column: "usage_pause_weekly_threshold",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_threshold INTEGER",
+		},
+		{
+			table: "accounts",
+			column: "usage_pause_five_hour_enabled",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_enabled INTEGER NOT NULL DEFAULT 0",
+		},
+		{
+			table: "accounts",
+			column: "usage_pause_weekly_enabled",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN usage_pause_weekly_enabled INTEGER NOT NULL DEFAULT 0",
+		},
+		{
+			table: "accounts",
 			column: "pause_reason",
 			definition: "ALTER TABLE accounts ADD COLUMN pause_reason TEXT",
 		},
@@ -868,6 +900,26 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 				"ALTER TABLE oauth_sessions ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
 		},
 	];
+
+	// Whether each usage-pause enabled flag is being added by THIS run. The
+	// backfill below must only run then: re-running it on every startup would
+	// switch a window back on that its owner had deliberately switched off
+	// while keeping its percentage.
+	//
+	// Tracked per column, not as a pair: the two are added independently, so a
+	// database that already has one and not the other would otherwise get the
+	// new flag defaulted to 0 with its backfill skipped, silently switching an
+	// existing threshold off.
+	const fiveHourFlagIsNew = !(await columnExists(
+		adapter,
+		"accounts",
+		"usage_pause_five_hour_enabled",
+	));
+	const weeklyFlagIsNew = !(await columnExists(
+		adapter,
+		"accounts",
+		"usage_pause_weekly_enabled",
+	));
 
 	for (const col of columnsToAdd) {
 		const exists = await columnExists(adapter, col.table, col.column);
@@ -1064,6 +1116,25 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		log.info("Performance indexes ensured");
 	} catch (_error) {
 		// Indexes may already exist
+	}
+
+	// A usage-pause threshold written before the enabled flags existed was in
+	// force by virtue of being set at all; keep it that way (mirrors SQLite).
+	// Guarded on the flags being new: from then on, `enabled = 0` with a
+	// percentage still stored is a deliberate "off", not a row to repair.
+	if (fiveHourFlagIsNew) {
+		await adapter.unsafe(`
+			UPDATE accounts
+			SET usage_pause_five_hour_enabled = 1
+			WHERE usage_pause_five_hour_threshold IS NOT NULL
+		`);
+	}
+	if (weeklyFlagIsNew) {
+		await adapter.unsafe(`
+			UPDATE accounts
+			SET usage_pause_weekly_enabled = 1
+			WHERE usage_pause_weekly_threshold IS NOT NULL
+		`);
 	}
 
 	// Backfill pause_reason for existing paused accounts (mirrors SQLite migration)

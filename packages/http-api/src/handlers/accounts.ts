@@ -5,8 +5,10 @@ import { join } from "node:path";
 import * as cliCommands from "@better-ccflare/cli-commands";
 import type { Config } from "@better-ccflare/config";
 import {
+	parseUsagePauseThreshold,
 	patterns,
 	sanitizers,
+	type UsagePauseSetting,
 	validateAndSanitizeModelMappings,
 	validateNumber,
 	validatePriority,
@@ -317,6 +319,10 @@ export function createAccountsListHandler(
 			auto_refresh_enabled: 0 | 1;
 			auto_pause_on_overage_enabled: 0 | 1;
 			peak_hours_pause_enabled: 0 | 1;
+			usage_pause_five_hour_threshold: number | null;
+			usage_pause_weekly_threshold: number | null;
+			usage_pause_five_hour_enabled: 0 | 1;
+			usage_pause_weekly_enabled: 0 | 1;
 			custom_endpoint: string | null;
 			model_mappings: string | null;
 			request_transformer: RequestTransformer | null;
@@ -355,6 +361,10 @@ export function createAccountsListHandler(
 					custom_endpoint,
 					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
 					COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
+					usage_pause_five_hour_threshold,
+					usage_pause_weekly_threshold,
+					COALESCE(usage_pause_five_hour_enabled, 0) as usage_pause_five_hour_enabled,
+					COALESCE(usage_pause_weekly_enabled, 0) as usage_pause_weekly_enabled,
 
 					model_mappings,
 					request_transformer,
@@ -748,6 +758,13 @@ export function createAccountsListHandler(
 					autoPauseOnOverageEnabled:
 						account.auto_pause_on_overage_enabled === 1,
 					peakHoursPauseEnabled: account.peak_hours_pause_enabled === 1,
+					usagePauseFiveHourThreshold:
+						account.usage_pause_five_hour_threshold ?? null,
+					usagePauseWeeklyThreshold:
+						account.usage_pause_weekly_threshold ?? null,
+					usagePauseFiveHourEnabled:
+						account.usage_pause_five_hour_enabled === 1,
+					usagePauseWeeklyEnabled: account.usage_pause_weekly_enabled === 1,
 					customEndpoint: account.custom_endpoint,
 					modelMappings,
 					requestTransformer: account.request_transformer,
@@ -3032,6 +3049,86 @@ export function createAccountAutoPauseOnOverageHandler(
 				error instanceof Error
 					? error
 					: new Error("Failed to toggle auto-pause-on-overage"),
+			);
+		}
+	};
+}
+
+/**
+ * Create a handler for the per-account usage-window pause thresholds.
+ *
+ * Body: `{ fiveHour: { enabled, percent }, weekly: { enabled, percent } }`.
+ * `percent` is a whole percentage or null, and `enabled` says whether that
+ * window is in force — the two are separate so switching a window off keeps
+ * its number. Both windows are written together, so a body that omits one
+ * switches it off; that keeps the stored pair and the form that submits it in
+ * step.
+ */
+export function createAccountUsagePauseThresholdsHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const readWindow = (raw: unknown): UsagePauseSetting => {
+				// A window may arrive as the object the dialog sends, or as a bare
+				// percentage/null from a simpler client; a bare percentage means
+				// "switch this window on at N".
+				if (typeof raw === "object" && raw !== null) {
+					const value = raw as { enabled?: unknown; percent?: unknown };
+					return {
+						enabled: value.enabled === true || value.enabled === 1,
+						percent: parseUsagePauseThreshold(value.percent),
+					};
+				}
+				const percent = parseUsagePauseThreshold(raw);
+				return { enabled: percent !== null, percent };
+			};
+
+			const parsed = (():
+				| { fiveHour: UsagePauseSetting; weekly: UsagePauseSetting }
+				| Response => {
+				try {
+					return {
+						fiveHour: readWindow(body.fiveHour),
+						weekly: readWindow(body.weekly),
+					};
+				} catch (err) {
+					return errorResponse(
+						BadRequest(err instanceof Error ? err.message : String(err)),
+					);
+				}
+			})();
+			if (parsed instanceof Response) return parsed;
+			const { fiveHour, weekly } = parsed;
+
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string }>(
+				"SELECT name FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			await dbOps.setUsagePauseThresholds(accountId, fiveHour, weekly);
+
+			return jsonResponse({
+				success: true,
+				message: `Usage pause thresholds updated for account '${account.name}'`,
+				usagePauseFiveHourThreshold: fiveHour.percent,
+				usagePauseFiveHourEnabled: fiveHour.enabled,
+				usagePauseWeeklyThreshold: weekly.percent,
+				usagePauseWeeklyEnabled: weekly.enabled,
+			});
+		} catch (error) {
+			log.error("Account usage pause thresholds error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to update usage pause thresholds"),
 			);
 		}
 	};

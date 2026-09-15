@@ -397,6 +397,37 @@ Pause an account temporarily.
 curl -X POST http://localhost:8080/api/accounts/uuid-here/pause
 ```
 
+#### POST /api/accounts/:accountId/usage-pause-thresholds
+
+Set the account's usage-window pause thresholds. The account is paused once a configured window reaches its percentage, and resumed automatically once every configured window reads back below it.
+
+**Request:**
+```json
+{
+  "fiveHour": 80,
+  "weekly": null
+}
+```
+
+Each field is a whole percentage from 1 to 100, or `null` to turn that window's threshold off. Both windows are written on every call, so a field left out is cleared.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Usage pause thresholds updated for account 'myaccount'",
+  "usagePauseFiveHourThreshold": 80,
+  "usagePauseWeeklyThreshold": null
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/accounts/uuid-here/usage-pause-thresholds \
+  -H "Content-Type: application/json" \
+  -d '{"fiveHour": 80, "weekly": null}'
+```
+
 #### POST /api/accounts/:accountId/force-reset-rate-limit
 
 Force-clear persisted rate-limit lock state for an account and trigger immediate usage polling when possible.

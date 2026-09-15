@@ -313,6 +313,10 @@ export interface AccountRow {
 	auto_refresh_enabled?: boolean | number | null;
 	auto_pause_on_overage_enabled?: boolean | number | null;
 	peak_hours_pause_enabled?: boolean | number | null;
+	usage_pause_five_hour_threshold?: number | null;
+	usage_pause_weekly_threshold?: number | null;
+	usage_pause_five_hour_enabled?: boolean | number | null;
+	usage_pause_weekly_enabled?: boolean | number | null;
 	custom_endpoint?: string | null;
 	model_mappings?: string | null; // JSON string for OpenAI-compatible providers
 	request_transformer?: RequestTransformer | null;
@@ -353,6 +357,14 @@ export interface Account {
 	auto_refresh_enabled: boolean;
 	auto_pause_on_overage_enabled: boolean;
 	peak_hours_pause_enabled: boolean;
+	/** Pause the account when 5-hour utilization reaches this percent. null = unset. */
+	usage_pause_five_hour_threshold: number | null;
+	/** Pause the account when weekly utilization reaches this percent. null = unset. */
+	usage_pause_weekly_threshold: number | null;
+	/** Whether the 5-hour threshold above is in force. */
+	usage_pause_five_hour_enabled: boolean;
+	/** Whether the weekly threshold above is in force. */
+	usage_pause_weekly_enabled: boolean;
 	custom_endpoint: string | null;
 	model_mappings: string | null; // JSON string for OpenAI-compatible providers
 	request_transformer: RequestTransformer | null;
@@ -402,6 +414,10 @@ export interface AccountResponse {
 	autoRefreshEnabled: boolean;
 	autoPauseOnOverageEnabled?: boolean;
 	peakHoursPauseEnabled?: boolean;
+	usagePauseFiveHourThreshold: number | null; // Stored 5-hour percentage; null = never set
+	usagePauseWeeklyThreshold: number | null; // Stored weekly percentage; null = never set
+	usagePauseFiveHourEnabled: boolean; // Whether the 5-hour threshold is in force
+	usagePauseWeeklyEnabled: boolean; // Whether the weekly threshold is in force
 	customEndpoint: string | null;
 	modelMappings: { [key: string]: string | string[] } | null; // Parsed model mappings (arrays = cycling models)
 	requestTransformer: RequestTransformer | null;
@@ -550,6 +566,12 @@ export function toAccount(row: AccountRow): Account {
 		auto_refresh_enabled: !!row.auto_refresh_enabled,
 		auto_pause_on_overage_enabled: !!row.auto_pause_on_overage_enabled,
 		peak_hours_pause_enabled: !!row.peak_hours_pause_enabled,
+		usage_pause_five_hour_threshold: toNumOrNull(
+			row.usage_pause_five_hour_threshold,
+		),
+		usage_pause_weekly_threshold: toNumOrNull(row.usage_pause_weekly_threshold),
+		usage_pause_five_hour_enabled: !!row.usage_pause_five_hour_enabled,
+		usage_pause_weekly_enabled: !!row.usage_pause_weekly_enabled,
 		custom_endpoint: row.custom_endpoint || null,
 		model_mappings: row.model_mappings || null,
 		request_transformer: row.request_transformer ?? null,
@@ -655,6 +677,10 @@ export function toAccountResponse(account: Account): AccountResponse {
 		autoRefreshEnabled: account.auto_refresh_enabled,
 		autoPauseOnOverageEnabled: account.auto_pause_on_overage_enabled,
 		peakHoursPauseEnabled: account.peak_hours_pause_enabled,
+		usagePauseFiveHourThreshold: account.usage_pause_five_hour_threshold,
+		usagePauseWeeklyThreshold: account.usage_pause_weekly_threshold,
+		usagePauseFiveHourEnabled: account.usage_pause_five_hour_enabled,
+		usagePauseWeeklyEnabled: account.usage_pause_weekly_enabled,
 		customEndpoint: account.custom_endpoint,
 		modelMappings,
 		requestTransformer: account.request_transformer,

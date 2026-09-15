@@ -50,6 +50,7 @@ import {
 	resumeAccount,
 	runDoctor,
 	setAccountPriority,
+	setUsagePauseThresholds,
 } from "@better-ccflare/cli-commands";
 import { Config } from "@better-ccflare/config";
 import {
@@ -100,6 +101,7 @@ interface ParsedArgs {
 	pause: string | null;
 	resume: string | null;
 	setPriority: [string, number] | null;
+	setUsagePauseThresholds: [string, string | null, string | null] | null;
 	reauthenticate: string | null;
 	analyze: boolean;
 	repairDb: boolean;
@@ -460,6 +462,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		pause: null,
 		resume: null,
 		setPriority: null,
+		setUsagePauseThresholds: null,
 		reauthenticate: null,
 		analyze: false,
 		repairDb: false,
@@ -733,6 +736,29 @@ function parseArgs(args: string[]): ParsedArgs {
 				parsed.setPriority = [name, priority];
 				break;
 			}
+			case "--set-usage-pause-thresholds": {
+				if (
+					i + 3 >= args.length ||
+					args[i + 1].startsWith("--") ||
+					args[i + 2].startsWith("--") ||
+					args[i + 3].startsWith("--")
+				) {
+					console.error(
+						"❌ --set-usage-pause-thresholds requires an account name, a 5-hour percentage and a weekly percentage (use 'off' to disable one)",
+					);
+					fastExit(1);
+				}
+				const name = args[++i];
+				// Hand the raw token on untouched. parseInt would read "80.5" and
+				// "80junk" as 80 and store a threshold nobody asked for; the shared
+				// parser rejects both.
+				const toThreshold = (raw: string): string | null =>
+					raw === "off" || raw === "none" ? null : raw;
+				const fiveHour = toThreshold(args[++i]);
+				const weekly = toThreshold(args[++i]);
+				parsed.setUsagePauseThresholds = [name, fiveHour, weekly];
+				break;
+			}
 			case "--analyze":
 				parsed.analyze = true;
 				break;
@@ -889,6 +915,8 @@ Options:
   --resume <name>      Resume an account
   --force-reset-rate-limit <name> Force-clear stale rate-limit lock for an account
   --set-priority <name> <priority>  Set account priority
+  --set-usage-pause-thresholds <name> <5h%|off> <weekly%|off>
+                        Pause the account when a usage window reaches the given percentage
   --analyze            Analyze database performance
   --repair-db          Check and repair database integrity
   --doctor             Run database integrity check and storage diagnostics
@@ -1311,6 +1339,17 @@ Examples:
 		}
 
 		const result = await setAccountPriority(dbOps, name, priority);
+		console.log(result.message);
+		if (!result.success) {
+			await exitGracefully(1);
+		}
+		await exitGracefully(0);
+	}
+
+	if (parsed.setUsagePauseThresholds) {
+		const [name, fiveHour, weekly] = parsed.setUsagePauseThresholds;
+
+		const result = await setUsagePauseThresholds(dbOps, name, fiveHour, weekly);
 		console.log(result.message);
 		if (!result.success) {
 			await exitGracefully(1);
