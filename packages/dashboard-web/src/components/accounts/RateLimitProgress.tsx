@@ -29,6 +29,8 @@ interface RateLimitProgressProps {
 	provider: string;
 	className?: string;
 	showWeekly?: boolean; // Whether to show weekly usage as well
+	pauseThresholdFiveHour?: number | null; // Pause at this percent of the 5-hour window; null = off
+	pauseThresholdWeekly?: number | null; // Pause at this percent of the all-models weekly window; null = off
 }
 
 const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours in milliseconds
@@ -45,6 +47,26 @@ function computeExpectedPct(
 	const durationMs = resetMs - startMs;
 	const elapsed = now - startMs;
 	return Math.min(100, Math.max(0, (elapsed / durationMs) * 100));
+}
+
+/**
+ * The pause threshold that applies to one usage row, or null when that row has
+ * none.
+ *
+ * Only the two windows a threshold can be set on are marked: the 5-hour window
+ * and the all-models weekly window. Per-model weekly caps (`seven_day_opus` and
+ * friends) share the weekly page but not the setting, so marking them would
+ * promise a pause that never comes.
+ */
+function thresholdForWindow(
+	window: string | null,
+	fiveHour: number | null,
+	weekly: number | null,
+): number | null {
+	if (!window) return null;
+	if (window === "five_hour") return fiveHour;
+	if (window === "seven_day") return weekly;
+	return null;
 }
 
 function computeWindowThrottleUntil(
@@ -140,6 +162,8 @@ export function RateLimitProgress({
 	provider,
 	className,
 	showWeekly = false,
+	pauseThresholdFiveHour = null,
+	pauseThresholdWeekly = null,
 }: RateLimitProgressProps) {
 	const [now, setNow] = useState(Date.now());
 
@@ -652,6 +676,11 @@ export function RateLimitProgress({
 							);
 							const isOverPacing =
 								expectedPct !== null && (percentage ?? 0) > expectedPct;
+							const pauseThreshold = thresholdForWindow(
+								usage.window ?? null,
+								pauseThresholdFiveHour,
+								pauseThresholdWeekly,
+							);
 							const isWindowThrottled = usage.window
 								? throttledWindowSet.has(usage.window)
 								: false;
@@ -749,6 +778,46 @@ export function RateLimitProgress({
 														"1px 0 2px rgba(0,0,0,0.5), -1px 0 2px rgba(0,0,0,0.5)",
 												}}
 											/>
+										)}
+										{pauseThreshold !== null && (
+											// Sits on top of the bar's own fill as often as beside it,
+											// so it needs contrast against the fill colour AND against
+											// the pale track — and it must not read as the thin white
+											// pace marker above. A foreground-coloured post with a
+											// halo and a flag head does both, in either theme.
+											<div
+												className="absolute pointer-events-none"
+												title={`Pauses this account at ${pauseThreshold}%`}
+												style={{
+													left: `${pauseThreshold}%`,
+													top: "-7px",
+													zIndex: 11,
+												}}
+											>
+												{/* The theme variables hold plain colour literals, so
+												    they are read here directly: this build generates no
+												    `bg-foreground` utility, and using one paints nothing
+												    at all. */}
+												<div
+													style={{
+														width: "2px",
+														height: "22px",
+														backgroundColor: "var(--foreground, #09090b)",
+														boxShadow: "0 0 0 1px var(--background, #fff)",
+													}}
+												/>
+												<div
+													className="absolute"
+													style={{
+														top: 0,
+														left: "2px",
+														width: "7px",
+														height: "6px",
+														backgroundColor: "var(--foreground, #09090b)",
+														clipPath: "polygon(0 0, 100% 0, 0 100%)",
+													}}
+												/>
+											</div>
 										)}
 									</div>
 									{isWindowThrottled && throttleDisplayUntil && (

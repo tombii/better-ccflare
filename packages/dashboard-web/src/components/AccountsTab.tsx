@@ -10,6 +10,7 @@ import {
 	AccountModelMappingsDialog,
 	AccountPriorityDialog,
 	AccountRequestTransformerDialog,
+	AccountUsageThresholdsDialog,
 	AnthropicReauthDialog,
 	CodexReauthDialog,
 	DeleteConfirmationDialog,
@@ -62,6 +63,13 @@ export function AccountsTab() {
 		account: null,
 	});
 	const [customEndpointDialog, setCustomEndpointDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
+	const [usageThresholdsDialog, setUsageThresholdsDialog] = useState<{
 		isOpen: boolean;
 		account: Account | null;
 	}>({
@@ -555,13 +563,17 @@ export function AccountsTab() {
 		}
 	};
 
-	const handleUsagePauseThresholdsChange = async (
-		account: Account,
+	const handleUsageThresholdsChange = (account: Account) => {
+		setUsageThresholdsDialog({ isOpen: true, account });
+	};
+
+	const handleUpdateUsageThresholds = async (
+		accountId: string,
 		fiveHour: number | null,
 		weekly: number | null,
 	) => {
 		try {
-			await api.updateAccountUsagePauseThresholds(account.id, fiveHour, weekly);
+			await api.updateAccountUsagePauseThresholds(accountId, fiveHour, weekly);
 			await loadAccounts();
 		} catch (err) {
 			setActionError(formatError(err));
@@ -729,7 +741,7 @@ export function AccountsTab() {
 						onBillingTypeToggle={handleBillingTypeToggle}
 						onAutoPauseOnOverageToggle={handleAutoPauseOnOverageToggle}
 						onPeakHoursPauseToggle={handlePeakHoursPauseToggle}
-						onUsagePauseThresholdsChange={handleUsagePauseThresholdsChange}
+						onUsageThresholdsChange={handleUsageThresholdsChange}
 						onCustomEndpointChange={handleCustomEndpointChange}
 						onModelMappingsChange={handleModelMappingsChange}
 						onRequestTransformerChange={handleRequestTransformerChange}
@@ -784,6 +796,20 @@ export function AccountsTab() {
 						})
 					}
 					onUpdatePriority={handleUpdatePriority}
+				/>
+			)}
+
+			{usageThresholdsDialog.isOpen && usageThresholdsDialog.account && (
+				<AccountUsageThresholdsDialog
+					account={usageThresholdsDialog.account}
+					isOpen={usageThresholdsDialog.isOpen}
+					onOpenChange={(open) =>
+						setUsageThresholdsDialog({
+							isOpen: open,
+							account: open ? usageThresholdsDialog.account : null,
+						})
+					}
+					onUpdateThresholds={handleUpdateUsageThresholds}
 				/>
 			)}
 

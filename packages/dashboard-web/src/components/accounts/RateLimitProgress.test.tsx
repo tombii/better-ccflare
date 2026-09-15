@@ -608,3 +608,92 @@ describe("RateLimitProgress", () => {
 		expect(html).not.toContain("Usage (5-hour)");
 	});
 });
+
+describe("RateLimitProgress — usage pause threshold marker", () => {
+	const anthropicUsage: AnthropicUsageData = {
+		five_hour: {
+			utilization: 62,
+			resets_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+		},
+		seven_day: {
+			utilization: 40,
+			resets_at: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
+		},
+	};
+
+	it("marks the 5-hour bar at the configured threshold", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={null}
+				usageUtilization={62}
+				usageWindow="five_hour"
+				usageData={anthropicUsage}
+				provider="anthropic"
+				showWeekly
+				pauseThresholdFiveHour={80}
+				pauseThresholdWeekly={null}
+			/>,
+		);
+
+		expect(html).toContain("Pauses this account at 80%");
+		expect(html).toContain("left:80%");
+	});
+
+	it("marks the weekly bar at its own threshold", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={null}
+				usageUtilization={62}
+				usageWindow="five_hour"
+				usageData={anthropicUsage}
+				provider="anthropic"
+				showWeekly
+				pauseThresholdFiveHour={null}
+				pauseThresholdWeekly={90}
+			/>,
+		);
+
+		expect(html).toContain("Pauses this account at 90%");
+		expect(html).toContain("left:90%");
+	});
+
+	it("draws no marker when no threshold is set", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={null}
+				usageUtilization={62}
+				usageWindow="five_hour"
+				usageData={anthropicUsage}
+				provider="anthropic"
+				showWeekly
+			/>,
+		);
+
+		expect(html).not.toContain("Pauses this account at");
+	});
+
+	it("does not mark per-model weekly caps, which carry no threshold of their own", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={null}
+				usageUtilization={62}
+				usageWindow="five_hour"
+				usageData={{
+					...anthropicUsage,
+					seven_day_opus: {
+						utilization: 95,
+						resets_at: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
+					},
+				}}
+				provider="anthropic"
+				showWeekly
+				pauseThresholdFiveHour={null}
+				pauseThresholdWeekly={90}
+			/>,
+		);
+
+		// Exactly one marker: the all-models weekly bar, not the Opus sub-cap.
+		expect(html.split("Pauses this account at").length - 1).toBe(1);
+		expect(html).toContain("Pauses this account at 90%");
+	});
+});

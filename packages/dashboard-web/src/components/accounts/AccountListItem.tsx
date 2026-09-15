@@ -2,6 +2,7 @@ import { AccountPresenter } from "@better-ccflare/ui-common";
 import {
 	AlertCircle,
 	Edit2,
+	Gauge,
 	Globe,
 	Hash,
 	KeyRound,
@@ -25,7 +26,6 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
-import { UsagePauseThresholds } from "./UsagePauseThresholds";
 
 function formatTokenCount(n: number): string {
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -52,11 +52,7 @@ interface AccountListItemProps {
 	onBillingTypeToggle: (account: Account) => void;
 	onAutoPauseOnOverageToggle?: (account: Account) => void;
 	onPeakHoursPauseToggle?: (account: Account) => void;
-	onUsagePauseThresholdsChange?: (
-		account: Account,
-		fiveHour: number | null,
-		weekly: number | null,
-	) => Promise<void>;
+	onUsageThresholdsChange?: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
 	onRequestTransformerChange?: (account: Account) => void;
@@ -79,7 +75,7 @@ export function AccountListItem({
 	onBillingTypeToggle,
 	onAutoPauseOnOverageToggle,
 	onPeakHoursPauseToggle,
-	onUsagePauseThresholdsChange,
+	onUsageThresholdsChange,
 	onCustomEndpointChange,
 	onModelMappingsChange,
 	onRequestTransformerChange,
@@ -129,6 +125,10 @@ export function AccountListItem({
 		}
 		bedrockCrossRegionMode = account.crossRegionMode || "geographic";
 	}
+
+	const hasUsageThreshold =
+		account.usagePauseFiveHourThreshold !== null ||
+		account.usagePauseWeeklyThreshold !== null;
 
 	return (
 		<div
@@ -205,13 +205,6 @@ export function AccountListItem({
 											title="Automatically pause account when overage usage is detected. Note: detection only happens when Anthropic API reports overage, so some overage usage may occur before pausing. Account resumes when usage window resets."
 										/>
 									</div>
-								)}
-							{providerShowsWeeklyUsage(account.provider) &&
-								onUsagePauseThresholdsChange && (
-									<UsagePauseThresholds
-										account={account}
-										onSave={onUsagePauseThresholdsChange}
-									/>
 								)}
 							{account.provider === "zai" && onPeakHoursPauseToggle && (
 								<div className="flex items-center gap-2">
@@ -379,6 +372,32 @@ export function AccountListItem({
 							/>
 						</Button>
 					)}
+					{providerShowsWeeklyUsage(account.provider) &&
+						onUsageThresholdsChange && (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={() => onUsageThresholdsChange(account)}
+								title={
+									hasUsageThreshold
+										? `Pauses at ${[
+												account.usagePauseFiveHourThreshold
+													? `${account.usagePauseFiveHourThreshold}% of the 5-hour window`
+													: null,
+												account.usagePauseWeeklyThreshold
+													? `${account.usagePauseWeeklyThreshold}% of the weekly window`
+													: null,
+											]
+												.filter(Boolean)
+												.join(", ")}`
+										: "Set usage pause thresholds"
+								}
+							>
+								<Gauge
+									className={`h-4 w-4 ${hasUsageThreshold ? "text-primary" : ""}`}
+								/>
+							</Button>
+						)}
 					{onModelMappingsChange && (
 						<Button
 							variant="ghost"
@@ -550,6 +569,8 @@ export function AccountListItem({
 					usageThrottledWindows={account.usageThrottledWindows}
 					provider={account.provider}
 					showWeekly={providerShowsWeeklyUsage(account.provider)}
+					pauseThresholdFiveHour={account.usagePauseFiveHourThreshold}
+					pauseThresholdWeekly={account.usagePauseWeeklyThreshold}
 				/>
 			)}
 		</div>

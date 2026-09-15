@@ -288,7 +288,7 @@ bun run cli --set-usage-pause-thresholds work-account off 80
 bun run cli --set-usage-pause-thresholds work-account off off
 ```
 
-The same setting is available per account in the dashboard's Accounts tab ("Pause at"), and over the API as `POST /api/accounts/:id/usage-pause-thresholds` with `{ "fiveHour": 80, "weekly": null }`.
+The same setting is available per account in the dashboard: the gauge button on the account row opens a "Usage Pause Thresholds" dialog, and a configured threshold is drawn as a marker on the matching usage bar. It is also available over the API as `POST /api/accounts/:id/usage-pause-thresholds` with `{ "fiveHour": 80, "weekly": null }`.
 
 ### Statistics and History
 
