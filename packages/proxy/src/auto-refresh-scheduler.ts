@@ -28,6 +28,7 @@ import {
 	extractAuthFailureReason,
 	getValidAccessToken,
 	INTERNAL_PROBE_SECRET_HEADER,
+	LOCAL_REFUSAL_ERROR_TYPES,
 } from "./handlers";
 import {
 	flushPendingRotation,
@@ -45,6 +46,33 @@ const log = new Logger("AutoRefreshScheduler");
  * its reset is unknown or still in the future.
  */
 const UNKNOWN_USAGE_RESET = 0;
+
+/**
+ * Whether a failed probe's response is better-ccflare's own refusal rather
+ * than something an upstream provider sent. Only our refusal may be exempted
+ * from the consecutive-failure accounting, so both the status and the body
+ * shape have to match: 503 is the only status we refuse with, and
+ * {@link LOCAL_REFUSAL_ERROR_TYPES} holds the `error.type` values only we
+ * produce. A body we cannot parse is treated as upstream's — failing closed
+ * costs at most one counted failure, while failing open would let a genuinely
+ * broken endpoint on a benched account escape the pause threshold forever.
+ */
+function isLocalRefusal(status: number, body: string | null): boolean {
+	if (status !== 503 || !body) return false;
+	try {
+		const parsed = JSON.parse(body) as {
+			type?: unknown;
+			error?: { type?: unknown };
+		};
+		return (
+			parsed?.type === "error" &&
+			typeof parsed.error?.type === "string" &&
+			LOCAL_REFUSAL_ERROR_TYPES.has(parsed.error.type)
+		);
+	} catch {
+		return false;
+	}
+}
 
 function isZaiPeakHour(ts = Date.now()): boolean {
 	const d = new Date(ts);
@@ -784,9 +812,11 @@ export class AutoRefreshScheduler {
 				`Auto-refresh message failed for account ${accountRow.name}: ${response.status} ${response.statusText}`,
 			);
 
-			// Log response body for debugging
+			// Log response body for debugging. Kept in scope: the refusal check
+			// below reads the same text rather than draining the stream twice.
+			let errorBody: string | null = null;
 			try {
-				const errorBody = await response.text();
+				errorBody = await response.text();
 				log.error(`Response body: ${errorBody}`);
 			} catch {
 				// Ignore error reading body
@@ -819,8 +849,31 @@ export class AutoRefreshScheduler {
 			// paused it with pause_reason='failure_threshold', the 10-minute
 			// liveness re-probe was then served by a DIFFERENT account, read as a
 			// success and auto-resumed it — ten hours and 329 probes of that cycle.
-			// The row this method was handed is a snapshot from the top of the
-			// tick, so ask the database what the bench says now.
+			//
+			// The exemption is for the proxy's OWN refusal only, which takes all
+			// three of:
+			//   (a) status 503 — the only status better-ccflare refuses with;
+			//   (b) a body naming one of LOCAL_REFUSAL_ERROR_TYPES, so an upstream
+			//       5xx that merely arrives while the account is benched still
+			//       counts. A forced probe does reach a rate-limited account (the
+			//       selector's bypass exists for that) and the transient-5xx retry
+			//       is disabled for internal probes, so a genuine upstream failure
+			//       is forwarded here as-is;
+			//   (c) the account really is benched right now. The row this method
+			//       was handed is a snapshot from the top of the tick, so ask the
+			//       database what the bench says now.
+			if (!isLocalRefusal(response.status, errorBody)) {
+				log.debug(
+					`Auto-refresh probe for ${accountRow.name} got ${response.status} with a non-local body — counting it as an endpoint failure`,
+				);
+				await this.recordRefreshFailure(
+					accountRow.id,
+					accountRow.name,
+					"(non-401 error)",
+				);
+				return false;
+			}
+
 			let benchedUntil: number | null = null;
 			let benchedReason: string | null = null;
 			try {

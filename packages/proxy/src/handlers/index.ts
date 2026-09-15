@@ -54,6 +54,7 @@ export {
 	ERROR_MESSAGES,
 	INTERNAL_PROBE_SECRET_HEADER,
 	isInternalProbe,
+	LOCAL_REFUSAL_ERROR_TYPES,
 	markTrustedNativeResponses,
 	type ProxyContext,
 	TIMING,

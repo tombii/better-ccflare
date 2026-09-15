@@ -45,6 +45,35 @@ export const ERROR_MESSAGES = {
 	POOL_EXHAUSTED: "All accounts are temporarily unavailable",
 } as const;
 
+/**
+ * The `error.type` values better-ccflare puts in a refusal it generates
+ * ITSELF, as opposed to anything an upstream provider ever sends:
+ *
+ * - `pool_exhausted` / `circuit_open` — {@link createPoolExhaustedResponse}
+ *   (`error.type = kind`) in proxy-operations.ts;
+ * - `service_unavailable_error` — the refusal helpers at the top of proxy.ts
+ *   (which add a `code`) and the server's catch-all for
+ *   {@link ERROR_MESSAGES.ALL_ACCOUNTS_FAILED} (which does not).
+ *
+ * The auto-refresh scheduler tests a failed probe's body against this set
+ * before exempting it from failure accounting. Status alone is not enough: a
+ * forced probe legitimately reaches a rate-limited account (the selector's
+ * bypass exists for that), and the transient-5xx retry is disabled for
+ * internal probes, so a genuine upstream 503 arrives at the scheduler
+ * unchanged. Without the shape test a truly broken endpoint on a benched
+ * account could never reach the failure threshold.
+ *
+ * No collision with the providers: Anthropic sends invalid_request_error,
+ * authentication_error, permission_error, not_found_error, request_too_large,
+ * rate_limit_error, api_error and overloaded_error; OpenAI sends server_error,
+ * insufficient_quota and friends.
+ */
+export const LOCAL_REFUSAL_ERROR_TYPES: ReadonlySet<string> = new Set([
+	"pool_exhausted",
+	"circuit_open",
+	"service_unavailable_error",
+]);
+
 /** Timing constants */
 export const TIMING = {
 	WORKER_SHUTDOWN_DELAY: 100, // ms

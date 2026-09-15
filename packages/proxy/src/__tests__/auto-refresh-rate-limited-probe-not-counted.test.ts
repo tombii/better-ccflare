@@ -114,25 +114,43 @@ function makeAccountRow(
 	};
 }
 
-/** What the proxy answers a probe for an account it has no route for. */
-function respondPoolExhausted(): void {
+function respondWith(
+	status: number,
+	body: string,
+	contentType = "application/json",
+): void {
 	globalThis.fetch = mock(
 		async () =>
-			new Response(
-				JSON.stringify({
-					type: "error",
-					error: {
-						type: "api_error",
-						message: "All accounts failed to handle the request",
-					},
-				}),
-				{
-					status: 503,
-					statusText: "Service Unavailable",
-					headers: { "content-type": "application/json" },
-				},
-			),
+			new Response(body, {
+				status,
+				statusText: "Service Unavailable",
+				headers: { "content-type": contentType },
+			}),
 	) as unknown as typeof fetch;
+}
+
+/** A refusal body better-ccflare produces itself, never an upstream one. */
+function localRefusalBody(
+	type: string,
+	extra: Record<string, unknown> = {},
+): string {
+	return JSON.stringify({
+		type: "error",
+		error: {
+			type,
+			message: "Service temporarily unavailable. Please try again later.",
+			...extra,
+		},
+	});
+}
+
+/**
+ * What the proxy answers a probe for an account it has no route for: the
+ * server's catch-all for "All accounts failed to proxy the request" — exactly
+ * the body the incident's 329 probes received.
+ */
+function respondPoolExhausted(): void {
+	respondWith(503, localRefusalBody("service_unavailable_error"));
 }
 
 function pauseCallFor(
@@ -312,5 +330,134 @@ describe("AutoRefreshScheduler.sendDummyMessage — a refusal while rate-limited
 		expect(
 			db.queryCalls.find(([sql]) => sql.includes("rate_limited_until")),
 		).toBeUndefined();
+	});
+});
+
+describe("AutoRefreshScheduler.sendDummyMessage — only OUR OWN refusal is exempt", () => {
+	/**
+	 * Greptile P1 on PR #468. The exemption used to fire for ANY failed probe
+	 * while `rate_limited_until` was in the future. But a forced probe does
+	 * reach a benched account — the selector's rate-limit bypass exists for
+	 * exactly that — and the transient-5xx retry in proxy-operations is disabled
+	 * for internal probes, so a genuine upstream 500/502/503/504 is forwarded to
+	 * the scheduler untouched. Read as "refused because benched", a truly broken
+	 * endpoint on a benched account could never reach failure_threshold.
+	 */
+	const benched = () => [
+		{
+			rate_limited_until: Date.now() + HOUR,
+			rate_limited_reason: "model_fallback_429",
+		},
+	];
+
+	it("exempts a 503 carrying our pool_exhausted body", async () => {
+		respondWith(
+			503,
+			localRefusalBody("pool_exhausted", {
+				next_available_at: null,
+				accounts: [],
+			}),
+		);
+		const db = makeDb(benched());
+		const scheduler = await makeScheduler(db);
+		const accountRow = makeAccountRow();
+
+		await scheduler.sendDummyMessage(accountRow);
+
+		expect(scheduler.consecutiveFailures.get(accountRow.id)).toBeUndefined();
+		expect(scheduler.uncountedProbeFailures.get(accountRow.id)?.streak).toBe(1);
+		expect(pauseCallFor(db, accountRow.id)).toBeUndefined();
+	});
+
+	it("exempts a 503 carrying our service_unavailable_error body", async () => {
+		respondWith(503, localRefusalBody("service_unavailable_error"));
+		const db = makeDb(benched());
+		const scheduler = await makeScheduler(db);
+		const accountRow = makeAccountRow();
+
+		await scheduler.sendDummyMessage(accountRow);
+
+		expect(scheduler.consecutiveFailures.get(accountRow.id)).toBeUndefined();
+		expect(scheduler.uncountedProbeFailures.get(accountRow.id)?.streak).toBe(1);
+	});
+
+	it("exempts a 503 carrying our circuit_open body", async () => {
+		respondWith(
+			503,
+			localRefusalBody("circuit_open", {
+				next_available_at: null,
+				accounts: [],
+			}),
+		);
+		const db = makeDb(benched());
+		const scheduler = await makeScheduler(db);
+		const accountRow = makeAccountRow();
+
+		await scheduler.sendDummyMessage(accountRow);
+
+		expect(scheduler.consecutiveFailures.get(accountRow.id)).toBeUndefined();
+		expect(scheduler.uncountedProbeFailures.get(accountRow.id)?.streak).toBe(1);
+	});
+
+	it("counts an upstream 500 even while the account is benched", async () => {
+		respondWith(
+			500,
+			JSON.stringify({
+				type: "error",
+				error: { type: "api_error", message: "Internal server error" },
+			}),
+		);
+		const db = makeDb(benched());
+		const scheduler = await makeScheduler(db);
+		const accountRow = makeAccountRow();
+
+		await scheduler.sendDummyMessage(accountRow);
+
+		expect(scheduler.consecutiveFailures.get(accountRow.id)).toBe(1);
+		expect(scheduler.uncountedProbeFailures.has(accountRow.id)).toBe(false);
+	});
+
+	it("counts a 503 whose body is an upstream error type", async () => {
+		respondWith(
+			503,
+			JSON.stringify({
+				type: "error",
+				error: { type: "overloaded_error" },
+			}),
+		);
+		const db = makeDb(benched());
+		const scheduler = await makeScheduler(db);
+		const accountRow = makeAccountRow();
+
+		await scheduler.sendDummyMessage(accountRow);
+
+		expect(scheduler.consecutiveFailures.get(accountRow.id)).toBe(1);
+		expect(scheduler.uncountedProbeFailures.has(accountRow.id)).toBe(false);
+	});
+
+	it("counts a 503 whose body is not JSON at all", async () => {
+		respondWith(503, "upstream said no", "text/plain");
+		const db = makeDb(benched());
+		const scheduler = await makeScheduler(db);
+		const accountRow = makeAccountRow();
+
+		await scheduler.sendDummyMessage(accountRow);
+
+		expect(scheduler.consecutiveFailures.get(accountRow.id)).toBe(1);
+		expect(scheduler.uncountedProbeFailures.has(accountRow.id)).toBe(false);
+	});
+
+	it("control: our own 503 body still counts when the account is NOT benched", async () => {
+		respondPoolExhausted();
+		const db = makeDb([
+			{ rate_limited_until: null, rate_limited_reason: null },
+		]);
+		const scheduler = await makeScheduler(db);
+		const accountRow = makeAccountRow();
+
+		await scheduler.sendDummyMessage(accountRow);
+
+		expect(scheduler.consecutiveFailures.get(accountRow.id)).toBe(1);
+		expect(scheduler.uncountedProbeFailures.has(accountRow.id)).toBe(false);
 	});
 });
