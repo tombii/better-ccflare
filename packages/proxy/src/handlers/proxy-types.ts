@@ -5,6 +5,9 @@ import type {
 } from "@better-ccflare/database";
 import type { Provider } from "@better-ccflare/providers";
 import type { LoadBalancingStrategy, RequestMeta } from "@better-ccflare/types";
+// Type-only, so the runtime edge stays one-way (proxy-operations imports
+// values from here, never the reverse).
+import type { PoolExhaustionKind } from "./proxy-operations";
 
 const trustedNativeResponsesRequests = new WeakSet<RequestMeta>();
 
@@ -72,7 +75,10 @@ export const LOCAL_REFUSAL_ERROR_TYPES: ReadonlySet<string> = new Set([
 	"pool_exhausted",
 	"circuit_open",
 	"service_unavailable_error",
-]);
+] as const satisfies readonly (
+	| PoolExhaustionKind
+	| "service_unavailable_error"
+)[]);
 
 /** Timing constants */
 export const TIMING = {

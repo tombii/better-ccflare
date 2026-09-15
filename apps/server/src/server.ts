@@ -1719,6 +1719,10 @@ export default async function startServer(options?: {
 							JSON.stringify({
 								type: "error",
 								error: {
+									// "service_unavailable_error" is listed in
+									// LOCAL_REFUSAL_ERROR_TYPES — the auto-refresh scheduler
+									// recognises this shape as a local refusal, so keep the two
+									// in sync.
 									type: isServiceUnavailable
 										? "service_unavailable_error"
 										: "proxy_error",
