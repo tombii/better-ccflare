@@ -901,6 +901,16 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		},
 	];
 
+	// Whether the usage-pause enabled flags are being added by THIS run. The
+	// backfill below must only run then: re-running it on every startup would
+	// switch a window back on that its owner had deliberately switched off
+	// while keeping its percentage.
+	const usagePauseFlagsAreNew = !(await columnExists(
+		adapter,
+		"accounts",
+		"usage_pause_five_hour_enabled",
+	));
+
 	for (const col of columnsToAdd) {
 		const exists = await columnExists(adapter, col.table, col.column);
 		if (!exists) {
@@ -1100,18 +1110,22 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 
 	// A usage-pause threshold written before the enabled flags existed was in
 	// force by virtue of being set at all; keep it that way (mirrors SQLite).
-	await adapter.unsafe(`
-		UPDATE accounts
-		SET usage_pause_five_hour_enabled = 1
-		WHERE usage_pause_five_hour_threshold IS NOT NULL
-		  AND COALESCE(usage_pause_five_hour_enabled, 0) = 0
-	`);
-	await adapter.unsafe(`
-		UPDATE accounts
-		SET usage_pause_weekly_enabled = 1
-		WHERE usage_pause_weekly_threshold IS NOT NULL
-		  AND COALESCE(usage_pause_weekly_enabled, 0) = 0
-	`);
+	// Guarded on the flags being new: from then on, `enabled = 0` with a
+	// percentage still stored is a deliberate "off", not a row to repair.
+	if (usagePauseFlagsAreNew) {
+		await adapter.unsafe(`
+			UPDATE accounts
+			SET usage_pause_five_hour_enabled = 1
+			WHERE usage_pause_five_hour_threshold IS NOT NULL
+			  AND COALESCE(usage_pause_five_hour_enabled, 0) = 0
+		`);
+		await adapter.unsafe(`
+			UPDATE accounts
+			SET usage_pause_weekly_enabled = 1
+			WHERE usage_pause_weekly_threshold IS NOT NULL
+			  AND COALESCE(usage_pause_weekly_enabled, 0) = 0
+		`);
+	}
 
 	// Backfill pause_reason for existing paused accounts (mirrors SQLite migration)
 	await adapter.unsafe(`

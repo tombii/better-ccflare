@@ -208,6 +208,30 @@ describe("usage-pause threshold columns", () => {
 		).toStrictEqual({ five: 0, week: 0 });
 	});
 
+	it("leaves a switched-off window off on later runs, percentage and all", () => {
+		// The backfill exists for the one run that adds the flags. After that,
+		// `enabled = 0` with a percentage still stored is a deliberate "off" —
+		// re-running it would switch the window back on behind its owner and
+		// pause the account unexpectedly.
+		db = makeModernDb();
+
+		runMigrations(db);
+		db.run(
+			`INSERT INTO accounts (id, name, created_at, usage_pause_five_hour_threshold, usage_pause_five_hour_enabled) VALUES ('acc-off', 'switched-off', ?, 80, 0)`,
+			[Date.now()],
+		);
+
+		runMigrations(db);
+
+		expect(
+			db
+				.query(
+					"SELECT usage_pause_five_hour_threshold AS pct, usage_pause_five_hour_enabled AS on_ FROM accounts WHERE id = ?",
+				)
+				.get("acc-off"),
+		).toStrictEqual({ pct: 80, on_: 0 });
+	});
+
 	it("is idempotent across repeated runs", () => {
 		db = makeModernDb();
 

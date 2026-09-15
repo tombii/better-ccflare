@@ -577,6 +577,10 @@ export function AccountsTab() {
 			await loadAccounts();
 		} catch (err) {
 			setActionError(formatError(err));
+			// Rethrow so the dialog stays open on a failed save. Swallowing it
+			// here would close the dialog as if the write had landed, throwing
+			// away what was typed.
+			throw err;
 		}
 	};
 

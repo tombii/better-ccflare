@@ -1224,15 +1224,23 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		}
 
 		// A threshold written before this pair existed was in force by virtue of
-		// being set at all; keep it that way rather than silently switching it off.
-		if (
-			!thresholdColumnNames.includes("usage_pause_five_hour_enabled") ||
-			!thresholdColumnNames.includes("usage_pause_weekly_enabled")
-		) {
+		// being set at all; keep it that way rather than silently switching it
+		// off. Each flag is backfilled only on the run that adds it: afterwards,
+		// `enabled = 0` with a percentage still stored is a deliberate "off",
+		// and rewriting it would switch a window back on behind its owner.
+		if (!thresholdColumnNames.includes("usage_pause_five_hour_enabled")) {
 			db.prepare(
 				`UPDATE accounts
-				 SET usage_pause_five_hour_enabled = CASE WHEN usage_pause_five_hour_threshold IS NOT NULL THEN 1 ELSE 0 END,
-				     usage_pause_weekly_enabled = CASE WHEN usage_pause_weekly_threshold IS NOT NULL THEN 1 ELSE 0 END`,
+				 SET usage_pause_five_hour_enabled = 1
+				 WHERE usage_pause_five_hour_threshold IS NOT NULL`,
+			).run();
+		}
+
+		if (!thresholdColumnNames.includes("usage_pause_weekly_enabled")) {
+			db.prepare(
+				`UPDATE accounts
+				 SET usage_pause_weekly_enabled = 1
+				 WHERE usage_pause_weekly_threshold IS NOT NULL`,
 			).run();
 		}
 
