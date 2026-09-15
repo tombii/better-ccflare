@@ -3,6 +3,7 @@ import {
 	CLAUDE_MODEL_IDS,
 	clearProbeBackoff,
 	getClientVersion,
+	isUsageExhausted,
 	PROBE_BACKOFF_PENALTY_THRESHOLD_MS,
 	registerHeartbeat,
 	requestEvents,
@@ -10,7 +11,13 @@ import {
 } from "@better-ccflare/core";
 import type { BunSqlAdapter } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
-import { fetchUsageData, getProvider } from "@better-ccflare/providers";
+import {
+	fetchUsageData,
+	getProvider,
+	getRepresentativeUsageResetMs,
+	getRepresentativeUtilizationForProvider,
+	usageCache,
+} from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import {
 	AUTO_REFRESH_PROMPTS,
@@ -31,6 +38,14 @@ import {
 import type { ProxyContext } from "./proxy";
 
 const log = new Logger("AutoRefreshScheduler");
+
+/**
+ * Stands in for "this window's reset is unknown" as a key in
+ * {@link AutoRefreshScheduler.usageExhaustedAnnouncedFor}. Epoch zero can never
+ * be a real key there: isUsageExhausted only treats a window as exhausted when
+ * its reset is unknown or still in the future.
+ */
+const UNKNOWN_USAGE_RESET = 0;
 
 function isZaiPeakHour(ts = Date.now()): boolean {
 	const d = new Date(ts);
@@ -99,6 +114,13 @@ export class AutoRefreshScheduler {
 	// pool stays dry that time does not move, so comparing against it turns the
 	// per-minute retry into one log line per episode.
 	private promptPoolExhaustedReportedFor: number | null = null;
+	// accountId -> the usage-window reset already announced as exhausted. A spent
+	// weekly window lasts up to seven days, which is ten thousand ticks; without
+	// this the skip would print the same line for every one of them. Keyed by the
+	// reset so a NEW exhausted window is still announced. A reset that is not
+	// known reads as UNKNOWN_USAGE_RESET, which cannot collide with a real one:
+	// isUsageExhausted only passes a reset that is still in the future.
+	private usageExhaustedAnnouncedFor: Map<string, number> = new Map();
 
 	constructor(db: BunSqlAdapter, proxyContext: ProxyContext) {
 		this.db = db;
@@ -143,6 +165,7 @@ export class AutoRefreshScheduler {
 			clearProbeBackoff(accountId);
 		}
 		this.uncountedProbeFailures.clear();
+		this.usageExhaustedAnnouncedFor.clear();
 		this.promptPoolExhaustedReportedFor = null;
 	}
 
@@ -1392,6 +1415,7 @@ export class AutoRefreshScheduler {
 		if (this.uncountedProbeFailures.delete(accountId)) {
 			clearProbeBackoff(accountId);
 		}
+		this.usageExhaustedAnnouncedFor.delete(accountId);
 	}
 
 	/**
@@ -1451,6 +1475,16 @@ export class AutoRefreshScheduler {
 					clearProbeBackoff(accountId);
 					log.debug(
 						`Removed uncounted-failure cooldown tracking for account ${accountId} (no longer exists or auto-refresh disabled)`,
+					);
+				}
+			}
+
+			// And what has already been announced about an exhausted usage window
+			for (const accountId of this.usageExhaustedAnnouncedFor.keys()) {
+				if (!activeAccountIdSet.has(accountId)) {
+					this.usageExhaustedAnnouncedFor.delete(accountId);
+					log.debug(
+						`Removed exhausted-usage announcement tracking for account ${accountId} (no longer exists or auto-refresh disabled)`,
 					);
 				}
 			}
@@ -1560,6 +1594,59 @@ export class AutoRefreshScheduler {
 		);
 	}
 
+	/**
+	 * True when the usage poller's snapshot says this account's window is spent,
+	 * in which case a probe can only come back 429: there is nothing to refresh
+	 * before the window resets, and the probe would spend a prompt from the
+	 * shared pool to learn that.
+	 *
+	 * The scheduler has to ask this itself, for two reasons. `rate_limited_until`
+	 * cannot carry a long exclusion — applyRateLimitCooldown deliberately clamps
+	 * every ordinary 429 bench to min(resetTime, now + backoff) on a 30s→5min
+	 * ramp, so even a correctly parsed four-day reset benches the account for
+	 * minutes at a time. And the long exclusion that does exist, the usage-aware
+	 * strategy's isUsageExhausted over the usage cache, is bypassed for this
+	 * caller on purpose: the account selector opens its usage-cap gate for forced
+	 * (x-better-ccflare-account-id) requests precisely so probes can get through.
+	 * That left the scheduler as the one path with no long hold at all — 329
+	 * probes over ten hours against a Codex account whose weekly window had four
+	 * days to run (incident 2026-09-15).
+	 */
+	private isUsageWindowExhausted(
+		account: { id: string; name: string; provider: string },
+		now: number,
+	): boolean {
+		// Synchronous, and null both when nothing was ever polled and when the
+		// snapshot is over ten minutes old. No snapshot means no opinion: the
+		// account is probed exactly as it was before.
+		const data = usageCache.get(account.id);
+		if (!data) return false;
+
+		const utilization = getRepresentativeUtilizationForProvider(
+			data,
+			account.provider,
+		);
+		const resetMs = getRepresentativeUsageResetMs(data, account.provider);
+		// The same predicate the selector and /health use, staleness guard
+		// included: a 100% reading whose reset has already passed is the poller
+		// lagging behind a rollover, not an exhausted window.
+		if (!isUsageExhausted(utilization, resetMs, now)) return false;
+
+		const until =
+			resetMs === null
+				? "until the provider reports a reset"
+				: `until ${new Date(resetMs).toISOString()}`;
+		const message = `Skipping auto-refresh probe for ${account.name}: usage window is exhausted (${utilization}%) ${until} — nothing to refresh before it resets`;
+		const key = resetMs ?? UNKNOWN_USAGE_RESET;
+		if (this.usageExhaustedAnnouncedFor.get(account.id) === key) {
+			log.debug(message);
+		} else {
+			this.usageExhaustedAnnouncedFor.set(account.id, key);
+			log.info(message);
+		}
+		return true;
+	}
+
 	private shouldRefreshAccount(
 		account: {
 			id: string;
@@ -1589,6 +1676,15 @@ export class AutoRefreshScheduler {
 				);
 				return false;
 			}
+		}
+
+		// Nothing to refresh while the usage window is spent. Checked ahead of the
+		// failure_threshold branch on purpose: that branch probes unconditionally
+		// for liveness, and in the 2026-09-15 incident its probe was the one that
+		// got answered by a different account, read as a success, and auto-resumed
+		// the exhausted one.
+		if (this.isUsageWindowExhausted(account, now)) {
+			return false;
 		}
 
 		// Throttle re-probes of failure_threshold-paused accounts to once per
