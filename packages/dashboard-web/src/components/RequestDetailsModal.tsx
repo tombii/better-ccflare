@@ -165,6 +165,16 @@ export function RequestDetailsModal({
 										</Badge>
 									);
 								})()}
+							{summary?.gatewayHintAgentType && (
+								<Badge variant="secondary">
+									Agent-Type: {summary.gatewayHintAgentType}
+								</Badge>
+							)}
+							{summary?.gatewayHintRequestClass && (
+								<Badge variant="secondary">
+									Request-Class: {summary.gatewayHintRequestClass}
+								</Badge>
+							)}
 							{summary?.totalTokens && (
 								<Badge variant="outline">
 									{formatTokens(summary.totalTokens)} tokens
