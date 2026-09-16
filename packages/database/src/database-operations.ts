@@ -1125,6 +1125,11 @@ OAuth tokens will need to be re-authenticated.
 			| "client_cancelled"
 			| null,
 		clientSessionId?: string | null,
+		gatewayHintRequestClass?: string | null,
+		gatewayHintAgentType?: string | null,
+		gatewayHintPrevToolDurations?: string | null,
+		gatewayHintCompaction?: string | null,
+		gatewayHintContextCompacted?: string | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -1151,6 +1156,11 @@ OAuth tokens will need to be re-authenticated.
 					agentAttributionSource,
 					streamTerminalState,
 					clientSessionId,
+					gatewayHintRequestClass,
+					gatewayHintAgentType,
+					gatewayHintPrevToolDurations,
+					gatewayHintCompaction,
+					gatewayHintContextCompacted,
 				}),
 			this.retryConfig,
 			"saveRequest",
