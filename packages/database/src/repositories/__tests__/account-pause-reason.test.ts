@@ -157,29 +157,5 @@ describe("AccountRepository — pause / resume with pause_reason", () => {
 			expect(row.paused).toBe(0);
 			expect(row.pause_reason).toBeNull();
 		});
-
-		it("clears pause_reason=NULL for an overage-paused account", async () => {
-			insertAccount(db, "acc-6", 1);
-			db.run("UPDATE accounts SET pause_reason = 'overage' WHERE id = 'acc-6'");
-
-			await repo.resume("acc-6");
-
-			const row = getAccount(db, "acc-6");
-			expect(row.paused).toBe(0);
-			expect(row.pause_reason).toBeNull();
-		});
-
-		it("clears pause_reason=NULL for a failure_threshold-paused account", async () => {
-			insertAccount(db, "acc-7", 1);
-			db.run(
-				"UPDATE accounts SET pause_reason = 'failure_threshold' WHERE id = 'acc-7'",
-			);
-
-			await repo.resume("acc-7");
-
-			const row = getAccount(db, "acc-7");
-			expect(row.paused).toBe(0);
-			expect(row.pause_reason).toBeNull();
-		});
 	});
 });

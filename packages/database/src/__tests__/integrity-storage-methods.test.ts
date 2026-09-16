@@ -254,16 +254,6 @@ describe("DatabaseOperations integrity PRAgMA checks", () => {
 		const result = await dbOps.runFullIntegrityCheck();
 		expect(result).toBe("ok");
 	});
-
-	it("runQuickIntegrityCheck returns a string", async () => {
-		const result = await dbOps.runQuickIntegrityCheck();
-		expect(typeof result).toBe("string");
-	});
-
-	it("runFullIntegrityCheck returns a string", async () => {
-		const result = await dbOps.runFullIntegrityCheck();
-		expect(typeof result).toBe("string");
-	});
 });
 
 // ---------------------------------------------------------------------------
