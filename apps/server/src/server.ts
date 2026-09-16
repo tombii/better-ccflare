@@ -51,6 +51,7 @@ import {
 	getProvider,
 	getRankingUtilizationForProvider,
 	isCodexSubscriptionEndpoint,
+	normalizeUsageSnapshotForHistory,
 	setProviderModelDefaultOverrides,
 	type UsageData,
 	usageCache,
@@ -234,7 +235,13 @@ export function createUsageSnapshotRecorder(
 			return;
 		}
 		try {
-			await dbOps.recordUsageSnapshot(accountId, data, Date.now());
+			const historyPayload = normalizeUsageSnapshotForHistory(
+				account.provider,
+				data,
+			);
+			if (Object.keys(historyPayload).length > 0) {
+				await dbOps.recordUsageSnapshot(accountId, historyPayload, Date.now());
+			}
 		} catch (err) {
 			logger.warn(
 				`Failed to record usage snapshot for account ${accountId}: ${err}`,

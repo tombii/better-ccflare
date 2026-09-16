@@ -3,10 +3,17 @@ import type { PredictionPoint, UsageSnapshotRow } from "@better-ccflare/types";
 import { getCleanupBatchSize } from "../adapters/bun-sql-adapter";
 import { BaseRepository } from "./base.repository";
 
-/** Duck-typed usage window: an object with a numeric `utilization` and a `resets_at` key. */
+/**
+ * Duck-typed usage window: an object with a numeric `utilization` and a
+ * `resets_at` key. `resets_at` is normally an ISO string (Anthropic/codex/
+ * xai) but zai/nanogpt/minimax's payloads are normalized to this shape with
+ * an already-epoch-ms `number` instead (see `normalizeUsageSnapshotForHistory`
+ * in packages/providers/src/usage-fetcher.ts) — `recordSnapshot` below passes
+ * either straight through `new Date(...)`, which accepts both.
+ */
 function isWindow(
 	value: unknown,
-): value is { utilization: number; resets_at: string | null } {
+): value is { utilization: number; resets_at: string | number | null } {
 	return (
 		typeof value === "object" &&
 		value !== null &&

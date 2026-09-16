@@ -790,6 +790,98 @@ function plainUsageSnapshot(
 }
 
 /**
+ * Internal usage-history window shape `UsageHistoryRepository.recordSnapshot`
+ * understands: a numeric 0-100 `utilization` and a `resets_at` that is either
+ * an ISO string (Anthropic/codex/xai) or already an epoch-ms number (zai/
+ * minimax use epoch ms natively; passing a number through avoids the
+ * repository's `new Date(value).getTime()` re-parse, which only strings need).
+ */
+interface HistoryWindow {
+	utilization: number;
+	resets_at: string | number | null;
+}
+
+/**
+ * Normalize a provider's raw usage payload into the internal
+ * `{ five_hour?, seven_day? }` window shape before it reaches
+ * `dbOps.recordUsageSnapshot` / `UsageHistoryRepository.recordSnapshot`.
+ *
+ * `recordSnapshot`'s `isWindow()` duck-type check requires a window object
+ * shaped `{ utilization: number, resets_at: string | null }`. zai's payload
+ * uses `{ percentage, resetAt }`, nanogpt uses `{ percentUsed (0-1 decimal),
+ * resetAt }`, and minimax uses `{ utilization, resetAt }` (numeric epoch ms,
+ * not the string `resets_at` key `isWindow` checks for) — none of them match,
+ * so passing these payloads through unchanged silently records zero rows
+ * (issue #467 follow-up, PR #470 review).
+ *
+ * Anthropic, codex and xai already report in the `{ five_hour, seven_day }` /
+ * `limits[]` shape `recordSnapshot` understands natively and pass through
+ * unchanged (same object reference, no copy). kilo and alibaba-coding-plan
+ * are excluded from `supportsUsagePauseThreshold`/usage-pause wiring entirely
+ * (dollar-credits balance / no pollable API respectively) and never reach
+ * this function via `createUsageSnapshotRecorder` in practice, so no branch
+ * is needed for them either.
+ */
+export function normalizeUsageSnapshotForHistory(
+	provider: string | null | undefined,
+	data: unknown,
+): Record<string, unknown> {
+	if (provider === "zai") {
+		const zai = data as ZaiUsageData;
+		const out: Record<string, HistoryWindow> = {};
+		if (zai.tokens_limit) {
+			out.five_hour = {
+				utilization: zai.tokens_limit.percentage,
+				resets_at: zai.tokens_limit.resetAt,
+			};
+		}
+		if (zai.tokens_limit_weekly) {
+			out.seven_day = {
+				utilization: zai.tokens_limit_weekly.percentage,
+				resets_at: zai.tokens_limit_weekly.resetAt,
+			};
+		}
+		return out;
+	}
+	if (provider === "nanogpt") {
+		const nanogpt = data as NanoGPTUsageData;
+		if (nanogpt.active === false) return {};
+		const out: Record<string, HistoryWindow> = {};
+		if (nanogpt.daily) {
+			out.five_hour = {
+				utilization: nanogpt.daily.percentUsed * 100,
+				resets_at: nanogpt.daily.resetAt,
+			};
+		}
+		if (nanogpt.monthly) {
+			out.seven_day = {
+				utilization: nanogpt.monthly.percentUsed * 100,
+				resets_at: nanogpt.monthly.resetAt,
+			};
+		}
+		return out;
+	}
+	if (provider === "minimax") {
+		const minimax = data as MinimaxUsageData;
+		const out: Record<string, HistoryWindow> = {};
+		if (minimax.five_hour) {
+			out.five_hour = {
+				utilization: minimax.five_hour.utilization,
+				resets_at: minimax.five_hour.resetAt,
+			};
+		}
+		if (minimax.seven_day) {
+			out.seven_day = {
+				utilization: minimax.seven_day.utilization,
+				resets_at: minimax.seven_day.resetAt,
+			};
+		}
+		return out;
+	}
+	return data as Record<string, unknown>;
+}
+
+/**
  * Type for a function that retrieves a fresh access token or API key
  */
 export type AccessTokenProvider = () => Promise<string>;
@@ -1156,6 +1248,8 @@ class UsageCache {
 					log.debug(
 						`Successfully fetched NanoGPT usage data for account ${accountId}: ${utilization}% (${window} window)`,
 					);
+					const snapshotCb = this.snapshotCallbacks.get(accountId);
+					if (snapshotCb) snapshotCb(accountId, data as unknown as UsageData);
 					return { success: true, retryAfterMs: null };
 				}
 			} else if (provider === "zai") {
@@ -1179,6 +1273,8 @@ class UsageCache {
 					log.debug(
 						`Successfully fetched Zai usage data for account ${accountId}: ${utilization}% (${window} window)`,
 					);
+					const snapshotCb = this.snapshotCallbacks.get(accountId);
+					if (snapshotCb) snapshotCb(accountId, data as unknown as UsageData);
 					return { success: true, retryAfterMs: null };
 				}
 			} else if (provider === "kilo") {
@@ -1226,6 +1322,8 @@ class UsageCache {
 					log.debug(
 						`Successfully fetched xAI Grok usage data for account ${accountId}: ${utilization?.toFixed(1)}% used (${window} window)`,
 					);
+					const snapshotCb = this.snapshotCallbacks.get(accountId);
+					if (snapshotCb) snapshotCb(accountId, data as unknown as UsageData);
 					return { success: true, retryAfterMs: null };
 				}
 			} else if (provider === "minimax") {
@@ -1245,6 +1343,8 @@ class UsageCache {
 					log.debug(
 						`Successfully fetched Minimax usage data for account ${accountId}: ${utilization?.toFixed(1)}% used (${window} window)`,
 					);
+					const snapshotCb = this.snapshotCallbacks.get(accountId);
+					if (snapshotCb) snapshotCb(accountId, data as unknown as UsageData);
 					return { success: true, retryAfterMs: null };
 				}
 			} else if (provider === "codex") {

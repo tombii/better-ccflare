@@ -159,6 +159,124 @@ describe("createUsageSnapshotRecorder", () => {
 		expect(recorded[0].usage).toEqual(data);
 		expect(runs).toHaveLength(0);
 	});
+
+	// Regression coverage for the P2 bug found in review of PR #470 (issue
+	// #467): zai/nanogpt/minimax raw payloads use field names
+	// (`percentage`/`percentUsed`/numeric `resetAt`) that
+	// UsageHistoryRepository's `isWindow()` duck-type check does not
+	// recognize (it wants `{ utilization: number, resets_at: string | null
+	// }`), so recordSnapshot silently recorded zero rows for these three
+	// providers even once the onSnapshot callback fires. The recorder must
+	// normalize each provider's payload into that internal shape before
+	// calling `dbOps.recordUsageSnapshot`.
+	it("normalizes zai's {percentage, resetAt} payload before recording", async () => {
+		const { dbOps, recorded } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-zai", name: "Zai Account", provider: "zai" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-zai", {
+			time_limit: null,
+			tokens_limit: {
+				used: 10,
+				remaining: 90,
+				percentage: 10,
+				resetAt: 1_788_455_420_775,
+				type: "tokens_limit",
+			},
+			tokens_limit_weekly: {
+				used: 20,
+				remaining: 80,
+				percentage: 20,
+				resetAt: 1_789_005_906_998,
+				type: "tokens_limit_weekly",
+			},
+		} as unknown as Record<string, unknown>);
+
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].usage).toEqual({
+			five_hour: { utilization: 10, resets_at: 1_788_455_420_775 },
+			seven_day: { utilization: 20, resets_at: 1_789_005_906_998 },
+		});
+	});
+
+	it("normalizes nanogpt's 0-1 percentUsed payload before recording", async () => {
+		const { dbOps, recorded } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-nanogpt", name: "NanoGPT Account", provider: "nanogpt" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-nanogpt", {
+			active: true,
+			limits: { daily: 100, monthly: 1000 },
+			enforceDailyLimit: true,
+			daily: { used: 10, remaining: 90, percentUsed: 0.1, resetAt: 1000 },
+			monthly: { used: 250, remaining: 750, percentUsed: 0.25, resetAt: 2000 },
+			state: "active",
+			graceUntil: null,
+		} as unknown as Record<string, unknown>);
+
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].usage).toEqual({
+			five_hour: { utilization: 10, resets_at: 1000 },
+			seven_day: { utilization: 25, resets_at: 2000 },
+		});
+	});
+
+	it("writes nothing for an inactive (PayG) nanogpt account", async () => {
+		const { dbOps, recorded } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-nanogpt", name: "NanoGPT Account", provider: "nanogpt" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-nanogpt", {
+			active: false,
+			limits: { daily: 100, monthly: 1000 },
+			enforceDailyLimit: true,
+			daily: { used: 0, remaining: 100, percentUsed: 0, resetAt: 1000 },
+			monthly: { used: 0, remaining: 1000, percentUsed: 0, resetAt: 2000 },
+			state: "inactive",
+			graceUntil: null,
+		} as unknown as Record<string, unknown>);
+
+		expect(recorded).toHaveLength(0);
+	});
+
+	it("normalizes minimax's numeric resetAt payload before recording, without string date-parsing", async () => {
+		const { dbOps, recorded } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-minimax", name: "Minimax Account", provider: "minimax" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-minimax", {
+			five_hour: {
+				utilization: 25,
+				remainingPercent: 75,
+				resetAt: 1_700_000_000_000,
+				intervalMs: 5 * 60 * 60 * 1000,
+			},
+			seven_day: {
+				utilization: 10,
+				remainingPercent: 90,
+				resetAt: 1_700_500_000_000,
+				intervalMs: 7 * 24 * 60 * 60 * 1000,
+			},
+		} as unknown as Record<string, unknown>);
+
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].usage).toEqual({
+			five_hour: { utilization: 25, resets_at: 1_700_000_000_000 },
+			seven_day: { utilization: 10, resets_at: 1_700_500_000_000 },
+		});
+	});
 });
 
 describe("registerMinimaxUsagePolling", () => {
