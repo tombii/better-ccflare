@@ -313,7 +313,18 @@ function RunawayLoopPanel({
 							<tbody>
 								{loops.map((loop) => (
 									<tr
-										key={`${loop.account}-${loop.model}-${loop.windowStartMs}-${loop.project ?? ""}-${loop.agentUsed ?? ""}-${loop.gatewayHintAgentType ?? ""}`}
+										// JSON-encoded tuple rather than a dash-join: project and
+										// agentUsed are client-supplied and may contain dashes, so a
+										// joined string is not injective (same class as the alert-id
+										// scope fix in alerts.ts).
+										key={JSON.stringify([
+											loop.account,
+											loop.model,
+											loop.windowStartMs,
+											loop.project,
+											loop.agentUsed,
+											loop.gatewayHintAgentType,
+										])}
 										className="border-t"
 									>
 										<td className="px-3 py-2 text-right tabular-nums font-medium">
