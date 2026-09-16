@@ -14,8 +14,11 @@
 //       handler's pre-check assumes.
 //
 // The handler's actual end-to-end behavior — that `createAccountAddHandler`
-// really maps this SQLite error to a 400 `BadRequest` — is covered by
-// account-add-duplicate-guard.test.ts, which calls the real handler.
+// really maps this SQLite error to a 400 `BadRequest` when a conflict lands
+// after its pre-check SELECT — is covered by the
+// "returns 400 via the UNIQUE-constraint catch..." test in
+// account-add-duplicate-guard.test.ts, which stubs the pre-check to force
+// that race window and calls the real handler.
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
