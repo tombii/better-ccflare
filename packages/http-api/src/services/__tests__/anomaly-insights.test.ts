@@ -998,6 +998,7 @@ describe("detectRunawayLoops", () => {
 		expect(loops).toHaveLength(1);
 		expect(loops[0].requests).toBe(12);
 		expect(loops[0].agentUsed).toBe("agent-a");
+		expect(loops[0].gatewayHintAgentType).toBe("general-purpose");
 	});
 
 	test("gatewayHintAgentType absent (null) leaves grouping unchanged (backward compatibility)", () => {
@@ -1018,6 +1019,7 @@ describe("detectRunawayLoops", () => {
 		expect(loops).toHaveLength(1);
 		expect(loops[0].requests).toBe(12);
 		expect(loops[0].agentUsed).toBe("agent-a");
+		expect(loops[0].gatewayHintAgentType).toBe(null);
 	});
 
 	test("DOES flag a single agent repeating the same request (true loop)", () => {

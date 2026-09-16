@@ -610,6 +610,7 @@ export function detectRunawayLoops(
 				model: normalizeKey(group[run.start].model),
 				project: group[run.start].project,
 				agentUsed: group[run.start].agentUsed,
+				gatewayHintAgentType: group[run.start].gatewayHintAgentType ?? null,
 				windowStartMs,
 				windowEndMs,
 				requests: run.end - run.start + 1,

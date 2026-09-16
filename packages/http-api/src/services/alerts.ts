@@ -144,9 +144,22 @@ export function buildRunawayLoopAlertId(
 	loop: RunawayLoopGroup,
 	cooldownMinutes: number,
 ): string {
+	// The gatewayHintAgentType segment is appended ONLY when present, using
+	// the same length-prefix encoding as encodeScopePart, so that:
+	//  - two loops the detector split on distinct hint values get distinct
+	//    alert ids (otherwise persistAndEmit's cooldown check would drop the
+	//    second alert as a "duplicate" of the first, see issue triage);
+	//  - a loop with no hint value (every client that doesn't send the
+	//    opt-in header, the overwhelming majority) keeps a scope
+	//    byte-identical to the legacy id, so already-stored cooldown rows in
+	//    the `alerts` table keep matching for those clients.
+	const scope = `${loop.account}:${loop.model}:${loop.project ?? ""}:${loop.agentUsed ?? ""}`;
+	const hintSuffix = loop.gatewayHintAgentType
+		? `:${encodeScopePart(loop.gatewayHintAgentType)}`
+		: "";
 	return buildThresholdAlertId(
 		"anomaly_runaway_loop",
-		`${loop.account}:${loop.model}:${loop.project ?? ""}:${loop.agentUsed ?? ""}`,
+		`${scope}${hintSuffix}`,
 		loop.windowEndMs,
 		cooldownMinutes,
 	);
@@ -743,7 +756,7 @@ export class AlertService {
 				type: "anomaly_runaway_loop",
 				severity: "critical",
 				title: "Runaway loop detected",
-				message: `${loop.requests} near-identical requests were sent in a short window by ${loop.agentUsed ?? "an unattributed agent"} for ${loop.model}.`,
+				message: `${loop.requests} near-identical requests were sent in a short window by ${loop.agentUsed ?? "an unattributed agent"}${loop.gatewayHintAgentType ? ` (agent type ${loop.gatewayHintAgentType})` : ""} for ${loop.model}.`,
 				value: loop.requests,
 				threshold: null,
 				account: loop.account,

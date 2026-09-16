@@ -33,6 +33,7 @@ const LOOP: RunawayLoopGroup = {
 	model: "model-a",
 	project: "proj-a",
 	agentUsed: "agent-a",
+	gatewayHintAgentType: null,
 	windowStartMs: 0,
 	windowEndMs: 1,
 	requests: 10,
@@ -62,6 +63,36 @@ describe("runaway-loop alert identity", () => {
 		);
 
 		expect(atBucketStart).toBe(atBucketEnd);
+	});
+
+	test("distinct gatewayHintAgentType values produce distinct IDs, both differing from the null-valued ID", () => {
+		const generalPurpose = buildRunawayLoopAlertId(
+			{ ...LOOP, gatewayHintAgentType: "general-purpose" },
+			60,
+		);
+		const explore = buildRunawayLoopAlertId(
+			{ ...LOOP, gatewayHintAgentType: "explore" },
+			60,
+		);
+		const nullValued = buildRunawayLoopAlertId(LOOP, 60);
+
+		expect(generalPurpose).not.toBe(explore);
+		expect(generalPurpose).not.toBe(nullValued);
+		expect(explore).not.toBe(nullValued);
+	});
+
+	test("gatewayHintAgentType null keeps the exact legacy ID byte-identical", () => {
+		expect(buildRunawayLoopAlertId(LOOP, 60)).toBe(
+			"anomaly_runaway_loop:acct:model-a:proj-a:agent-a:0",
+		);
+	});
+
+	test("a present gatewayHintAgentType appends a length-prefixed segment", () => {
+		const id = buildRunawayLoopAlertId(
+			{ ...LOOP, gatewayHintAgentType: "explore" },
+			60,
+		);
+		expect(id.endsWith(":7:explore:0")).toBe(true);
 	});
 });
 
