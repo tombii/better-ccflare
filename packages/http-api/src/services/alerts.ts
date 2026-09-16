@@ -140,26 +140,46 @@ function encodeScopePart(raw: string | null): string {
 	return `${raw.length}:${raw}`;
 }
 
+/**
+ * The legacy scope joined raw, unencoded segments with ':' — account, model,
+ * project, agentUsed — and appended a length-prefixed hint segment only when
+ * gatewayHintAgentType was present. Because agentUsed, model and project are
+ * client-supplied and colon-legal (agentUsed comes straight from the
+ * x-better-ccflare-agent-id / x-anthropic-agent-id / x-claude-code-session-id
+ * headers, only length-capped to 256 chars — see agent-interceptor.ts), a
+ * loop with agentUsed "x:7:explore" and no hint produced the exact same
+ * scope string as a loop with agentUsed "x" and hint "explore":
+ * persistAndEmit's cooldown check then silently dropped whichever of the two
+ * CRITICAL alerts arrived second.
+ *
+ * Every segment now goes through encodeScopePart (length-prefix, null ->
+ * "0:") and all five segments are joined with GROUP_KEY_SEPARATOR, matching
+ * the anomaly_token_outlier/anomaly_output_blowup builders below. The fifth
+ * (hint) segment is now always present — no more conditional suffix — so a
+ * present vs. absent hint can never shift where a segment boundary falls,
+ * making the encoding injective regardless of what characters any segment
+ * contains.
+ *
+ * This changes the id format for every runaway-loop alert, including loops
+ * with no hint at all: a loop already sitting in an active cooldown bucket
+ * at deploy time will not match its old id and may alert once more before
+ * falling back into cooldown under the new id — the same one-time trade-off
+ * fc985f77 already accepted when it fixed the sibling builders' scope keys.
+ */
 export function buildRunawayLoopAlertId(
 	loop: RunawayLoopGroup,
 	cooldownMinutes: number,
 ): string {
-	// The gatewayHintAgentType segment is appended ONLY when present, using
-	// the same length-prefix encoding as encodeScopePart, so that:
-	//  - two loops the detector split on distinct hint values get distinct
-	//    alert ids (otherwise persistAndEmit's cooldown check would drop the
-	//    second alert as a "duplicate" of the first, see issue triage);
-	//  - a loop with no hint value (every client that doesn't send the
-	//    opt-in header, the overwhelming majority) keeps a scope
-	//    byte-identical to the legacy id, so already-stored cooldown rows in
-	//    the `alerts` table keep matching for those clients.
-	const scope = `${loop.account}:${loop.model}:${loop.project ?? ""}:${loop.agentUsed ?? ""}`;
-	const hintSuffix = loop.gatewayHintAgentType
-		? `:${encodeScopePart(loop.gatewayHintAgentType)}`
-		: "";
+	const scope = [
+		encodeScopePart(loop.account),
+		encodeScopePart(loop.model),
+		encodeScopePart(loop.project),
+		encodeScopePart(loop.agentUsed),
+		encodeScopePart(loop.gatewayHintAgentType),
+	].join(GROUP_KEY_SEPARATOR);
 	return buildThresholdAlertId(
 		"anomaly_runaway_loop",
-		`${scope}${hintSuffix}`,
+		scope,
 		loop.windowEndMs,
 		cooldownMinutes,
 	);
