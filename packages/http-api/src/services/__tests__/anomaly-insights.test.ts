@@ -69,6 +69,7 @@ function req(partial: Partial<AnomalyRequestRow> = {}): AnomalyRequestRow {
 		model: "claude-opus-4-8",
 		project: null,
 		agentUsed: null,
+		gatewayHintAgentType: null,
 		inputTokens: 0,
 		cacheReadInputTokens: 0,
 		cacheCreationInputTokens: 0,
@@ -961,6 +962,62 @@ describe("detectRunawayLoops", () => {
 		}
 		const loops = detectRunawayLoops(rows, opts);
 		expect(loops).toHaveLength(0);
+	});
+
+	test("splits a bucket by gatewayHintAgentType when present, even with identical agentUsed", () => {
+		// 12 requests sharing (account, model, project, agentUsed) — which
+		// alone would collapse into one 12-row bucket and fire — split evenly
+		// across two gatewayHintAgentType values (6 each). Both halves stay
+		// below opts.minRequests (10), so neither fires. This is the case
+		// documented on detectRunawayLoops: several agent types funnelled
+		// through one agentUsed value because the session-id header they'd
+		// otherwise be distinguished by is unreliable or absent.
+		const rows = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: i % 2 === 0 ? "general-purpose" : "explore",
+			}),
+		);
+		expect(detectRunawayLoops(rows, opts)).toHaveLength(0);
+	});
+
+	test("one gatewayHintAgentType repeating alone still fires as a loop", () => {
+		const rows = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: "general-purpose",
+			}),
+		);
+		const loops = detectRunawayLoops(rows, opts);
+		expect(loops).toHaveLength(1);
+		expect(loops[0].requests).toBe(12);
+		expect(loops[0].agentUsed).toBe("agent-a");
+	});
+
+	test("gatewayHintAgentType absent (null) leaves grouping unchanged (backward compatibility)", () => {
+		// Same shape as the very first test in this describe block, but with
+		// gatewayHintAgentType explicitly null — the default for every client
+		// that doesn't send the opt-in header. Must still produce exactly one
+		// loop: the bucket key's optional fifth segment must not appear.
+		const rows = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: null,
+			}),
+		);
+		const loops = detectRunawayLoops(rows, opts);
+		expect(loops).toHaveLength(1);
+		expect(loops[0].requests).toBe(12);
+		expect(loops[0].agentUsed).toBe("agent-a");
 	});
 
 	test("DOES flag a single agent repeating the same request (true loop)", () => {

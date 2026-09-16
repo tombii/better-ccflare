@@ -179,6 +179,7 @@ interface AnomalyRequestSqlRow {
 	model: string | null;
 	project: string | null;
 	agent_used: string | null;
+	gateway_hint_agent_type: string | null;
 	input_tokens: number;
 	cache_read_input_tokens: number;
 	cache_creation_input_tokens: number;
@@ -197,6 +198,7 @@ function toAnomalyRequestRow(row: AnomalyRequestSqlRow): AnomalyRequestRow {
 		// the API response. The real extraction bug is upstream (#368).
 		project: sanitizeProjectForDisplay(row.project),
 		agentUsed: row.agent_used,
+		gatewayHintAgentType: row.gateway_hint_agent_type,
 		inputTokens: Number(row.input_tokens) || 0,
 		cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,
 		cacheCreationInputTokens: Number(row.cache_creation_input_tokens) || 0,
@@ -319,6 +321,7 @@ export function createAnomalyInsightsHandler(context: APIContext) {
 					r.model as model,
 					r.project as project,
 					r.agent_used as agent_used,
+					r.gateway_hint_agent_type as gateway_hint_agent_type,
 					COALESCE(r.input_tokens, 0) as input_tokens,
 					COALESCE(r.cache_read_input_tokens, 0) as cache_read_input_tokens,
 					COALESCE(r.cache_creation_input_tokens, 0) as cache_creation_input_tokens,
