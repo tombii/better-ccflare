@@ -190,15 +190,6 @@ describe("AgentRegistry plugin agent discovery", () => {
 		expect(pluginAgents[0].name).toBe("My Plugin Agent");
 	});
 
-	it("sets pluginName on agent when loading plugin agents", () => {
-		// Test that the plugin agent ID namespacing works correctly
-		// pluginName:agentBaseName format
-		const pluginName = "myplugin";
-		const baseName = "my-agent";
-		const expectedId = `${pluginName}:${baseName}`;
-		expect(expectedId).toBe("myplugin:my-agent");
-	});
-
 	it("seenRealPaths deduplication prevents loading same file twice", () => {
 		const seenRealPaths = new Set<string>();
 		const filePath = path.join(tmpDir, "agent.md");
@@ -282,18 +273,5 @@ describe("AgentRegistry plugin agent discovery", () => {
 		await expect(
 			registry.updateAgent("myplugin:ro-agent", { description: "tampered" }),
 		).rejects.toThrow(/plugin-managed/);
-	});
-
-	it("two plugins with same agent basename get distinct namespaced IDs", () => {
-		const pluginA = "plugin-a";
-		const pluginB = "plugin-b";
-		const baseName = "shared-agent";
-
-		const idA = `${pluginA}:${baseName}`;
-		const idB = `${pluginB}:${baseName}`;
-
-		expect(idA).toBe("plugin-a:shared-agent");
-		expect(idB).toBe("plugin-b:shared-agent");
-		expect(idA).not.toBe(idB);
 	});
 });

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { DatabaseFactory } from "@better-ccflare/database";
@@ -179,5 +179,58 @@ describe("createAccountAddHandler — duplicate (name, provider, custom_endpoint
 				"race",
 			]);
 		expect(rows).toHaveLength(1);
+	});
+
+	// Greptile P1 (PR #343) follow-up: the test above still routes through the
+	// pre-check SELECT (it seeds the row before calling the handler), so it
+	// never actually exercises the handler's own INSERT-then-catch. This test
+	// forces the true race window: the pre-check's SELECT is stubbed to see no
+	// conflict, a competing writer inserts the conflicting row immediately
+	// after, and only then does the handler's own INSERT run — reproducing a
+	// second caller that wins the SELECT race and loses at the DB-level
+	// UNIQUE index.
+	it("returns 400 via the UNIQUE-constraint catch when a conflict lands after the pre-check SELECT", async () => {
+		const adapter = dbOps.getAdapter();
+		const getSpy = spyOn(adapter, "get").mockImplementationOnce(async () => {
+			// Simulate a concurrent writer landing between the pre-check's
+			// SELECT and this handler's own INSERT.
+			await adapter.run(
+				`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`,
+				[
+					"concurrent",
+					"race-2",
+					"anthropic",
+					"r-direct",
+					"a-direct",
+					Date.now(),
+				],
+			);
+			return null;
+		});
+
+		const response = await handler(
+			makeRequest({
+				name: "race-2",
+				provider: "anthropic",
+				accessToken: "a1",
+				refreshToken: "r1",
+			}),
+		);
+
+		expect(getSpy).toHaveBeenCalled();
+		expect(response.status).toBe(400);
+		const body = (await response.json()) as { error?: string };
+		expect(body.error).toContain("already taken");
+
+		const rows = await dbOps
+			.getAdapter()
+			.query<{ id: string }>("SELECT id FROM accounts WHERE name = ?", [
+				"race-2",
+			]);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].id).toBe("concurrent");
+
+		getSpy.mockRestore();
 	});
 });
