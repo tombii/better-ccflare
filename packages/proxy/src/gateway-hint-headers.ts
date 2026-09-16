@@ -10,11 +10,19 @@
  *   x-claude-code-compaction
  *   x-claude-code-context-compacted
  *
- * These are pure observability metadata — better-ccflare never reads them to
- * make a routing or rewrite decision, so (unlike project/agent attribution)
- * there is no need to thread them through `RequestMeta`/`StartMessage` ahead
- * of time. They are captured directly from the raw request-header map that
- * already accompanies every `StartMessage` (see usage-collector.ts).
+ * These values never influence a routing or rewrite decision, so (unlike
+ * project/agent attribution) there is no need to thread them through
+ * `RequestMeta`/`StartMessage` ahead of time. They are NOT purely
+ * observational, though: `agentType` is a grouping dimension of the
+ * runaway-loop detector (`detectRunawayLoops` in
+ * http-api/src/services/anomaly-insights.ts, since commit 8427e1db), which
+ * buckets and keys alerts on it. Every path that persists a request row must
+ * therefore carry all five values — the proxy's direct `saveRequest` audit
+ * sites (upstream-error classifications that return before the request ever
+ * reaches the UsageCollector) extract them once per `proxyWithAccount` call
+ * from `req.headers` via `extractGatewayHintHeadersFromRequest`; the
+ * UsageCollector extracts them from the `StartMessage`'s header map via
+ * `extractGatewayHintHeadersFromParts` (see usage-collector.ts).
  *
  * Absence is the normal case: the opt-in env var is off by default, and older
  * Claude Code versions never send these headers at all. Every field is
