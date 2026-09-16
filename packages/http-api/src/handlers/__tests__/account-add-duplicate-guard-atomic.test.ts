@@ -1,26 +1,21 @@
 // Standalone integration test for the Greptile P1 atomic-guard fix on
 // PR #343. Runs without the full provider/CLI dependency chain so the test
 // env doesn't drag in the AWS / google-auth / qwen submodules that the
-// upstream suite pulls in transitively. We exercise the actual
-// `createAccountAddHandler` (the same code the production server wires to
-// POST /api/accounts) against an in-memory SQLite DB with the
-// production-schema migration applied, and we exercise the
-// `isUniqueConstraintError` mapping by replaying the exact SQLite error
-// the UNIQUE index raises when a duplicate tuple slips past the
-// pre-check.
+// upstream suite pulls in transitively. We exercise the DB-level UNIQUE
+// index directly against an in-memory SQLite DB with the production-schema
+// migration applied.
 //
 // What this test proves:
-//   (1) The atomic guarantee holds end-to-end: even when a row for the
-//       tuple already exists (simulating the race where the pre-check
-//       passed because the SELECT ran before the concurrent INSERT
-//       committed), the handler's INSERT is rejected and the same
-//       `BadRequest("Account name '...' is already taken")` the pre-check
-//       returns is emitted.
-//   (2) The migration is active at the time of the test (the UNIQUE
-//       index is queried directly, not assumed).
-//   (3) The pre-check's clean 400 path is unchanged for the common
-//       sequential case (this matches the existing
-//       account-add-duplicate-guard.test.ts scenario 1).
+//   (1) The migration is active at the time of the test (the UNIQUE
+//       index is queried directly, not assumed) and it rejects a
+//       duplicate tuple even when a race lets it slip past the handler's
+//       pre-check SELECT.
+//   (2) The COALESCE(custom_endpoint, '') tuple semantics match what the
+//       handler's pre-check assumes.
+//
+// The handler's actual end-to-end behavior — that `createAccountAddHandler`
+// really maps this SQLite error to a 400 `BadRequest` — is covered by
+// account-add-duplicate-guard.test.ts, which calls the real handler.
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -158,59 +153,5 @@ describe("createAccountAddHandler — atomic DB-level guard (Greptile P1)", () =
 					"https://api.other.example.com",
 				),
 		).not.toThrow();
-	});
-
-	it('handler catch is wired: replays the UNIQUE error into BadRequest("Account name ...")', async () => {
-		// We import the handler lazily so this test file does NOT pull
-		// in the full provider/CLI subgraph just to compile. The
-		// handler itself only depends on @better-ccflare/database +
-		// @better-ccflare/cli-commands, and the imports chain through
-		// optional provider SDKs that may be absent in this test env.
-		// We isolate the contract we care about by importing just
-		// the helper `isUniqueConstraintError` indirectly via the
-		// migration + manual handler invocation below.
-		//
-		// The contract: if a duplicate INSERT slips past the pre-check
-		// (which is exactly the race the Greptile P1 reviewer flagged),
-		// the handler's catch block maps the SQLite UNIQUE error to
-		// the same BadRequest the pre-check would have produced.
-
-		// Seed a row so the next INSERT collides.
-		db.prepare(
-			`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-		).run("seed", "race", "anthropic", "r", "a", Date.now());
-
-		// Replay the same INSERT the handler would emit (post-pre-check)
-		// — the UNIQUE constraint will reject it. We assert the error
-		// shape is exactly the one isUniqueConstraintError() matches,
-		// so the handler's catch block will fire.
-		let replayed: unknown;
-		try {
-			db.prepare(
-				`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at)
-				 VALUES (?, ?, ?, ?, ?, ?)`,
-			).run("replay", "race", "anthropic", "r", "a", Date.now());
-		} catch (e) {
-			replayed = e;
-		}
-
-		expect(replayed).toBeInstanceOf(Error);
-		const msg = (replayed as Error).message;
-		expect(msg).toContain("UNIQUE constraint failed");
-
-		// The handler's catch uses `msg.includes("UNIQUE constraint failed")`
-		// to gate the 400. This proves the mapping is sound.
-		const isUnique =
-			replayed instanceof Error &&
-			replayed.message.includes("UNIQUE constraint failed");
-		expect(isUnique).toBe(true);
-
-		// And only the seeded row persisted.
-		const rows = db
-			.prepare(`SELECT id FROM accounts WHERE name = 'race'`)
-			.all() as Array<{ id: string }>;
-		expect(rows).toHaveLength(1);
-		expect(rows[0]?.id).toBe("seed");
 	});
 });

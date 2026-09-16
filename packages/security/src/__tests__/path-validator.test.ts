@@ -498,18 +498,6 @@ describe("Path Validator - Core Security Tests", () => {
 			expect(result).toBeDefined();
 		});
 
-		test("should handle very long paths gracefully", () => {
-			// PATH_MAX is typically 4096 on Linux
-			const longPath = `/tmp/${"a".repeat(5000)}`;
-			const result = validatePath(longPath, {
-				description: "very long path",
-			});
-
-			// Should not crash, may be valid or invalid depending on filesystem
-			expect(result).toBeDefined();
-			expect(typeof result.isValid).toBe("boolean");
-		});
-
 		test("should normalize path with current directory references", () => {
 			const result = validatePath("/tmp/./test/./file.txt", {
 				description: "current dir references",

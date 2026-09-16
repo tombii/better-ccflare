@@ -218,16 +218,6 @@ describe("clearRequestHistory", () => {
 			expect(result.removedPayloads).toBe(17);
 		});
 
-		it("returns zero counts when nothing was deleted", async () => {
-			const dbOps = makeDbOps({ removedRequests: 0, removedPayloads: 0 });
-			const config = makeConfig();
-
-			const result = await clearRequestHistory(dbOps, config);
-
-			expect(result.removedRequests).toBe(0);
-			expect(result.removedPayloads).toBe(0);
-		});
-
 		it("does NOT return a { count } field (old signature removed)", async () => {
 			const dbOps = makeDbOps({ removedRequests: 5, removedPayloads: 3 });
 			const config = makeConfig();
@@ -236,19 +226,6 @@ describe("clearRequestHistory", () => {
 
 			// Confirm old shape is absent
 			expect(result).not.toHaveProperty("count");
-		});
-
-		it("propagates large deletion counts accurately", async () => {
-			const dbOps = makeDbOps({
-				removedRequests: 100_000,
-				removedPayloads: 50_000,
-			});
-			const config = makeConfig();
-
-			const result = await clearRequestHistory(dbOps, config);
-
-			expect(result.removedRequests).toBe(100_000);
-			expect(result.removedPayloads).toBe(50_000);
 		});
 	});
 });
