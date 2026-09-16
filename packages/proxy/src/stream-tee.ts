@@ -11,12 +11,25 @@ export function teeStream(
 		onClose?: (buffered: Uint8Array[]) => void;
 		onError?: (error: Error) => void;
 		maxBytes?: number; // Max bytes to buffer (default: 1MB)
+		/**
+		 * Fired synchronously at the start of `cancel()`, alongside `onClose`
+		 * — i.e. exactly when the client disconnects — but BEFORE the
+		 * drain-to-done loop below runs. Distinct from `onClose`: this exists
+		 * so a caller wrapping an inner stream (e.g.
+		 * `createAnthropicTerminalRecoveryStream`) can flag the disconnect on
+		 * a side channel (see its `clientDisconnectSignal` option) without
+		 * this function ever calling the inner stream's own `.cancel()` —
+		 * doing that would short-circuit the drain loop below and reintroduce
+		 * the Bun native-buffer leak (#273, see the comment further down).
+		 */
+		onCancel?: () => void;
 	} = {},
 ): ReadableStream<Uint8Array> {
 	const {
 		onChunk,
 		onClose,
 		onError,
+		onCancel,
 		maxBytes = BUFFER_SIZES.STREAM_TEE_MAX_BYTES,
 	} = options;
 	const reader = upstream.getReader();
@@ -63,6 +76,15 @@ export function teeStream(
 		},
 
 		cancel() {
+			// onCancel fires first, synchronously, so a caller wiring it to a
+			// side-channel signal (see createAnthropicTerminalRecoveryStream's
+			// `clientDisconnectSignal`) has that signal set BEFORE onClose
+			// reads any state derived from it — onClose fires immediately
+			// below rather than waiting on the async drain, so anything it
+			// needs from the inner stream's terminal-state determination must
+			// already be in place by this point.
+			onCancel?.();
+
 			// A client-initiated cancel (Esc, tab close, network drop) must
 			// finalize the same way a clean `done` does — otherwise the
 			// caller's onClose (and whatever it drives, e.g. usage-collector's
