@@ -151,7 +151,75 @@ export function evaluateUsagePause(input: UsagePauseInput): UsagePauseDecision {
 }
 
 /**
+ * Read a nested numeric field (e.g. `payload.tokens_limit.percentage`) off an
+ * object, returning `null` when the parent is missing/not an object or the
+ * field is missing/non-numeric.
+ */
+function readNestedNumber(
+	data: Record<string, unknown>,
+	parentKey: string,
+	childKey: string,
+): number | null {
+	const parent = data[parentKey];
+	if (typeof parent !== "object" || parent === null) return null;
+	const value = (parent as Record<string, unknown>)[childKey];
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * zai payload shape: `{ tokens_limit: {percentage}|null, tokens_limit_weekly:
+ * {percentage}|null, time_limit: ... }`. `time_limit` caps the web tools, not
+ * model traffic, so it is never read into either window — mirrors the
+ * exclusion `tokenWindows()` in the zai usage fetcher already applies.
+ * `tokens_limit_weekly` is legitimately absent on single-window plans, which
+ * reads back as `null`, not an error.
+ */
+function readZaiUtilization(data: Record<string, unknown>): UsageUtilization {
+	return {
+		fiveHour: readNestedNumber(data, "tokens_limit", "percentage"),
+		weekly: readNestedNumber(data, "tokens_limit_weekly", "percentage"),
+	};
+}
+
+/**
+ * nanogpt payload shape: `{ active: boolean, daily: {percentUsed}, monthly:
+ * {percentUsed}, ... }`, with `percentUsed` a 0-1 decimal. An inactive
+ * (pay-as-you-go) account has no usage window at all, matching
+ * `getRepresentativeNanoGPTUtilization`'s null-on-inactive precedent
+ * elsewhere in the codebase.
+ *
+ * The two-slot fiveHour/weekly schema is reused to mean "daily" and
+ * "monthly" for nanogpt specifically — an intentional mapping, not a
+ * mismatch with the window names.
+ */
+function readNanoGptUtilization(
+	data: Record<string, unknown>,
+): UsageUtilization {
+	if (data.active === false) {
+		return { fiveHour: null, weekly: null };
+	}
+
+	const toPercent = (parentKey: string): number | null => {
+		const raw = readNestedNumber(data, parentKey, "percentUsed");
+		return raw === null ? null : raw * 100;
+	};
+
+	return {
+		fiveHour: toPercent("daily"),
+		weekly: toPercent("monthly"),
+	};
+}
+
+/**
  * Read the 5-hour and weekly utilization out of a usage payload.
+ *
+ * `provider` selects the payload shape to parse. Anthropic, codex, xai,
+ * minimax and any unrecognized/omitted provider all fall through to the
+ * Anthropic-shaped parsing below — codex and xai already report in that
+ * shape, and minimax's fetcher (`parseMinimaxTokenPlanResponse`) normalizes
+ * its response to the same `five_hour`/`seven_day` flat fields before it
+ * reaches this function, so no dedicated branch is needed for any of them.
+ * zai and nanogpt have their own payload shapes and get dedicated parsing.
  *
  * Anthropic is moving the flat `five_hour` / `seven_day` fields into a generic
  * `limits[]` array, and a payload can carry either shape (or both, mid
@@ -164,11 +232,17 @@ export function evaluateUsagePause(input: UsagePauseInput): UsagePauseDecision {
  * Anything missing or non-numeric reads back as `null`, which
  * {@link evaluateUsagePause} treats as "unknown", never as "recovered".
  */
-export function readUsageUtilization(payload: unknown): UsageUtilization {
+export function readUsageUtilization(
+	payload: unknown,
+	provider?: string | null,
+): UsageUtilization {
 	if (typeof payload !== "object" || payload === null) {
 		return { fiveHour: null, weekly: null };
 	}
 	const data = payload as Record<string, unknown>;
+
+	if (provider === "zai") return readZaiUtilization(data);
+	if (provider === "nanogpt") return readNanoGptUtilization(data);
 
 	const flat = (key: string): number | null => {
 		const window = data[key];
@@ -227,22 +301,35 @@ export function parseUsagePauseThreshold(value: unknown): number | null {
  * (`applyUsagePauseThresholds` in apps/server/src/server.ts, wired into
  * `startUsagePollingWithRefresh`'s `onSnapshot` callback).
  *
- * Several other providers (zai, nanogpt, alibaba-coding-plan, minimax) also
- * report a usage percentage and show a weekly usage bar in the dashboard, but
- * their polling call sites don't yet pass a snapshot callback that calls
- * `evaluateUsagePause`/`readUsageUtilization` — which only understands the
- * Anthropic-shaped payload (`five_hour`/`seven_day` flat fields or a
- * `limits[]` array) in any case. Until each provider's payload shape is
- * threaded through, setting a threshold on one of those accounts would be
- * accepted and stored but would never actually pause anything — worse than
- * not offering the control at all. Keep this list in lockstep with
- * `supportsUsagePollingForAccount` in apps/server/src/server.ts.
+ * `readUsageUtilization` now understands anthropic, codex and xai (the
+ * shared flat `five_hour`/`seven_day`/`limits[]` shape), zai and nanogpt
+ * (their own dedicated payload shapes), and minimax (whose fetcher already
+ * normalizes its response to the same flat shape before it reaches
+ * `readUsageUtilization`, so it rides the anthropic/codex/xai path with no
+ * dedicated branch).
  *
- * Tracked follow-up to extend this to the other providers:
- * https://github.com/tombii/better-ccflare/issues/467
+ * Two providers remain excluded, for different reasons:
+ *   - `kilo` reports a dollar-credits balance, not a percentage window —
+ *     there is no "utilization" to compare a threshold against.
+ *   - `alibaba-coding-plan` has no pollable usage API at all; reading its
+ *     usage would require session-cookie auth against Alibaba's website,
+ *     which has never been implemented.
+ *
+ * Not to be confused with `supportsRefreshBackedUsagePolling` in
+ * apps/server/src/server.ts, which gates a strict subset of this list — only
+ * anthropic/codex/xai are polled through the OAuth-refresh-backed path.
+ * zai/nanogpt/minimax support pause thresholds too, but are polled through
+ * their own dedicated bootstrap blocks with their own `onSnapshot` wiring.
  */
 export function supportsUsagePauseThreshold(
 	provider: string | null | undefined,
 ): boolean {
-	return provider === "anthropic" || provider === "codex" || provider === "xai";
+	return (
+		provider === "anthropic" ||
+		provider === "codex" ||
+		provider === "xai" ||
+		provider === "zai" ||
+		provider === "nanogpt" ||
+		provider === "minimax"
+	);
 }
