@@ -22,7 +22,6 @@ import {
 	setForceAccountModel,
 	setPricingLogger,
 	shutdown,
-	supportsUsagePauseThreshold,
 	TIME_CONSTANTS,
 	USAGE_THRESHOLD_PAUSE_REASON,
 } from "@better-ccflare/core";
@@ -52,6 +51,7 @@ import {
 	getProvider,
 	getRankingUtilizationForProvider,
 	isCodexSubscriptionEndpoint,
+	normalizeUsageSnapshotForHistory,
 	setProviderModelDefaultOverrides,
 	type UsageData,
 	usageCache,
@@ -154,15 +154,28 @@ const MEMORY_GROWTH_WARN_BYTES = 512 * 1024 * 1024;
 const MEMORY_GROWTH_ERROR_BYTES = 1024 * 1024 * 1024;
 
 /**
- * Also the set of providers whose usage poller evaluates pause thresholds
- * (`applyUsagePauseThresholds` below) — kept as one function,
- * `supportsUsagePauseThreshold` in @better-ccflare/core, so the dashboard/CLI/API
- * threshold controls and the poller that actually acts on them can't drift apart.
+ * Whether this provider is polled through `startUsagePollingWithRefresh` —
+ * the OAuth-refresh-backed path that syncs a rotated `access_token`/
+ * `refresh_token` pair from the database before every poll. Only anthropic,
+ * codex and xai have OAuth session tokens to refresh in the first place.
+ *
+ * This is now a STRICT SUBSET of `supportsUsagePauseThreshold`'s providers,
+ * not the same set: zai, nanogpt and minimax also support pause thresholds,
+ * but they are API-key providers polled through their own dedicated
+ * bootstrap blocks further down this file (`usageCache.startPolling` calls
+ * with an `apiKeyProvider`, no refresh-token machinery involved) and reach
+ * `applyUsagePauseThresholds` via their own `onSnapshot` wiring instead of
+ * this path. Do not delegate this function to `supportsUsagePauseThreshold`
+ * again — doing so would leak API-key-only accounts into
+ * `refreshBackedUsageAccounts` below, which expects `access_token`/
+ * `refresh_token` and would log spurious "no token, skipping" warnings (or
+ * double-register polling for accounts already handled by the dedicated
+ * nanogpt/zai/minimax blocks).
  */
 export function supportsRefreshBackedUsagePolling(
 	provider: string | null | undefined,
 ): boolean {
-	return supportsUsagePauseThreshold(provider);
+	return provider === "anthropic" || provider === "codex" || provider === "xai";
 }
 
 /**
@@ -222,7 +235,13 @@ export function createUsageSnapshotRecorder(
 			return;
 		}
 		try {
-			await dbOps.recordUsageSnapshot(accountId, data, Date.now());
+			const historyPayload = normalizeUsageSnapshotForHistory(
+				account.provider,
+				data,
+			);
+			if (Object.keys(historyPayload).length > 0) {
+				await dbOps.recordUsageSnapshot(accountId, historyPayload, Date.now());
+			}
 		} catch (err) {
 			logger.warn(
 				`Failed to record usage snapshot for account ${accountId}: ${err}`,
@@ -275,7 +294,7 @@ export async function applyUsagePauseThresholds(
 
 		const decision = evaluateUsagePause({
 			thresholds,
-			utilization: readUsageUtilization(data),
+			utilization: readUsageUtilization(data, account.provider),
 			paused: account.paused,
 			pauseReason: account.pause_reason ?? null,
 		});
@@ -314,6 +333,11 @@ export async function applyUsagePauseThresholds(
  * `@better-ccflare/providers`. Declared locally so the bootstrap helper
  * can be unit-tested with a mock without dragging the full UsageCache
  * class (which is not exported) into the public type surface.
+ *
+ * Mirrors the real `startPolling`'s trailing optional callback params
+ * (`onWindowReset`/`onCapacityRestored`/`onStaleWeeklyReset`/`onSnapshot`)
+ * as a faithful subset so this interface doesn't need widening again the
+ * next time a bootstrap helper needs one of them.
  */
 export interface UsageCacheRegistrar {
 	startPolling(
@@ -321,6 +345,11 @@ export interface UsageCacheRegistrar {
 		tokenProvider: () => Promise<string>,
 		provider: string,
 		intervalMs: number,
+		customEndpoint?: string | null,
+		onWindowReset?: (accountId: string) => void,
+		onCapacityRestored?: (accountId: string) => void,
+		onStaleWeeklyReset?: (accountId: string, observedAt: number) => void,
+		onSnapshot?: (accountId: string, data: UsageData) => void,
 	): void;
 }
 
@@ -340,11 +369,22 @@ export interface UsageCacheRegistrar {
  * sibling nanogpt/zai/kilo blocks (Greptile #350 P2): "X account <name> has
  * no API key, skipping usage polling". The account name is the only
  * identifier in the message — never the key value or any part of it.
+ *
+ * `dbOps` is required (unlike `logger`, which stays optional for back-compat)
+ * because it is needed to build the `onSnapshot` callback via
+ * {@link createUsageSnapshotRecorder}, which records every successful poll
+ * and feeds `applyUsagePauseThresholds` — the same wiring the anthropic/
+ * codex/xai path uses. When `logger` is omitted, a fallback `Logger` is
+ * constructed for the recorder so the callback always has a real logger,
+ * even though the "no API key" warn above stays silent in that case (that
+ * warn intentionally no-ops when `logger` is absent — see the back-compat
+ * test).
  */
 export function registerMinimaxUsagePolling(
 	account: Account,
 	usageCache: UsageCacheRegistrar,
 	intervalMs: number,
+	dbOps: DatabaseOperations,
 	logger?: Logger,
 ): boolean {
 	if (account.provider !== "minimax") return false;
@@ -360,6 +400,15 @@ export function registerMinimaxUsagePolling(
 		apiKeyProvider,
 		account.provider,
 		intervalMs,
+		undefined,
+		undefined,
+		undefined,
+		undefined,
+		createUsageSnapshotRecorder(
+			account,
+			dbOps,
+			logger ?? new Logger("MinimaxUsagePolling"),
+		),
 	);
 	return true;
 }
@@ -378,6 +427,9 @@ export function registerMinimaxUsagePolling(
  * `logger` is forwarded to {@link registerMinimaxUsagePolling} so per-account
  * "no API key" warnings surface from the unit-testable helper, keeping
  * behavior consistent with the sibling nanogpt/zai/kilo bootstrap blocks.
+ * `dbOps` is forwarded too, so every registered account's `onSnapshot`
+ * callback can record its usage snapshot and evaluate pause thresholds
+ * exactly like the anthropic/codex/xai path does.
  *
  * Extracted from the inline bootstrap block so a regression test can exercise
  * the exact wiring path (filter → forEach → registerMinimaxUsagePolling) with
@@ -390,12 +442,21 @@ export function bootstrapMinimaxUsagePolling(
 	accounts: readonly Account[],
 	usageCache: UsageCacheRegistrar,
 	intervalMs: number,
+	dbOps: DatabaseOperations,
 	logger?: Logger,
 ): string[] {
 	const minimaxAccounts = accounts.filter((a) => a.provider === "minimax");
 	const registered: string[] = [];
 	for (const account of minimaxAccounts) {
-		if (registerMinimaxUsagePolling(account, usageCache, intervalMs, logger)) {
+		if (
+			registerMinimaxUsagePolling(
+				account,
+				usageCache,
+				intervalMs,
+				dbOps,
+				logger,
+			)
+		) {
 			registered.push(account.id);
 		}
 	}
@@ -1930,6 +1991,10 @@ Available endpoints:
 					account.provider,
 					config.getUsagePollIntervalMs(),
 					account.custom_endpoint,
+					undefined,
+					undefined,
+					undefined,
+					createUsageSnapshotRecorder(account, dbOps, log),
 				);
 				log.info(`Started usage polling for NanoGPT account ${account.name}`);
 			} else {
@@ -1976,6 +2041,9 @@ Available endpoints:
 								),
 							);
 					},
+					undefined,
+					undefined,
+					createUsageSnapshotRecorder(account, dbOps, log),
 				);
 				log.info(`Started usage polling for Zai account ${account.name}`);
 			} else {
@@ -2022,6 +2090,7 @@ Available endpoints:
 		accounts,
 		usageCache,
 		config.getUsagePollIntervalMs(),
+		dbOps,
 		log,
 	);
 	if (minimaxAccounts.length === 0) {

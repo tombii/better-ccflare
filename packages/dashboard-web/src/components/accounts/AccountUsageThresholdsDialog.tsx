@@ -42,6 +42,24 @@ function fromField(value: string): number | null | "invalid" {
 }
 
 /**
+ * Labels for the two threshold rows. The underlying fields (`fiveHour` /
+ * `weekly`) and everything they save stay the same for every provider — this
+ * only changes what the rows are called, because for NanoGPT accounts those
+ * same two slots govern NanoGPT's daily and monthly usage windows instead of
+ * a 5-hour/weekly one.
+ */
+export function getThresholdLabels(account: Account | null): {
+	fiveHourLabel: string;
+	weeklyLabel: string;
+} {
+	const isNanoGpt = account?.provider === "nanogpt";
+	return {
+		fiveHourLabel: isNanoGpt ? "Daily" : "5-hour",
+		weeklyLabel: isNanoGpt ? "Monthly" : "Weekly",
+	};
+}
+
+/**
  * Per-account usage pause thresholds: bench the account once a usage window
  * reaches the given percentage, and let it back in when the window resets.
  *
@@ -67,6 +85,7 @@ export function AccountUsageThresholdsDialog({
 		() => account?.usagePauseWeeklyEnabled ?? false,
 	);
 	const [isUpdating, setIsUpdating] = useState(false);
+	const { fiveHourLabel, weeklyLabel } = getThresholdLabels(account);
 
 	// Reset the fields whenever the dialog is pointed at another account.
 	useEffect(() => {
@@ -131,7 +150,7 @@ export function AccountUsageThresholdsDialog({
 				<div className="grid gap-4 py-4">
 					<ThresholdRow
 						id="usage-threshold-5h"
-						label="5-hour"
+						label={fiveHourLabel}
 						enabled={fiveHourOn}
 						onEnabledChange={setFiveHourOn}
 						value={fiveHour}
@@ -139,7 +158,7 @@ export function AccountUsageThresholdsDialog({
 					/>
 					<ThresholdRow
 						id="usage-threshold-weekly"
-						label="Weekly"
+						label={weeklyLabel}
 						enabled={weeklyOn}
 						onEnabledChange={setWeeklyOn}
 						value={weekly}

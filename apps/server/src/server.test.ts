@@ -159,6 +159,124 @@ describe("createUsageSnapshotRecorder", () => {
 		expect(recorded[0].usage).toEqual(data);
 		expect(runs).toHaveLength(0);
 	});
+
+	// Regression coverage for the P2 bug found in review of PR #470 (issue
+	// #467): zai/nanogpt/minimax raw payloads use field names
+	// (`percentage`/`percentUsed`/numeric `resetAt`) that
+	// UsageHistoryRepository's `isWindow()` duck-type check does not
+	// recognize (it wants `{ utilization: number, resets_at: string | null
+	// }`), so recordSnapshot silently recorded zero rows for these three
+	// providers even once the onSnapshot callback fires. The recorder must
+	// normalize each provider's payload into that internal shape before
+	// calling `dbOps.recordUsageSnapshot`.
+	it("normalizes zai's {percentage, resetAt} payload before recording", async () => {
+		const { dbOps, recorded } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-zai", name: "Zai Account", provider: "zai" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-zai", {
+			time_limit: null,
+			tokens_limit: {
+				used: 10,
+				remaining: 90,
+				percentage: 10,
+				resetAt: 1_788_455_420_775,
+				type: "tokens_limit",
+			},
+			tokens_limit_weekly: {
+				used: 20,
+				remaining: 80,
+				percentage: 20,
+				resetAt: 1_789_005_906_998,
+				type: "tokens_limit_weekly",
+			},
+		} as unknown as Record<string, unknown>);
+
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].usage).toEqual({
+			five_hour: { utilization: 10, resets_at: 1_788_455_420_775 },
+			seven_day: { utilization: 20, resets_at: 1_789_005_906_998 },
+		});
+	});
+
+	it("normalizes nanogpt's 0-1 percentUsed payload before recording", async () => {
+		const { dbOps, recorded } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-nanogpt", name: "NanoGPT Account", provider: "nanogpt" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-nanogpt", {
+			active: true,
+			limits: { daily: 100, monthly: 1000 },
+			enforceDailyLimit: true,
+			daily: { used: 10, remaining: 90, percentUsed: 0.1, resetAt: 1000 },
+			monthly: { used: 250, remaining: 750, percentUsed: 0.25, resetAt: 2000 },
+			state: "active",
+			graceUntil: null,
+		} as unknown as Record<string, unknown>);
+
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].usage).toEqual({
+			five_hour: { utilization: 10, resets_at: 1000 },
+			seven_day: { utilization: 25, resets_at: 2000 },
+		});
+	});
+
+	it("writes nothing for an inactive (PayG) nanogpt account", async () => {
+		const { dbOps, recorded } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-nanogpt", name: "NanoGPT Account", provider: "nanogpt" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-nanogpt", {
+			active: false,
+			limits: { daily: 100, monthly: 1000 },
+			enforceDailyLimit: true,
+			daily: { used: 0, remaining: 100, percentUsed: 0, resetAt: 1000 },
+			monthly: { used: 0, remaining: 1000, percentUsed: 0, resetAt: 2000 },
+			state: "inactive",
+			graceUntil: null,
+		} as unknown as Record<string, unknown>);
+
+		expect(recorded).toHaveLength(0);
+	});
+
+	it("normalizes minimax's numeric resetAt payload before recording, without string date-parsing", async () => {
+		const { dbOps, recorded } = makeDbOps();
+		const recorder = createUsageSnapshotRecorder(
+			{ id: "acc-minimax", name: "Minimax Account", provider: "minimax" },
+			dbOps,
+			logger,
+		);
+
+		await recorder("acc-minimax", {
+			five_hour: {
+				utilization: 25,
+				remainingPercent: 75,
+				resetAt: 1_700_000_000_000,
+				intervalMs: 5 * 60 * 60 * 1000,
+			},
+			seven_day: {
+				utilization: 10,
+				remainingPercent: 90,
+				resetAt: 1_700_500_000_000,
+				intervalMs: 7 * 24 * 60 * 60 * 1000,
+			},
+		} as unknown as Record<string, unknown>);
+
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].usage).toEqual({
+			five_hour: { utilization: 25, resets_at: 1_700_000_000_000 },
+			seven_day: { utilization: 10, resets_at: 1_700_500_000_000 },
+		});
+	});
 });
 
 describe("registerMinimaxUsagePolling", () => {
@@ -186,6 +304,7 @@ describe("registerMinimaxUsagePolling", () => {
 				_tokenProvider: () => Promise<string>,
 				_provider: string,
 				_intervalMs: number,
+				..._rest: unknown[]
 			) => {},
 		);
 		return {
@@ -194,12 +313,20 @@ describe("registerMinimaxUsagePolling", () => {
 		};
 	}
 
+	function makeDbOps(): DatabaseOperations {
+		return {
+			recordUsageSnapshot: async () => {},
+			getAccount: async () => null,
+		} as unknown as DatabaseOperations;
+	}
+
 	it("registers polling for a Minimax account with an API key", () => {
 		const { registrar, startPolling } = makeRegistrar();
 		const result = registerMinimaxUsagePolling(
 			makeAccount(),
 			registrar,
 			30_000,
+			makeDbOps(),
 		);
 
 		expect(result).toBe(true);
@@ -211,12 +338,30 @@ describe("registerMinimaxUsagePolling", () => {
 		expect(typeof call?.[1]).toBe("function");
 	});
 
+	it("passes an onSnapshot callback to startPolling as the 9th argument", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = registerMinimaxUsagePolling(
+			makeAccount(),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		const call = startPolling.mock.calls[0];
+		// Positional args: accountId, tokenProvider, provider, intervalMs,
+		// customEndpoint, onWindowReset, onCapacityRestored, onStaleWeeklyReset,
+		// onSnapshot.
+		expect(typeof call?.[8]).toBe("function");
+	});
+
 	it("the registered token provider returns the account's API key", async () => {
 		const { registrar, startPolling } = makeRegistrar();
 		registerMinimaxUsagePolling(
 			makeAccount({ api_key: "secret-key" }),
 			registrar,
 			30_000,
+			makeDbOps(),
 		);
 
 		const tokenProvider = startPolling.mock.calls[0]?.[1];
@@ -235,6 +380,7 @@ describe("registerMinimaxUsagePolling", () => {
 				makeAccount({ provider: "zai", api_key: "k" }),
 				registrar,
 				30_000,
+				makeDbOps(),
 			),
 		).toBe(false);
 		expect(
@@ -242,6 +388,7 @@ describe("registerMinimaxUsagePolling", () => {
 				makeAccount({ provider: "nanogpt", api_key: "k" }),
 				registrar,
 				30_000,
+				makeDbOps(),
 			),
 		).toBe(false);
 		expect(
@@ -249,6 +396,7 @@ describe("registerMinimaxUsagePolling", () => {
 				makeAccount({ provider: "anthropic", api_key: "k" }),
 				registrar,
 				30_000,
+				makeDbOps(),
 			),
 		).toBe(false);
 		expect(startPolling).toHaveBeenCalledTimes(0);
@@ -260,6 +408,7 @@ describe("registerMinimaxUsagePolling", () => {
 			makeAccount({ api_key: null }),
 			registrar,
 			30_000,
+			makeDbOps(),
 		);
 
 		expect(result).toBe(false);
@@ -272,6 +421,7 @@ describe("registerMinimaxUsagePolling", () => {
 			makeAccount({ api_key: "" }),
 			registrar,
 			30_000,
+			makeDbOps(),
 		);
 
 		expect(result).toBe(false);
@@ -325,12 +475,20 @@ describe("registerMinimaxUsagePolling — warns on missing API key (Greptile #35
 				_tokenProvider: () => Promise<string>,
 				_provider: string,
 				_intervalMs: number,
+				..._rest: unknown[]
 			) => {},
 		);
 		return {
 			registrar: { startPolling } as unknown as UsageCacheRegistrar,
 			startPolling,
 		};
+	}
+
+	function makeDbOps(): DatabaseOperations {
+		return {
+			recordUsageSnapshot: async () => {},
+			getAccount: async () => null,
+		} as unknown as DatabaseOperations;
 	}
 
 	function findWarn(messages: string[]): string | undefined {
@@ -347,6 +505,7 @@ describe("registerMinimaxUsagePolling — warns on missing API key (Greptile #35
 			makeAccount({ name: "primary", api_key: null }),
 			registrar,
 			30_000,
+			makeDbOps(),
 			logger,
 		);
 
@@ -363,6 +522,7 @@ describe("registerMinimaxUsagePolling — warns on missing API key (Greptile #35
 			makeAccount({ name: "secondary", api_key: "" }),
 			registrar,
 			30_000,
+			makeDbOps(),
 			logger,
 		);
 
@@ -379,6 +539,7 @@ describe("registerMinimaxUsagePolling — warns on missing API key (Greptile #35
 			makeAccount({ api_key: "real-key" }),
 			registrar,
 			30_000,
+			makeDbOps(),
 			logger,
 		);
 
@@ -394,6 +555,7 @@ describe("registerMinimaxUsagePolling — warns on missing API key (Greptile #35
 			makeAccount({ name: "zai-row", provider: "zai", api_key: "k" }),
 			registrar,
 			30_000,
+			makeDbOps(),
 			logger,
 		);
 
@@ -411,6 +573,7 @@ describe("registerMinimaxUsagePolling — warns on missing API key (Greptile #35
 			makeAccount({ name: "leak-check", api_key: null }),
 			registrar,
 			30_000,
+			makeDbOps(),
 			logger,
 		);
 		// Re-register with a marker in the key — must NOT appear in any log.
@@ -418,6 +581,7 @@ describe("registerMinimaxUsagePolling — warns on missing API key (Greptile #35
 			makeAccount({ id: "acc-2", name: "with-key", api_key: MARKER }),
 			registrar,
 			30_000,
+			makeDbOps(),
 			logger,
 		);
 
@@ -438,6 +602,7 @@ describe("registerMinimaxUsagePolling — warns on missing API key (Greptile #35
 			}),
 			registrar,
 			30_000,
+			makeDbOps(),
 			logger,
 		);
 
@@ -453,6 +618,7 @@ describe("registerMinimaxUsagePolling — warns on missing API key (Greptile #35
 			makeAccount({ api_key: null }),
 			registrar,
 			30_000,
+			makeDbOps(),
 		);
 
 		expect(result).toBe(false);
@@ -500,12 +666,20 @@ describe("bootstrapMinimaxUsagePolling", () => {
 				_tokenProvider: () => Promise<string>,
 				_provider: string,
 				_intervalMs: number,
+				..._rest: unknown[]
 			) => {},
 		);
 		return {
 			registrar: { startPolling } as unknown as UsageCacheRegistrar,
 			startPolling,
 		};
+	}
+
+	function makeDbOps(): DatabaseOperations {
+		return {
+			recordUsageSnapshot: async () => {},
+			getAccount: async () => null,
+		} as unknown as DatabaseOperations;
 	}
 
 	// This is the regression test for PR #347. The inline bootstrap block in
@@ -548,6 +722,7 @@ describe("bootstrapMinimaxUsagePolling", () => {
 			accounts,
 			registrar,
 			30_000,
+			makeDbOps(),
 		);
 
 		// Only the two Minimax accounts should appear in the registered list,
@@ -574,6 +749,7 @@ describe("bootstrapMinimaxUsagePolling", () => {
 			accounts,
 			registrar,
 			30_000,
+			makeDbOps(),
 		);
 
 		expect(registered).toEqual([]);
@@ -607,6 +783,7 @@ describe("bootstrapMinimaxUsagePolling", () => {
 			accounts,
 			registrar,
 			30_000,
+			makeDbOps(),
 		);
 
 		expect(registered).toEqual(["minimax-good"]);
@@ -631,7 +808,7 @@ describe("bootstrapMinimaxUsagePolling", () => {
 			}),
 		];
 
-		bootstrapMinimaxUsagePolling(accounts, registrar, 12_345);
+		bootstrapMinimaxUsagePolling(accounts, registrar, 12_345, makeDbOps());
 
 		expect(startPolling).toHaveBeenCalledTimes(2);
 		for (const call of startPolling.mock.calls) {
@@ -670,6 +847,7 @@ describe("bootstrapMinimaxUsagePolling", () => {
 			accounts,
 			registrar,
 			30_000,
+			makeDbOps(),
 			logger,
 		);
 
@@ -698,6 +876,7 @@ describe("bootstrapMinimaxUsagePolling", () => {
 			accounts,
 			registrar,
 			30_000,
+			makeDbOps(),
 			logger,
 		);
 
@@ -725,7 +904,13 @@ describe("bootstrapMinimaxUsagePolling", () => {
 			}),
 		];
 
-		bootstrapMinimaxUsagePolling(accounts, registrar, 30_000, logger);
+		bootstrapMinimaxUsagePolling(
+			accounts,
+			registrar,
+			30_000,
+			makeDbOps(),
+			logger,
+		);
 
 		const allMessages = captured.map((e) => e.msg).join("\n");
 		const allData = JSON.stringify(captured.map((e) => e.data ?? null));
@@ -944,16 +1129,47 @@ describe("startServer() wiring guards", () => {
 		// zai/kilo blocks pass. This catches the regression where someone
 		// replaces the full call with a stub like `bootstrapMinimaxUsagePolling()`
 		// that compiles and lints but never actually wires the cache.
-		const call = body.match(/bootstrapMinimaxUsagePolling\s*\(([\s\S]*?)\)/);
-		expect(call).not.toBeNull();
-		const args = call?.[1] ?? "";
-		// Trim and split on top-level commas (no nested parens expected
-		// inside the 3-arg call, but be conservative).
-		const argList = args
-			.split(",")
-			.map((s) => s.trim())
-			.filter(Boolean);
-		expect(argList.length).toBe(3);
+		//
+		// The naive non-greedy `\(([\s\S]*?)\)` stops at the FIRST closing
+		// paren, which belongs to the nested `config.getUsagePollIntervalMs()`
+		// call, silently truncating the argument list before dbOps/logger. Find
+		// the call site's opening paren and balance depth manually instead.
+		const callStart = body.search(/bootstrapMinimaxUsagePolling\s*\(/);
+		expect(callStart).toBeGreaterThanOrEqual(0);
+		const openIdx = body.indexOf("(", callStart);
+		let depth = 0;
+		let closeIdx = -1;
+		for (let i = openIdx; i < body.length; i++) {
+			if (body[i] === "(") depth++;
+			else if (body[i] === ")") {
+				depth--;
+				if (depth === 0) {
+					closeIdx = i;
+					break;
+				}
+			}
+		}
+		expect(closeIdx).toBeGreaterThan(openIdx);
+		const args = body.slice(openIdx + 1, closeIdx);
+		// Split on top-level commas only, so `config.getUsagePollIntervalMs()`
+		// stays one argument instead of being split on a comma that doesn't
+		// exist inside it (defensive — there is none today, but this keeps the
+		// guard correct if that call ever takes an argument).
+		const argList: string[] = [];
+		let argDepth = 0;
+		let current = "";
+		for (const ch of args) {
+			if (ch === "(") argDepth++;
+			if (ch === ")") argDepth--;
+			if (ch === "," && argDepth === 0) {
+				argList.push(current.trim());
+				current = "";
+			} else {
+				current += ch;
+			}
+		}
+		if (current.trim()) argList.push(current.trim());
+		expect(argList.length).toBe(5);
 		// First two arguments must be the live runtime objects, not the
 		// string literals "accounts" / "usageCache".
 		expect(argList[0]).toBe("accounts");
@@ -961,6 +1177,12 @@ describe("startServer() wiring guards", () => {
 		// Third argument must flow through the configured poll interval —
 		// i.e. not a hardcoded numeric literal.
 		expect(argList[2]).not.toMatch(/^\d+$/);
+		// Fourth argument must be the live dbOps instance, used to build the
+		// onSnapshot recorder — not a stub or a string literal.
+		expect(argList[3]).toBe("dbOps");
+		// Fifth argument is the logger, forwarded for per-account "no API key"
+		// warnings — not omitted or a string literal.
+		expect(argList[4]).toBe("log");
 	});
 });
 
@@ -1209,6 +1431,31 @@ describe("applyUsagePauseThresholds", () => {
 		);
 
 		expect(paused).toStrictEqual([]);
+		expect(resumed).toStrictEqual([]);
+	});
+
+	// Regression: readUsageUtilization needs the account's provider to parse
+	// zai/nanogpt-shaped payloads. Without threading account.provider through,
+	// this zai payload would be read with the Anthropic-shaped parser, get
+	// null for both windows, and never trigger a pause — even though the
+	// zai-shaped percentage is well above the configured threshold.
+	it("passes account.provider through so provider-shaped payloads (zai) are parsed", async () => {
+		const { dbOps, paused, resumed } = makeDbOps({
+			provider: "zai",
+			usage_pause_five_hour_threshold: 90,
+			usage_pause_five_hour_enabled: true,
+		});
+
+		await applyUsagePauseThresholds(
+			"acc-1",
+			{ tokens_limit: { percentage: 95 }, tokens_limit_weekly: null },
+			dbOps,
+			logger,
+		);
+
+		expect(paused).toStrictEqual([
+			{ accountId: "acc-1", reason: "usage_threshold" },
+		]);
 		expect(resumed).toStrictEqual([]);
 	});
 });
