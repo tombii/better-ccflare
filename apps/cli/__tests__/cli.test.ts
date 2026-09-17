@@ -311,6 +311,39 @@ describe("CLI Integration Tests", () => {
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toContain("better-ccflare v");
 		});
+
+		it("should parse set-priority's two positional arguments", async () => {
+			// Drives the real --set-priority branch in main.ts, which requires
+			// exactly two non-flag arguments (name, priority) following it.
+			// Omitting the priority hits the validation error, proving the
+			// parser actually reads both positionals rather than just the flag.
+			const result = await runCLI(["--set-priority", "some-account"]);
+
+			expect(result.exitCode).toBe(1);
+			const output = result.stdout + result.stderr;
+			expect(output).toContain(
+				"--set-priority requires an account name and priority",
+			);
+		});
+
+		it("should read set-priority's positionals in name-then-priority order", async () => {
+			// Complements the missing-argument test above by proving the parser
+			// assigns each positional to the right slot, not just that it reads
+			// two of them. A valid (name, priority) pair reaches the DB lookup
+			// and fails with "not found" (proving both args parsed correctly);
+			// swapping the order feeds a non-numeric string as the priority and
+			// fails earlier with a NaN error instead. A regression that flips
+			// the two positionals would make this test observe the wrong error.
+			const valid = await runCLI(["--set-priority", "some-account", "42"]);
+			expect(valid.exitCode).toBe(1);
+			const validOutput = valid.stdout + valid.stderr;
+			expect(validOutput).toContain("Account 'some-account' not found");
+
+			const swapped = await runCLI(["--set-priority", "42", "some-account"]);
+			expect(swapped.exitCode).toBe(1);
+			const swappedOutput = swapped.stdout + swapped.stderr;
+			expect(swappedOutput).toContain("Invalid priority value: NaN");
+		});
 	});
 
 	describe("Error Handling", () => {
@@ -374,62 +407,6 @@ afterEach(() => {
 		}
 	}
 	createdDbPaths.clear();
-});
-
-/**
- * Unit tests for argument parsing logic
- */
-describe("CLI Argument Parsing Logic", () => {
-	// We'll test the parsing logic by simulating what parseArgs does
-
-	it("should parse boolean flags correctly", () => {
-		const testArgs = ["--version", "--help", "--compact"];
-		const hasVersion = testArgs.includes("--version");
-		const hasHelp = testArgs.includes("--help");
-		const hasCompact = testArgs.includes("--compact");
-
-		expect(hasVersion).toBe(true);
-		expect(hasHelp).toBe(true);
-		expect(hasCompact).toBe(true);
-	});
-
-	it("should parse flags with values", () => {
-		const testArgs = ["--port", "8081", "--ssl-key", "/path/to/key"];
-
-		const portIndex = testArgs.indexOf("--port");
-		const port = portIndex >= 0 ? testArgs[portIndex + 1] : null;
-
-		const sslKeyIndex = testArgs.indexOf("--ssl-key");
-		const sslKey = sslKeyIndex >= 0 ? testArgs[sslKeyIndex + 1] : null;
-
-		expect(port).toBe("8081");
-		expect(sslKey).toBe("/path/to/key");
-	});
-
-	it("should handle flags in any order", () => {
-		const testArgs1 = ["--serve", "--port", "8081", "--compact"];
-		const testArgs2 = ["--compact", "--port", "8081", "--serve"];
-
-		expect(testArgs1.includes("--serve")).toBe(true);
-		expect(testArgs2.includes("--serve")).toBe(true);
-		expect(testArgs1.includes("--port")).toBe(true);
-		expect(testArgs2.includes("--port")).toBe(true);
-		expect(testArgs1.includes("--compact")).toBe(true);
-		expect(testArgs2.includes("--compact")).toBe(true);
-	});
-
-	it("should parse set-priority with two arguments", () => {
-		const testArgs = ["--set-priority", "account-name", "10"];
-
-		const setPriorityIndex = testArgs.indexOf("--set-priority");
-		if (setPriorityIndex >= 0) {
-			const name = testArgs[setPriorityIndex + 1];
-			const priority = testArgs[setPriorityIndex + 2];
-
-			expect(name).toBe("account-name");
-			expect(priority).toBe("10");
-		}
-	});
 });
 
 /**
