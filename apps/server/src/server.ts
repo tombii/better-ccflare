@@ -101,6 +101,7 @@ import {
 } from "@better-ccflare/types";
 import { serve } from "bun";
 import { createCodexUsageRefresher } from "./codex-usage-refresher";
+import { createVacuumScheduler, runVacuumBootstrap } from "./vacuum-scheduler";
 
 /**
  * Build a load-balancing strategy from its enum name. Add new strategies here
@@ -560,6 +561,7 @@ let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
 let stopDataCleanupJob: (() => void) | null = null;
+let stopVacuumCatchUpJob: (() => void) | null = null;
 let stopWalCheckpointJob: (() => void) | null = null;
 let stopIntegritySchedulerJob: (() => void) | null = null;
 let stopModelCatalogRefreshJob: (() => void) | null = null;
@@ -944,6 +946,10 @@ function startUsagePollingWithRefresh(
 	}
 }
 
+// shouldRunVacuumCatchUp(), VACUUM_CATCHUP_FREELIST_RATIO_THRESHOLD, and
+// VACUUM_CATCHUP_MAX_PAGES_PER_TICK moved to ./vacuum-scheduler.ts
+// (internal-5) — see that module's doc comment for why.
+
 // Export for programmatic use
 let serverLifecycleOwned = false;
 
@@ -1093,43 +1099,13 @@ export default async function startServer(options?: {
 	// `PRAGMA auto_vacuum = INCREMENTAL` are already in mode 2 and this is a
 	// fast no-op. Existing DBs upgraded into this build run a full VACUUM
 	// here — minutes on a multi-GB file. Done BEFORE the HTTP listener binds
-	// so the proxy never sees a stalled writer slot.
+	// so the proxy never sees a stalled writer slot. Gated on the operator
+	// switch (internal-7) — see runVacuumBootstrap()'s doc comment for why:
+	// without the gate, a still-mode-0 file would run this blocking VACUUM
+	// even when the operator just disabled reclaim for a maintenance window.
 	if (dbOps.isSQLite) {
 		const startupLog = new Logger("Startup");
-		try {
-			const result = dbOps.bootstrapAutoVacuum();
-			if (result.migrated) {
-				startupLog.info(
-					`One-time auto_vacuum migration: mode ${result.modeBefore} → ${result.modeAfter} ` +
-						`in ${result.durationMs}ms. Future free-page reclamation runs incrementally via the ` +
-						`hourly worker — no more blocking VACUUM.`,
-				);
-				if (result.modeAfter !== 2) {
-					startupLog.error(
-						`auto_vacuum still ${result.modeAfter} after migration VACUUM — ` +
-							`incremental reclamation will be a no-op. Investigate disk space and DB integrity.`,
-					);
-				}
-			} else if (result.modeBefore === 1) {
-				// Operator set auto_vacuum=FULL on purpose. We don't migrate it to
-				// INCREMENTAL silently because FULL reclaims pages on every COMMIT
-				// while INCREMENTAL only reclaims when our hourly worker runs —
-				// rewriting that policy without notice would surprise the user.
-				// Log so it shows up in startup logs and `journalctl`. (Greptile #230)
-				startupLog.info(
-					`auto_vacuum=FULL (mode 1) detected — left in place. The hourly incremental_vacuum ` +
-						`worker is a no-op under FULL mode; pages are reclaimed on every COMMIT. ` +
-						`Switch to INCREMENTAL manually if you want the worker-driven cadence.`,
-				);
-			}
-		} catch (err) {
-			startupLog.error(
-				`Bootstrap auto_vacuum migration failed: ${err instanceof Error ? err.message : String(err)}. ` +
-					`Free pages will not be reclaimed until this is resolved. ` +
-					`Common causes: disk full (VACUUM needs ~2× DB size free), DB corruption.`,
-			);
-			throw err;
-		}
+		runVacuumBootstrap(dbOps, config.getAutoVacuumEnabled(), startupLog);
 	}
 
 	// Start periodic integrity scheduler. The startup `PRAGMA integrity_check`
@@ -1183,6 +1159,17 @@ export default async function startServer(options?: {
 	};
 	const getRetentionStatus = (): RetentionStatus => ({ ...retentionState });
 
+	// The shared in-flight guard, the hourly tick, and the catch-up tick's
+	// dispatch policy live in ./vacuum-scheduler.ts (internal-5) — see that
+	// module's doc comment for why (testability: none of this was reachable
+	// from a test while it lived in closures here).
+	const vacuumScheduler = createVacuumScheduler({
+		dbOps,
+		config,
+		asyncWriter,
+		log,
+	});
+
 	// Registered here (before runStartupMaintenance() below) so intervalManager
 	// has "data-retention-cleanup" on record and runNow() can find it — startup
 	// maintenance triggers the very same callback via runNow() instead of
@@ -1213,20 +1200,10 @@ export default async function startServer(options?: {
 				// yields between chunks, so the single writer slot is never held
 				// long and concurrent main-thread writes (rate-limit updates, OAuth
 				// refresh, post-processor inserts) aren't starved. Off-thread via
-				// the incremental-vacuum worker. Fire-and-forget so the cleanup
-				// callback isn't blocked on it.
-				dbOps
-					.incrementalVacuumAdaptive()
-					.then((r) => {
-						if (r.reclaimedPages > 0) {
-							log.info(
-								`Adaptive incremental vacuum reclaimed ${r.reclaimedPages} pages in ${r.chunks} chunk(s)`,
-							);
-						}
-					})
-					.catch((err) => {
-						log.error(`Incremental vacuum error: ${err}`);
-					});
+				// the incremental-vacuum worker. Fire-and-forget (via the vacuum
+				// scheduler's shared guard) so the cleanup callback isn't blocked
+				// on it.
+				vacuumScheduler.runHourlyTick();
 			}
 			const usageHistoryDays = config.getUsageHistoryRetentionDays();
 			const removedSnapshots = await dbOps.pruneUsageSnapshots(
@@ -1265,6 +1242,27 @@ export default async function startServer(options?: {
 	});
 	stopDataCleanupJob = unregisterDataCleanup;
 
+	// Catch-up incremental vacuum: the hourly retention-driven tick above caps
+	// reclaim at ~1 GiB, which cannot keep pace with a sustained delete rate
+	// above that — on one production instance retention was removing
+	// ~2.2 GiB/h of payload rows, so the freelist grew without bound purely
+	// because the hourly path never got another turn soon enough. This runs
+	// every 5 minutes; the dispatch policy (including its internal-2 busy-skip
+	// telemetry) lives in vacuumScheduler.runCatchUpTick — see
+	// ./vacuum-scheduler.ts.
+	const unregisterVacuumCatchUp = registerCleanup({
+		id: "vacuum-catchup",
+		callback: vacuumScheduler.runCatchUpTick,
+		minutes: 5,
+		// Mirrors data-retention-cleanup's guard: incrementalVacuumAdaptive()
+		// already bounds a single call, but a catch-up tick firing while the
+		// previous one (or the hourly one) is still draining chunks would
+		// double the writer-slot pressure this exists to avoid.
+		maxConcurrent: 1,
+		description: "Catch-up incremental vacuum when the freelist ratio is high",
+	});
+	stopVacuumCatchUpJob = unregisterVacuumCatchUp;
+
 	const apiRouter = new APIRouter({
 		db,
 		config,
@@ -1301,6 +1299,7 @@ export default async function startServer(options?: {
 		getUsageWorkerHealth: () => getUsageCollectorHealth(),
 		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
 		getRetentionStatus,
+		getVacuumStatus: () => dbOps.getVacuumStatus(),
 		getStrategy: () => currentStrategy,
 		internalProbeSecret,
 		localControlSecret,
@@ -2358,6 +2357,10 @@ async function handleGracefulShutdown(signal: string) {
 		if (stopDataCleanupJob) {
 			stopDataCleanupJob();
 			stopDataCleanupJob = null;
+		}
+		if (stopVacuumCatchUpJob) {
+			stopVacuumCatchUpJob();
+			stopVacuumCatchUpJob = null;
 		}
 		if (stopWalCheckpointJob) {
 			stopWalCheckpointJob();

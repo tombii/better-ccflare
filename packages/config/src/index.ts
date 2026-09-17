@@ -115,6 +115,7 @@ export interface ConfigData {
 	request_retention_days?: number;
 	usage_history_retention_days?: number;
 	store_payloads?: boolean;
+	auto_vacuum_enabled?: boolean;
 	usage_poll_interval_ms?: number;
 	cache_keepalive_ttl_minutes?: number;
 	system_prompt_cache_ttl_1h?: boolean;
@@ -453,6 +454,91 @@ export class Config extends EventEmitter {
 
 	setStorePayloads(value: boolean): void {
 		this.set("store_payloads", value);
+	}
+
+	/**
+	 * Whether the unattended incremental-vacuum backstop
+	 * (`incrementalVacuumAdaptive`, driven by the hourly retention tick and the
+	 * 5-minute catch-up tick) is allowed to run at all. Defaults to true so
+	 * behaviour is unchanged for existing installs.
+	 *
+	 * Escape hatch for the scenario an earlier production incident needed a
+	 * marker-file hotfix for: an operator running an external backup, a
+	 * manual `--compact`, or another maintenance window wants zero automatic
+	 * writer-slot contention from reclaim, without touching retention or
+	 * payload cleanup (which keep running — this only gates the reclaim
+	 * step). Also gates the one-time auto_vacuum-mode migration VACUUM that
+	 * runs at startup on an upgraded install (`runVacuumBootstrap()` in
+	 * apps/server/src/vacuum-scheduler.ts), for the same reason.
+	 *
+	 * **Takes effect immediately for the two periodic reclaim ticks, but not
+	 * for the one-time startup migration.** `apps/server/src/vacuum-scheduler.ts`'s
+	 * `runHourlyTick()` and `runCatchUpTick()` both call this getter live on
+	 * every tick (they read `this.data` fresh via `get()`/`set()`'s shared
+	 * in-memory snapshot, not a cached value), so an in-process call to
+	 * `setAutoVacuumEnabled()` — or any `set("auto_vacuum_enabled", …)` call —
+	 * is picked up on the very next tick, no restart needed. The one
+	 * exception is `runVacuumBootstrap()`'s one-time auto_vacuum-mode
+	 * migration: it reads this value once, at server startup before the HTTP
+	 * listener binds, and never again — a switch flipped after boot cannot
+	 * make a deferred migration run without a restart (see that function's
+	 * doc comment). Separately, an *external* edit — hand-editing the config
+	 * file on disk, or changing the env var from outside this process — has
+	 * no effect on an already-running process, but the two halves of that
+	 * claim hold for different reasons. The on-disk file really is read only
+	 * once, in the constructor's `loadConfig()` call, and nothing here
+	 * re-reads it afterward, so only an in-process caller of
+	 * `set()`/`setAutoVacuumEnabled()` can change what `this.data` holds. The
+	 * env var is different: this getter reads `process.env.BETTER_CCFLARE_AUTO_VACUUM`
+	 * fresh on every single call (see the `fromEnv` check just below) — an
+	 * *in-process* mutation of `process.env` would in principle take effect
+	 * on the very next call, no `set()` involved — but no code path in this
+	 * codebase ever writes to `process.env` after startup, and an external
+	 * process or shell cannot push a changed environment variable into a
+	 * process that is already running (the OS only hands a process its
+	 * environment once, at exec time). So in practice an externally-edited
+	 * env var behaves exactly like the file: fixed until restart. Set it (and
+	 * restart) *before* the maintenance window starts if you're relying on an
+	 * external edit rather than a live in-process call — today there is no
+	 * API route or CLI flag that makes such a call, so a restart is in
+	 * practice the only way to change this switch's effect from outside the
+	 * process.
+	 *
+	 * Same env-parsing shape as `getStorePayloads()` (opt-out, default-on):
+	 * only the literal values `"false"` and `"0"` disable it — any other set
+	 * value (including `"off"`, `"no"`, `"disabled"`) is treated as enabled,
+	 * matching that sibling storage toggle's parsing exactly (and its same
+	 * gap: those common spellings are silently accepted as "on").
+	 */
+	getAutoVacuumEnabled(): boolean {
+		const fromEnv = process.env.BETTER_CCFLARE_AUTO_VACUUM;
+		if (fromEnv) {
+			return fromEnv !== "false" && fromEnv !== "0";
+		}
+		const fromFile = this.data.auto_vacuum_enabled;
+		if (typeof fromFile === "boolean") return fromFile;
+		return true; // default: automatic reclaim enabled
+	}
+
+	/**
+	 * Persists the switch to the config file AND updates the in-memory value
+	 * immediately — `set()` mutates `this.data` synchronously before the
+	 * write-to-disk, so the very next `getAutoVacuumEnabled()` call in this
+	 * same process already reflects it (proven by
+	 * `auto-vacuum-enabled.test.ts`'s "setAutoVacuumEnabled persists the
+	 * value read back by the getter" case). Because the two periodic reclaim
+	 * ticks read that getter live on every tick, calling this takes effect on
+	 * their very next run, no restart needed; only the one-time startup
+	 * migration (`runVacuumBootstrap()`) is unaffected by a call made after
+	 * boot, since it only ever reads the value once (see
+	 * `getAutoVacuumEnabled()`'s doc comment). No production caller exists
+	 * yet (no API route or CLI flag writes this field); kept as
+	 * forward-looking config-surface API, the same shape as e.g.
+	 * `setUsagePollIntervalMs()` below, which has no caller at all,
+	 * production or test.
+	 */
+	setAutoVacuumEnabled(value: boolean): void {
+		this.set("auto_vacuum_enabled", value);
 	}
 
 	getUsagePollIntervalMs(): number {
@@ -1119,6 +1205,7 @@ export class Config extends EventEmitter {
 			request_retention_days: this.getRequestRetentionDays(),
 			usage_history_retention_days: this.getUsageHistoryRetentionDays(),
 			store_payloads: this.getStorePayloads(),
+			auto_vacuum_enabled: this.getAutoVacuumEnabled(),
 			usage_poll_interval_ms: this.getUsagePollIntervalMs(),
 			cache_keepalive_ttl_minutes: this.getCacheKeepaliveTtlMinutes(),
 			system_prompt_cache_ttl_1h: this.getSystemPromptCacheTtl1h(),

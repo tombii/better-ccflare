@@ -17,6 +17,7 @@ import type {
 	ProjectAttributionSource,
 	RateLimitReason,
 	StrategyStore,
+	VacuumStatus,
 } from "@better-ccflare/types";
 import {
 	BunSqlAdapter,
@@ -193,6 +194,22 @@ function configureSqlite(db: Database, config: DatabaseConfig): void {
 const INC_VAC_SKIP_ESCALATE_AT = 3;
 
 /**
+ * Per-chunk worker timeout for `incrementalVacuum()` (internal-3). The
+ * awaited worker promise previously had no timer at all: `resolve` fires on
+ * `onmessage`, `reject` on `onerror`, and nothing else — a worker that dies
+ * without delivering either (a thread-level OOM kill on a constrained
+ * container, or a `Blob`-URL worker that fails to start without raising
+ * `onerror`) left the await pending forever, which — once the shared
+ * `vacuumTickInFlight` guard in `apps/server/src/vacuum-scheduler.ts` was
+ * introduced — permanently disables both the hourly and catch-up reclaim
+ * ticks. A worker message round trip for the default 16384-page chunk
+ * (`incrementalVacuumAdaptive`'s `CHUNK`) completes in well under a second
+ * on the production file, so 120s is generous headroom while still bounding
+ * a genuinely hung worker.
+ */
+const INC_VACUUM_WORKER_TIMEOUT_MS = 120_000;
+
+/**
  * DatabaseOperations using Repository Pattern
  * Provides a clean, organized interface for database operations
  *
@@ -248,6 +265,33 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		lastFullError: null,
 		lastQuickSkipReason: null,
 		lastFullSkipReason: null,
+	};
+	/**
+	 * Cached adaptive-vacuum status; surfaced via /health. Written by
+	 * incrementalVacuumAdaptive() (via recordVacuumStatus(), and directly on
+	 * the unsupported-backend and rejected-reclaim paths — see those call
+	 * sites) and by recordVacuumCatchUpBusySkip()/resetVacuumCatchUpBusySkips()
+	 * (the catch-up tick's busy-skip counters, updated from
+	 * apps/server/src/vacuum-scheduler.ts since that backoff happens before
+	 * incrementalVacuumAdaptive() is ever called). Corrected for the
+	 * PostgreSQL backend just below the constructor's isSQLite branch (field
+	 * initializers run before `this.isSQLite` is assigned, so
+	 * `supported`/`enabled` start at their SQLite-shaped defaults here and are
+	 * flipped there for PG).
+	 */
+	private vacuumStatus: VacuumStatus = {
+		enabled: true,
+		supported: true,
+		lastRunAt: null,
+		lastReclaimedPages: 0,
+		lastChunks: 0,
+		freelistPages: 0,
+		freelistRatio: 0,
+		consecutiveBusySkips: 0,
+		escalated: false,
+		lastError: null,
+		catchUpBusySkips: 0,
+		catchUpBusySkipsTotal: 0,
 	};
 
 	// Repositories
@@ -376,6 +420,20 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			this.adapter = new BunSqlAdapter(this.sqliteDb);
 		}
 
+		// internal-4: PostgreSQL has no freelist or incremental_vacuum concept,
+		// so reclaim can never run there. Correct the vacuumStatus field
+		// initializer's SQLite-shaped defaults here — this must happen AFTER
+		// `this.isSQLite` is assigned above, since class field initializers run
+		// before the constructor body (referencing `this.isSQLite` inside the
+		// field initializer itself would read `undefined`).
+		if (!this.isSQLite) {
+			this.vacuumStatus = {
+				...this.vacuumStatus,
+				enabled: false,
+				supported: false,
+			};
+		}
+
 		// Initialize repositories
 		this.accounts = new AccountRepository(this.adapter);
 		this.requests = new RequestRepository(this.adapter);
@@ -500,6 +558,11 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	 */
 	getIntegrityStatus(): IntegrityStatus {
 		return { ...this.integrityStatus };
+	}
+
+	/** Snapshot of the adaptive-vacuum backstop's most recent call. See `VacuumStatus`. */
+	getVacuumStatus(): VacuumStatus {
+		return { ...this.vacuumStatus };
 	}
 
 	/**
@@ -1693,8 +1756,19 @@ OAuth tokens will need to be re-authenticated.
 	 * inner worker handles its own errors and posts them back as
 	 * `{ok: false, error}` — we surface them via the returned promise rather
 	 * than throwing, so a transient failure doesn't crash the hourly tick.
+	 *
+	 * `opts.workerTimeoutMs` (internal-3) bounds the awaited worker round
+	 * trip — see `INC_VACUUM_WORKER_TIMEOUT_MS` for the default and its
+	 * derivation. A worker that never fires `onmessage` or `onerror` rejects
+	 * with a descriptive timeout Error instead of hanging the await forever;
+	 * the surrounding `finally` still terminates the worker either way.
+	 * Injectable only so a test can shorten it — production callers should
+	 * never override it.
 	 */
-	async incrementalVacuum(pages = 8000): Promise<void> {
+	async incrementalVacuum(
+		pages = 8000,
+		opts?: { workerTimeoutMs?: number },
+	): Promise<void> {
 		if (!this.sqliteDb || !this.resolvedDbPath) return;
 
 		// Resolve the effective auto_vacuum mode. The captured `originalMode`
@@ -1745,13 +1819,28 @@ OAuth tokens will need to be re-authenticated.
 			);
 		}
 
+		const workerTimeoutMs =
+			opts?.workerTimeoutMs ?? INC_VACUUM_WORKER_TIMEOUT_MS;
 		try {
 			const result = await new Promise<
 				{ ok: true; mode: number } | { ok: false; error: string }
 			>((resolve, reject) => {
-				worker.onmessage = (event: MessageEvent) => resolve(event.data);
-				worker.onerror = (event: ErrorEvent) =>
+				const timeoutId = setTimeout(() => {
+					reject(
+						new Error(
+							`incremental-vacuum worker timed out after ${workerTimeoutMs}ms ` +
+								`(pages=${pages}) — the worker never fired onmessage or onerror`,
+						),
+					);
+				}, workerTimeoutMs);
+				worker.onmessage = (event: MessageEvent) => {
+					clearTimeout(timeoutId);
+					resolve(event.data);
+				};
+				worker.onerror = (event: ErrorEvent) => {
+					clearTimeout(timeoutId);
 					reject(new Error(event.message ?? "incremental-vacuum worker error"));
+				};
 				worker.postMessage({ dbPath, pages });
 			});
 			if (result.ok) {
@@ -1796,6 +1885,22 @@ OAuth tokens will need to be re-authenticated.
 	}
 
 	/**
+	 * Read `PRAGMA page_count` — the total number of pages in the main
+	 * database file, used pages plus free (freelist) pages. Paired with
+	 * `getFreelistCount()` to compute the freelist ratio that drives the
+	 * vacuum catch-up pacing decision and the `VacuumStatus` health surface.
+	 * Returns 0 when not in SQLite mode or no handle is open. Synchronous,
+	 * like the other small pragma readers in this file.
+	 */
+	getPageCount(): number {
+		if (!this.sqliteDb) return 0;
+		const result = this.sqliteDb.query("PRAGMA page_count").get() as {
+			page_count: number;
+		};
+		return result.page_count;
+	}
+
+	/**
 	 * Adaptive incremental vacuum — the unattended hourly backstop.
 	 *
 	 * With auto_vacuum=INCREMENTAL, deleted pages go to the freelist and are
@@ -1830,12 +1935,73 @@ OAuth tokens will need to be re-authenticated.
 	 * (first reading minus last, clamped at >= 0). Under concurrent inserts
 	 * this is approximate — new deletes can re-grow the freelist mid-call — but
 	 * it's a faithful "how much did the file shrink" signal for logging.
+	 *
+	 * Two callers drive this on different cadences (both in apps/server's
+	 * `startServer()`): the hourly retention tick (default `maxPagesPerTick`,
+	 * ~1 GiB ceiling) and a 5-minute catch-up tick that only fires while the
+	 * freelist ratio is elevated, with a smaller per-tick ceiling so it can't
+	 * out-hold the writer slot longer than the hourly tick does. This exists
+	 * because on one production instance the hourly-only path could not keep
+	 * up: retention was deleting ~2.2 GiB/h of payload rows while the ~1 GiB
+	 * hourly ceiling reclaimed at most ~1 GiB/h, so the freelist grew without
+	 * bound (48 GiB free of ~101 GiB total observed, then 83% free days
+	 * later) — see the catch-up tick in server.ts for the throughput math.
+	 *
+	 * `opts.enabled` gates the whole call, checked BEFORE the freelist read,
+	 * so the operator can pause every automatic reclaim path (both callers
+	 * pass their own live `config.getAutoVacuumEnabled()` read) without this
+	 * method ever touching the DB. Retention and payload cleanup are
+	 * unaffected — only this reclaim step is gated. Every call — run,
+	 * no-op, or disabled-skip — updates the `VacuumStatus` surfaced via
+	 * `getVacuumStatus()` / `/health`, so the freelist ratio and skip streak
+	 * are visible to an operator instead of only appearing in logs.
 	 */
 	async incrementalVacuumAdaptive(opts?: {
 		maxPagesPerTick?: number;
 		chunkPages?: number;
+		/** Operator switch (default true). false skips the tick entirely, before the freelist read, and logs once. */
+		enabled?: boolean;
 	}): Promise<{ reclaimedPages: number; chunks: number }> {
 		if (!this.sqliteDb || !this.resolvedDbPath) {
+			// internal-4: no freelist to reclaim on this backend (PostgreSQL, or
+			// a defensive "no handle open" case) — never claim `enabled: true` as
+			// if reclaim could run here. Explicit rather than relying solely on
+			// the constructor's isSQLite-based default so this is true even if
+			// that invariant ever drifts.
+			this.vacuumStatus = {
+				...this.vacuumStatus,
+				enabled: false,
+				supported: false,
+			};
+			return { reclaimedPages: 0, chunks: 0 };
+		}
+
+		if (opts?.enabled === false) {
+			console.info(
+				"[incrementalVacuum] adaptive reclaim disabled (auto_vacuum_enabled=false) — skipping tick",
+			);
+			this.vacuumStatus = {
+				...this.vacuumStatus,
+				enabled: false,
+				lastRunAt: Date.now(),
+				// greptile review on PR #475: this branch previously updated only
+				// enabled/lastRunAt, leaving whatever lastReclaimedPages/lastChunks/
+				// lastError a PRIOR (enabled) run had recorded still in place — so
+				// /health paired a brand-new timestamp with stale reclaim or error
+				// data from before the switch was flipped off, reading as if this
+				// disabled tick had just reclaimed pages or just failed. Reset every
+				// per-attempt field the same way the steady-state no-op path a few
+				// lines below does (via recordVacuumStatus(0, 0, 0)), so "disabled"
+				// reads as "nothing happened this tick", not "the last real attempt's
+				// result, restamped now". freelistPages/freelistRatio are
+				// deliberately left untouched — those are documented as
+				// stale-while-disabled (see VacuumStatus's field comments in
+				// packages/types/src/stats.ts) since this path returns before ever
+				// reading the freelist.
+				lastReclaimedPages: 0,
+				lastChunks: 0,
+				lastError: null,
+			};
 			return { reclaimedPages: 0, chunks: 0 };
 		}
 
@@ -1846,6 +2012,7 @@ OAuth tokens will need to be re-authenticated.
 		let freelist = initialFreelist;
 		if (freelist <= 0) {
 			// Nothing to reclaim — steady state. Avoid spawning a worker.
+			this.recordVacuumStatus(0, 0, 0);
 			return { reclaimedPages: 0, chunks: 0 };
 		}
 
@@ -1856,7 +2023,24 @@ OAuth tokens will need to be re-authenticated.
 		while (requestedPages < budget && freelist > 0) {
 			const n = Math.min(CHUNK, budget - requestedPages);
 			const before = this.getFreelistCount();
-			await this.incrementalVacuum(n); // one bounded worker txn
+			try {
+				await this.incrementalVacuum(n); // one bounded worker txn
+			} catch (err) {
+				// internal-4: incrementalVacuum() previously only rejected on a
+				// genuine worker crash; internal-3's timeout adds a second
+				// rejection path. Either way, record it (message only — no stack)
+				// instead of letting it propagate silently past recordVacuumStatus,
+				// then re-throw so the caller (runVacuumTick in
+				// apps/server/src/vacuum-scheduler.ts) still sees the rejection —
+				// its `.catch()` logs it and its `.finally()` clears the shared
+				// in-flight flag.
+				this.vacuumStatus = {
+					...this.vacuumStatus,
+					lastError: err instanceof Error ? err.message : String(err),
+					lastRunAt: Date.now(),
+				};
+				throw err;
+			}
 			const after = this.getFreelistCount();
 			requestedPages += n;
 			chunks += 1;
@@ -1879,7 +2063,74 @@ OAuth tokens will need to be re-authenticated.
 
 		const finalFreelist = this.getFreelistCount();
 		const reclaimedPages = Math.max(0, initialFreelist - finalFreelist);
+		this.recordVacuumStatus(finalFreelist, reclaimedPages, chunks);
 		return { reclaimedPages, chunks };
+	}
+
+	/**
+	 * Updates the cached `VacuumStatus` at the end of a call that actually
+	 * reached the reclaim loop (ran chunks or no-opped on an empty freelist).
+	 * Takes `freelistPages` from the caller instead of re-reading it — both
+	 * call sites already have the value on hand, and this avoids a redundant
+	 * `PRAGMA freelist_count` per tick. Reads `page_count` once to compute the
+	 * ratio the catch-up tick's threshold and the health endpoint both use.
+	 */
+	private recordVacuumStatus(
+		freelistPages: number,
+		reclaimedPages: number,
+		chunks: number,
+	): void {
+		const pageCount = this.getPageCount();
+		this.vacuumStatus = {
+			// Spread first so this never clobbers catchUpBusySkips /
+			// catchUpBusySkipsTotal — owned by
+			// recordVacuumCatchUpBusySkip()/resetVacuumCatchUpBusySkips() below,
+			// updated from outside this class — or `supported`, owned by the
+			// constructor's PG correction.
+			...this.vacuumStatus,
+			enabled: true,
+			lastRunAt: Date.now(),
+			lastReclaimedPages: reclaimedPages,
+			lastChunks: chunks,
+			freelistPages,
+			freelistRatio: pageCount > 0 ? freelistPages / pageCount : 0,
+			consecutiveBusySkips: this.incVacuumConsecutiveSkips,
+			escalated: this.incVacuumConsecutiveSkips >= INC_VAC_SKIP_ESCALATE_AT,
+			// Reaching this method at all means the call completed without
+			// throwing (internal-4) — clear any error recorded by a prior tick.
+			lastError: null,
+		};
+	}
+
+	/**
+	 * Records one catch-up-tick busy skip (internal-2): called from
+	 * `apps/server/src/vacuum-scheduler.ts` when the 5-minute catch-up tick
+	 * backs off because the async DB writer's queue is non-empty — a
+	 * condition checked BEFORE `incrementalVacuumAdaptive()` is ever called,
+	 * so `recordVacuumStatus()` above never runs for it. Kept narrow (touches
+	 * only the two busy-skip counters) so a busy skip never overwrites the
+	 * last real reclaim's freelist/ratio telemetry. Returns the updated
+	 * consecutive count so the caller can decide whether to escalate to a
+	 * `warn` log without a second read.
+	 */
+	recordVacuumCatchUpBusySkip(): number {
+		const catchUpBusySkips = this.vacuumStatus.catchUpBusySkips + 1;
+		this.vacuumStatus = {
+			...this.vacuumStatus,
+			catchUpBusySkips,
+			catchUpBusySkipsTotal: this.vacuumStatus.catchUpBusySkipsTotal + 1,
+		};
+		return catchUpBusySkips;
+	}
+
+	/**
+	 * Resets the consecutive catch-up busy-skip counter (internal-2), called
+	 * once a catch-up reclaim actually dispatches. Never touches
+	 * `catchUpBusySkipsTotal`, which is a lifetime counter.
+	 */
+	resetVacuumCatchUpBusySkips(): void {
+		if (this.vacuumStatus.catchUpBusySkips === 0) return;
+		this.vacuumStatus = { ...this.vacuumStatus, catchUpBusySkips: 0 };
 	}
 
 	// API Key operations delegated to repository

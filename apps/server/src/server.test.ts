@@ -1497,3 +1497,6 @@ describe("applyUsagePauseThresholds — switched-off windows", () => {
 		expect(paused).toStrictEqual([]);
 	});
 });
+
+// shouldRunVacuumCatchUp() moved to ./vacuum-scheduler.test.ts alongside the
+// module it now lives in (internal-5).
