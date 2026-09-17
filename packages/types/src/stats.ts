@@ -22,6 +22,34 @@ export interface RetentionStatus {
 }
 
 /**
+ * Cached status of the adaptive incremental-vacuum backstop
+ * (`DatabaseOperations.incrementalVacuumAdaptive`). Exists so an operator can
+ * tell "reclaim is keeping up with deletes" from "the freelist is growing
+ * unbounded" without tailing logs — the same gap `RetentionStatus` closed for
+ * the retention job. Updated on every `incrementalVacuumAdaptive()` call,
+ * whether it ran a reclaim, no-opped in steady state, or was skipped because
+ * automatic reclaim is disabled.
+ */
+export interface VacuumStatus {
+	/** Whether automatic (unattended) reclaim is enabled, as of the most recent call. Mirrors `auto_vacuum_enabled` / `BETTER_CCFLARE_AUTO_VACUUM`. */
+	enabled: boolean;
+	/** Epoch ms of the most recent `incrementalVacuumAdaptive()` call, run or skipped-while-disabled; null before the first call. */
+	lastRunAt: number | null;
+	/** Pages reclaimed by the most recent call that actually ran a reclaim pass (0 in steady state or while disabled). */
+	lastReclaimedPages: number;
+	/** Worker chunks the most recent call issued (0 in steady state or while disabled). */
+	lastChunks: number;
+	/** `PRAGMA freelist_count` as of the end of the most recent call that ran; stale (not refreshed) while disabled. */
+	freelistPages: number;
+	/** `freelistPages / PRAGMA page_count`, 0-1; stale (not refreshed) while disabled. 0 when page_count is 0 (fresh/empty DB). */
+	freelistRatio: number;
+	/** Consecutive `incrementalVacuum()` ticks that failed to claim the writer slot (SQLITE_BUSY); mirrors the internal escalation counter used for the log warning. */
+	consecutiveBusySkips: number;
+	/** True once `consecutiveBusySkips` has crossed the escalation threshold — sustained reclaim starvation an operator should investigate. */
+	escalated: boolean;
+}
+
+/**
  * Cached integrity status. The `status` collapses both probes into a single
  * surface, but each probe's own most-recent result is preserved so a quick
  * `ok` cannot mask a previously-detected full `corrupt`.
@@ -269,6 +297,16 @@ export interface HealthResponse {
 				lastSuccessAt: string | null;
 				lastError: string | null;
 				lastErrorAt: string | null;
+			};
+			vacuum?: {
+				enabled: boolean;
+				lastRunAt: string | null;
+				lastReclaimedPages: number;
+				lastChunks: number;
+				freelistPages: number;
+				freelistRatio: number;
+				consecutiveBusySkips: number;
+				escalated: boolean;
 			};
 		};
 	};

@@ -115,6 +115,7 @@ export interface ConfigData {
 	request_retention_days?: number;
 	usage_history_retention_days?: number;
 	store_payloads?: boolean;
+	auto_vacuum_enabled?: boolean;
 	usage_poll_interval_ms?: number;
 	cache_keepalive_ttl_minutes?: number;
 	system_prompt_cache_ttl_1h?: boolean;
@@ -453,6 +454,35 @@ export class Config extends EventEmitter {
 
 	setStorePayloads(value: boolean): void {
 		this.set("store_payloads", value);
+	}
+
+	/**
+	 * Whether the unattended incremental-vacuum backstop
+	 * (`incrementalVacuumAdaptive`, driven by the hourly retention tick and the
+	 * 5-minute catch-up tick) is allowed to run at all. Defaults to true so
+	 * behaviour is unchanged for existing installs.
+	 *
+	 * Escape hatch for the scenario an earlier production incident needed a
+	 * marker-file hotfix for: an operator running an external backup, a
+	 * manual `--compact`, or another maintenance window wants zero automatic
+	 * writer-slot contention from reclaim, without touching retention or
+	 * payload cleanup (which keep running — this only gates the reclaim
+	 * step). Same env-parsing shape as `getStorePayloads()` (opt-out,
+	 * default-on): any env value other than "false"/"0" is treated as
+	 * enabled, matching that sibling storage toggle.
+	 */
+	getAutoVacuumEnabled(): boolean {
+		const fromEnv = process.env.BETTER_CCFLARE_AUTO_VACUUM;
+		if (fromEnv) {
+			return fromEnv !== "false" && fromEnv !== "0";
+		}
+		const fromFile = this.data.auto_vacuum_enabled;
+		if (typeof fromFile === "boolean") return fromFile;
+		return true; // default: automatic reclaim enabled
+	}
+
+	setAutoVacuumEnabled(value: boolean): void {
+		this.set("auto_vacuum_enabled", value);
 	}
 
 	getUsagePollIntervalMs(): number {
@@ -1119,6 +1149,7 @@ export class Config extends EventEmitter {
 			request_retention_days: this.getRequestRetentionDays(),
 			usage_history_retention_days: this.getUsageHistoryRetentionDays(),
 			store_payloads: this.getStorePayloads(),
+			auto_vacuum_enabled: this.getAutoVacuumEnabled(),
 			usage_poll_interval_ms: this.getUsagePollIntervalMs(),
 			cache_keepalive_ttl_minutes: this.getCacheKeepaliveTtlMinutes(),
 			system_prompt_cache_ttl_1h: this.getSystemPromptCacheTtl1h(),
