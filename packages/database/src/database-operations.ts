@@ -17,6 +17,7 @@ import type {
 	ProjectAttributionSource,
 	RateLimitReason,
 	StrategyStore,
+	VacuumStatus,
 } from "@better-ccflare/types";
 import {
 	BunSqlAdapter,
@@ -248,6 +249,17 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		lastFullError: null,
 		lastQuickSkipReason: null,
 		lastFullSkipReason: null,
+	};
+	/** Cached adaptive-vacuum status; surfaced via /health. Written only by incrementalVacuumAdaptive(). */
+	private vacuumStatus: VacuumStatus = {
+		enabled: true,
+		lastRunAt: null,
+		lastReclaimedPages: 0,
+		lastChunks: 0,
+		freelistPages: 0,
+		freelistRatio: 0,
+		consecutiveBusySkips: 0,
+		escalated: false,
 	};
 
 	// Repositories
@@ -500,6 +512,11 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	 */
 	getIntegrityStatus(): IntegrityStatus {
 		return { ...this.integrityStatus };
+	}
+
+	/** Snapshot of the adaptive-vacuum backstop's most recent call. See `VacuumStatus`. */
+	getVacuumStatus(): VacuumStatus {
+		return { ...this.vacuumStatus };
 	}
 
 	/**
@@ -1796,6 +1813,22 @@ OAuth tokens will need to be re-authenticated.
 	}
 
 	/**
+	 * Read `PRAGMA page_count` — the total number of pages in the main
+	 * database file, used pages plus free (freelist) pages. Paired with
+	 * `getFreelistCount()` to compute the freelist ratio that drives the
+	 * vacuum catch-up pacing decision and the `VacuumStatus` health surface.
+	 * Returns 0 when not in SQLite mode or no handle is open. Synchronous,
+	 * like the other small pragma readers in this file.
+	 */
+	getPageCount(): number {
+		if (!this.sqliteDb) return 0;
+		const result = this.sqliteDb.query("PRAGMA page_count").get() as {
+			page_count: number;
+		};
+		return result.page_count;
+	}
+
+	/**
 	 * Adaptive incremental vacuum — the unattended hourly backstop.
 	 *
 	 * With auto_vacuum=INCREMENTAL, deleted pages go to the freelist and are
@@ -1830,12 +1863,46 @@ OAuth tokens will need to be re-authenticated.
 	 * (first reading minus last, clamped at >= 0). Under concurrent inserts
 	 * this is approximate — new deletes can re-grow the freelist mid-call — but
 	 * it's a faithful "how much did the file shrink" signal for logging.
+	 *
+	 * Two callers drive this on different cadences (both in apps/server's
+	 * `startServer()`): the hourly retention tick (default `maxPagesPerTick`,
+	 * ~1 GiB ceiling) and a 5-minute catch-up tick that only fires while the
+	 * freelist ratio is elevated, with a smaller per-tick ceiling so it can't
+	 * out-hold the writer slot longer than the hourly tick does. This exists
+	 * because on one production instance the hourly-only path could not keep
+	 * up: retention was deleting ~2.2 GiB/h of payload rows while the ~1 GiB
+	 * hourly ceiling reclaimed at most ~1 GiB/h, so the freelist grew without
+	 * bound (48 GiB free of ~101 GiB total observed, then 83% free days
+	 * later) — see the catch-up tick in server.ts for the throughput math.
+	 *
+	 * `opts.enabled` gates the whole call, checked BEFORE the freelist read,
+	 * so the operator can pause every automatic reclaim path (both callers
+	 * pass their own live `config.getAutoVacuumEnabled()` read) without this
+	 * method ever touching the DB. Retention and payload cleanup are
+	 * unaffected — only this reclaim step is gated. Every call — run,
+	 * no-op, or disabled-skip — updates the `VacuumStatus` surfaced via
+	 * `getVacuumStatus()` / `/health`, so the freelist ratio and skip streak
+	 * are visible to an operator instead of only appearing in logs.
 	 */
 	async incrementalVacuumAdaptive(opts?: {
 		maxPagesPerTick?: number;
 		chunkPages?: number;
+		/** Operator switch (default true). false skips the tick entirely, before the freelist read, and logs once. */
+		enabled?: boolean;
 	}): Promise<{ reclaimedPages: number; chunks: number }> {
 		if (!this.sqliteDb || !this.resolvedDbPath) {
+			return { reclaimedPages: 0, chunks: 0 };
+		}
+
+		if (opts?.enabled === false) {
+			console.info(
+				"[incrementalVacuum] adaptive reclaim disabled (auto_vacuum_enabled=false) — skipping tick",
+			);
+			this.vacuumStatus = {
+				...this.vacuumStatus,
+				enabled: false,
+				lastRunAt: Date.now(),
+			};
 			return { reclaimedPages: 0, chunks: 0 };
 		}
 
@@ -1846,6 +1913,7 @@ OAuth tokens will need to be re-authenticated.
 		let freelist = initialFreelist;
 		if (freelist <= 0) {
 			// Nothing to reclaim — steady state. Avoid spawning a worker.
+			this.recordVacuumStatus(0, 0, 0);
 			return { reclaimedPages: 0, chunks: 0 };
 		}
 
@@ -1879,7 +1947,34 @@ OAuth tokens will need to be re-authenticated.
 
 		const finalFreelist = this.getFreelistCount();
 		const reclaimedPages = Math.max(0, initialFreelist - finalFreelist);
+		this.recordVacuumStatus(finalFreelist, reclaimedPages, chunks);
 		return { reclaimedPages, chunks };
+	}
+
+	/**
+	 * Updates the cached `VacuumStatus` at the end of a call that actually
+	 * reached the reclaim loop (ran chunks or no-opped on an empty freelist).
+	 * Takes `freelistPages` from the caller instead of re-reading it — both
+	 * call sites already have the value on hand, and this avoids a redundant
+	 * `PRAGMA freelist_count` per tick. Reads `page_count` once to compute the
+	 * ratio the catch-up tick's threshold and the health endpoint both use.
+	 */
+	private recordVacuumStatus(
+		freelistPages: number,
+		reclaimedPages: number,
+		chunks: number,
+	): void {
+		const pageCount = this.getPageCount();
+		this.vacuumStatus = {
+			enabled: true,
+			lastRunAt: Date.now(),
+			lastReclaimedPages: reclaimedPages,
+			lastChunks: chunks,
+			freelistPages,
+			freelistRatio: pageCount > 0 ? freelistPages / pageCount : 0,
+			consecutiveBusySkips: this.incVacuumConsecutiveSkips,
+			escalated: this.incVacuumConsecutiveSkips >= INC_VAC_SKIP_ESCALATE_AT,
+		};
 	}
 
 	// API Key operations delegated to repository

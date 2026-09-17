@@ -146,4 +146,136 @@ describe("DatabaseOperations.incrementalVacuumAdaptive", () => {
 		// Freelist still has pages left because the per-tick budget was small.
 		expect(dbOps.getFreelistCount()).toBeGreaterThan(0);
 	});
+
+	// The tests below drive incrementalVacuumAdaptive() with a faked
+	// incrementalVacuum()/getFreelistCount() pair instead of the real Worker,
+	// mirroring the disable-marker hotfix's test style (docs/operations/
+	// 2026-09-08-disable-auto-vacuum.patch). The three tests above already
+	// exercise the real worker end-to-end and are slow/flaky in constrained
+	// CI/sandboxed environments (observed timing out past the 5s per-test
+	// default on this machine, pre-existing and unrelated to this change);
+	// fakes keep the new coverage fast and deterministic without touching
+	// that pre-existing behavior.
+	it("opts.enabled=false skips before the freelist read, does not spawn a worker, and updates VacuumStatus", async () => {
+		const internals = dbOps as unknown as {
+			getFreelistCount: () => number;
+			incrementalVacuum: (pages: number) => Promise<void>;
+		};
+		let freelistReads = 0;
+		let vacuumCalls = 0;
+		internals.getFreelistCount = () => {
+			freelistReads += 1;
+			return 100;
+		};
+		internals.incrementalVacuum = async () => {
+			vacuumCalls += 1;
+		};
+
+		const before = Date.now();
+		const r = await dbOps.incrementalVacuumAdaptive({ enabled: false });
+
+		expect(r).toEqual({ reclaimedPages: 0, chunks: 0 });
+		expect(freelistReads).toBe(0);
+		expect(vacuumCalls).toBe(0);
+
+		const status = dbOps.getVacuumStatus();
+		expect(status.enabled).toBe(false);
+		expect(status.lastRunAt).not.toBeNull();
+		expect(status.lastRunAt as number).toBeGreaterThanOrEqual(before);
+		// Disabled path must not touch freelist/ratio fields — they stay at
+		// whatever they were (the freshly-constructed default here).
+		expect(status.freelistPages).toBe(0);
+		expect(status.lastReclaimedPages).toBe(0);
+		expect(status.lastChunks).toBe(0);
+	});
+
+	it("opts.enabled defaults to true (omitted) — unchanged from before the switch existed", async () => {
+		const internals = dbOps as unknown as {
+			getFreelistCount: () => number;
+			incrementalVacuum: (pages: number) => Promise<void>;
+		};
+		let freelist = 10;
+		internals.getFreelistCount = () => freelist;
+		internals.incrementalVacuum = async (pages: number) => {
+			freelist = Math.max(0, freelist - pages);
+		};
+
+		const r = await dbOps.incrementalVacuumAdaptive({
+			chunkPages: 10,
+			maxPagesPerTick: 10,
+		});
+
+		expect(r).toEqual({ reclaimedPages: 10, chunks: 1 });
+		expect(dbOps.getVacuumStatus().enabled).toBe(true);
+	});
+
+	it("records reclaimedPages, chunks and the freelist ratio in VacuumStatus after a reclaim", async () => {
+		const internals = dbOps as unknown as {
+			getFreelistCount: () => number;
+			getPageCount: () => number;
+			incrementalVacuum: (pages: number) => Promise<void>;
+		};
+		let freelist = 40;
+		internals.getFreelistCount = () => freelist;
+		internals.getPageCount = () => 200; // freelist starts at 40/200 = 20%
+		internals.incrementalVacuum = async (pages: number) => {
+			freelist = Math.max(0, freelist - pages);
+		};
+
+		const r = await dbOps.incrementalVacuumAdaptive({
+			chunkPages: 10,
+			maxPagesPerTick: 40,
+		});
+
+		expect(r).toEqual({ reclaimedPages: 40, chunks: 4 });
+		const status = dbOps.getVacuumStatus();
+		expect(status.lastReclaimedPages).toBe(40);
+		expect(status.lastChunks).toBe(4);
+		expect(status.freelistPages).toBe(0);
+		// Freelist fully drained (0/200) after the reclaim.
+		expect(status.freelistRatio).toBe(0);
+		expect(status.consecutiveBusySkips).toBe(0);
+		expect(status.escalated).toBe(false);
+	});
+
+	it("records a steady-state no-op (empty freelist) in VacuumStatus without spawning a worker", async () => {
+		const internals = dbOps as unknown as {
+			getFreelistCount: () => number;
+			incrementalVacuum: (pages: number) => Promise<void>;
+		};
+		internals.getFreelistCount = () => 0;
+		let vacuumCalls = 0;
+		internals.incrementalVacuum = async () => {
+			vacuumCalls += 1;
+		};
+
+		const r = await dbOps.incrementalVacuumAdaptive();
+
+		expect(r).toEqual({ reclaimedPages: 0, chunks: 0 });
+		expect(vacuumCalls).toBe(0);
+		const status = dbOps.getVacuumStatus();
+		expect(status.enabled).toBe(true);
+		expect(status.lastRunAt).not.toBeNull();
+		expect(status.lastReclaimedPages).toBe(0);
+		expect(status.lastChunks).toBe(0);
+	});
+});
+
+describe("DatabaseOperations.getPageCount", () => {
+	let dbOps: DatabaseOperations;
+
+	beforeEach(() => {
+		dbOps = new DatabaseOperations(tempDbPath());
+	});
+
+	afterEach(async () => {
+		await dbOps.dispose?.();
+	});
+
+	it("returns a positive integer on a fresh DB (schema pages already allocated)", () => {
+		const n = dbOps.getPageCount();
+		expect(typeof n).toBe("number");
+		expect(n).toBeGreaterThan(0);
+		expect(Number.isInteger(n)).toBe(true);
+	});
 });
