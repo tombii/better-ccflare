@@ -17,6 +17,10 @@ import { toStreamTerminalState } from "@better-ccflare/types/request";
 import { formatCost } from "@better-ccflare/ui-common";
 import { cacheBodyStore } from "./cache-body-store";
 import {
+	extractGatewayHintHeadersFromParts,
+	type GatewayHintHeaders,
+} from "./gateway-hint-headers";
+import {
 	extractProjectAttributionFromParts,
 	sanitizeProjectName,
 } from "./project-attribution";
@@ -51,6 +55,7 @@ interface RequestState {
 	agentAttributionSource?: AgentAttributionSource | null;
 	project?: string | null;
 	projectAttributionSource?: ProjectAttributionSource | null;
+	gatewayHint: GatewayHintHeaders;
 	billingType?: string;
 	firstTokenTimestamp?: number;
 	lastTokenTimestamp?: number;
@@ -462,6 +467,11 @@ export class UsageCollector {
 			usage: {},
 			lastActivity: now,
 			createdAt: now,
+			// Pure observability metadata (see gateway-hint-headers.ts) — extracted
+			// once here from the raw header map every StartMessage already
+			// carries, regardless of which code path constructed it. Absent
+			// headers (the normal case) resolve to an all-null object.
+			gatewayHint: extractGatewayHintHeadersFromParts(msg.requestHeaders),
 			shouldSkipLogging: shouldSkip,
 			payloadReleased: false,
 			retainedPayloadBytes: 0,
@@ -896,6 +906,11 @@ export class UsageCollector {
 					state.agentAttributionSource ?? null,
 					msg.streamTerminalState ?? null,
 					startMessage.clientSessionId ?? null,
+					state.gatewayHint.requestClass,
+					state.gatewayHint.agentType,
+					state.gatewayHint.prevToolDurations,
+					state.gatewayHint.compaction,
+					state.gatewayHint.contextCompacted,
 				);
 			} catch (error) {
 				log.error(
@@ -958,6 +973,16 @@ export class UsageCollector {
 			projectAttributionSource: state.projectAttributionSource ?? undefined,
 			agentAttributionSource: state.agentAttributionSource ?? undefined,
 			clientSessionId: startMessage.clientSessionId ?? undefined,
+			// Same values handed to saveRequest above — see the comment on
+			// streamTerminalState just below for why the live summary and the
+			// persisted row must agree instead of only converging after reload.
+			gatewayHintRequestClass: state.gatewayHint.requestClass ?? undefined,
+			gatewayHintAgentType: state.gatewayHint.agentType ?? undefined,
+			gatewayHintPrevToolDurations:
+				state.gatewayHint.prevToolDurations ?? undefined,
+			gatewayHintCompaction: state.gatewayHint.compaction ?? undefined,
+			gatewayHintContextCompacted:
+				state.gatewayHint.contextCompacted ?? undefined,
 			// Same value handed to saveRequest above, so a dashboard does not have
 			// to reload before a request shows its terminal state. Note this is
 			// the value as REPORTED, not as persisted: the save is an

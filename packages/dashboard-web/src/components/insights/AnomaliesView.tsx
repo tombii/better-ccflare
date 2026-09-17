@@ -302,6 +302,9 @@ function RunawayLoopPanel({
 									<th scope="col" className="text-left px-3 py-2">
 										Project
 									</th>
+									<th scope="col" className="text-left px-3 py-2">
+										Agent
+									</th>
 									<th scope="col" className="text-right px-3 py-2 tabular-nums">
 										Window
 									</th>
@@ -310,7 +313,18 @@ function RunawayLoopPanel({
 							<tbody>
 								{loops.map((loop) => (
 									<tr
-										key={`${loop.account}-${loop.model}-${loop.windowStartMs}-${loop.project ?? ""}`}
+										// JSON-encoded tuple rather than a dash-join: project and
+										// agentUsed are client-supplied and may contain dashes, so a
+										// joined string is not injective (same class as the alert-id
+										// scope fix in alerts.ts).
+										key={JSON.stringify([
+											loop.account,
+											loop.model,
+											loop.windowStartMs,
+											loop.project,
+											loop.agentUsed,
+											loop.gatewayHintAgentType,
+										])}
 										className="border-t"
 									>
 										<td className="px-3 py-2 text-right tabular-nums font-medium">
@@ -327,6 +341,16 @@ function RunawayLoopPanel({
 										</td>
 										<td className="px-3 py-2 text-xs text-muted-foreground">
 											{renderProject(loop.project)}
+										</td>
+										<td className="px-3 py-2">
+											<div className="text-xs text-muted-foreground">
+												{renderProject(loop.agentUsed)}
+											</div>
+											{loop.gatewayHintAgentType && (
+												<div className="text-xs text-muted-foreground">
+													type: {renderProject(loop.gatewayHintAgentType)}
+												</div>
+											)}
 										</td>
 										<td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
 											{formatWindow(loop.windowEndMs - loop.windowStartMs)}

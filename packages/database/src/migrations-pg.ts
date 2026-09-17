@@ -147,7 +147,12 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			project_attribution_source TEXT,
 			agent_attribution_source TEXT,
 			stream_terminal_state TEXT,
-			client_session_id TEXT
+			client_session_id TEXT,
+			gateway_hint_request_class TEXT,
+			gateway_hint_agent_type TEXT,
+			gateway_hint_prev_tool_durations TEXT,
+			gateway_hint_compaction TEXT,
+			gateway_hint_context_compacted TEXT
 		)
 	`);
 
@@ -882,6 +887,40 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			table: "requests",
 			column: "stream_terminal_state",
 			definition: "ALTER TABLE requests ADD COLUMN stream_terminal_state TEXT",
+		},
+		// Claude Code's opt-in "gateway hint" request headers (CLI >= 2.1.273,
+		// CLAUDE_CODE_GATEWAY_HINT_HEADERS=1). Pure observability metadata —
+		// NULL for the overwhelming majority of clients/versions that never
+		// send them. See packages/proxy/src/gateway-hint-headers.ts.
+		{
+			table: "requests",
+			column: "gateway_hint_request_class",
+			definition:
+				"ALTER TABLE requests ADD COLUMN gateway_hint_request_class TEXT",
+		},
+		{
+			table: "requests",
+			column: "gateway_hint_agent_type",
+			definition:
+				"ALTER TABLE requests ADD COLUMN gateway_hint_agent_type TEXT",
+		},
+		{
+			table: "requests",
+			column: "gateway_hint_prev_tool_durations",
+			definition:
+				"ALTER TABLE requests ADD COLUMN gateway_hint_prev_tool_durations TEXT",
+		},
+		{
+			table: "requests",
+			column: "gateway_hint_compaction",
+			definition:
+				"ALTER TABLE requests ADD COLUMN gateway_hint_compaction TEXT",
+		},
+		{
+			table: "requests",
+			column: "gateway_hint_context_compacted",
+			definition:
+				"ALTER TABLE requests ADD COLUMN gateway_hint_context_compacted TEXT",
 		},
 		{
 			table: "request_payloads",

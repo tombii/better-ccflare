@@ -15,6 +15,7 @@ import {
 	buildThresholdAlertId,
 	shouldFireAlert,
 } from "../alerts";
+import { GROUP_KEY_SEPARATOR } from "../anomaly-insights";
 
 const CONFIG: AlertsConfigPayload = {
 	dailySpendUsd: 10,
@@ -33,6 +34,7 @@ const LOOP: RunawayLoopGroup = {
 	model: "model-a",
 	project: "proj-a",
 	agentUsed: "agent-a",
+	gatewayHintAgentType: null,
 	windowStartMs: 0,
 	windowEndMs: 1,
 	requests: 10,
@@ -40,6 +42,15 @@ const LOOP: RunawayLoopGroup = {
 	meanRequestSideTokens: 100,
 	requestSideTokenSpread: 0,
 };
+
+// Builds the expected runaway-loop cooldown id from its five already
+// length-prefixed segments (e.g. "4:acct"), mirroring exactly what
+// buildRunawayLoopAlertId is expected to produce: every segment through
+// encodeScopePart, joined by GROUP_KEY_SEPARATOR, matching the
+// anomaly_token_outlier/anomaly_output_blowup builders in alerts.ts.
+function expectedRunawayLoopId(segments: string[], bucket = 0): string {
+	return `anomaly_runaway_loop:${segments.join(GROUP_KEY_SEPARATOR)}:${bucket}`;
+}
 
 describe("runaway-loop alert identity", () => {
 	test("different projects produce distinct exact IDs for the same account, model, and agent", () => {
@@ -49,8 +60,24 @@ describe("runaway-loop alert identity", () => {
 			60,
 		);
 
-		expect(projectA).toBe("anomaly_runaway_loop:acct:model-a:proj-a:agent-a:0");
-		expect(projectB).toBe("anomaly_runaway_loop:acct:model-a:proj-b:agent-a:0");
+		expect(projectA).toBe(
+			expectedRunawayLoopId([
+				"4:acct",
+				"7:model-a",
+				"6:proj-a",
+				"7:agent-a",
+				"0:",
+			]),
+		);
+		expect(projectB).toBe(
+			expectedRunawayLoopId([
+				"4:acct",
+				"7:model-a",
+				"6:proj-b",
+				"7:agent-a",
+				"0:",
+			]),
+		);
 		expect(projectA).not.toBe(projectB);
 	});
 
@@ -62,6 +89,80 @@ describe("runaway-loop alert identity", () => {
 		);
 
 		expect(atBucketStart).toBe(atBucketEnd);
+	});
+
+	test("distinct gatewayHintAgentType values produce distinct IDs, both differing from the null-valued ID", () => {
+		const generalPurpose = buildRunawayLoopAlertId(
+			{ ...LOOP, gatewayHintAgentType: "general-purpose" },
+			60,
+		);
+		const explore = buildRunawayLoopAlertId(
+			{ ...LOOP, gatewayHintAgentType: "explore" },
+			60,
+		);
+		const nullValued = buildRunawayLoopAlertId(LOOP, 60);
+
+		expect(generalPurpose).not.toBe(explore);
+		expect(generalPurpose).not.toBe(nullValued);
+		expect(explore).not.toBe(nullValued);
+	});
+
+	test("the null-valued gatewayHintAgentType id matches the new fully length-prefixed format", () => {
+		expect(buildRunawayLoopAlertId(LOOP, 60)).toBe(
+			expectedRunawayLoopId([
+				"4:acct",
+				"7:model-a",
+				"6:proj-a",
+				"7:agent-a",
+				"0:",
+			]),
+		);
+	});
+
+	test("a present gatewayHintAgentType length-prefixes the fifth segment instead of a conditional suffix", () => {
+		const id = buildRunawayLoopAlertId(
+			{ ...LOOP, gatewayHintAgentType: "explore" },
+			60,
+		);
+		expect(id).toBe(
+			expectedRunawayLoopId([
+				"4:acct",
+				"7:model-a",
+				"6:proj-a",
+				"7:agent-a",
+				"7:explore",
+			]),
+		);
+	});
+
+	test("a colon-bearing agentUsed cannot collide with a hinted scope built from the shortened agentUsed", () => {
+		// Pre-fix, the legacy scope joined raw segments with ':' and only
+		// length-prefixed the hint. agentUsed "agent-a:7:explore" with no hint
+		// produced the exact same joined string as agentUsed "agent-a" with
+		// hint "explore" — a real client-controlled collision.
+		const colonInAgentUsed = buildRunawayLoopAlertId(
+			{ ...LOOP, agentUsed: "agent-a:7:explore", gatewayHintAgentType: null },
+			60,
+		);
+		const agentUsedPlusHint = buildRunawayLoopAlertId(
+			{ ...LOOP, agentUsed: "agent-a", gatewayHintAgentType: "explore" },
+			60,
+		);
+
+		expect(colonInAgentUsed).not.toBe(agentUsedPlusHint);
+	});
+
+	test("a colon in project cannot collide with the same colon shifted into agentUsed", () => {
+		const colonInProject = buildRunawayLoopAlertId(
+			{ ...LOOP, project: "p:x", agentUsed: "y" },
+			60,
+		);
+		const colonInAgentUsed = buildRunawayLoopAlertId(
+			{ ...LOOP, project: "p", agentUsed: "x:y" },
+			60,
+		);
+
+		expect(colonInProject).not.toBe(colonInAgentUsed);
 	});
 });
 

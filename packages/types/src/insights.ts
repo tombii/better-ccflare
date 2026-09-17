@@ -187,6 +187,16 @@ export interface RunawayLoopGroup {
 	model: string;
 	project: string | null;
 	agentUsed: string | null;
+	/**
+	 * Claude Code's own structural agent-type header
+	 * (`x-claude-code-agent-type`) that the bucket was split on, e.g.
+	 * "general-purpose" or "explore". `null` when the bucket was not split
+	 * on it — either no row in the group carried the header, or the rows
+	 * carried a mix of values/absence and the detector fell back to the
+	 * legacy (account, model, project, agentUsed) bucket instead of
+	 * fragmenting it (see detectRunawayLoops).
+	 */
+	gatewayHintAgentType: string | null;
 	windowStartMs: number;
 	windowEndMs: number;
 	requests: number;

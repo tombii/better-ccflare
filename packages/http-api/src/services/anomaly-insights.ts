@@ -28,6 +28,9 @@ import type {
  *   loop. `project` is also part of the key so requests with no agent
  *   attribution still split by project (the x-claude-code-session-id
  *   header is unreliable in some clients and is not always present).
+ *   When present, `gatewayHintAgentType` (Claude Code's own structural
+ *   agent-type header) further splits the bucket — an additional signal
+ *   that doesn't depend on the unreliable session-id header at all.
  * - misrouting: expensive models repeatedly used for trivially small calls
  */
 
@@ -55,6 +58,21 @@ export interface AnomalyRequestRow {
 	 * into a single bucket that falsely reports as a loop.
 	 */
 	agentUsed: string | null;
+	/**
+	 * Claude Code's own "gateway hint" agent-type classification, taken
+	 * verbatim from the opt-in `x-claude-code-agent-type` request header
+	 * (CLI >= 2.1.273, `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1`; see
+	 * packages/proxy/src/gateway-hint-headers.ts). Unlike `agentUsed` —
+	 * derived heuristically from `x-better-ccflare-agent-id` or the
+	 * sometimes-unreliable/absent session-id header — this is set
+	 * structurally by the client itself, so the runaway-loop detector uses
+	 * it as an ADDITIONAL bucket-key dimension when present (see
+	 * detectRunawayLoops). `null` for every client that doesn't send the
+	 * header, which is the normal case, and the bucket key is then
+	 * byte-identical to the pre-existing key — no behavior change for those
+	 * clients.
+	 */
+	gatewayHintAgentType: string | null;
 	inputTokens: number;
 	cacheReadInputTokens: number;
 	cacheCreationInputTokens: number;
@@ -460,6 +478,32 @@ export interface RunawayLoopOptions {
  *  - Both signals collapse to `Unknown` only when both are null, which
  *    is the strictest reasonable bucket.
  *
+ * `gatewayHintAgentType` (Claude Code's own structural agent-type header,
+ * see AnomalyRequestRow) drives a SECOND grouping pass on top of the
+ * four-part key above, gated by a consistency guard: rows are first
+ * grouped on the legacy four-part key exactly as before the header
+ * existed, and each of those groups is only THEN sub-split by
+ * `gatewayHintAgentType` — and only when EVERY row in that group carries
+ * a truthy value. When it does, each distinct value becomes its own
+ * bucket, further splitting buckets that would otherwise share (account,
+ * model, project, agentUsed) — e.g. several agent types funnelled through
+ * one `agentUsed` value because the session-id header they'd otherwise be
+ * distinguished by is unreliable or absent. When any row in the group
+ * lacks the header — including the normal case where NO client in the
+ * group sends the opt-in header at all — the whole group is kept as ONE
+ * bucket, reported with `gatewayHintAgentType: null`, instead of
+ * fragmenting it into a hinted and an unhinted (or differently-mixed)
+ * remainder that might each fall below `minRequests` on their own. This
+ * guard is what keeps grouping for clients that never send the header
+ * byte-identical to the pre-existing four-part behaviour, and it also
+ * protects a genuinely mixed population (some rows hinted, some not) from
+ * silently going undetected — see the "mixed hint/null population" tests.
+ * Trade-off: a single stray unhinted row falling into an otherwise fully
+ * hinted, cleanly-split population collapses that split back into one
+ * merged bucket. This is accepted because under-splitting only
+ * over-reports (a coarser bucket can still qualify and fire), whereas the
+ * false negative this guard prevents makes a real loop go silent.
+ *
  * All rows count, including zero-token ones — repeated failing retries are
  * exactly the signal.
  *
@@ -478,19 +522,52 @@ export function detectRunawayLoops(
 	rows: AnomalyRequestRow[],
 	options: RunawayLoopOptions,
 ): RunawayLoopGroup[] {
-	const groups = new Map<string, AnomalyRequestRow[]>();
+	const legacyGroups = new Map<string, AnomalyRequestRow[]>();
 	for (const row of rows) {
 		const key = `${baselineKey(row.account, row.model)}${GROUP_KEY_SEPARATOR}${normalizeKey(row.project)}${GROUP_KEY_SEPARATOR}${normalizeKey(row.agentUsed)}`;
-		const group = groups.get(key);
+		const group = legacyGroups.get(key);
 		if (group) {
 			group.push(row);
 		} else {
-			groups.set(key, [row]);
+			legacyGroups.set(key, [row]);
+		}
+	}
+
+	// Second pass: sub-split each legacy group by gatewayHintAgentType, but
+	// ONLY when every row in it carries a truthy value (the consistency
+	// guard described above). Each resulting bucket carries the
+	// gatewayHintAgentType it will be reported under.
+	const buckets: Array<{
+		rows: AnomalyRequestRow[];
+		gatewayHintAgentType: string | null;
+	}> = [];
+	for (const legacyGroup of legacyGroups.values()) {
+		const everyRowHinted = legacyGroup.every((row) =>
+			Boolean(row.gatewayHintAgentType),
+		);
+		if (!everyRowHinted) {
+			buckets.push({ rows: legacyGroup, gatewayHintAgentType: null });
+			continue;
+		}
+		const byHintType = new Map<string, AnomalyRequestRow[]>();
+		for (const row of legacyGroup) {
+			// Safe: everyRowHinted guarantees this is a non-empty string.
+			const hintType = row.gatewayHintAgentType as string;
+			const subGroup = byHintType.get(hintType);
+			if (subGroup) {
+				subGroup.push(row);
+			} else {
+				byHintType.set(hintType, [row]);
+			}
+		}
+		for (const [hintType, subGroup] of byHintType) {
+			buckets.push({ rows: subGroup, gatewayHintAgentType: hintType });
 		}
 	}
 
 	const loops: RunawayLoopGroup[] = [];
-	for (const group of groups.values()) {
+	for (const bucket of buckets) {
+		const group = bucket.rows;
 		group.sort((a, b) => a.timestamp - b.timestamp);
 		const n = group.length;
 
@@ -573,6 +650,7 @@ export function detectRunawayLoops(
 				model: normalizeKey(group[run.start].model),
 				project: group[run.start].project,
 				agentUsed: group[run.start].agentUsed,
+				gatewayHintAgentType: bucket.gatewayHintAgentType,
 				windowStartMs,
 				windowEndMs,
 				requests: run.end - run.start + 1,

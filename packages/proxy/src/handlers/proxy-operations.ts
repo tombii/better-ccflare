@@ -30,6 +30,7 @@ import type {
 } from "@better-ccflare/types";
 import { cacheBodyStore } from "../cache-body-store";
 import { ensureCodexModelDefaults } from "../codex-model-catalog";
+import { extractGatewayHintHeadersFromRequest } from "../gateway-hint-headers";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
@@ -805,6 +806,12 @@ export async function proxyWithAccount(
 	returnRateLimitedResponseOnExhaustion = false,
 ): Promise<Response | null> {
 	try {
+		// Extracted once for the whole call: every direct `saveRequest` audit
+		// site below (403/429/400 classification exits that never reach the
+		// UsageCollector) threads these through, matching what the collector
+		// itself does from the `StartMessage` header map (usage-collector.ts).
+		const gatewayHint = extractGatewayHintHeadersFromRequest(req.headers);
+
 		// Dedicated controller so a stuck-upstream drain deadline (see
 		// anthropic-terminal-recovery.ts) can abort this request's fetch
 		// connection after the fact — a signal not part of `init.signal` at
@@ -1316,6 +1323,11 @@ export async function proxyWithAccount(
 						requestMeta.agentAttributionSource ?? null,
 						null,
 						requestMeta.clientSessionId ?? null,
+						gatewayHint.requestClass,
+						gatewayHint.agentType,
+						gatewayHint.prevToolDurations,
+						gatewayHint.compaction,
+						gatewayHint.contextCompacted,
 					),
 				);
 				// Do not bench the account or fail over — pass Anthropic's real error
@@ -1423,6 +1435,11 @@ export async function proxyWithAccount(
 							requestMeta.agentAttributionSource ?? null,
 							null,
 							requestMeta.clientSessionId ?? null,
+							gatewayHint.requestClass,
+							gatewayHint.agentType,
+							gatewayHint.prevToolDurations,
+							gatewayHint.compaction,
+							gatewayHint.contextCompacted,
 						),
 					);
 				}
@@ -1517,6 +1534,11 @@ export async function proxyWithAccount(
 						requestMeta.agentAttributionSource ?? null,
 						null,
 						requestMeta.clientSessionId ?? null,
+						gatewayHint.requestClass,
+						gatewayHint.agentType,
+						gatewayHint.prevToolDurations,
+						gatewayHint.compaction,
+						gatewayHint.contextCompacted,
 					),
 				);
 				cancelDiscardedResponseBody(rawResponse);
@@ -1616,6 +1638,11 @@ export async function proxyWithAccount(
 							requestMeta.agentAttributionSource ?? null,
 							null,
 							requestMeta.clientSessionId ?? null,
+							gatewayHint.requestClass,
+							gatewayHint.agentType,
+							gatewayHint.prevToolDurations,
+							gatewayHint.compaction,
+							gatewayHint.contextCompacted,
 						),
 					);
 					cancelDiscardedResponseBody(rawResponse);
@@ -1674,6 +1701,11 @@ export async function proxyWithAccount(
 						requestMeta.agentAttributionSource ?? null,
 						null,
 						requestMeta.clientSessionId ?? null,
+						gatewayHint.requestClass,
+						gatewayHint.agentType,
+						gatewayHint.prevToolDurations,
+						gatewayHint.compaction,
+						gatewayHint.contextCompacted,
 					),
 				);
 				cancelDiscardedResponseBody(rawResponse);
@@ -2017,6 +2049,11 @@ export async function proxyWithAccount(
 								requestMeta.agentAttributionSource ?? null,
 								null,
 								requestMeta.clientSessionId ?? null,
+								gatewayHint.requestClass,
+								gatewayHint.agentType,
+								gatewayHint.prevToolDurations,
+								gatewayHint.compaction,
+								gatewayHint.contextCompacted,
 							),
 						);
 					}
@@ -2391,6 +2428,11 @@ export async function proxyWithAccount(
 							requestMeta.agentAttributionSource ?? null,
 							null,
 							requestMeta.clientSessionId ?? null,
+							gatewayHint.requestClass,
+							gatewayHint.agentType,
+							gatewayHint.prevToolDurations,
+							gatewayHint.compaction,
+							gatewayHint.contextCompacted,
 						),
 					);
 					cancelDiscardedResponseBody(response);

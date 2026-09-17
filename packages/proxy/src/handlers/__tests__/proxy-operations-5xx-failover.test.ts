@@ -221,7 +221,8 @@ async function runProxy(
 
 /**
  * saveRequest(id, method, path, accountUsed, statusCode, success, errorMessage,
- * responseTime, failoverAttempts, usage, ..., clientSessionId)
+ * responseTime, failoverAttempts, usage, ..., clientSessionId, gatewayHint*
+ * requestClass, agentType, prevToolDurations, compaction, contextCompacted)
  */
 const saveCalls = (ctx: ProxyContext) =>
 	(ctx.dbOps.saveRequest as ReturnType<typeof mock>).mock
@@ -346,7 +347,9 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 		expect(args[8]).toBe(2);
 		expect(args[9]).toEqual({ model: "claude-sonnet-4-5" });
 		// The tail arguments are easy to drop when copying a sibling branch.
-		expect(args[args.length - 1]).toBe("sess-5xx");
+		// clientSessionId sits six from the end — the five gatewayHint* fields
+		// (all null here, since the request carries none of those headers) follow it.
+		expect(args[args.length - 6]).toBe("sess-5xx");
 	});
 
 	it("records no audit row for a synthetic probe's 5xx", async () => {

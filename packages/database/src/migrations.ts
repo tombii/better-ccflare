@@ -160,7 +160,12 @@ export function ensureSchema(db: Database): void {
 			project_attribution_source TEXT,
 			agent_attribution_source TEXT,
 			stream_terminal_state TEXT,
-			client_session_id TEXT
+			client_session_id TEXT,
+			gateway_hint_request_class TEXT,
+			gateway_hint_agent_type TEXT,
+			gateway_hint_prev_tool_durations TEXT,
+			gateway_hint_compaction TEXT,
+			gateway_hint_context_compacted TEXT
 		)
 	`);
 
@@ -1472,6 +1477,48 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"ALTER TABLE requests ADD COLUMN stream_terminal_state TEXT",
 			).run();
 			log.info("Added stream_terminal_state column to requests table");
+		}
+
+		// Add gateway_hint_* columns if they don't exist. These persist Claude
+		// Code's opt-in "gateway hint" request headers (CLI >= 2.1.273,
+		// CLAUDE_CODE_GATEWAY_HINT_HEADERS=1): x-claude-code-request-class,
+		// x-claude-code-agent-type, x-claude-code-prev-tool-durations,
+		// x-claude-code-compaction, x-claude-code-context-compacted. Pure
+		// observability metadata — NULL for the overwhelming majority of
+		// clients/versions that never send them.
+		if (!requestsColumnNames.includes("gateway_hint_request_class")) {
+			db.prepare(
+				"ALTER TABLE requests ADD COLUMN gateway_hint_request_class TEXT",
+			).run();
+			log.info("Added gateway_hint_request_class column to requests table");
+		}
+		if (!requestsColumnNames.includes("gateway_hint_agent_type")) {
+			db.prepare(
+				"ALTER TABLE requests ADD COLUMN gateway_hint_agent_type TEXT",
+			).run();
+			log.info("Added gateway_hint_agent_type column to requests table");
+		}
+		if (!requestsColumnNames.includes("gateway_hint_prev_tool_durations")) {
+			db.prepare(
+				"ALTER TABLE requests ADD COLUMN gateway_hint_prev_tool_durations TEXT",
+			).run();
+			log.info(
+				"Added gateway_hint_prev_tool_durations column to requests table",
+			);
+		}
+		if (!requestsColumnNames.includes("gateway_hint_compaction")) {
+			db.prepare(
+				"ALTER TABLE requests ADD COLUMN gateway_hint_compaction TEXT",
+			).run();
+			log.info("Added gateway_hint_compaction column to requests table");
+		}
+		if (!requestsColumnNames.includes("gateway_hint_context_compacted")) {
+			db.prepare(
+				"ALTER TABLE requests ADD COLUMN gateway_hint_context_compacted TEXT",
+			).run();
+			log.info(
+				"Added gateway_hint_context_compacted column to requests table",
+			);
 		}
 
 		// Add timestamp column to request_payloads if it doesn't exist

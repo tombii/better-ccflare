@@ -69,6 +69,7 @@ function req(partial: Partial<AnomalyRequestRow> = {}): AnomalyRequestRow {
 		model: "claude-opus-4-8",
 		project: null,
 		agentUsed: null,
+		gatewayHintAgentType: null,
 		inputTokens: 0,
 		cacheReadInputTokens: 0,
 		cacheCreationInputTokens: 0,
@@ -961,6 +962,193 @@ describe("detectRunawayLoops", () => {
 		}
 		const loops = detectRunawayLoops(rows, opts);
 		expect(loops).toHaveLength(0);
+	});
+
+	test("splits a bucket by gatewayHintAgentType when present, even with identical agentUsed", () => {
+		// 12 requests sharing (account, model, project, agentUsed) — which
+		// alone would collapse into one 12-row bucket and fire — split evenly
+		// across two gatewayHintAgentType values (6 each). Both halves stay
+		// below opts.minRequests (10), so neither fires. This is the case
+		// documented on detectRunawayLoops: several agent types funnelled
+		// through one agentUsed value because the session-id header they'd
+		// otherwise be distinguished by is unreliable or absent.
+		const rows = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: i % 2 === 0 ? "general-purpose" : "explore",
+			}),
+		);
+		expect(detectRunawayLoops(rows, opts)).toHaveLength(0);
+	});
+
+	test("one gatewayHintAgentType repeating alone still fires as a loop", () => {
+		const rows = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: "general-purpose",
+			}),
+		);
+		const loops = detectRunawayLoops(rows, opts);
+		expect(loops).toHaveLength(1);
+		expect(loops[0].requests).toBe(12);
+		expect(loops[0].agentUsed).toBe("agent-a");
+		expect(loops[0].gatewayHintAgentType).toBe("general-purpose");
+	});
+
+	test("gatewayHintAgentType absent (null) leaves grouping unchanged (backward compatibility)", () => {
+		// Same shape as the very first test in this describe block, but with
+		// gatewayHintAgentType explicitly null — the default for every client
+		// that doesn't send the opt-in header. Must still produce exactly one
+		// loop: the bucket key's optional fifth segment must not appear.
+		const rows = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: null,
+			}),
+		);
+		const loops = detectRunawayLoops(rows, opts);
+		expect(loops).toHaveLength(1);
+		expect(loops[0].requests).toBe(12);
+		expect(loops[0].agentUsed).toBe("agent-a");
+		expect(loops[0].gatewayHintAgentType).toBe(null);
+	});
+
+	test("mixed hint/null population stays in one bucket (consistency guard)", () => {
+		// 14 rows sharing (account, model, project, agentUsed): rows 0-7 carry
+		// gatewayHintAgentType "general-purpose", rows 8-13 have no hint at
+		// all (null) — a partially-hinted population, e.g. a proxy path that
+		// doesn't yet forward the header alongside one that does. Splitting
+		// naively by the fifth key segment would fragment this into a
+		// hinted 8-row bucket and an unhinted 6-row bucket, both below
+		// opts.minRequests (10) — a loop that fired before the split goes
+		// silent. The guard must keep the whole population in ONE bucket
+		// instead, falling back to the legacy four-part key.
+		const rows = Array.from({ length: 14 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: i < 8 ? "general-purpose" : null,
+			}),
+		);
+		const loops = detectRunawayLoops(rows, opts);
+		expect(loops).toHaveLength(1);
+		expect(loops[0].requests).toBe(14);
+		expect(loops[0].gatewayHintAgentType).toBe(null);
+	});
+
+	test("mixed hint/null population stays in one bucket even when the hinted majority alone would qualify", () => {
+		// Same guard, but the hinted sub-population (10 rows) would already
+		// meet opts.minRequests (10) on its own. The guard does not special-
+		// case this: any row lacking the hint keeps the WHOLE population in
+		// one legacy bucket, reported with gatewayHintAgentType null, rather
+		// than attributing the merged bucket to "explore".
+		const rows = Array.from({ length: 14 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: i < 10 ? "explore" : null,
+			}),
+		);
+		const loops = detectRunawayLoops(rows, opts);
+		expect(loops).toHaveLength(1);
+		expect(loops[0].requests).toBe(14);
+		expect(loops[0].gatewayHintAgentType).toBe(null);
+	});
+
+	test("fully hinted population still splits by type, even at higher volume", () => {
+		// Extends "splits a bucket by gatewayHintAgentType when present,
+		// even with identical agentUsed" (both halves below minRequests) to
+		// the case where EVERY row is hinted and each half independently
+		// clears opts.minRequests: the sub-split must still happen and both
+		// halves must fire as their own loop.
+		const generalPurposeRows = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: "general-purpose",
+			}),
+		);
+		const exploreRows = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: "explore",
+			}),
+		);
+		const loops = detectRunawayLoops(
+			[...generalPurposeRows, ...exploreRows],
+			opts,
+		);
+		expect(loops).toHaveLength(2);
+		const byType = new Map(
+			loops.map((loop) => [loop.gatewayHintAgentType, loop]),
+		);
+		expect(byType.get("general-purpose")?.requests).toBe(12);
+		expect(byType.get("explore")?.requests).toBe(12);
+	});
+
+	test("a null row must not merge two otherwise-split types (accepted guard trade-off)", () => {
+		// 10 "general-purpose" rows + 10 "explore" rows would split cleanly
+		// into two 10-row loops on their own. Adding a single unhinted row
+		// makes the population mixed, so the consistency guard falls back to
+		// ONE 21-row bucket attributed to no type (gatewayHintAgentType
+		// null) instead of the two clean sub-loops. This is an accepted
+		// trade-off of the guard: a stray unhinted row collapses an
+		// otherwise-clean split. It does not go silent (unlike the false
+		// negative the guard exists to prevent) — it just under-splits,
+		// which over-reports rather than under-reports. The root cause is
+		// fixed upstream in 29504ba1, which makes every proxy audit path
+		// carry the hint, so a genuinely mixed population should no longer
+		// occur in practice.
+		const generalPurposeRows = Array.from({ length: 10 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: "general-purpose",
+			}),
+		);
+		const exploreRows = Array.from({ length: 10 }, (_, i) =>
+			req({
+				timestamp: (10 + i) * 10_000,
+				inputTokens: 500,
+				project: "proj",
+				agentUsed: "agent-a",
+				gatewayHintAgentType: "explore",
+			}),
+		);
+		const unhintedRow = req({
+			timestamp: 20 * 10_000,
+			inputTokens: 500,
+			project: "proj",
+			agentUsed: "agent-a",
+			gatewayHintAgentType: null,
+		});
+		const loops = detectRunawayLoops(
+			[...generalPurposeRows, ...exploreRows, unhintedRow],
+			opts,
+		);
+		expect(loops).toHaveLength(1);
+		expect(loops[0].requests).toBe(21);
+		expect(loops[0].gatewayHintAgentType).toBe(null);
 	});
 
 	test("DOES flag a single agent repeating the same request (true loop)", () => {

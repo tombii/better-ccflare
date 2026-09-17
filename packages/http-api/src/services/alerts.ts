@@ -61,6 +61,7 @@ interface AnomalySqlRow {
 	model: string | null;
 	project: string | null;
 	agent_used: string | null;
+	gateway_hint_agent_type: string | null;
 	input_tokens: number;
 	cache_read_input_tokens: number;
 	cache_creation_input_tokens: number;
@@ -139,13 +140,46 @@ function encodeScopePart(raw: string | null): string {
 	return `${raw.length}:${raw}`;
 }
 
+/**
+ * The legacy scope joined raw, unencoded segments with ':' — account, model,
+ * project, agentUsed — and appended a length-prefixed hint segment only when
+ * gatewayHintAgentType was present. Because agentUsed, model and project are
+ * client-supplied and colon-legal (agentUsed comes straight from the
+ * x-better-ccflare-agent-id / x-anthropic-agent-id / x-claude-code-session-id
+ * headers, only length-capped to 256 chars — see agent-interceptor.ts), a
+ * loop with agentUsed "x:7:explore" and no hint produced the exact same
+ * scope string as a loop with agentUsed "x" and hint "explore":
+ * persistAndEmit's cooldown check then silently dropped whichever of the two
+ * CRITICAL alerts arrived second.
+ *
+ * Every segment now goes through encodeScopePart (length-prefix, null ->
+ * "0:") and all five segments are joined with GROUP_KEY_SEPARATOR, matching
+ * the anomaly_token_outlier/anomaly_output_blowup builders below. The fifth
+ * (hint) segment is now always present — no more conditional suffix — so a
+ * present vs. absent hint can never shift where a segment boundary falls,
+ * making the encoding injective regardless of what characters any segment
+ * contains.
+ *
+ * This changes the id format for every runaway-loop alert, including loops
+ * with no hint at all: a loop already sitting in an active cooldown bucket
+ * at deploy time will not match its old id and may alert once more before
+ * falling back into cooldown under the new id — the same one-time trade-off
+ * fc985f77 already accepted when it fixed the sibling builders' scope keys.
+ */
 export function buildRunawayLoopAlertId(
 	loop: RunawayLoopGroup,
 	cooldownMinutes: number,
 ): string {
+	const scope = [
+		encodeScopePart(loop.account),
+		encodeScopePart(loop.model),
+		encodeScopePart(loop.project),
+		encodeScopePart(loop.agentUsed),
+		encodeScopePart(loop.gatewayHintAgentType),
+	].join(GROUP_KEY_SEPARATOR);
 	return buildThresholdAlertId(
 		"anomaly_runaway_loop",
-		`${loop.account}:${loop.model}:${loop.project ?? ""}:${loop.agentUsed ?? ""}`,
+		scope,
 		loop.windowEndMs,
 		cooldownMinutes,
 	);
@@ -235,6 +269,7 @@ function toAnomalyRow(row: AnomalySqlRow): AnomalyRequestRow {
 		// detector itself collapse distinct projects into one loop.
 		project: row.project,
 		agentUsed: row.agent_used,
+		gatewayHintAgentType: row.gateway_hint_agent_type,
 		inputTokens: Number(row.input_tokens) || 0,
 		cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,
 		cacheCreationInputTokens: Number(row.cache_creation_input_tokens) || 0,
@@ -635,6 +670,7 @@ export class AlertService {
 					r.model as model,
 					r.project as project,
 					r.agent_used as agent_used,
+					r.gateway_hint_agent_type as gateway_hint_agent_type,
 					COALESCE(r.input_tokens, 0) as input_tokens,
 					COALESCE(r.cache_read_input_tokens, 0) as cache_read_input_tokens,
 					COALESCE(r.cache_creation_input_tokens, 0) as cache_creation_input_tokens,
@@ -740,7 +776,7 @@ export class AlertService {
 				type: "anomaly_runaway_loop",
 				severity: "critical",
 				title: "Runaway loop detected",
-				message: `${loop.requests} near-identical requests were sent in a short window by ${loop.agentUsed ?? "an unattributed agent"} for ${loop.model}.`,
+				message: `${loop.requests} near-identical requests were sent in a short window by ${loop.agentUsed ?? "an unattributed agent"}${loop.gatewayHintAgentType ? ` (agent type ${loop.gatewayHintAgentType})` : ""} for ${loop.model}.`,
 				value: loop.requests,
 				threshold: null,
 				account: loop.account,

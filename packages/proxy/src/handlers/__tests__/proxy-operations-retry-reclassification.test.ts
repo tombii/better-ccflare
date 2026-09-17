@@ -462,4 +462,42 @@ describe("proxyWithAccount — a retried response is classified like a first res
 		expect(account.rate_limited_until).toBeNull();
 		expect(account.rate_limited_reason).toBeNull();
 	});
+
+	it("threads gateway hint headers through the org_permission_denied audit save site", async () => {
+		let callCount = 0;
+		globalThis.fetch = mock(async () => {
+			callCount++;
+			return callCount === 1
+				? serverErrorResponse(500)
+				: orgPermissionDenied403();
+		});
+
+		const ctx = makeProxyContext();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody();
+		const req = new Request("https://proxy.local/v1/messages", {
+			method: "POST",
+			body: bodyBuffer,
+			headers: {
+				"Content-Type": "application/json",
+				"x-claude-code-request-class": "primary",
+				"x-claude-code-agent-type": "explore",
+				"x-claude-code-prev-tool-durations": "[12,34]",
+				"x-claude-code-compaction": "auto",
+				"x-claude-code-context-compacted": "true",
+			},
+		});
+
+		await runProxy(req, account, bodyBuffer, ctx);
+
+		const saveMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
+		expect(saveMock.mock.calls.length).toBeGreaterThan(0);
+		const args = saveMock.mock.calls[0] as unknown[];
+		expect(args[6]).toBe("org_permission_denied");
+		expect(args[22]).toBe("primary");
+		expect(args[23]).toBe("explore");
+		expect(args[24]).toBe("[12,34]");
+		expect(args[25]).toBe("auto");
+		expect(args[26]).toBe("true");
+	});
 });

@@ -77,6 +77,11 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			agent_attribution_source: string | null;
 			client_session_id: string | null;
 			stream_terminal_state: string | null;
+			gateway_hint_request_class: string | null;
+			gateway_hint_agent_type: string | null;
+			gateway_hint_prev_tool_durations: string | null;
+			gateway_hint_compaction: string | null;
+			gateway_hint_context_compacted: string | null;
 		}>(
 			`
 			SELECT r.*, a.name as account_name
@@ -135,6 +140,17 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			streamTerminalState: toStreamTerminalState(request.stream_terminal_state),
 			clientSessionId: request.client_session_id || undefined,
 			rateLimited: request.status_code === 429,
+			// See the matching field on `Request`/`RequestRow` in
+			// @better-ccflare/types/request — pure observability metadata, absent
+			// for every client that doesn't opt in.
+			gatewayHintRequestClass:
+				request.gateway_hint_request_class || undefined,
+			gatewayHintAgentType: request.gateway_hint_agent_type || undefined,
+			gatewayHintPrevToolDurations:
+				request.gateway_hint_prev_tool_durations || undefined,
+			gatewayHintCompaction: request.gateway_hint_compaction || undefined,
+			gatewayHintContextCompacted:
+				request.gateway_hint_context_compacted || undefined,
 		}));
 
 		return jsonResponse(response);
