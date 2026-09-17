@@ -189,6 +189,64 @@ describe("DatabaseOperations.incrementalVacuumAdaptive", () => {
 		expect(status.lastChunks).toBe(0);
 	});
 
+	it("resets lastReclaimedPages/lastChunks/lastError when a tick is disabled after a prior run recorded them (greptile review on PR #475)", async () => {
+		const internals = dbOps as unknown as {
+			getFreelistCount: () => number;
+			incrementalVacuum: (pages: number) => Promise<void>;
+		};
+		let freelist = 40;
+		internals.getFreelistCount = () => freelist;
+		internals.incrementalVacuum = async (pages: number) => {
+			freelist = Math.max(0, freelist - pages);
+		};
+
+		// First: an enabled run that actually reclaims pages and records them.
+		const enabledResult = await dbOps.incrementalVacuumAdaptive({
+			chunkPages: 10,
+			maxPagesPerTick: 40,
+		});
+		expect(enabledResult.reclaimedPages).toBeGreaterThan(0);
+		const afterEnabled = dbOps.getVacuumStatus();
+		expect(afterEnabled.lastReclaimedPages).toBeGreaterThan(0);
+		expect(afterEnabled.lastChunks).toBeGreaterThan(0);
+
+		// Now: a disabled tick. Its result must not still pair the PREVIOUS
+		// run's reclaim/chunk numbers with a fresh timestamp — /health would
+		// otherwise read a disabled tick as if it had just reclaimed pages.
+		const before = Date.now();
+		const disabledResult = await dbOps.incrementalVacuumAdaptive({
+			enabled: false,
+		});
+		expect(disabledResult).toEqual({ reclaimedPages: 0, chunks: 0 });
+
+		const status = dbOps.getVacuumStatus();
+		expect(status.enabled).toBe(false);
+		expect(status.lastRunAt as number).toBeGreaterThanOrEqual(before);
+		expect(status.lastReclaimedPages).toBe(0);
+		expect(status.lastChunks).toBe(0);
+		expect(status.lastError).toBeNull();
+	});
+
+	it("resets lastError when a tick is disabled after a prior run recorded a failure (greptile review on PR #475)", async () => {
+		const internals = dbOps as unknown as {
+			getFreelistCount: () => number;
+			incrementalVacuum: (pages: number) => Promise<void>;
+		};
+		internals.getFreelistCount = () => 100; // non-empty, so the loop runs
+		internals.incrementalVacuum = async () => {
+			throw new Error("boom");
+		};
+
+		await expect(dbOps.incrementalVacuumAdaptive()).rejects.toThrow("boom");
+		expect(dbOps.getVacuumStatus().lastError).toBe("boom");
+
+		const disabledResult = await dbOps.incrementalVacuumAdaptive({
+			enabled: false,
+		});
+		expect(disabledResult).toEqual({ reclaimedPages: 0, chunks: 0 });
+		expect(dbOps.getVacuumStatus().lastError).toBeNull();
+	});
+
 	it("opts.enabled defaults to true (omitted) — unchanged from before the switch existed", async () => {
 		const internals = dbOps as unknown as {
 			getFreelistCount: () => number;

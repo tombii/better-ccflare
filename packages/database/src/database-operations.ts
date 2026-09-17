@@ -1984,6 +1984,23 @@ OAuth tokens will need to be re-authenticated.
 				...this.vacuumStatus,
 				enabled: false,
 				lastRunAt: Date.now(),
+				// greptile review on PR #475: this branch previously updated only
+				// enabled/lastRunAt, leaving whatever lastReclaimedPages/lastChunks/
+				// lastError a PRIOR (enabled) run had recorded still in place — so
+				// /health paired a brand-new timestamp with stale reclaim or error
+				// data from before the switch was flipped off, reading as if this
+				// disabled tick had just reclaimed pages or just failed. Reset every
+				// per-attempt field the same way the steady-state no-op path a few
+				// lines below does (via recordVacuumStatus(0, 0, 0)), so "disabled"
+				// reads as "nothing happened this tick", not "the last real attempt's
+				// result, restamped now". freelistPages/freelistRatio are
+				// deliberately left untouched — those are documented as
+				// stale-while-disabled (see VacuumStatus's field comments in
+				// packages/types/src/stats.ts) since this path returns before ever
+				// reading the freelist.
+				lastReclaimedPages: 0,
+				lastChunks: 0,
+				lastError: null,
 			};
 			return { reclaimedPages: 0, chunks: 0 };
 		}
