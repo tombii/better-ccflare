@@ -183,6 +183,115 @@ describe("health runtime payload", () => {
 
 		expect(body.runtime?.storage?.retention).toBeUndefined();
 	});
+
+	// Same telemetry gap as retention above, for the adaptive incremental-vacuum
+	// backstop: surfaces runtime.storage.vacuum, mirroring runtime.storage.retention
+	// and runtime.storage.integrity.
+	it("includes runtime.storage.vacuum with reclaim stats when the vacuum ran", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const lastRunAt = Date.now() - 30_000;
+		const handler = createHealthHandler(
+			db,
+			config,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			() => ({
+				enabled: true,
+				lastRunAt,
+				lastReclaimedPages: 65536,
+				lastChunks: 4,
+				freelistPages: 12000,
+				freelistRatio: 0.12,
+				consecutiveBusySkips: 0,
+				escalated: false,
+			}),
+		);
+
+		const url = new URL("http://localhost/health");
+		const response = await handler(url);
+		const body = (await response.json()) as HealthResponse;
+
+		expect(body.runtime?.storage?.vacuum).toEqual({
+			enabled: true,
+			lastRunAt: new Date(lastRunAt).toISOString(),
+			lastReclaimedPages: 65536,
+			lastChunks: 4,
+			freelistPages: 12000,
+			freelistRatio: 0.12,
+			consecutiveBusySkips: 0,
+			escalated: false,
+		});
+	});
+
+	it("reports runtime.storage.vacuum with enabled=false and lastRunAt when disabled by the operator switch", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(
+			db,
+			config,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			() => ({
+				enabled: false,
+				lastRunAt: null,
+				lastReclaimedPages: 0,
+				lastChunks: 0,
+				freelistPages: 0,
+				freelistRatio: 0,
+				consecutiveBusySkips: 0,
+				escalated: false,
+			}),
+		);
+
+		const url = new URL("http://localhost/health");
+		const response = await handler(url);
+		const body = (await response.json()) as HealthResponse;
+
+		expect(body.runtime?.storage?.vacuum?.enabled).toBe(false);
+		expect(body.runtime?.storage?.vacuum?.lastRunAt).toBeNull();
+	});
+
+	it("omits runtime.storage.vacuum when getVacuumStatus is not provided", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(db, config);
+		const url = new URL("http://localhost/health");
+		const response = await handler(url);
+		const body = (await response.json()) as HealthResponse;
+
+		expect(body.runtime?.storage?.vacuum).toBeUndefined();
+	});
 });
 
 describe("AsyncDbWriter.getHealth", () => {

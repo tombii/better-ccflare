@@ -12,6 +12,7 @@ import type {
 	IntegrityStatus,
 	PoolStatus,
 	RetentionStatus,
+	VacuumStatus,
 } from "../types";
 import { isUsageExhausted } from "./rate-limit-status";
 
@@ -56,6 +57,7 @@ type UsageWorkerHealthFn = () => {
 };
 type IntegrityStatusFn = () => IntegrityStatus;
 type RetentionStatusFn = () => RetentionStatus;
+type VacuumStatusFn = () => VacuumStatus;
 
 export function computePoolStatus(
 	accounts: Account[],
@@ -186,6 +188,7 @@ export function createHealthHandler(
 	getIntegrityStatus?: IntegrityStatusFn,
 	getAccountUsageInfo: AccountUsageInfoFn = usageCacheUsageInfo,
 	getRetentionStatus?: RetentionStatusFn,
+	getVacuumStatus?: VacuumStatusFn,
 ) {
 	const normalCache = new TtlCache<HealthResponse>(2000);
 	const detailCache = new TtlCache<HealthResponse>(2000);
@@ -282,6 +285,31 @@ export function createHealthHandler(
 					lastErrorAt: retention.lastErrorAt
 						? new Date(retention.lastErrorAt).toISOString()
 						: null,
+				},
+			};
+		}
+
+		// Add adaptive-vacuum job telemetry independently — orthogonal to the
+		// blocks above. Lets operators see the freelist ratio and skip streak
+		// (e.g. after disabling BETTER_CCFLARE_AUTO_VACUUM, or during sustained
+		// writer contention) instead of only finding out via a log line.
+		if (getVacuumStatus) {
+			const runtime = response.runtime ?? {};
+			response.runtime = runtime;
+			const vacuum = getVacuumStatus();
+			runtime.storage = {
+				...runtime.storage,
+				vacuum: {
+					enabled: vacuum.enabled,
+					lastRunAt: vacuum.lastRunAt
+						? new Date(vacuum.lastRunAt).toISOString()
+						: null,
+					lastReclaimedPages: vacuum.lastReclaimedPages,
+					lastChunks: vacuum.lastChunks,
+					freelistPages: vacuum.freelistPages,
+					freelistRatio: vacuum.freelistRatio,
+					consecutiveBusySkips: vacuum.consecutiveBusySkips,
+					escalated: vacuum.escalated,
 				},
 			};
 		}
