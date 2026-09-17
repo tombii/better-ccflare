@@ -9,6 +9,7 @@ import { Logger, logBus } from "@better-ccflare/logger";
 import type { LogEvent } from "@better-ccflare/types";
 import {
 	createVacuumScheduler,
+	runVacuumBootstrap,
 	shouldRunVacuumCatchUp,
 	VACUUM_CATCHUP_FREELIST_RATIO_THRESHOLD,
 	VACUUM_CATCHUP_MAX_PAGES_PER_TICK,
@@ -374,5 +375,52 @@ describe("createVacuumScheduler — catch-up busy-skip telemetry (internal-2)", 
 		expect(warns.length).toBe(2);
 		expect(warns[0]?.msg).toContain("12");
 		expect(warns[1]?.msg).toContain("24");
+	});
+});
+
+describe("runVacuumBootstrap (internal-7)", () => {
+	it("runs bootstrapAutoVacuum() when the operator switch is enabled", () => {
+		let calls = 0;
+		const dbOps: Parameters<typeof runVacuumBootstrap>[0] = {
+			bootstrapAutoVacuum: () => {
+				calls += 1;
+				return { migrated: false, modeBefore: 2, modeAfter: 2, durationMs: 0 };
+			},
+		};
+		runVacuumBootstrap(dbOps, true, new Logger("test"));
+		expect(calls).toBe(1);
+	});
+
+	it("skips bootstrapAutoVacuum() and logs a WARN when the operator switch is disabled", () => {
+		let calls = 0;
+		const dbOps: Parameters<typeof runVacuumBootstrap>[0] = {
+			bootstrapAutoVacuum: () => {
+				calls += 1;
+				return { migrated: true, modeBefore: 0, modeAfter: 2, durationMs: 5 };
+			},
+		};
+		const log = new Logger("test");
+		const captured: LogEvent[] = [];
+		const handler = (event: LogEvent) => captured.push(event);
+		logBus.on("log", handler);
+		try {
+			runVacuumBootstrap(dbOps, false, log);
+		} finally {
+			logBus.off("log", handler);
+		}
+
+		expect(calls).toBe(0);
+		expect(captured.some((e) => e.level === "WARN")).toBe(true);
+	});
+
+	it("propagates a thrown error from bootstrapAutoVacuum() instead of swallowing it", () => {
+		const dbOps: Parameters<typeof runVacuumBootstrap>[0] = {
+			bootstrapAutoVacuum: () => {
+				throw new Error("disk full");
+			},
+		};
+		expect(() => runVacuumBootstrap(dbOps, true, new Logger("test"))).toThrow(
+			"disk full",
+		);
 	});
 });

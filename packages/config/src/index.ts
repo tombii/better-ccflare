@@ -467,9 +467,23 @@ export class Config extends EventEmitter {
 	 * manual `--compact`, or another maintenance window wants zero automatic
 	 * writer-slot contention from reclaim, without touching retention or
 	 * payload cleanup (which keep running — this only gates the reclaim
-	 * step). Same env-parsing shape as `getStorePayloads()` (opt-out,
-	 * default-on): any env value other than "false"/"0" is treated as
-	 * enabled, matching that sibling storage toggle.
+	 * step). Also gates the one-time auto_vacuum-mode migration VACUUM that
+	 * runs at startup on an upgraded install (`runVacuumBootstrap()` in
+	 * apps/server/src/vacuum-scheduler.ts), for the same reason.
+	 *
+	 * **Takes effect only at process start.** `loadConfig()` runs once, from
+	 * the constructor — this method reads the resulting in-memory snapshot
+	 * (`this.data`) plus a live `process.env` read, neither of which changes
+	 * while the process is running. Editing the config file or the env var
+	 * on a live process has no effect until the process is restarted; there
+	 * is no API route or CLI flag that flips this without one. Set it (and
+	 * restart) *before* the maintenance window starts, not during it.
+	 *
+	 * Same env-parsing shape as `getStorePayloads()` (opt-out, default-on):
+	 * only the literal values `"false"` and `"0"` disable it — any other set
+	 * value (including `"off"`, `"no"`, `"disabled"`) is treated as enabled,
+	 * matching that sibling storage toggle's parsing exactly (and its same
+	 * gap: those common spellings are silently accepted as "on").
 	 */
 	getAutoVacuumEnabled(): boolean {
 		const fromEnv = process.env.BETTER_CCFLARE_AUTO_VACUUM;
@@ -481,6 +495,14 @@ export class Config extends EventEmitter {
 		return true; // default: automatic reclaim enabled
 	}
 
+	/**
+	 * Persists the switch to the config file for the *next* process start —
+	 * this does not affect the current process (see `getAutoVacuumEnabled()`'s
+	 * doc comment). No production caller exists yet (no API route or CLI flag
+	 * writes this field); kept as forward-looking config-surface API, the same
+	 * shape as e.g. `setUsagePollIntervalMs()` below, which has no caller at
+	 * all, production or test.
+	 */
 	setAutoVacuumEnabled(value: boolean): void {
 		this.set("auto_vacuum_enabled", value);
 	}

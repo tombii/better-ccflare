@@ -307,3 +307,83 @@ export function createVacuumScheduler(
 
 	return { runHourlyTick, runCatchUpTick, state };
 }
+
+/**
+ * Narrow surface `runVacuumBootstrap()` needs from `DatabaseOperations`.
+ */
+export type VacuumBootstrapDbOps = Pick<
+	DatabaseOperations,
+	"bootstrapAutoVacuum"
+>;
+
+/**
+ * One-time migration: promote pre-existing DBs from auto_vacuum=NONE to
+ * INCREMENTAL. Fresh DBs created since ensureSchema() started issuing
+ * `PRAGMA auto_vacuum = INCREMENTAL` are already in mode 2 and this is a
+ * fast no-op. Existing DBs upgraded into this build run a full VACUUM here
+ * — minutes on a multi-GB file. Called from `startServer()` BEFORE the HTTP
+ * listener binds so the proxy never sees a stalled writer slot.
+ *
+ * internal-7: gated on the operator switch. Without this gate, a file still
+ * on auto_vacuum=NONE would run its blocking migration VACUUM regardless of
+ * `BETTER_CCFLARE_AUTO_VACUUM` — exactly the writer-slot contention an
+ * operator setting the switch off before a maintenance window is trying to
+ * avoid, at exactly the moment they act on it. This only DEFERS the
+ * migration (it re-runs, still gated, on the next restart) — it never skips
+ * it permanently, since bootstrapAutoVacuum() itself is a fast no-op once
+ * the file is already in INCREMENTAL mode. The switch can only be applied
+ * by restarting the process (it is read once at construction, see
+ * `Config.getAutoVacuumEnabled()`'s doc comment) — this gate reads the same
+ * live value the hourly and catch-up ticks do, so all three agree at any
+ * given process lifetime.
+ */
+export function runVacuumBootstrap(
+	dbOps: VacuumBootstrapDbOps,
+	autoVacuumEnabled: boolean,
+	log: Logger,
+): void {
+	if (!autoVacuumEnabled) {
+		log.warn(
+			"BETTER_CCFLARE_AUTO_VACUUM is disabled — deferring the one-time " +
+				"auto_vacuum mode migration (bootstrapAutoVacuum) until the switch " +
+				"is re-enabled and the process restarts. A file still on " +
+				"auto_vacuum=NONE will not reclaim any freed pages until this " +
+				"migration runs.",
+		);
+		return;
+	}
+	try {
+		const result = dbOps.bootstrapAutoVacuum();
+		if (result.migrated) {
+			log.info(
+				`One-time auto_vacuum migration: mode ${result.modeBefore} → ${result.modeAfter} ` +
+					`in ${result.durationMs}ms. Future free-page reclamation runs incrementally via the ` +
+					`hourly worker — no more blocking VACUUM.`,
+			);
+			if (result.modeAfter !== 2) {
+				log.error(
+					`auto_vacuum still ${result.modeAfter} after migration VACUUM — ` +
+						`incremental reclamation will be a no-op. Investigate disk space and DB integrity.`,
+				);
+			}
+		} else if (result.modeBefore === 1) {
+			// Operator set auto_vacuum=FULL on purpose. We don't migrate it to
+			// INCREMENTAL silently because FULL reclaims pages on every COMMIT
+			// while INCREMENTAL only reclaims when our hourly worker runs —
+			// rewriting that policy without notice would surprise the user.
+			// Log so it shows up in startup logs and `journalctl`. (Greptile #230)
+			log.info(
+				`auto_vacuum=FULL (mode 1) detected — left in place. The hourly incremental_vacuum ` +
+					`worker is a no-op under FULL mode; pages are reclaimed on every COMMIT. ` +
+					`Switch to INCREMENTAL manually if you want the worker-driven cadence.`,
+			);
+		}
+	} catch (err) {
+		log.error(
+			`Bootstrap auto_vacuum migration failed: ${err instanceof Error ? err.message : String(err)}. ` +
+				`Free pages will not be reclaimed until this is resolved. ` +
+				`Common causes: disk full (VACUUM needs ~2× DB size free), DB corruption.`,
+		);
+		throw err;
+	}
+}
