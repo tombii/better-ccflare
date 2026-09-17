@@ -311,6 +311,20 @@ describe("CLI Integration Tests", () => {
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toContain("better-ccflare v");
 		});
+
+		it("should parse set-priority's two positional arguments", async () => {
+			// Drives the real --set-priority branch in main.ts, which requires
+			// exactly two non-flag arguments (name, priority) following it.
+			// Omitting the priority hits the validation error, proving the
+			// parser actually reads both positionals rather than just the flag.
+			const result = await runCLI(["--set-priority", "some-account"]);
+
+			expect(result.exitCode).toBe(1);
+			const output = result.stdout + result.stderr;
+			expect(output).toContain(
+				"--set-priority requires an account name and priority",
+			);
+		});
 	});
 
 	describe("Error Handling", () => {

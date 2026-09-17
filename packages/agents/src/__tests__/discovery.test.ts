@@ -277,4 +277,47 @@ describe("AgentRegistry — model parsing and empty-prompt guard", () => {
 			expect(fileContent).toMatch(/^model: claude-sonnet-5$/m);
 		});
 	});
+
+	describe("symlink dedup (seenRealPaths)", () => {
+		it("loads a symlinked agent file only once", async () => {
+			writeAgent(
+				"agent-real.md",
+				"name: Real Agent\ndescription: test agent",
+				"You are the real agent.",
+			);
+			fs.symlinkSync(
+				path.join(agentsDir, "agent-real.md"),
+				path.join(agentsDir, "agent-alias.md"),
+			);
+
+			const agents = await loadAgents();
+			const matches = agents.filter(
+				(a) => a.id.endsWith(":agent-real") || a.id.endsWith(":agent-alias"),
+			);
+
+			// Both filenames resolve to the same real path, so only the first
+			// one encountered during directory iteration should be loaded.
+			expect(matches).toHaveLength(1);
+		});
+
+		it("loads both agents when their real paths differ", async () => {
+			writeAgent(
+				"agent-one.md",
+				"name: Agent One\ndescription: test agent",
+				"You are agent one.",
+			);
+			writeAgent(
+				"agent-two.md",
+				"name: Agent Two\ndescription: test agent",
+				"You are agent two.",
+			);
+
+			const agents = await loadAgents();
+			const matches = agents.filter(
+				(a) => a.id.endsWith(":agent-one") || a.id.endsWith(":agent-two"),
+			);
+
+			expect(matches).toHaveLength(2);
+		});
+	});
 });
