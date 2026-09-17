@@ -391,11 +391,14 @@ export type VacuumBootstrapDbOps = Pick<
  * avoid, at exactly the moment they act on it. This only DEFERS the
  * migration (it re-runs, still gated, on the next restart) — it never skips
  * it permanently, since bootstrapAutoVacuum() itself is a fast no-op once
- * the file is already in INCREMENTAL mode. The switch can only be applied
- * by restarting the process (it is read once at construction, see
- * `Config.getAutoVacuumEnabled()`'s doc comment) — this gate reads the same
- * live value the hourly and catch-up ticks do, so all three agree at any
- * given process lifetime.
+ * the file is already in INCREMENTAL mode. Unlike the two periodic reclaim
+ * ticks in `createVacuumScheduler()` above (which both call
+ * `config.getAutoVacuumEnabled()` live on every tick, so an in-process
+ * switch flip reaches them on their very next run — see that method's doc
+ * comment), this function only ever runs once per process, at startup
+ * before the HTTP listener binds: a switch flipped after boot cannot change
+ * whether *this* run's migration happens, only whether the *next* restart's
+ * run does.
  */
 export function runVacuumBootstrap(
 	dbOps: VacuumBootstrapDbOps,

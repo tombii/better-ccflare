@@ -350,6 +350,30 @@ describe("createVacuumScheduler — shared in-flight guard", () => {
 	});
 });
 
+describe("createVacuumScheduler — live config reads (internal-breadth-2)", () => {
+	it("runHourlyTick reads config.getAutoVacuumEnabled() live on every tick — a switch flip takes effect on the very next tick, no restart needed", async () => {
+		let enabled = true;
+		const { dbOps, calls } = makeFakeDbOps();
+		const scheduler = createVacuumScheduler({
+			dbOps,
+			config: { getAutoVacuumEnabled: () => enabled },
+			asyncWriter: makeFakeAsyncWriter(),
+			log: new Logger("test"),
+		});
+
+		scheduler.runHourlyTick();
+		await flushAsync();
+		expect(calls[0]?.enabled).toBe(true);
+
+		// Simulates an in-process setAutoVacuumEnabled(false) call between
+		// ticks — no restart, no re-construction of the scheduler.
+		enabled = false;
+		scheduler.runHourlyTick();
+		await flushAsync();
+		expect(calls[1]?.enabled).toBe(false);
+	});
+});
+
 describe("createVacuumScheduler — catch-up busy-skip telemetry (internal-2)", () => {
 	it("does not dispatch and does not touch the busy-skip counter when the freelist ratio is below threshold", async () => {
 		const { dbOps, calls, getCatchUpBusySkips } = makeFakeDbOps({

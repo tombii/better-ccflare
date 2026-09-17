@@ -471,13 +471,27 @@ export class Config extends EventEmitter {
 	 * runs at startup on an upgraded install (`runVacuumBootstrap()` in
 	 * apps/server/src/vacuum-scheduler.ts), for the same reason.
 	 *
-	 * **Takes effect only at process start.** `loadConfig()` runs once, from
-	 * the constructor — this method reads the resulting in-memory snapshot
-	 * (`this.data`) plus a live `process.env` read, neither of which changes
-	 * while the process is running. Editing the config file or the env var
-	 * on a live process has no effect until the process is restarted; there
-	 * is no API route or CLI flag that flips this without one. Set it (and
-	 * restart) *before* the maintenance window starts, not during it.
+	 * **Takes effect immediately for the two periodic reclaim ticks, but not
+	 * for the one-time startup migration.** `apps/server/src/vacuum-scheduler.ts`'s
+	 * `runHourlyTick()` and `runCatchUpTick()` both call this getter live on
+	 * every tick (they read `this.data` fresh via `get()`/`set()`'s shared
+	 * in-memory snapshot, not a cached value), so an in-process call to
+	 * `setAutoVacuumEnabled()` — or any `set("auto_vacuum_enabled", …)` call —
+	 * is picked up on the very next tick, no restart needed. The one
+	 * exception is `runVacuumBootstrap()`'s one-time auto_vacuum-mode
+	 * migration: it reads this value once, at server startup before the HTTP
+	 * listener binds, and never again — a switch flipped after boot cannot
+	 * make a deferred migration run without a restart (see that function's
+	 * doc comment). Separately, an *external* edit — hand-editing the config
+	 * file on disk, or changing the env var for an already-running process —
+	 * has no effect on either path: nothing re-reads `process.env` or the
+	 * file outside the constructor's one-time `loadConfig()` call, so only an
+	 * in-process caller of `set()`/`setAutoVacuumEnabled()` can change what
+	 * the next call to this getter returns. Set it (and restart) *before* the
+	 * maintenance window starts if you're relying on an external edit rather
+	 * than a live in-process call — today there is no API route or CLI flag
+	 * that makes such a call, so a restart is in practice the only way to
+	 * change this switch's effect.
 	 *
 	 * Same env-parsing shape as `getStorePayloads()` (opt-out, default-on):
 	 * only the literal values `"false"` and `"0"` disable it — any other set
@@ -496,12 +510,21 @@ export class Config extends EventEmitter {
 	}
 
 	/**
-	 * Persists the switch to the config file for the *next* process start —
-	 * this does not affect the current process (see `getAutoVacuumEnabled()`'s
-	 * doc comment). No production caller exists yet (no API route or CLI flag
-	 * writes this field); kept as forward-looking config-surface API, the same
-	 * shape as e.g. `setUsagePollIntervalMs()` below, which has no caller at
-	 * all, production or test.
+	 * Persists the switch to the config file AND updates the in-memory value
+	 * immediately — `set()` mutates `this.data` synchronously before the
+	 * write-to-disk, so the very next `getAutoVacuumEnabled()` call in this
+	 * same process already reflects it (proven by
+	 * `auto-vacuum-enabled.test.ts`'s "setAutoVacuumEnabled persists the
+	 * value read back by the getter" case). Because the two periodic reclaim
+	 * ticks read that getter live on every tick, calling this takes effect on
+	 * their very next run, no restart needed; only the one-time startup
+	 * migration (`runVacuumBootstrap()`) is unaffected by a call made after
+	 * boot, since it only ever reads the value once (see
+	 * `getAutoVacuumEnabled()`'s doc comment). No production caller exists
+	 * yet (no API route or CLI flag writes this field); kept as
+	 * forward-looking config-surface API, the same shape as e.g.
+	 * `setUsagePollIntervalMs()` below, which has no caller at all,
+	 * production or test.
 	 */
 	setAutoVacuumEnabled(value: boolean): void {
 		this.set("auto_vacuum_enabled", value);
