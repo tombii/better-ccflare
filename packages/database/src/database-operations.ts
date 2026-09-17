@@ -268,14 +268,20 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	};
 	/**
 	 * Cached adaptive-vacuum status; surfaced via /health. Written by
-	 * incrementalVacuumAdaptive() (via recordVacuumStatus()) and by
-	 * recordVacuumCatchUpBusySkip()/resetVacuumCatchUpBusySkips() (the
-	 * catch-up tick's busy-skip counters, updated from
+	 * incrementalVacuumAdaptive() (via recordVacuumStatus(), and directly on
+	 * the unsupported-backend and rejected-reclaim paths — see those call
+	 * sites) and by recordVacuumCatchUpBusySkip()/resetVacuumCatchUpBusySkips()
+	 * (the catch-up tick's busy-skip counters, updated from
 	 * apps/server/src/vacuum-scheduler.ts since that backoff happens before
-	 * incrementalVacuumAdaptive() is ever called).
+	 * incrementalVacuumAdaptive() is ever called). Corrected for the
+	 * PostgreSQL backend just below the constructor's isSQLite branch (field
+	 * initializers run before `this.isSQLite` is assigned, so
+	 * `supported`/`enabled` start at their SQLite-shaped defaults here and are
+	 * flipped there for PG).
 	 */
 	private vacuumStatus: VacuumStatus = {
 		enabled: true,
+		supported: true,
 		lastRunAt: null,
 		lastReclaimedPages: 0,
 		lastChunks: 0,
@@ -283,6 +289,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		freelistRatio: 0,
 		consecutiveBusySkips: 0,
 		escalated: false,
+		lastError: null,
 		catchUpBusySkips: 0,
 		catchUpBusySkipsTotal: 0,
 	};
@@ -411,6 +418,20 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			runMigrations(this.sqliteDb, resolvedPath);
 
 			this.adapter = new BunSqlAdapter(this.sqliteDb);
+		}
+
+		// internal-4: PostgreSQL has no freelist or incremental_vacuum concept,
+		// so reclaim can never run there. Correct the vacuumStatus field
+		// initializer's SQLite-shaped defaults here — this must happen AFTER
+		// `this.isSQLite` is assigned above, since class field initializers run
+		// before the constructor body (referencing `this.isSQLite` inside the
+		// field initializer itself would read `undefined`).
+		if (!this.isSQLite) {
+			this.vacuumStatus = {
+				...this.vacuumStatus,
+				enabled: false,
+				supported: false,
+			};
 		}
 
 		// Initialize repositories
@@ -1942,6 +1963,16 @@ OAuth tokens will need to be re-authenticated.
 		enabled?: boolean;
 	}): Promise<{ reclaimedPages: number; chunks: number }> {
 		if (!this.sqliteDb || !this.resolvedDbPath) {
+			// internal-4: no freelist to reclaim on this backend (PostgreSQL, or
+			// a defensive "no handle open" case) — never claim `enabled: true` as
+			// if reclaim could run here. Explicit rather than relying solely on
+			// the constructor's isSQLite-based default so this is true even if
+			// that invariant ever drifts.
+			this.vacuumStatus = {
+				...this.vacuumStatus,
+				enabled: false,
+				supported: false,
+			};
 			return { reclaimedPages: 0, chunks: 0 };
 		}
 
@@ -1975,7 +2006,24 @@ OAuth tokens will need to be re-authenticated.
 		while (requestedPages < budget && freelist > 0) {
 			const n = Math.min(CHUNK, budget - requestedPages);
 			const before = this.getFreelistCount();
-			await this.incrementalVacuum(n); // one bounded worker txn
+			try {
+				await this.incrementalVacuum(n); // one bounded worker txn
+			} catch (err) {
+				// internal-4: incrementalVacuum() previously only rejected on a
+				// genuine worker crash; internal-3's timeout adds a second
+				// rejection path. Either way, record it (message only — no stack)
+				// instead of letting it propagate silently past recordVacuumStatus,
+				// then re-throw so the caller (runVacuumTick in
+				// apps/server/src/vacuum-scheduler.ts) still sees the rejection —
+				// its `.catch()` logs it and its `.finally()` clears the shared
+				// in-flight flag.
+				this.vacuumStatus = {
+					...this.vacuumStatus,
+					lastError: err instanceof Error ? err.message : String(err),
+					lastRunAt: Date.now(),
+				};
+				throw err;
+			}
 			const after = this.getFreelistCount();
 			requestedPages += n;
 			chunks += 1;
@@ -2020,7 +2068,8 @@ OAuth tokens will need to be re-authenticated.
 			// Spread first so this never clobbers catchUpBusySkips /
 			// catchUpBusySkipsTotal — owned by
 			// recordVacuumCatchUpBusySkip()/resetVacuumCatchUpBusySkips() below,
-			// updated from outside this class.
+			// updated from outside this class — or `supported`, owned by the
+			// constructor's PG correction.
 			...this.vacuumStatus,
 			enabled: true,
 			lastRunAt: Date.now(),
@@ -2030,6 +2079,9 @@ OAuth tokens will need to be re-authenticated.
 			freelistRatio: pageCount > 0 ? freelistPages / pageCount : 0,
 			consecutiveBusySkips: this.incVacuumConsecutiveSkips,
 			escalated: this.incVacuumConsecutiveSkips >= INC_VAC_SKIP_ESCALATE_AT,
+			// Reaching this method at all means the call completed without
+			// throwing (internal-4) — clear any error recorded by a prior tick.
+			lastError: null,
 		};
 	}
 

@@ -301,6 +301,7 @@ export function createHealthHandler(
 				...runtime.storage,
 				vacuum: {
 					enabled: vacuum.enabled,
+					supported: vacuum.supported,
 					lastRunAt: vacuum.lastRunAt
 						? new Date(vacuum.lastRunAt).toISOString()
 						: null,
@@ -310,6 +311,7 @@ export function createHealthHandler(
 					freelistRatio: vacuum.freelistRatio,
 					consecutiveBusySkips: vacuum.consecutiveBusySkips,
 					escalated: vacuum.escalated,
+					lastError: vacuum.lastError,
 					catchUpBusySkips: vacuum.catchUpBusySkips,
 					catchUpBusySkipsTotal: vacuum.catchUpBusySkipsTotal,
 				},

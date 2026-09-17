@@ -209,6 +209,7 @@ describe("health runtime payload", () => {
 			undefined,
 			() => ({
 				enabled: true,
+				supported: true,
 				lastRunAt,
 				lastReclaimedPages: 65536,
 				lastChunks: 4,
@@ -216,6 +217,7 @@ describe("health runtime payload", () => {
 				freelistRatio: 0.12,
 				consecutiveBusySkips: 0,
 				escalated: false,
+				lastError: null,
 				catchUpBusySkips: 3,
 				catchUpBusySkipsTotal: 17,
 			}),
@@ -227,6 +229,7 @@ describe("health runtime payload", () => {
 
 		expect(body.runtime?.storage?.vacuum).toEqual({
 			enabled: true,
+			supported: true,
 			lastRunAt: new Date(lastRunAt).toISOString(),
 			lastReclaimedPages: 65536,
 			lastChunks: 4,
@@ -234,9 +237,101 @@ describe("health runtime payload", () => {
 			freelistRatio: 0.12,
 			consecutiveBusySkips: 0,
 			escalated: false,
+			lastError: null,
 			catchUpBusySkips: 3,
 			catchUpBusySkipsTotal: 17,
 		});
+	});
+
+	it("includes runtime.storage.vacuum.lastError when the most recent reclaim attempt failed", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const lastRunAt = Date.now() - 1_000;
+		const handler = createHealthHandler(
+			db,
+			config,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			() => ({
+				enabled: true,
+				supported: true,
+				lastRunAt,
+				lastReclaimedPages: 0,
+				lastChunks: 1,
+				freelistPages: 5000,
+				freelistRatio: 0.05,
+				consecutiveBusySkips: 0,
+				escalated: false,
+				lastError: "incremental-vacuum worker timed out after 120000ms",
+				catchUpBusySkips: 0,
+				catchUpBusySkipsTotal: 0,
+			}),
+		);
+
+		const url = new URL("http://localhost/health");
+		const response = await handler(url);
+		const body = (await response.json()) as HealthResponse;
+
+		expect(body.runtime?.storage?.vacuum?.lastError).toBe(
+			"incremental-vacuum worker timed out after 120000ms",
+		);
+	});
+
+	// internal-4: PostgreSQL has no freelist or incremental_vacuum concept —
+	// supported: false must be surfaced distinctly from enabled: false (an
+	// operator-switch skip), so /health never implies reclaim could run.
+	it("reports runtime.storage.vacuum.supported=false on an unsupported backend", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(
+			db,
+			config,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			() => ({
+				enabled: false,
+				supported: false,
+				lastRunAt: null,
+				lastReclaimedPages: 0,
+				lastChunks: 0,
+				freelistPages: 0,
+				freelistRatio: 0,
+				consecutiveBusySkips: 0,
+				escalated: false,
+				lastError: null,
+				catchUpBusySkips: 0,
+				catchUpBusySkipsTotal: 0,
+			}),
+		);
+
+		const url = new URL("http://localhost/health");
+		const response = await handler(url);
+		const body = (await response.json()) as HealthResponse;
+
+		expect(body.runtime?.storage?.vacuum?.supported).toBe(false);
+		expect(body.runtime?.storage?.vacuum?.enabled).toBe(false);
 	});
 
 	it("reports runtime.storage.vacuum with enabled=false and lastRunAt when disabled by the operator switch", async () => {
@@ -260,6 +355,7 @@ describe("health runtime payload", () => {
 			undefined,
 			() => ({
 				enabled: false,
+				supported: true,
 				lastRunAt: null,
 				lastReclaimedPages: 0,
 				lastChunks: 0,
@@ -267,6 +363,7 @@ describe("health runtime payload", () => {
 				freelistRatio: 0,
 				consecutiveBusySkips: 0,
 				escalated: false,
+				lastError: null,
 				catchUpBusySkips: 0,
 				catchUpBusySkipsTotal: 0,
 			}),

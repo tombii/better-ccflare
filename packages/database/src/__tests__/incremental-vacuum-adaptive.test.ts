@@ -280,6 +280,106 @@ describe("DatabaseOperations.getPageCount", () => {
 	});
 });
 
+// internal-4: incrementalVacuumAdaptive() previously returned before ever
+// touching vacuumStatus when this.sqliteDb/this.resolvedDbPath is absent
+// (PostgreSQL, or a defensive "no handle open" case), so /health kept
+// reporting the SQLite-shaped default (enabled: true, lastRunAt: null)
+// forever — contradicting both the "no-op on PostgreSQL" documentation and
+// an operator dead-man alert built on lastRunAt. No live PostgreSQL server
+// is available in this dev/CI environment (see migrations-pg.test.ts), so
+// this simulates the guard's condition directly on an otherwise-real SQLite
+// instance rather than constructing a real PG-mode DatabaseOperations.
+describe("DatabaseOperations.incrementalVacuumAdaptive — unsupported backend (internal-4)", () => {
+	let dbOps: DatabaseOperations;
+
+	beforeEach(() => {
+		dbOps = new DatabaseOperations(tempDbPath());
+	});
+
+	afterEach(async () => {
+		await dbOps.dispose?.();
+	});
+
+	it("reports supported: false and enabled: false, and never runs a reclaim, when no SQLite handle is open", async () => {
+		const internals = dbOps as unknown as {
+			sqliteDb: unknown;
+			resolvedDbPath: unknown;
+			incrementalVacuum: (pages: number) => Promise<void>;
+		};
+		internals.sqliteDb = undefined;
+		internals.resolvedDbPath = undefined;
+		let vacuumCalls = 0;
+		internals.incrementalVacuum = async () => {
+			vacuumCalls += 1;
+		};
+
+		const r = await dbOps.incrementalVacuumAdaptive();
+
+		expect(r).toEqual({ reclaimedPages: 0, chunks: 0 });
+		expect(vacuumCalls).toBe(0);
+		const status = dbOps.getVacuumStatus();
+		expect(status.supported).toBe(false);
+		expect(status.enabled).toBe(false);
+	});
+});
+
+// internal-4: a rejected incrementalVacuum() chunk previously propagated
+// straight out of incrementalVacuumAdaptive() without ever recording
+// anything — lastRunAt silently froze at the last successful tick, and the
+// failure was visible only in logs.
+describe("DatabaseOperations.incrementalVacuumAdaptive — records a rejected reclaim (internal-4)", () => {
+	let dbOps: DatabaseOperations;
+
+	beforeEach(() => {
+		dbOps = new DatabaseOperations(tempDbPath());
+	});
+
+	afterEach(async () => {
+		await dbOps.dispose?.();
+	});
+
+	it("records lastError (message only) and lastRunAt, and still propagates the rejection", async () => {
+		const internals = dbOps as unknown as {
+			getFreelistCount: () => number;
+			incrementalVacuum: (pages: number) => Promise<void>;
+		};
+		internals.getFreelistCount = () => 100; // non-empty, so the loop runs
+		internals.incrementalVacuum = async () => {
+			throw new Error("incremental-vacuum worker timed out after 120000ms");
+		};
+
+		const before = Date.now();
+		await expect(dbOps.incrementalVacuumAdaptive()).rejects.toThrow(
+			"incremental-vacuum worker timed out after 120000ms",
+		);
+
+		const status = dbOps.getVacuumStatus();
+		expect(status.lastError).toBe(
+			"incremental-vacuum worker timed out after 120000ms",
+		);
+		expect(status.lastRunAt).not.toBeNull();
+		expect(status.lastRunAt as number).toBeGreaterThanOrEqual(before);
+	});
+
+	it("clears lastError on the next call that completes without throwing", async () => {
+		const internals = dbOps as unknown as {
+			getFreelistCount: () => number;
+			incrementalVacuum: (pages: number) => Promise<void>;
+		};
+		internals.getFreelistCount = () => 100;
+		internals.incrementalVacuum = async () => {
+			throw new Error("boom");
+		};
+		await expect(dbOps.incrementalVacuumAdaptive()).rejects.toThrow("boom");
+		expect(dbOps.getVacuumStatus().lastError).toBe("boom");
+
+		// Now let it succeed (steady-state no-op).
+		internals.getFreelistCount = () => 0;
+		await dbOps.incrementalVacuumAdaptive();
+		expect(dbOps.getVacuumStatus().lastError).toBeNull();
+	});
+});
+
 // internal-2: the catch-up tick's own backoff (the async DB writer's queue
 // non-empty) happens before incrementalVacuumAdaptive() is ever called, so
 // these two counters are updated directly by the scheduler rather than
