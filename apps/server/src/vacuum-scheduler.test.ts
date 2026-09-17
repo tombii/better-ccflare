@@ -484,6 +484,65 @@ describe("createVacuumScheduler — catch-up busy-skip telemetry (internal-2)", 
 		expect(getCatchUpBusySkipsTotal()).toBe(2);
 	});
 
+	it("does not touch the busy-skip counters when the freelist ratio is below threshold even though the writer queue is busy (greptile review on PR #475)", async () => {
+		const { dbOps, calls, getCatchUpBusySkips, getCatchUpBusySkipsTotal } =
+			makeFakeDbOps({
+				freelistPages: 5,
+				pageCount: 100, // 5% — below the 10% threshold
+			});
+		const scheduler = createVacuumScheduler({
+			dbOps,
+			config: makeFakeConfig(),
+			asyncWriter: makeFakeAsyncWriter(1), // queue busy
+			log: new Logger("test"),
+		});
+
+		await scheduler.runCatchUpTick();
+
+		expect(calls.length).toBe(0);
+		expect(getCatchUpBusySkips()).toBe(0);
+		expect(getCatchUpBusySkipsTotal()).toBe(0);
+	});
+
+	it("records a busy skip when the freelist ratio is at or above threshold and the writer queue is busy (greptile review on PR #475)", async () => {
+		const { dbOps, calls, getCatchUpBusySkips, getCatchUpBusySkipsTotal } =
+			makeFakeDbOps({
+				freelistPages: 15,
+				pageCount: 100, // 15% — above the 10% threshold
+			});
+		const scheduler = createVacuumScheduler({
+			dbOps,
+			config: makeFakeConfig(),
+			asyncWriter: makeFakeAsyncWriter(1), // queue busy
+			log: new Logger("test"),
+		});
+
+		await scheduler.runCatchUpTick();
+
+		expect(calls.length).toBe(0);
+		expect(getCatchUpBusySkips()).toBe(1);
+		expect(getCatchUpBusySkipsTotal()).toBe(1);
+	});
+
+	it("dispatches and resets the consecutive busy-skip counter when the freelist ratio is at or above threshold and the writer queue is idle (greptile review on PR #475)", async () => {
+		const { dbOps, calls, getCatchUpBusySkips } = makeFakeDbOps({
+			freelistPages: 15,
+			pageCount: 100, // 15% — above the 10% threshold
+		});
+		const scheduler = createVacuumScheduler({
+			dbOps,
+			config: makeFakeConfig(),
+			asyncWriter: makeFakeAsyncWriter(0), // queue idle
+			log: new Logger("test"),
+		});
+
+		await scheduler.runCatchUpTick();
+		await flushAsync();
+
+		expect(calls.length).toBe(1);
+		expect(getCatchUpBusySkips()).toBe(0);
+	});
+
 	it("logs a WARN once the consecutive busy-skip count reaches 12, and again at 24", async () => {
 		const { dbOps } = makeFakeDbOps({ freelistPages: 50, pageCount: 100 });
 		const log = new Logger("test");

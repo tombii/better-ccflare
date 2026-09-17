@@ -95,6 +95,28 @@ export const VACUUM_HOURLY_MAX_PAGES_PER_TICK = 262144;
  * per-account project name is out of scope; this pacing gate only
  * ever affects internal maintenance work, not client-visible routing.
  */
+/**
+ * Pure freelist-ratio check, factored out of `shouldRunVacuumCatchUp` so the
+ * catch-up tick's busy-skip telemetry below can reuse the exact same
+ * threshold logic WITHOUT the queue-idle gate `shouldRunVacuumCatchUp` also
+ * applies (greptile review on PR #475): the busy-skip counter must fire only
+ * when the writer queue is the thing that blocked a catch-up that would
+ * otherwise have qualified on the ratio alone, never when the ratio itself
+ * was already below threshold (see the busy-skip comment in `runCatchUpTick`
+ * for why counting the latter is a false starvation signal).
+ */
+function freelistRatioAtOrAboveThreshold(input: {
+	freelistPages: number;
+	pageCount: number;
+	ratioThreshold?: number;
+}): boolean {
+	if (input.pageCount <= 0) return false;
+	const ratio = input.freelistPages / input.pageCount;
+	return (
+		ratio >= (input.ratioThreshold ?? VACUUM_CATCHUP_FREELIST_RATIO_THRESHOLD)
+	);
+}
+
 export function shouldRunVacuumCatchUp(input: {
 	autoVacuumEnabled: boolean;
 	asyncWriterQueuedJobs: number;
@@ -104,11 +126,7 @@ export function shouldRunVacuumCatchUp(input: {
 }): boolean {
 	if (!input.autoVacuumEnabled) return false;
 	if (input.asyncWriterQueuedJobs > 0) return false;
-	if (input.pageCount <= 0) return false;
-	const ratio = input.freelistPages / input.pageCount;
-	return (
-		ratio >= (input.ratioThreshold ?? VACUUM_CATCHUP_FREELIST_RATIO_THRESHOLD)
-	);
+	return freelistRatioAtOrAboveThreshold(input);
 }
 
 /**
@@ -382,14 +400,27 @@ export function createVacuumScheduler(
 			pageCount,
 		};
 
-		// internal-2: asyncWriterQueuedJobs > 0 is the ONE backoff condition
-		// this tick added on top of the switch and the ratio threshold, and it
-		// is the one that can correlate with — and hide behind — the exact
-		// writer contention the tick exists to work through. Track it with its
-		// own counter instead of letting it vanish into a silent early return;
-		// "ratio below threshold" is ordinary steady state and is not tracked
-		// here.
-		if (autoVacuumEnabled && asyncWriterQueuedJobs > 0) {
+		// internal-2 / greptile review on PR #475: asyncWriterQueuedJobs > 0 is
+		// the ONE backoff condition this tick added on top of the switch and
+		// the ratio threshold, and it is the one that can correlate with — and
+		// hide behind — the exact writer contention the tick exists to work
+		// through. Track it with its own counter, but ONLY when the freelist
+		// ratio alone already cleared the threshold: a busy writer queue is
+		// never the reason a catch-up round with a below-threshold ratio does
+		// nothing (the ratio check would have skipped it regardless of the
+		// queue), so counting that combination here would read as "reclaim is
+		// starved by writer contention" on a database that is not actually
+		// falling behind at all — the false-starvation telemetry this fix
+		// removes. "ratio below threshold" (busy queue or not) stays ordinary
+		// steady state and is not tracked here: the consecutive counter is
+		// left exactly as it was, neither incremented nor reset — a
+		// below-threshold round is not evidence either way about writer
+		// contention, so it should not silently erase a real streak that was
+		// building while the ratio was still elevated a few ticks ago. The
+		// counter only ever resets on an actual catch-up dispatch, below.
+		const ratioReachedThreshold =
+			autoVacuumEnabled && freelistRatioAtOrAboveThreshold(decision);
+		if (ratioReachedThreshold && asyncWriterQueuedJobs > 0) {
 			const consecutive = dbOps.recordVacuumCatchUpBusySkip();
 			if (consecutive % VACUUM_CATCHUP_BUSY_SKIP_WARN_EVERY === 0) {
 				const hours = (consecutive * 5) / 60;
