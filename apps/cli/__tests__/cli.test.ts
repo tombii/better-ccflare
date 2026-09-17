@@ -325,6 +325,25 @@ describe("CLI Integration Tests", () => {
 				"--set-priority requires an account name and priority",
 			);
 		});
+
+		it("should read set-priority's positionals in name-then-priority order", async () => {
+			// Complements the missing-argument test above by proving the parser
+			// assigns each positional to the right slot, not just that it reads
+			// two of them. A valid (name, priority) pair reaches the DB lookup
+			// and fails with "not found" (proving both args parsed correctly);
+			// swapping the order feeds a non-numeric string as the priority and
+			// fails earlier with a NaN error instead. A regression that flips
+			// the two positionals would make this test observe the wrong error.
+			const valid = await runCLI(["--set-priority", "some-account", "42"]);
+			expect(valid.exitCode).toBe(1);
+			const validOutput = valid.stdout + valid.stderr;
+			expect(validOutput).toContain("Account 'some-account' not found");
+
+			const swapped = await runCLI(["--set-priority", "42", "some-account"]);
+			expect(swapped.exitCode).toBe(1);
+			const swappedOutput = swapped.stdout + swapped.stderr;
+			expect(swappedOutput).toContain("Invalid priority value: NaN");
+		});
 	});
 
 	describe("Error Handling", () => {
