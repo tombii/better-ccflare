@@ -483,15 +483,26 @@ export class Config extends EventEmitter {
 	 * listener binds, and never again — a switch flipped after boot cannot
 	 * make a deferred migration run without a restart (see that function's
 	 * doc comment). Separately, an *external* edit — hand-editing the config
-	 * file on disk, or changing the env var for an already-running process —
-	 * has no effect on either path: nothing re-reads `process.env` or the
-	 * file outside the constructor's one-time `loadConfig()` call, so only an
-	 * in-process caller of `set()`/`setAutoVacuumEnabled()` can change what
-	 * the next call to this getter returns. Set it (and restart) *before* the
-	 * maintenance window starts if you're relying on an external edit rather
-	 * than a live in-process call — today there is no API route or CLI flag
-	 * that makes such a call, so a restart is in practice the only way to
-	 * change this switch's effect.
+	 * file on disk, or changing the env var from outside this process — has
+	 * no effect on an already-running process, but the two halves of that
+	 * claim hold for different reasons. The on-disk file really is read only
+	 * once, in the constructor's `loadConfig()` call, and nothing here
+	 * re-reads it afterward, so only an in-process caller of
+	 * `set()`/`setAutoVacuumEnabled()` can change what `this.data` holds. The
+	 * env var is different: this getter reads `process.env.BETTER_CCFLARE_AUTO_VACUUM`
+	 * fresh on every single call (see the `fromEnv` check just below) — an
+	 * *in-process* mutation of `process.env` would in principle take effect
+	 * on the very next call, no `set()` involved — but no code path in this
+	 * codebase ever writes to `process.env` after startup, and an external
+	 * process or shell cannot push a changed environment variable into a
+	 * process that is already running (the OS only hands a process its
+	 * environment once, at exec time). So in practice an externally-edited
+	 * env var behaves exactly like the file: fixed until restart. Set it (and
+	 * restart) *before* the maintenance window starts if you're relying on an
+	 * external edit rather than a live in-process call — today there is no
+	 * API route or CLI flag that makes such a call, so a restart is in
+	 * practice the only way to change this switch's effect from outside the
+	 * process.
 	 *
 	 * Same env-parsing shape as `getStorePayloads()` (opt-out, default-on):
 	 * only the literal values `"false"` and `"0"` disable it — any other set
