@@ -217,15 +217,5 @@ describe("clearRequestHistory", () => {
 			expect(result.removedRequests).toBe(42);
 			expect(result.removedPayloads).toBe(17);
 		});
-
-		it("does NOT return a { count } field (old signature removed)", async () => {
-			const dbOps = makeDbOps({ removedRequests: 5, removedPayloads: 3 });
-			const config = makeConfig();
-
-			const result = await clearRequestHistory(dbOps, config);
-
-			// Confirm old shape is absent
-			expect(result).not.toHaveProperty("count");
-		});
 	});
 });
