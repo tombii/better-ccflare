@@ -244,6 +244,74 @@ describe("createVacuumScheduler — shared in-flight guard", () => {
 		expect(calls.length).toBe(0);
 	});
 
+	it("(f) a stale dispatch settling after a self-heal takeover does not clobber the newer dispatch's state, and a tick during the takeover window still skips (internal-breadth-1)", async () => {
+		let now = 1_000_000;
+		let resolveFirst: (() => void) | undefined;
+		const firstGate = new Promise<void>((resolve) => {
+			resolveFirst = resolve;
+		});
+		// The second (takeover) dispatch's own promise never settles within
+		// this test — it represents the genuinely still-running reclaim the
+		// self-heal takeover started.
+		const secondGate = new Promise<void>(() => {});
+		const { dbOps, calls } = makeFakeDbOps({
+			incrementalVacuumAdaptive: async (o) => {
+				calls.push(o);
+				if (calls.length === 1) {
+					await firstGate;
+				} else {
+					await secondGate;
+				}
+				return { reclaimedPages: 0, chunks: 0 };
+			},
+		});
+		const scheduler = createVacuumScheduler({
+			dbOps,
+			config: makeFakeConfig(),
+			asyncWriter: makeFakeAsyncWriter(),
+			log: new Logger("test"),
+			now: () => now,
+		});
+
+		// Dispatch #1 (token 1): slow but healthy, not actually hung yet.
+		scheduler.runHourlyTick();
+		await flushAsync();
+		expect(calls.length).toBe(1);
+		expect(scheduler.state.vacuumTickInFlight).toBe(true);
+
+		// Past the self-heal ceiling — a second tick takes over and mints a
+		// new token (dispatch #2), even though dispatch #1 is merely slow.
+		now += VACUUM_TICK_STALE_GUARD_MS;
+		scheduler.runHourlyTick();
+		await flushAsync();
+		expect(calls.length).toBe(2);
+		expect(scheduler.state.vacuumTickInFlight).toBe(true);
+		const tokenAfterTakeover = scheduler.state.vacuumTickToken;
+		expect(scheduler.state.staleTakeovers).toBe(1);
+
+		// A third tick fires immediately after the takeover — the guard was
+		// just re-latched (vacuumTickInFlightSince reset), so age is ~0 and
+		// this tick must skip rather than dispatch a THIRD call.
+		scheduler.runHourlyTick();
+		await flushAsync();
+		expect(calls.length).toBe(2);
+
+		// Dispatch #1 (the stale one) now settles — belatedly, after being
+		// superseded. Its own `.finally()` must NOT clear the state dispatch
+		// #2 owns: this is the clobber internal-breadth-1 identified.
+		resolveFirst?.();
+		await flushAsync();
+		expect(scheduler.state.vacuumTickInFlight).toBe(true);
+		expect(scheduler.state.vacuumTickToken).toBe(tokenAfterTakeover);
+
+		// A fourth tick, right after dispatch #1's belated settlement, must
+		// still see "in flight" (dispatch #2 is genuinely still running) and
+		// skip — proving no third dispatch snuck in via the clobbered state.
+		scheduler.runHourlyTick();
+		await flushAsync();
+		expect(calls.length).toBe(2);
+	});
+
 	it("(e) a stale in-flight flag self-heals after VACUUM_TICK_STALE_GUARD_MS and dispatches", async () => {
 		let now = 1_000_000;
 		const gate = new Promise<void>(() => {}); // never settles — simulates a hung worker

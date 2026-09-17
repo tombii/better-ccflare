@@ -122,23 +122,54 @@ export function shouldRunVacuumCatchUp(input: {
 const VACUUM_CATCHUP_BUSY_SKIP_WARN_EVERY = 12;
 
 /**
- * Self-heal ceiling for the shared `vacuumTickInFlight` flag (internal-3):
- * if a tick still finds it set after this long, a prior reclaim promise
- * almost certainly never settled (e.g. the worker died without firing
- * `onmessage` or `onerror`) rather than genuinely still running —
- * `incrementalVacuum()`'s own 120s per-chunk worker timeout
- * (database-operations.ts) should already have rejected it by then.
- * Derivation: 3 * 120s per-chunk timeout * 16 chunks (the hourly tick's
- * ~1 GiB ceiling / 64 MiB chunk size — the most chunks one legitimate tick
- * can issue) = 96 minutes; capped at 30 minutes so a genuinely wedged flag
- * cannot silently disable both reclaim ticks for over an hour and a half.
+ * Self-heal ceiling for the shared `vacuumTickInFlight` flag (internal-3,
+ * revised for internal-breadth-1): if a tick still finds it set after this
+ * long, a prior reclaim promise almost certainly never settled (e.g. the
+ * worker died without firing `onmessage` or `onerror`) rather than
+ * genuinely still running.
+ * Derivation: each chunk of the hourly tick's reclaim is individually bounded
+ * by `incrementalVacuum()`'s own 120s per-chunk worker timeout
+ * (`INC_VACUUM_WORKER_TIMEOUT_MS` in database-operations.ts), and the hourly
+ * tick issues at most 16 chunks (`VACUUM_HOURLY_MAX_PAGES_PER_TICK` /
+ * `CHUNK` = 262144 / 16384) — so a healthy tick, even one whose every single
+ * chunk times out and gets individually retried by the timeout's own reject
+ * path, cannot legitimately run longer than 120s * 16 = 32 minutes. This
+ * ceiling is deliberately set to well over 2x that bound (65 minutes) so a
+ * merely slow-but-healthy tick can never trigger a false self-heal takeover
+ * (see the dispatch-token handling in `runVacuumTick` below for what happens
+ * when one nonetheless does, via genuine timer drift or a future change to
+ * the per-chunk bound), while a genuinely wedged flag is still caught well
+ * under two hours instead of disabling both reclaim ticks indefinitely.
  */
-export const VACUUM_TICK_STALE_GUARD_MS = 30 * 60 * 1000;
+export const VACUUM_TICK_STALE_GUARD_MS = 65 * 60 * 1000;
 
 export interface VacuumSchedulerState {
 	vacuumTickInFlight: boolean;
 	/** epoch ms (per the injected `now`) when the flag was last set; null while not in flight. */
 	vacuumTickInFlightSince: number | null;
+	/**
+	 * Monotonically increasing dispatch identity (internal-breadth-1). Every
+	 * call to `runVacuumTick()` that actually dispatches (fresh, or a
+	 * self-heal takeover of a stale flag) mints a new token by incrementing
+	 * this counter and captures it in its own `.finally()` closure. A
+	 * dispatch's `.finally()` only clears `vacuumTickInFlight` /
+	 * `vacuumTickInFlightSince` when this field still equals the token it
+	 * captured — so a stale dispatch that settles after being superseded by
+	 * a self-heal takeover becomes a no-op instead of clobbering the newer
+	 * dispatch's state. 0 before the first dispatch ever runs; tokens are
+	 * minted starting at 1.
+	 */
+	vacuumTickToken: number;
+	/**
+	 * Count of times the self-heal ceiling has taken over a flag it judged
+	 * stale (internal-breadth-1). Exposed for tests/observability; not
+	 * plumbed into `VacuumStatus` (packages/types/src/stats.ts) — that
+	 * struct is populated by `database-operations.ts`'s
+	 * `recordVacuumStatus()`, which this scheduler module has no handle on
+	 * (its `VacuumSchedulerDbOps` surface is deliberately narrow), so wiring
+	 * it through would touch files outside this fix's scope.
+	 */
+	staleTakeovers: number;
 }
 
 export interface VacuumSchedulerDeps {
@@ -185,6 +216,8 @@ export function createVacuumScheduler(
 	const state: VacuumSchedulerState = {
 		vacuumTickInFlight: false,
 		vacuumTickInFlightSince: null,
+		vacuumTickToken: 0,
+		staleTakeovers: 0,
 	};
 
 	const runVacuumTick = (
@@ -197,18 +230,25 @@ export function createVacuumScheduler(
 					? now() - state.vacuumTickInFlightSince
 					: 0;
 			if (age >= VACUUM_TICK_STALE_GUARD_MS) {
-				// internal-3: the flag has been held far longer than any
-				// legitimate reclaim can take (incrementalVacuum()'s own
-				// per-chunk worker timeout bounds each chunk) — treat it as
-				// stuck rather than early-returning forever, and dispatch this
-				// tick instead of silently disabling reclaim indefinitely.
+				// internal-3 / internal-breadth-1: the flag has been held far
+				// longer than any legitimate reclaim can take
+				// (incrementalVacuum()'s own per-chunk worker timeout bounds each
+				// chunk) — treat it as stuck rather than early-returning forever,
+				// and dispatch this tick instead of silently disabling reclaim
+				// indefinitely. We do NOT simply clear the flag here: the prior
+				// dispatch below still owns a `.finally()` closure captured over
+				// the token it was minted with, and that promise may yet settle
+				// (it may not actually be hung, just slow). Minting a fresh token
+				// on the dispatch below makes this takeover visible to that stale
+				// closure once it runs.
+				state.staleTakeovers += 1;
 				log.warn(
-					`Vacuum tick in-flight flag has been set for ${age}ms, past the ` +
-						`${VACUUM_TICK_STALE_GUARD_MS}ms self-heal ceiling — a prior ` +
-						`reclaim likely never settled. Resetting the guard and ` +
-						`dispatching this tick (${source}).`,
+					`Vacuum tick in-flight flag has been set for ${age}ms (token ` +
+						`${state.vacuumTickToken}), past the ${VACUUM_TICK_STALE_GUARD_MS}ms ` +
+						`self-heal ceiling — a prior reclaim likely never settled. ` +
+						`Taking over the guard and dispatching this tick (${source}); ` +
+						`${state.staleTakeovers} stale takeover(s) so far.`,
 				);
-				state.vacuumTickInFlight = false;
 			} else {
 				log.debug(
 					`Vacuum tick (${source}) skipped — another vacuum tick is still in flight`,
@@ -216,6 +256,14 @@ export function createVacuumScheduler(
 				return;
 			}
 		}
+		// internal-breadth-1: mint a token identifying THIS dispatch. The
+		// `.finally()` below only clears the shared in-flight state if this
+		// field still holds the same token by the time it runs — a stale
+		// dispatch's belated settlement (its own `.finally()` closes over the
+		// OLDER token value it captured here) becomes a no-op once a self-heal
+		// takeover has minted a newer one, instead of clobbering the newer
+		// dispatch's in-flight state.
+		const token = ++state.vacuumTickToken;
 		state.vacuumTickInFlight = true;
 		state.vacuumTickInFlightSince = now();
 		dbOps
@@ -231,6 +279,18 @@ export function createVacuumScheduler(
 				log.error(`Incremental vacuum (${source}) error: ${err}`);
 			})
 			.finally(() => {
+				if (state.vacuumTickToken !== token) {
+					// Superseded by a self-heal takeover while this dispatch was
+					// still running (or already timed out) — leave the newer
+					// dispatch's in-flight state untouched.
+					log.warn(
+						`Vacuum tick (${source}, token ${token}) settled after being ` +
+							`superseded by a stale-guard takeover (current token ` +
+							`${state.vacuumTickToken}) — leaving the current in-flight ` +
+							`state untouched.`,
+					);
+					return;
+				}
 				state.vacuumTickInFlight = false;
 				state.vacuumTickInFlightSince = null;
 			});
