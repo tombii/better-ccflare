@@ -384,10 +384,16 @@ export function createVacuumScheduler(
 	// Catch-up incremental vacuum: the hourly retention-driven tick above caps
 	// reclaim at ~1 GiB (VACUUM_HOURLY_MAX_PAGES_PER_TICK), which cannot keep
 	// pace with a sustained delete rate above that. This runs every 5 minutes,
-	// but shouldRunVacuumCatchUp keeps it a no-op in steady state: it only
-	// dispatches a (smaller-capped) reclaim while the freelist ratio is
-	// elevated and the async writer has fully drained its own queue, so it
-	// adds no extra writer-slot contention when the DB is already healthy.
+	// but shouldRunVacuumCatchUp keeps it a genuine no-op in steady state (a
+	// below-threshold ratio skips regardless of the queue, so a healthy DB
+	// adds no writer-slot contention at all). Once the ratio IS elevated, it
+	// only dispatches while the async writer's queue is empty at the moment
+	// this check runs — a best-effort backpressure gate, not a running
+	// guarantee (greptile review on PR #475): the queue is a point-in-time
+	// snapshot taken before dispatch, so writes arriving afterwards, while
+	// the reclaim's own chunks are still in flight, can still contend for
+	// the writer slot. This reduces, rather than eliminates, contention on
+	// an elevated-ratio dispatch.
 	const runCatchUpTick = async (): Promise<void> => {
 		const autoVacuumEnabled = config.getAutoVacuumEnabled();
 		const asyncWriterQueuedJobs = asyncWriter.getHealth().queuedJobs;
