@@ -12,6 +12,7 @@ import {
 	VACUUM_CATCHUP_FREELIST_RATIO_THRESHOLD,
 	VACUUM_CATCHUP_MAX_PAGES_PER_TICK,
 	VACUUM_HOURLY_MAX_PAGES_PER_TICK,
+	VACUUM_TICK_STALE_GUARD_MS,
 	type VacuumSchedulerDbOps,
 } from "./vacuum-scheduler";
 
@@ -224,5 +225,42 @@ describe("createVacuumScheduler — shared in-flight guard", () => {
 		await scheduler.runCatchUpTick();
 
 		expect(calls.length).toBe(0);
+	});
+
+	it("(e) a stale in-flight flag self-heals after VACUUM_TICK_STALE_GUARD_MS and dispatches", async () => {
+		let now = 1_000_000;
+		const gate = new Promise<void>(() => {}); // never settles — simulates a hung worker
+		const { dbOps, calls } = makeFakeDbOps({
+			incrementalVacuumAdaptive: async (o) => {
+				calls.push(o);
+				if (calls.length === 1) {
+					await gate;
+				}
+				return { reclaimedPages: 0, chunks: 0 };
+			},
+		});
+		const scheduler = createVacuumScheduler({
+			dbOps,
+			config: makeFakeConfig(),
+			asyncWriter: makeFakeAsyncWriter(),
+			log: new Logger("test"),
+			now: () => now,
+		});
+
+		scheduler.runHourlyTick(); // latches the flag forever (gate never resolves)
+		await flushAsync();
+		expect(scheduler.state.vacuumTickInFlight).toBe(true);
+
+		// Still within the ceiling — stays skipped.
+		now += VACUUM_TICK_STALE_GUARD_MS - 1;
+		scheduler.runHourlyTick();
+		await flushAsync();
+		expect(calls.length).toBe(1);
+
+		// Past the ceiling — self-heals and dispatches a fresh call.
+		now += 2;
+		scheduler.runHourlyTick();
+		await flushAsync();
+		expect(calls.length).toBe(2);
 	});
 });

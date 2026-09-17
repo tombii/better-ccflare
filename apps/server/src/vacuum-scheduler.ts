@@ -107,8 +107,24 @@ export function shouldRunVacuumCatchUp(input: {
 	);
 }
 
+/**
+ * Self-heal ceiling for the shared `vacuumTickInFlight` flag (internal-3):
+ * if a tick still finds it set after this long, a prior reclaim promise
+ * almost certainly never settled (e.g. the worker died without firing
+ * `onmessage` or `onerror`) rather than genuinely still running —
+ * `incrementalVacuum()`'s own 120s per-chunk worker timeout
+ * (database-operations.ts) should already have rejected it by then.
+ * Derivation: 3 * 120s per-chunk timeout * 16 chunks (the hourly tick's
+ * ~1 GiB ceiling / 64 MiB chunk size — the most chunks one legitimate tick
+ * can issue) = 96 minutes; capped at 30 minutes so a genuinely wedged flag
+ * cannot silently disable both reclaim ticks for over an hour and a half.
+ */
+export const VACUUM_TICK_STALE_GUARD_MS = 30 * 60 * 1000;
+
 export interface VacuumSchedulerState {
 	vacuumTickInFlight: boolean;
+	/** epoch ms (per the injected `now`) when the flag was last set; null while not in flight. */
+	vacuumTickInFlightSince: number | null;
 }
 
 export interface VacuumSchedulerDeps {
@@ -116,6 +132,8 @@ export interface VacuumSchedulerDeps {
 	config: VacuumSchedulerConfig;
 	asyncWriter: VacuumSchedulerAsyncWriter;
 	log: Logger;
+	/** Injectable clock for the stale-guard test; defaults to `Date.now`. */
+	now?: () => number;
 }
 
 export interface VacuumScheduler {
@@ -137,6 +155,7 @@ export function createVacuumScheduler(
 	deps: VacuumSchedulerDeps,
 ): VacuumScheduler {
 	const { dbOps, config, asyncWriter, log } = deps;
+	const now = deps.now ?? Date.now;
 
 	// The hourly retention tick and the 5-minute vacuum catch-up tick both
 	// fire incrementalVacuumAdaptive() and are each fire-and-forget from
@@ -149,19 +168,42 @@ export function createVacuumScheduler(
 	// reclaim loops could each hold SQLite's single writer slot in their own
 	// worker call, doubling exactly the contention this backstop exists to
 	// bound.
-	const state: VacuumSchedulerState = { vacuumTickInFlight: false };
+	const state: VacuumSchedulerState = {
+		vacuumTickInFlight: false,
+		vacuumTickInFlightSince: null,
+	};
 
 	const runVacuumTick = (
 		opts: Parameters<VacuumSchedulerDbOps["incrementalVacuumAdaptive"]>[0],
 		source: "retention" | "catchup",
 	): void => {
 		if (state.vacuumTickInFlight) {
-			log.debug(
-				`Vacuum tick (${source}) skipped — another vacuum tick is still in flight`,
-			);
-			return;
+			const age =
+				state.vacuumTickInFlightSince !== null
+					? now() - state.vacuumTickInFlightSince
+					: 0;
+			if (age >= VACUUM_TICK_STALE_GUARD_MS) {
+				// internal-3: the flag has been held far longer than any
+				// legitimate reclaim can take (incrementalVacuum()'s own
+				// per-chunk worker timeout bounds each chunk) — treat it as
+				// stuck rather than early-returning forever, and dispatch this
+				// tick instead of silently disabling reclaim indefinitely.
+				log.warn(
+					`Vacuum tick in-flight flag has been set for ${age}ms, past the ` +
+						`${VACUUM_TICK_STALE_GUARD_MS}ms self-heal ceiling — a prior ` +
+						`reclaim likely never settled. Resetting the guard and ` +
+						`dispatching this tick (${source}).`,
+				);
+				state.vacuumTickInFlight = false;
+			} else {
+				log.debug(
+					`Vacuum tick (${source}) skipped — another vacuum tick is still in flight`,
+				);
+				return;
+			}
 		}
 		state.vacuumTickInFlight = true;
+		state.vacuumTickInFlightSince = now();
 		dbOps
 			.incrementalVacuumAdaptive(opts)
 			.then((r) => {
@@ -176,6 +218,7 @@ export function createVacuumScheduler(
 			})
 			.finally(() => {
 				state.vacuumTickInFlight = false;
+				state.vacuumTickInFlightSince = null;
 			});
 	};
 

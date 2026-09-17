@@ -279,3 +279,51 @@ describe("DatabaseOperations.getPageCount", () => {
 		expect(Number.isInteger(n)).toBe(true);
 	});
 });
+
+// internal-3: the awaited worker promise in incrementalVacuum() previously
+// had no timer — resolve on onmessage, reject on onerror, and nothing else.
+// A worker that dies without delivering either left the await pending
+// forever, which (once vacuum-scheduler.ts's shared vacuumTickInFlight guard
+// exists) permanently disables both reclaim ticks. These tests fake the
+// global Worker constructor so a "hung worker" never posts a message,
+// without spawning a real thread or sleeping for the real 120s default.
+describe("DatabaseOperations.incrementalVacuum — worker timeout (internal-3)", () => {
+	let dbOps: DatabaseOperations;
+	let OriginalWorker: typeof Worker;
+
+	beforeEach(() => {
+		dbOps = new DatabaseOperations(tempDbPath());
+		OriginalWorker = globalThis.Worker;
+	});
+
+	afterEach(async () => {
+		globalThis.Worker = OriginalWorker;
+		await dbOps.dispose?.();
+	});
+
+	it("rejects with a descriptive Error, and still terminates the worker, when it never posts onmessage or onerror", async () => {
+		let terminated = false;
+		class HangingWorker {
+			onmessage: ((event: MessageEvent) => void) | null = null;
+			onerror: ((event: ErrorEvent) => void) | null = null;
+			constructor(
+				public url: string | URL,
+				public opts?: unknown,
+			) {}
+			postMessage(_msg: unknown): void {
+				// Deliberately never calls onmessage or onerror — simulates a
+				// worker that died without delivering either callback.
+			}
+			terminate(): void {
+				terminated = true;
+			}
+		}
+		// @ts-expect-error test double — only implements what incrementalVacuum() uses
+		globalThis.Worker = HangingWorker;
+
+		await expect(
+			dbOps.incrementalVacuum(100, { workerTimeoutMs: 20 }),
+		).rejects.toThrow(/timed out/);
+		expect(terminated).toBe(true);
+	});
+});

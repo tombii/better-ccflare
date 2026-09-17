@@ -194,6 +194,22 @@ function configureSqlite(db: Database, config: DatabaseConfig): void {
 const INC_VAC_SKIP_ESCALATE_AT = 3;
 
 /**
+ * Per-chunk worker timeout for `incrementalVacuum()` (internal-3). The
+ * awaited worker promise previously had no timer at all: `resolve` fires on
+ * `onmessage`, `reject` on `onerror`, and nothing else — a worker that dies
+ * without delivering either (a thread-level OOM kill on a constrained
+ * container, or a `Blob`-URL worker that fails to start without raising
+ * `onerror`) left the await pending forever, which — once the shared
+ * `vacuumTickInFlight` guard in `apps/server/src/vacuum-scheduler.ts` was
+ * introduced — permanently disables both the hourly and catch-up reclaim
+ * ticks. A worker message round trip for the default 16384-page chunk
+ * (`incrementalVacuumAdaptive`'s `CHUNK`) completes in well under a second
+ * on the production file, so 120s is generous headroom while still bounding
+ * a genuinely hung worker.
+ */
+const INC_VACUUM_WORKER_TIMEOUT_MS = 120_000;
+
+/**
  * DatabaseOperations using Repository Pattern
  * Provides a clean, organized interface for database operations
  *
@@ -1710,8 +1726,19 @@ OAuth tokens will need to be re-authenticated.
 	 * inner worker handles its own errors and posts them back as
 	 * `{ok: false, error}` — we surface them via the returned promise rather
 	 * than throwing, so a transient failure doesn't crash the hourly tick.
+	 *
+	 * `opts.workerTimeoutMs` (internal-3) bounds the awaited worker round
+	 * trip — see `INC_VACUUM_WORKER_TIMEOUT_MS` for the default and its
+	 * derivation. A worker that never fires `onmessage` or `onerror` rejects
+	 * with a descriptive timeout Error instead of hanging the await forever;
+	 * the surrounding `finally` still terminates the worker either way.
+	 * Injectable only so a test can shorten it — production callers should
+	 * never override it.
 	 */
-	async incrementalVacuum(pages = 8000): Promise<void> {
+	async incrementalVacuum(
+		pages = 8000,
+		opts?: { workerTimeoutMs?: number },
+	): Promise<void> {
 		if (!this.sqliteDb || !this.resolvedDbPath) return;
 
 		// Resolve the effective auto_vacuum mode. The captured `originalMode`
@@ -1762,13 +1789,28 @@ OAuth tokens will need to be re-authenticated.
 			);
 		}
 
+		const workerTimeoutMs =
+			opts?.workerTimeoutMs ?? INC_VACUUM_WORKER_TIMEOUT_MS;
 		try {
 			const result = await new Promise<
 				{ ok: true; mode: number } | { ok: false; error: string }
 			>((resolve, reject) => {
-				worker.onmessage = (event: MessageEvent) => resolve(event.data);
-				worker.onerror = (event: ErrorEvent) =>
+				const timeoutId = setTimeout(() => {
+					reject(
+						new Error(
+							`incremental-vacuum worker timed out after ${workerTimeoutMs}ms ` +
+								`(pages=${pages}) — the worker never fired onmessage or onerror`,
+						),
+					);
+				}, workerTimeoutMs);
+				worker.onmessage = (event: MessageEvent) => {
+					clearTimeout(timeoutId);
+					resolve(event.data);
+				};
+				worker.onerror = (event: ErrorEvent) => {
+					clearTimeout(timeoutId);
 					reject(new Error(event.message ?? "incremental-vacuum worker error"));
+				};
 				worker.postMessage({ dbPath, pages });
 			});
 			if (result.ok) {
