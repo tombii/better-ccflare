@@ -27,7 +27,11 @@ import type { Logger } from "@better-ccflare/logger";
  */
 export type VacuumSchedulerDbOps = Pick<
 	DatabaseOperations,
-	"incrementalVacuumAdaptive" | "getFreelistCount" | "getPageCount"
+	| "incrementalVacuumAdaptive"
+	| "getFreelistCount"
+	| "getPageCount"
+	| "recordVacuumCatchUpBusySkip"
+	| "resetVacuumCatchUpBusySkips"
 >;
 
 /** Narrow surface this module needs from `Config`. */
@@ -106,6 +110,16 @@ export function shouldRunVacuumCatchUp(input: {
 		ratio >= (input.ratioThreshold ?? VACUUM_CATCHUP_FREELIST_RATIO_THRESHOLD)
 	);
 }
+
+/**
+ * Consecutive catch-up busy-skip count at which the tick escalates to a
+ * `warn` log, and every further multiple of it (internal-2): 12 ticks at
+ * the 5-minute cadence is 1 hour of the catch-up tick being unable to get a
+ * turn because the async writer's queue never drained — long enough that an
+ * operator should know reclaim may be falling behind, short enough not to
+ * spam logs on an ordinary few-minute contention burst.
+ */
+const VACUUM_CATCHUP_BUSY_SKIP_WARN_EVERY = 12;
 
 /**
  * Self-heal ceiling for the shared `vacuumTickInFlight` flag (internal-3):
@@ -242,13 +256,43 @@ export function createVacuumScheduler(
 	// elevated and the async writer has fully drained its own queue, so it
 	// adds no extra writer-slot contention when the DB is already healthy.
 	const runCatchUpTick = async (): Promise<void> => {
+		const autoVacuumEnabled = config.getAutoVacuumEnabled();
+		const asyncWriterQueuedJobs = asyncWriter.getHealth().queuedJobs;
+		const freelistPages = dbOps.getFreelistCount();
+		const pageCount = dbOps.getPageCount();
 		const decision = {
-			autoVacuumEnabled: config.getAutoVacuumEnabled(),
-			asyncWriterQueuedJobs: asyncWriter.getHealth().queuedJobs,
-			freelistPages: dbOps.getFreelistCount(),
-			pageCount: dbOps.getPageCount(),
+			autoVacuumEnabled,
+			asyncWriterQueuedJobs,
+			freelistPages,
+			pageCount,
 		};
+
+		// internal-2: asyncWriterQueuedJobs > 0 is the ONE backoff condition
+		// this tick added on top of the switch and the ratio threshold, and it
+		// is the one that can correlate with — and hide behind — the exact
+		// writer contention the tick exists to work through. Track it with its
+		// own counter instead of letting it vanish into a silent early return;
+		// "ratio below threshold" is ordinary steady state and is not tracked
+		// here.
+		if (autoVacuumEnabled && asyncWriterQueuedJobs > 0) {
+			const consecutive = dbOps.recordVacuumCatchUpBusySkip();
+			if (consecutive % VACUUM_CATCHUP_BUSY_SKIP_WARN_EVERY === 0) {
+				const hours = (consecutive * 5) / 60;
+				log.warn(
+					`Vacuum catch-up has backed off ${consecutive} consecutive times ` +
+						`(~${hours}h at the 5-minute cadence) because the async DB ` +
+						`writer's queue was non-empty — reclaim may be starved by ` +
+						`sustained writer contention.`,
+				);
+			}
+		}
+
 		if (!shouldRunVacuumCatchUp(decision)) return;
+
+		// A dispatch means the writer was idle this round, so any prior
+		// busy-skip streak is over.
+		dbOps.resetVacuumCatchUpBusySkips();
+
 		log.debug(
 			`Vacuum catch-up dispatching — freelist ${decision.freelistPages}/${decision.pageCount} pages`,
 		);

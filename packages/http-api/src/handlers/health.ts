@@ -310,6 +310,8 @@ export function createHealthHandler(
 					freelistRatio: vacuum.freelistRatio,
 					consecutiveBusySkips: vacuum.consecutiveBusySkips,
 					escalated: vacuum.escalated,
+					catchUpBusySkips: vacuum.catchUpBusySkips,
+					catchUpBusySkipsTotal: vacuum.catchUpBusySkipsTotal,
 				},
 			};
 		}

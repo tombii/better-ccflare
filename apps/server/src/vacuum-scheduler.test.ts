@@ -5,7 +5,8 @@
  * these run in milliseconds without a real DB, worker, or async writer.
  */
 import { describe, expect, it } from "bun:test";
-import { Logger } from "@better-ccflare/logger";
+import { Logger, logBus } from "@better-ccflare/logger";
+import type { LogEvent } from "@better-ccflare/types";
 import {
 	createVacuumScheduler,
 	shouldRunVacuumCatchUp,
@@ -98,6 +99,8 @@ function makeFakeDbOps(opts: FakeDbOpsOptions = {}) {
 	const calls: Array<
 		Parameters<VacuumSchedulerDbOps["incrementalVacuumAdaptive"]>[0]
 	> = [];
+	let catchUpBusySkips = 0;
+	let catchUpBusySkipsTotal = 0;
 	const dbOps: VacuumSchedulerDbOps = {
 		incrementalVacuumAdaptive:
 			opts.incrementalVacuumAdaptive ??
@@ -107,8 +110,21 @@ function makeFakeDbOps(opts: FakeDbOpsOptions = {}) {
 			}),
 		getFreelistCount: () => opts.freelistPages ?? 0,
 		getPageCount: () => opts.pageCount ?? 100,
+		recordVacuumCatchUpBusySkip: () => {
+			catchUpBusySkips += 1;
+			catchUpBusySkipsTotal += 1;
+			return catchUpBusySkips;
+		},
+		resetVacuumCatchUpBusySkips: () => {
+			catchUpBusySkips = 0;
+		},
 	};
-	return { dbOps, calls };
+	return {
+		dbOps,
+		calls,
+		getCatchUpBusySkips: () => catchUpBusySkips,
+		getCatchUpBusySkipsTotal: () => catchUpBusySkipsTotal,
+	};
 }
 
 /**
@@ -262,5 +278,101 @@ describe("createVacuumScheduler — shared in-flight guard", () => {
 		scheduler.runHourlyTick();
 		await flushAsync();
 		expect(calls.length).toBe(2);
+	});
+});
+
+describe("createVacuumScheduler — catch-up busy-skip telemetry (internal-2)", () => {
+	it("does not dispatch and does not touch the busy-skip counter when the freelist ratio is below threshold", async () => {
+		const { dbOps, calls, getCatchUpBusySkips } = makeFakeDbOps({
+			freelistPages: 5,
+			pageCount: 100, // 5% — below the 10% threshold
+		});
+		const scheduler = createVacuumScheduler({
+			dbOps,
+			config: makeFakeConfig(),
+			asyncWriter: makeFakeAsyncWriter(0), // writer idle
+			log: new Logger("test"),
+		});
+
+		await scheduler.runCatchUpTick();
+
+		expect(calls.length).toBe(0);
+		expect(getCatchUpBusySkips()).toBe(0);
+	});
+
+	it("records a busy skip and does not dispatch when the async writer queue is non-empty", async () => {
+		const { dbOps, calls, getCatchUpBusySkips, getCatchUpBusySkipsTotal } =
+			makeFakeDbOps({
+				freelistPages: 50,
+				pageCount: 100, // 50% free — would otherwise qualify
+			});
+		const scheduler = createVacuumScheduler({
+			dbOps,
+			config: makeFakeConfig(),
+			asyncWriter: makeFakeAsyncWriter(1), // queue non-empty
+			log: new Logger("test"),
+		});
+
+		await scheduler.runCatchUpTick();
+		await scheduler.runCatchUpTick();
+
+		expect(calls.length).toBe(0);
+		expect(getCatchUpBusySkips()).toBe(2);
+		expect(getCatchUpBusySkipsTotal()).toBe(2);
+	});
+
+	it("resets the consecutive busy-skip counter once a catch-up reclaim actually dispatches", async () => {
+		let queuedJobs = 1;
+		const { dbOps, calls, getCatchUpBusySkips, getCatchUpBusySkipsTotal } =
+			makeFakeDbOps({
+				freelistPages: 50,
+				pageCount: 100,
+			});
+		const scheduler = createVacuumScheduler({
+			dbOps,
+			config: makeFakeConfig(),
+			asyncWriter: { getHealth: () => ({ queuedJobs }) },
+			log: new Logger("test"),
+		});
+
+		await scheduler.runCatchUpTick(); // busy skip #1
+		await scheduler.runCatchUpTick(); // busy skip #2
+		expect(getCatchUpBusySkips()).toBe(2);
+
+		queuedJobs = 0; // writer drains
+		await scheduler.runCatchUpTick();
+		await flushAsync();
+
+		expect(calls.length).toBe(1);
+		expect(getCatchUpBusySkips()).toBe(0);
+		// The lifetime total is never reset.
+		expect(getCatchUpBusySkipsTotal()).toBe(2);
+	});
+
+	it("logs a WARN once the consecutive busy-skip count reaches 12, and again at 24", async () => {
+		const { dbOps } = makeFakeDbOps({ freelistPages: 50, pageCount: 100 });
+		const log = new Logger("test");
+		const scheduler = createVacuumScheduler({
+			dbOps,
+			config: makeFakeConfig(),
+			asyncWriter: makeFakeAsyncWriter(1),
+			log,
+		});
+
+		const captured: LogEvent[] = [];
+		const handler = (event: LogEvent) => captured.push(event);
+		logBus.on("log", handler);
+		try {
+			for (let i = 0; i < 24; i++) {
+				await scheduler.runCatchUpTick();
+			}
+		} finally {
+			logBus.off("log", handler);
+		}
+
+		const warns = captured.filter((e) => e.level === "WARN");
+		expect(warns.length).toBe(2);
+		expect(warns[0]?.msg).toContain("12");
+		expect(warns[1]?.msg).toContain("24");
 	});
 });

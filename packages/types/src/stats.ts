@@ -47,6 +47,17 @@ export interface VacuumStatus {
 	consecutiveBusySkips: number;
 	/** True once `consecutiveBusySkips` has crossed the escalation threshold — sustained reclaim starvation an operator should investigate. */
 	escalated: boolean;
+	/**
+	 * Consecutive 5-minute catch-up ticks that backed off because the async
+	 * DB writer's queue was non-empty. Resets to 0 the next time a catch-up
+	 * reclaim actually dispatches — NOT on a skip for any other reason (switch
+	 * off, freelist ratio below threshold). A high value means the catch-up
+	 * tick is being starved by writer contention, the exact condition it
+	 * exists to work through.
+	 */
+	catchUpBusySkips: number;
+	/** Lifetime total of the same backoff; never reset, a coarse long-run signal alongside the consecutive counter. */
+	catchUpBusySkipsTotal: number;
 }
 
 /**
@@ -307,6 +318,8 @@ export interface HealthResponse {
 				freelistRatio: number;
 				consecutiveBusySkips: number;
 				escalated: boolean;
+				catchUpBusySkips: number;
+				catchUpBusySkipsTotal: number;
 			};
 		};
 	};

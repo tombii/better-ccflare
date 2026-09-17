@@ -266,7 +266,14 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		lastQuickSkipReason: null,
 		lastFullSkipReason: null,
 	};
-	/** Cached adaptive-vacuum status; surfaced via /health. Written only by incrementalVacuumAdaptive(). */
+	/**
+	 * Cached adaptive-vacuum status; surfaced via /health. Written by
+	 * incrementalVacuumAdaptive() (via recordVacuumStatus()) and by
+	 * recordVacuumCatchUpBusySkip()/resetVacuumCatchUpBusySkips() (the
+	 * catch-up tick's busy-skip counters, updated from
+	 * apps/server/src/vacuum-scheduler.ts since that backoff happens before
+	 * incrementalVacuumAdaptive() is ever called).
+	 */
 	private vacuumStatus: VacuumStatus = {
 		enabled: true,
 		lastRunAt: null,
@@ -276,6 +283,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		freelistRatio: 0,
 		consecutiveBusySkips: 0,
 		escalated: false,
+		catchUpBusySkips: 0,
+		catchUpBusySkipsTotal: 0,
 	};
 
 	// Repositories
@@ -2008,6 +2017,11 @@ OAuth tokens will need to be re-authenticated.
 	): void {
 		const pageCount = this.getPageCount();
 		this.vacuumStatus = {
+			// Spread first so this never clobbers catchUpBusySkips /
+			// catchUpBusySkipsTotal — owned by
+			// recordVacuumCatchUpBusySkip()/resetVacuumCatchUpBusySkips() below,
+			// updated from outside this class.
+			...this.vacuumStatus,
 			enabled: true,
 			lastRunAt: Date.now(),
 			lastReclaimedPages: reclaimedPages,
@@ -2017,6 +2031,37 @@ OAuth tokens will need to be re-authenticated.
 			consecutiveBusySkips: this.incVacuumConsecutiveSkips,
 			escalated: this.incVacuumConsecutiveSkips >= INC_VAC_SKIP_ESCALATE_AT,
 		};
+	}
+
+	/**
+	 * Records one catch-up-tick busy skip (internal-2): called from
+	 * `apps/server/src/vacuum-scheduler.ts` when the 5-minute catch-up tick
+	 * backs off because the async DB writer's queue is non-empty — a
+	 * condition checked BEFORE `incrementalVacuumAdaptive()` is ever called,
+	 * so `recordVacuumStatus()` above never runs for it. Kept narrow (touches
+	 * only the two busy-skip counters) so a busy skip never overwrites the
+	 * last real reclaim's freelist/ratio telemetry. Returns the updated
+	 * consecutive count so the caller can decide whether to escalate to a
+	 * `warn` log without a second read.
+	 */
+	recordVacuumCatchUpBusySkip(): number {
+		const catchUpBusySkips = this.vacuumStatus.catchUpBusySkips + 1;
+		this.vacuumStatus = {
+			...this.vacuumStatus,
+			catchUpBusySkips,
+			catchUpBusySkipsTotal: this.vacuumStatus.catchUpBusySkipsTotal + 1,
+		};
+		return catchUpBusySkips;
+	}
+
+	/**
+	 * Resets the consecutive catch-up busy-skip counter (internal-2), called
+	 * once a catch-up reclaim actually dispatches. Never touches
+	 * `catchUpBusySkipsTotal`, which is a lifetime counter.
+	 */
+	resetVacuumCatchUpBusySkips(): void {
+		if (this.vacuumStatus.catchUpBusySkips === 0) return;
+		this.vacuumStatus = { ...this.vacuumStatus, catchUpBusySkips: 0 };
 	}
 
 	// API Key operations delegated to repository

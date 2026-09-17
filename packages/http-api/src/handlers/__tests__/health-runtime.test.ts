@@ -216,6 +216,8 @@ describe("health runtime payload", () => {
 				freelistRatio: 0.12,
 				consecutiveBusySkips: 0,
 				escalated: false,
+				catchUpBusySkips: 3,
+				catchUpBusySkipsTotal: 17,
 			}),
 		);
 
@@ -232,6 +234,8 @@ describe("health runtime payload", () => {
 			freelistRatio: 0.12,
 			consecutiveBusySkips: 0,
 			escalated: false,
+			catchUpBusySkips: 3,
+			catchUpBusySkipsTotal: 17,
 		});
 	});
 
@@ -263,6 +267,8 @@ describe("health runtime payload", () => {
 				freelistRatio: 0,
 				consecutiveBusySkips: 0,
 				escalated: false,
+				catchUpBusySkips: 0,
+				catchUpBusySkipsTotal: 0,
 			}),
 		);
 

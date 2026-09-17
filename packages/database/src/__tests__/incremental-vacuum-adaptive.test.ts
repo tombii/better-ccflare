@@ -280,6 +280,60 @@ describe("DatabaseOperations.getPageCount", () => {
 	});
 });
 
+// internal-2: the catch-up tick's own backoff (the async DB writer's queue
+// non-empty) happens before incrementalVacuumAdaptive() is ever called, so
+// these two counters are updated directly by the scheduler rather than
+// through recordVacuumStatus().
+describe("DatabaseOperations.recordVacuumCatchUpBusySkip / resetVacuumCatchUpBusySkips", () => {
+	let dbOps: DatabaseOperations;
+
+	beforeEach(() => {
+		dbOps = new DatabaseOperations(tempDbPath());
+	});
+
+	afterEach(async () => {
+		await dbOps.dispose?.();
+	});
+
+	it("increments both counters and returns the updated consecutive count", () => {
+		expect(dbOps.recordVacuumCatchUpBusySkip()).toBe(1);
+		expect(dbOps.recordVacuumCatchUpBusySkip()).toBe(2);
+		expect(dbOps.recordVacuumCatchUpBusySkip()).toBe(3);
+
+		const status = dbOps.getVacuumStatus();
+		expect(status.catchUpBusySkips).toBe(3);
+		expect(status.catchUpBusySkipsTotal).toBe(3);
+	});
+
+	it("resetVacuumCatchUpBusySkips clears only the consecutive counter, never the lifetime total", () => {
+		dbOps.recordVacuumCatchUpBusySkip();
+		dbOps.recordVacuumCatchUpBusySkip();
+		dbOps.resetVacuumCatchUpBusySkips();
+
+		const status = dbOps.getVacuumStatus();
+		expect(status.catchUpBusySkips).toBe(0);
+		expect(status.catchUpBusySkipsTotal).toBe(2);
+	});
+
+	it("a successful incrementalVacuumAdaptive() call does not clobber an in-progress busy-skip streak", async () => {
+		const internals = dbOps as unknown as {
+			getFreelistCount: () => number;
+			incrementalVacuum: (pages: number) => Promise<void>;
+		};
+		internals.getFreelistCount = () => 0; // steady-state no-op path
+		internals.incrementalVacuum = async () => {};
+
+		dbOps.recordVacuumCatchUpBusySkip();
+		dbOps.recordVacuumCatchUpBusySkip();
+
+		await dbOps.incrementalVacuumAdaptive();
+
+		const status = dbOps.getVacuumStatus();
+		expect(status.catchUpBusySkips).toBe(2);
+		expect(status.catchUpBusySkipsTotal).toBe(2);
+	});
+});
+
 // internal-3: the awaited worker promise in incrementalVacuum() previously
 // had no timer — resolve on onmessage, reject on onerror, and nothing else.
 // A worker that dies without delivering either left the await pending
