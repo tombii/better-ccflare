@@ -123,23 +123,32 @@ const VACUUM_CATCHUP_BUSY_SKIP_WARN_EVERY = 12;
 
 /**
  * Self-heal ceiling for the shared `vacuumTickInFlight` flag (internal-3,
- * revised for internal-breadth-1): if a tick still finds it set after this
- * long, a prior reclaim promise almost certainly never settled (e.g. the
- * worker died without firing `onmessage` or `onerror`) rather than
- * genuinely still running.
+ * revised for internal-breadth-1, then for fix-loop-3): if a tick still
+ * finds it set after this long, a prior reclaim promise almost certainly
+ * never settled (e.g. the worker died without firing `onmessage` or
+ * `onerror`) — or is still genuinely running under sustained writer
+ * contention. Past this ceiling, `runVacuumTick` no longer tries to take
+ * over and dispatch a second reclaim (see its stale branch below for why
+ * that was removed); it only warns and skips.
  * Derivation: each chunk of the hourly tick's reclaim is individually bounded
  * by `incrementalVacuum()`'s own 120s per-chunk worker timeout
  * (`INC_VACUUM_WORKER_TIMEOUT_MS` in database-operations.ts), and the hourly
  * tick issues at most 16 chunks (`VACUUM_HOURLY_MAX_PAGES_PER_TICK` /
  * `CHUNK` = 262144 / 16384) — so a healthy tick, even one whose every single
- * chunk times out and gets individually retried by the timeout's own reject
- * path, cannot legitimately run longer than 120s * 16 = 32 minutes. This
- * ceiling is deliberately set to well over 2x that bound (65 minutes) so a
- * merely slow-but-healthy tick can never trigger a false self-heal takeover
- * (see the dispatch-token handling in `runVacuumTick` below for what happens
- * when one nonetheless does, via genuine timer drift or a future change to
- * the per-chunk bound), while a genuinely wedged flag is still caught well
- * under two hours instead of disabling both reclaim ticks indefinitely.
+ * chunk is merely slow (approaching, but never exceeding, the 120s per-chunk
+ * timeout), cannot legitimately run longer than 120s * 16 = 32 minutes. A
+ * chunk that actually TIMES OUT is a different, faster-ending case, not a
+ * slower one: `incrementalVacuumAdaptive()` throws immediately on the first
+ * chunk's rejection instead of retrying it (database-operations.ts), which
+ * aborts that dispatch's whole reclaim loop right away and — once the
+ * rejection reaches `runVacuumTick`'s `.catch()`/`.finally()` below —
+ * releases the shared flag with it, so a timed-out chunk ends a dispatch
+ * well under the 32-minute bound, never past it. This ceiling is
+ * deliberately set to well over 2x that 32-minute healthy-tick bound (65
+ * minutes) so a merely slow-but-healthy tick can never trigger a false
+ * stale-guard warning, while a genuinely wedged flag is still caught well
+ * under two hours instead of silently disabling both reclaim ticks
+ * indefinitely without ever telling an operator why.
  */
 export const VACUUM_TICK_STALE_GUARD_MS = 65 * 60 * 1000;
 
@@ -149,27 +158,47 @@ export interface VacuumSchedulerState {
 	vacuumTickInFlightSince: number | null;
 	/**
 	 * Monotonically increasing dispatch identity (internal-breadth-1). Every
-	 * call to `runVacuumTick()` that actually dispatches (fresh, or a
-	 * self-heal takeover of a stale flag) mints a new token by incrementing
-	 * this counter and captures it in its own `.finally()` closure. A
-	 * dispatch's `.finally()` only clears `vacuumTickInFlight` /
+	 * call to `runVacuumTick()` that actually dispatches mints a new token by
+	 * incrementing this counter and captures it in its own `.finally()`
+	 * closure, which only clears `vacuumTickInFlight` /
 	 * `vacuumTickInFlightSince` when this field still equals the token it
-	 * captured — so a stale dispatch that settles after being superseded by
-	 * a self-heal takeover becomes a no-op instead of clobbering the newer
-	 * dispatch's state. 0 before the first dispatch ever runs; tokens are
-	 * minted starting at 1.
+	 * captured. Originally added to guard against a stale dispatch's belated
+	 * settlement clobbering a *newer* dispatch's state after a self-heal
+	 * takeover; fix-loop-3 removed the takeover path itself (see the
+	 * stale-guard comment above `VACUUM_TICK_STALE_GUARD_MS` and the
+	 * warn-only stale branch in `runVacuumTick` below), so with only ever one
+	 * dispatch outstanding at a time this comparison can no longer actually
+	 * diverge in practice — kept as the cheap, already-correct
+	 * defense-in-depth it always was (c259ac83) rather than stripped along
+	 * with the takeover it used to protect against. 0 before the first
+	 * dispatch ever runs; tokens are minted starting at 1.
 	 */
 	vacuumTickToken: number;
 	/**
-	 * Count of times the self-heal ceiling has taken over a flag it judged
-	 * stale (internal-breadth-1). Exposed for tests/observability; not
-	 * plumbed into `VacuumStatus` (packages/types/src/stats.ts) — that
-	 * struct is populated by `database-operations.ts`'s
-	 * `recordVacuumStatus()`, which this scheduler module has no handle on
-	 * (its `VacuumSchedulerDbOps` surface is deliberately narrow), so wiring
-	 * it through would touch files outside this fix's scope.
+	 * Count of times the self-heal ceiling has logged a stale-in-flight
+	 * warning (fix-loop-3; renamed from `staleTakeovers` — this guard no
+	 * longer dispatches a takeover reclaim, only warns and skips, see
+	 * `runVacuumTick`'s stale branch). Incremented only on an actual warn
+	 * emission, not on every stale tick: `lastStaleWarnAt` below rate-limits
+	 * the warn itself to at most once per `VACUUM_TICK_STALE_GUARD_MS` per
+	 * stuck dispatch, so a process stuck past the ceiling for hours logs
+	 * roughly once per ~65 minutes instead of once per 5-minute catch-up
+	 * tick. Exposed for tests/observability; not plumbed into `VacuumStatus`
+	 * (packages/types/src/stats.ts) — that struct is populated by
+	 * `database-operations.ts`'s `recordVacuumStatus()`, which this
+	 * scheduler module has no handle on (its `VacuumSchedulerDbOps` surface
+	 * is deliberately narrow), so wiring it through would touch files
+	 * outside this fix's scope.
 	 */
-	staleTakeovers: number;
+	staleWarnings: number;
+	/**
+	 * epoch ms (per the injected `now`) of the last stale-guard warning log;
+	 * null before the first one. Rate-limits `runVacuumTick`'s stale branch
+	 * to at most one warn per `VACUUM_TICK_STALE_GUARD_MS` per stuck
+	 * dispatch (fix-loop-3), so a wedged flag that persists across many
+	 * 5-minute catch-up ticks doesn't spam a warning every 5 minutes.
+	 */
+	lastStaleWarnAt: number | null;
 }
 
 export interface VacuumSchedulerDeps {
@@ -217,7 +246,8 @@ export function createVacuumScheduler(
 		vacuumTickInFlight: false,
 		vacuumTickInFlightSince: null,
 		vacuumTickToken: 0,
-		staleTakeovers: 0,
+		staleWarnings: 0,
+		lastStaleWarnAt: null,
 	};
 
 	const runVacuumTick = (
@@ -229,40 +259,66 @@ export function createVacuumScheduler(
 				state.vacuumTickInFlightSince !== null
 					? now() - state.vacuumTickInFlightSince
 					: 0;
-			if (age >= VACUUM_TICK_STALE_GUARD_MS) {
-				// internal-3 / internal-breadth-1: the flag has been held far
-				// longer than any legitimate reclaim can take
-				// (incrementalVacuum()'s own per-chunk worker timeout bounds each
-				// chunk) — treat it as stuck rather than early-returning forever,
-				// and dispatch this tick instead of silently disabling reclaim
-				// indefinitely. We do NOT simply clear the flag here: the prior
-				// dispatch below still owns a `.finally()` closure captured over
-				// the token it was minted with, and that promise may yet settle
-				// (it may not actually be hung, just slow). Minting a fresh token
-				// on the dispatch below makes this takeover visible to that stale
-				// closure once it runs.
-				state.staleTakeovers += 1;
-				log.warn(
-					`Vacuum tick in-flight flag has been set for ${age}ms (token ` +
-						`${state.vacuumTickToken}), past the ${VACUUM_TICK_STALE_GUARD_MS}ms ` +
-						`self-heal ceiling — a prior reclaim likely never settled. ` +
-						`Taking over the guard and dispatching this tick (${source}); ` +
-						`${state.staleTakeovers} stale takeover(s) so far.`,
-				);
-			} else {
+			if (age < VACUUM_TICK_STALE_GUARD_MS) {
 				log.debug(
 					`Vacuum tick (${source}) skipped — another vacuum tick is still in flight`,
 				);
 				return;
 			}
+			// fix-loop-3: WARN-ONLY, never dispatch a takeover. This branch used
+			// to mint a fresh token and dispatch a second
+			// `incrementalVacuumAdaptive()` call here (internal-3 /
+			// internal-breadth-1) once the flag looked stuck. Since 93daf88b
+			// every worker call inside `incrementalVacuum()` is bounded by
+			// `INC_VACUUM_WORKER_TIMEOUT_MS` (120s), and that timeout's
+			// rejection propagates through `incrementalVacuumAdaptive()` to this
+			// dispatch's own `.finally()` below — so a hung worker can no longer
+			// latch this flag forever the way the old takeover was built to
+			// route around: a healthy reclaim is bounded by 16 chunks * 120s ~=
+			// 32 minutes (see `VACUUM_TICK_STALE_GUARD_MS`'s derivation comment
+			// above), well under this 65-minute ceiling. A takeover that
+			// dispatches while the old call may still be genuinely running (just
+			// slow under contention, not hung) would put two reclaim loops on
+			// SQLite's single writer slot at once — the exact condition this
+			// shared flag exists to prevent (see the top-of-file comment) — and
+			// nothing at the `DatabaseOperations` layer serializes them (no
+			// mutex around `incrementalVacuumAdaptive()` / `incrementalVacuum()`,
+			// and no cancellation hook to stop the stale call instead). So: log
+			// once, count it, and skip — never dispatch. The flag can only be
+			// cleared by the stuck dispatch's own `.finally()` once its promise
+			// actually settles.
+			//
+			// Discarded alternative: keep the takeover but have it cancel the
+			// stale dispatch first. Rejected because `DatabaseOperations` has no
+			// cancellation hook for an in-flight worker call, and adding one is
+			// out of this fix's scope — the warn-only guard needs no new
+			// coordination at that layer.
+			const sinceLastWarn =
+				state.lastStaleWarnAt !== null
+					? now() - state.lastStaleWarnAt
+					: Number.POSITIVE_INFINITY;
+			if (sinceLastWarn >= VACUUM_TICK_STALE_GUARD_MS) {
+				state.staleWarnings += 1;
+				state.lastStaleWarnAt = now();
+				log.warn(
+					`Vacuum tick in-flight flag has been set for ${age}ms (token ` +
+						`${state.vacuumTickToken}), past the ${VACUUM_TICK_STALE_GUARD_MS}ms ` +
+						`self-heal ceiling — a prior reclaim likely never settled, or is ` +
+						`still genuinely running under sustained writer contention. NOT ` +
+						`dispatching a second reclaim (would double up on SQLite's ` +
+						`single writer slot) — skipping this tick (${source}) instead. ` +
+						`The flag clears only when the stuck dispatch's own promise ` +
+						`settles. ${state.staleWarnings} stale warning(s) so far.`,
+				);
+			}
+			return;
 		}
 		// internal-breadth-1: mint a token identifying THIS dispatch. The
 		// `.finally()` below only clears the shared in-flight state if this
-		// field still holds the same token by the time it runs — a stale
-		// dispatch's belated settlement (its own `.finally()` closes over the
-		// OLDER token value it captured here) becomes a no-op once a self-heal
-		// takeover has minted a newer one, instead of clobbering the newer
-		// dispatch's in-flight state.
+		// field still holds the same token by the time it runs. With the
+		// stale branch above no longer minting a fresh token on takeover
+		// (fix-loop-3), this can no longer actually diverge in practice —
+		// kept as the cheap, already-correct guard it always was (c259ac83).
 		const token = ++state.vacuumTickToken;
 		state.vacuumTickInFlight = true;
 		state.vacuumTickInFlightSince = now();
@@ -280,12 +336,11 @@ export function createVacuumScheduler(
 			})
 			.finally(() => {
 				if (state.vacuumTickToken !== token) {
-					// Superseded by a self-heal takeover while this dispatch was
-					// still running (or already timed out) — leave the newer
-					// dispatch's in-flight state untouched.
+					// Should be unreachable now that the stale branch never mints
+					// a new token — left in place as defense-in-depth (c259ac83).
 					log.warn(
 						`Vacuum tick (${source}, token ${token}) settled after being ` +
-							`superseded by a stale-guard takeover (current token ` +
+							`superseded by a newer dispatch (current token ` +
 							`${state.vacuumTickToken}) — leaving the current in-flight ` +
 							`state untouched.`,
 					);
