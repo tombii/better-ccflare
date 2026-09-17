@@ -484,7 +484,7 @@ describe("createVacuumScheduler — catch-up busy-skip telemetry (internal-2)", 
 		expect(getCatchUpBusySkipsTotal()).toBe(2);
 	});
 
-	it("does not touch the busy-skip counters when the freelist ratio is below threshold even though the writer queue is busy (greptile review on PR #475)", async () => {
+	it("does not count a busy skip when the freelist ratio is below threshold even though the writer queue is busy (greptile review on PR #475)", async () => {
 		const { dbOps, calls, getCatchUpBusySkips, getCatchUpBusySkipsTotal } =
 			makeFakeDbOps({
 				freelistPages: 5,
@@ -502,6 +502,40 @@ describe("createVacuumScheduler — catch-up busy-skip telemetry (internal-2)", 
 		expect(calls.length).toBe(0);
 		expect(getCatchUpBusySkips()).toBe(0);
 		expect(getCatchUpBusySkipsTotal()).toBe(0);
+	});
+
+	it("breaks the consecutive busy-skip streak, keeping the lifetime total, once the freelist ratio drops below threshold (greptile review on PR #475)", async () => {
+		// Two busy rounds at an elevated ratio build a streak of 2. The hourly
+		// reclaim (or fresh inserts reusing free pages) then pulls the ratio
+		// below the threshold without any catch-up dispatch: catch-up is no
+		// longer required, so the streak must end there — otherwise a later,
+		// unrelated contention period would resume from 2 and reach the
+		// twelve-skip "~1h" warning on skips that were never consecutive.
+		const fakeOpts = { freelistPages: 15, pageCount: 100 }; // 15%
+		const { dbOps, calls, getCatchUpBusySkips, getCatchUpBusySkipsTotal } =
+			makeFakeDbOps(fakeOpts);
+		const scheduler = createVacuumScheduler({
+			dbOps,
+			config: makeFakeConfig(),
+			asyncWriter: makeFakeAsyncWriter(1), // queue busy throughout
+			log: new Logger("test"),
+		});
+
+		await scheduler.runCatchUpTick();
+		await scheduler.runCatchUpTick();
+		expect(getCatchUpBusySkips()).toBe(2);
+		expect(getCatchUpBusySkipsTotal()).toBe(2);
+
+		fakeOpts.freelistPages = 5; // 5% — catch-up no longer required
+		await scheduler.runCatchUpTick();
+		expect(calls.length).toBe(0);
+		expect(getCatchUpBusySkips()).toBe(0);
+		expect(getCatchUpBusySkipsTotal()).toBe(2);
+
+		fakeOpts.freelistPages = 15; // a new, separate contention period
+		await scheduler.runCatchUpTick();
+		expect(getCatchUpBusySkips()).toBe(1);
+		expect(getCatchUpBusySkipsTotal()).toBe(3);
 	});
 
 	it("records a busy skip when the freelist ratio is at or above threshold and the writer queue is busy (greptile review on PR #475)", async () => {

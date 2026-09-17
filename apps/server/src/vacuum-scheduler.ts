@@ -417,13 +417,14 @@ export function createVacuumScheduler(
 		// queue), so counting that combination here would read as "reclaim is
 		// starved by writer contention" on a database that is not actually
 		// falling behind at all — the false-starvation telemetry this fix
-		// removes. "ratio below threshold" (busy queue or not) stays ordinary
-		// steady state and is not tracked here: the consecutive counter is
-		// left exactly as it was, neither incremented nor reset — a
-		// below-threshold round is not evidence either way about writer
-		// contention, so it should not silently erase a real streak that was
-		// building while the ratio was still elevated a few ticks ago. The
-		// counter only ever resets on an actual catch-up dispatch, below.
+		// removes. A round in which catch-up is not required at all (switch
+		// off, or ratio below threshold — the hourly reclaim or fresh inserts
+		// reusing free pages can pull it down without any catch-up dispatch)
+		// ENDS the consecutive streak while the lifetime total is kept:
+		// "consecutive" must mean consecutive, or two separate contention
+		// periods would add up to one and reach the twelve-skip warning on
+		// skips that never were back to back (greptile review on PR #475).
+		// The streak also ends on an actual catch-up dispatch, below.
 		const ratioReachedThreshold =
 			autoVacuumEnabled && freelistRatioAtOrAboveThreshold(decision);
 		if (ratioReachedThreshold && asyncWriterQueuedJobs > 0) {
@@ -437,6 +438,8 @@ export function createVacuumScheduler(
 						`sustained writer contention.`,
 				);
 			}
+		} else if (!ratioReachedThreshold) {
+			dbOps.resetVacuumCatchUpBusySkips();
 		}
 
 		if (!shouldRunVacuumCatchUp(decision)) return;
