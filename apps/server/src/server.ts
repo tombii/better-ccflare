@@ -560,6 +560,7 @@ let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
 let stopDataCleanupJob: (() => void) | null = null;
+let stopVacuumCatchUpJob: (() => void) | null = null;
 let stopWalCheckpointJob: (() => void) | null = null;
 let stopIntegritySchedulerJob: (() => void) | null = null;
 let stopModelCatalogRefreshJob: (() => void) | null = null;
@@ -944,6 +945,64 @@ function startUsagePollingWithRefresh(
 	}
 }
 
+/**
+ * Freelist-ratio threshold that triggers a catch-up incremental-vacuum tick
+ * between the hourly retention-driven ones (see `shouldRunVacuumCatchUp`
+ * below). A healthy, actively-reclaiming SQLite file sits near 0% free most
+ * of the time; 10% is comfortably above ordinary delete/insert-burst noise
+ * while catching a growing backlog long before it reaches the 47.5%-free and
+ * 83%-free levels observed on one production instance once the hourly-only
+ * ceiling could no longer keep up with the delete rate.
+ */
+export const VACUUM_CATCHUP_FREELIST_RATIO_THRESHOLD = 0.1;
+
+/**
+ * Per-tick reclaim ceiling for the catch-up path, deliberately smaller than
+ * the hourly tick's ~1 GiB default (`incrementalVacuumAdaptive`'s
+ * `maxPagesPerTick`): at the 5-minute cadence this job runs on, 65536 pages
+ * (~256 MiB) yields up to ~3 GiB/h of *additional* reclaim capacity on top
+ * of the hourly tick's ~1 GiB/h, for a combined ceiling of up to ~4 GiB/h —
+ * comfortably above the ~2.2 GiB/h payload-delete rate observed in the
+ * incident this backstop responds to, while keeping any single tick's chunk
+ * count (and therefore its writer-slot hold time) below the hourly tick's.
+ */
+export const VACUUM_CATCHUP_MAX_PAGES_PER_TICK = 65536;
+
+/**
+ * Decides whether the 5-minute vacuum catch-up tick should run this round.
+ * Pure and side-effect-free so it can be unit tested without a real DB or
+ * async writer; `startServer()` wires it to live reads of
+ * `config.getAutoVacuumEnabled()`, `dbOps.getFreelistCount()` /
+ * `getPageCount()`, and `asyncWriter.getHealth().queuedJobs`.
+ *
+ * Order matters for cost, not correctness: the operator switch and the
+ * writer-backlog check are both free (memory reads), so they run before the
+ * pragma-backed freelist ratio.
+ *
+ * The backpressure check reuses `queuedJobs > 0` — the exact bar
+ * `AsyncDbWriter`'s own health-interval log already treats as "worth
+ * flagging" (packages/database/src/async-writer.ts) — rather than a new
+ * threshold: if the writer has not fully drained its own 100ms tick, this
+ * is not the moment to add another write-lock contender. A byte range or
+ * per-account project name is out of scope; this pacing gate only
+ * ever affects internal maintenance work, not client-visible routing.
+ */
+export function shouldRunVacuumCatchUp(input: {
+	autoVacuumEnabled: boolean;
+	asyncWriterQueuedJobs: number;
+	freelistPages: number;
+	pageCount: number;
+	ratioThreshold?: number;
+}): boolean {
+	if (!input.autoVacuumEnabled) return false;
+	if (input.asyncWriterQueuedJobs > 0) return false;
+	if (input.pageCount <= 0) return false;
+	const ratio = input.freelistPages / input.pageCount;
+	return (
+		ratio >= (input.ratioThreshold ?? VACUUM_CATCHUP_FREELIST_RATIO_THRESHOLD)
+	);
+}
+
 // Export for programmatic use
 let serverLifecycleOwned = false;
 
@@ -1183,6 +1242,46 @@ export default async function startServer(options?: {
 	};
 	const getRetentionStatus = (): RetentionStatus => ({ ...retentionState });
 
+	// The hourly retention tick below and the 5-minute vacuum catch-up tick
+	// (registered further down) both fire incrementalVacuumAdaptive() and are
+	// each fire-and-forget from their own IntervalManager callback — so
+	// neither interval's own `maxConcurrent: 1` guard (which only tracks the
+	// awaited callback, not this dangling promise) sees the other one, or
+	// even a still-running invocation of itself if a reclaim ever outlives
+	// its tick. A single shared in-flight flag serializes every call through
+	// runVacuumTick() below, regardless of which tick started it — without
+	// it, two concurrent reclaim loops could each hold SQLite's single
+	// writer slot in their own worker call, doubling exactly the contention
+	// this backstop exists to bound.
+	let vacuumTickInFlight = false;
+	const runVacuumTick = (
+		opts: Parameters<typeof dbOps.incrementalVacuumAdaptive>[0],
+		source: "retention" | "catchup",
+	): void => {
+		if (vacuumTickInFlight) {
+			log.debug(
+				`Vacuum tick (${source}) skipped — another vacuum tick is still in flight`,
+			);
+			return;
+		}
+		vacuumTickInFlight = true;
+		dbOps
+			.incrementalVacuumAdaptive(opts)
+			.then((r) => {
+				if (r.reclaimedPages > 0) {
+					log.info(
+						`Adaptive incremental vacuum (${source}) reclaimed ${r.reclaimedPages} pages in ${r.chunks} chunk(s)`,
+					);
+				}
+			})
+			.catch((err) => {
+				log.error(`Incremental vacuum (${source}) error: ${err}`);
+			})
+			.finally(() => {
+				vacuumTickInFlight = false;
+			});
+	};
+
 	// Registered here (before runStartupMaintenance() below) so intervalManager
 	// has "data-retention-cleanup" on record and runNow() can find it — startup
 	// maintenance triggers the very same callback via runNow() instead of
@@ -1213,20 +1312,9 @@ export default async function startServer(options?: {
 				// yields between chunks, so the single writer slot is never held
 				// long and concurrent main-thread writes (rate-limit updates, OAuth
 				// refresh, post-processor inserts) aren't starved. Off-thread via
-				// the incremental-vacuum worker. Fire-and-forget so the cleanup
-				// callback isn't blocked on it.
-				dbOps
-					.incrementalVacuumAdaptive()
-					.then((r) => {
-						if (r.reclaimedPages > 0) {
-							log.info(
-								`Adaptive incremental vacuum reclaimed ${r.reclaimedPages} pages in ${r.chunks} chunk(s)`,
-							);
-						}
-					})
-					.catch((err) => {
-						log.error(`Incremental vacuum error: ${err}`);
-					});
+				// the incremental-vacuum worker. Fire-and-forget (via
+				// runVacuumTick) so the cleanup callback isn't blocked on it.
+				runVacuumTick({ enabled: config.getAutoVacuumEnabled() }, "retention");
 			}
 			const usageHistoryDays = config.getUsageHistoryRetentionDays();
 			const removedSnapshots = await dbOps.pruneUsageSnapshots(
@@ -1265,6 +1353,48 @@ export default async function startServer(options?: {
 	});
 	stopDataCleanupJob = unregisterDataCleanup;
 
+	// Catch-up incremental vacuum: the hourly retention-driven tick above caps
+	// reclaim at ~1 GiB (incrementalVacuumAdaptive's default maxPagesPerTick),
+	// which cannot keep pace with a sustained delete rate above that — on one
+	// production instance retention was removing ~2.2 GiB/h of payload rows,
+	// so the freelist grew without bound purely because the hourly path never
+	// got another turn soon enough. This runs every 5 minutes, but
+	// `shouldRunVacuumCatchUp` keeps it a no-op in steady state: it only
+	// dispatches a (smaller-capped) reclaim while the freelist ratio is
+	// elevated and the async writer has fully drained its own queue, so it
+	// adds no extra writer-slot contention when the DB is already healthy.
+	const vacuumCatchUp = async () => {
+		const decision = {
+			autoVacuumEnabled: config.getAutoVacuumEnabled(),
+			asyncWriterQueuedJobs: asyncWriter.getHealth().queuedJobs,
+			freelistPages: dbOps.getFreelistCount(),
+			pageCount: dbOps.getPageCount(),
+		};
+		if (!shouldRunVacuumCatchUp(decision)) return;
+		log.debug(
+			`Vacuum catch-up dispatching — freelist ${decision.freelistPages}/${decision.pageCount} pages`,
+		);
+		runVacuumTick(
+			{
+				maxPagesPerTick: VACUUM_CATCHUP_MAX_PAGES_PER_TICK,
+				enabled: true, // shouldRunVacuumCatchUp() already checked the switch
+			},
+			"catchup",
+		);
+	};
+	const unregisterVacuumCatchUp = registerCleanup({
+		id: "vacuum-catchup",
+		callback: vacuumCatchUp,
+		minutes: 5,
+		// Mirrors data-retention-cleanup's guard: incrementalVacuumAdaptive()
+		// already bounds a single call, but a catch-up tick firing while the
+		// previous one (or the hourly one) is still draining chunks would
+		// double the writer-slot pressure this exists to avoid.
+		maxConcurrent: 1,
+		description: "Catch-up incremental vacuum when the freelist ratio is high",
+	});
+	stopVacuumCatchUpJob = unregisterVacuumCatchUp;
+
 	const apiRouter = new APIRouter({
 		db,
 		config,
@@ -1301,6 +1431,7 @@ export default async function startServer(options?: {
 		getUsageWorkerHealth: () => getUsageCollectorHealth(),
 		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
 		getRetentionStatus,
+		getVacuumStatus: () => dbOps.getVacuumStatus(),
 		getStrategy: () => currentStrategy,
 		internalProbeSecret,
 		localControlSecret,
@@ -2358,6 +2489,10 @@ async function handleGracefulShutdown(signal: string) {
 		if (stopDataCleanupJob) {
 			stopDataCleanupJob();
 			stopDataCleanupJob = null;
+		}
+		if (stopVacuumCatchUpJob) {
+			stopVacuumCatchUpJob();
+			stopVacuumCatchUpJob = null;
 		}
 		if (stopWalCheckpointJob) {
 			stopWalCheckpointJob();

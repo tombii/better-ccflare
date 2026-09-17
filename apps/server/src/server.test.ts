@@ -11,9 +11,11 @@ import {
 	createRefreshBackedTokenProvider,
 	createUsageSnapshotRecorder,
 	registerMinimaxUsagePolling,
+	shouldRunVacuumCatchUp,
 	supportsRefreshBackedUsagePolling,
 	supportsUsagePollingForAccount,
 	type UsageCacheRegistrar,
+	VACUUM_CATCHUP_FREELIST_RATIO_THRESHOLD,
 } from "./server";
 
 describe("supportsRefreshBackedUsagePolling", () => {
@@ -1495,5 +1497,69 @@ describe("applyUsagePauseThresholds — switched-off windows", () => {
 		);
 
 		expect(paused).toStrictEqual([]);
+	});
+});
+
+describe("shouldRunVacuumCatchUp", () => {
+	const baseInput = {
+		autoVacuumEnabled: true,
+		asyncWriterQueuedJobs: 0,
+		freelistPages: 30,
+		pageCount: 100, // 30% free — above the 10% default threshold
+	};
+
+	it("runs when enabled, the writer is idle, and the freelist ratio is at or above the threshold", () => {
+		expect(shouldRunVacuumCatchUp(baseInput)).toBe(true);
+	});
+
+	it("does not run when the operator switch is off — the explicit reason the switch must gate this path too", () => {
+		expect(
+			shouldRunVacuumCatchUp({ ...baseInput, autoVacuumEnabled: false }),
+		).toBe(false);
+	});
+
+	it("backs off when the async writer has not drained its queue", () => {
+		expect(
+			shouldRunVacuumCatchUp({ ...baseInput, asyncWriterQueuedJobs: 1 }),
+		).toBe(false);
+	});
+
+	it("does not run when page_count is 0 (fresh/empty DB) — avoids a division by zero reading as a false trigger", () => {
+		expect(
+			shouldRunVacuumCatchUp({ ...baseInput, freelistPages: 0, pageCount: 0 }),
+		).toBe(false);
+	});
+
+	it("does not run below the freelist ratio threshold (steady state)", () => {
+		expect(
+			shouldRunVacuumCatchUp({ ...baseInput, freelistPages: 5 }), // 5%
+		).toBe(false);
+	});
+
+	it("runs exactly at the threshold boundary (>=, not >)", () => {
+		expect(
+			shouldRunVacuumCatchUp({
+				...baseInput,
+				freelistPages: VACUUM_CATCHUP_FREELIST_RATIO_THRESHOLD * 100,
+				pageCount: 100,
+			}),
+		).toBe(true);
+	});
+
+	it("honors an explicit ratioThreshold override instead of the module default", () => {
+		expect(
+			shouldRunVacuumCatchUp({
+				...baseInput,
+				freelistPages: 5,
+				ratioThreshold: 0.03,
+			}),
+		).toBe(true);
+		expect(
+			shouldRunVacuumCatchUp({
+				...baseInput,
+				freelistPages: 5,
+				ratioThreshold: 0.5,
+			}),
+		).toBe(false);
 	});
 });
