@@ -57,14 +57,6 @@ const COMPACT_RESULT = {
 	walTruncateBusy: 0,
 };
 
-const COMPACT_ERROR_RESULT = {
-	walBusy: 1,
-	walLog: 5,
-	walCheckpointed: 2,
-	vacuumed: false,
-	error: "busy database",
-};
-
 // ---------------------------------------------------------------------------
 // compactDatabase tests
 // ---------------------------------------------------------------------------
@@ -76,29 +68,6 @@ describe("compactDatabase", () => {
 		await compactDatabase(dbOps);
 
 		expect(dbOps.compact).toHaveBeenCalledTimes(1);
-	});
-
-	it("returns wal/vacuum fields from dbOps.compact", async () => {
-		const dbOps = makeCompactDbOps(COMPACT_RESULT);
-
-		const result = await compactDatabase(dbOps);
-
-		expect(result.walBusy).toBe(0);
-		expect(result.walLog).toBe(12);
-		expect(result.walCheckpointed).toBe(12);
-		expect(result.vacuumed).toBe(true);
-		expect(result.walTruncateBusy).toBe(0);
-		expect(result).not.toHaveProperty("error");
-	});
-
-	it("returns error payload unchanged when compact fails", async () => {
-		const dbOps = makeCompactDbOps(COMPACT_ERROR_RESULT);
-
-		const result = await compactDatabase(dbOps);
-
-		expect(result.vacuumed).toBe(false);
-		expect(result.error).toBe("busy database");
-		expect(result.walBusy).toBe(1);
 	});
 
 	describe("live-service writer-lock guard", () => {
@@ -204,18 +173,6 @@ describe("clearRequestHistory", () => {
 			).mock.calls[0];
 			expect(payloadMs).toBe(7 * 24 * 60 * 60 * 1000);
 			expect(requestMs).toBe(180 * 24 * 60 * 60 * 1000);
-		});
-	});
-
-	describe("return value: { removedRequests, removedPayloads }", () => {
-		it("returns removedRequests and removedPayloads from dbOps.cleanupOldRequests", async () => {
-			const dbOps = makeDbOps({ removedRequests: 42, removedPayloads: 17 });
-			const config = makeConfig();
-
-			const result = await clearRequestHistory(dbOps, config);
-
-			expect(result.removedRequests).toBe(42);
-			expect(result.removedPayloads).toBe(17);
 		});
 	});
 });

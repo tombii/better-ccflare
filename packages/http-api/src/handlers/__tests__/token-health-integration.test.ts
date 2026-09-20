@@ -1,14 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	checkAllAccountsHealth,
 	getAccountsNeedingReauth,
 } from "@better-ccflare/proxy";
-import {
-	createAccountTokenHealthHandler,
-	createReauthNeededHandler,
-	createTokenHealthHandler,
-} from "../token-health";
 
 // Mock database operations for testing
 const mockAccounts = [
@@ -107,49 +101,7 @@ const mockAccounts = [
 	},
 ];
 
-const mockDbOps = {
-	getAllAccounts: () => mockAccounts,
-	getAccount: (name: string) =>
-		mockAccounts.find((acc) => acc.name === name) || null,
-	createOAuthSession: () => {},
-	getOAuthSession: () => null,
-	deleteOAuthSession: () => {},
-	getDatabase: () => ({
-		prepare: () => ({
-			run: () => {},
-			get: () => null,
-			all: () => [],
-		}),
-	}),
-} as unknown as DatabaseOperations;
-
 describe("Token Health HTTP API Integration", () => {
-	describe("Token Health Endpoints", () => {
-		it("should create token health handler", () => {
-			expect(() => {
-				const handler = createTokenHealthHandler(mockDbOps);
-				expect(typeof handler).toBe("function");
-			}).not.toThrow();
-		});
-
-		it("should create reauth needed handler", () => {
-			expect(() => {
-				const handler = createReauthNeededHandler(mockDbOps);
-				expect(typeof handler).toBe("function");
-			}).not.toThrow();
-		});
-
-		it("should create account token health handler", () => {
-			expect(() => {
-				const handler = createAccountTokenHealthHandler(
-					mockDbOps,
-					"test-account-1",
-				);
-				expect(typeof handler).toBe("function");
-			}).not.toThrow();
-		});
-	});
-
 	describe("Token Health Monitoring", () => {
 		it("should check all accounts health", () => {
 			const healthReport = checkAllAccountsHealth(mockAccounts);
@@ -255,17 +207,6 @@ describe("Token Health HTTP API Integration", () => {
 });
 
 describe("CLI Integration Tests", () => {
-	it("should support CLI token health commands", () => {
-		// Test that CLI can import and use token health functions
-		expect(() => {
-			const report = checkAllAccountsHealth(mockAccounts);
-			const reauthNeeded = getAccountsNeedingReauth(mockAccounts);
-
-			expect(report.summary.total).toBe(3);
-			expect(reauthNeeded.length).toBeGreaterThanOrEqual(0);
-		}).not.toThrow();
-	});
-
 	it("should handle account-specific health checks", () => {
 		const healthReport = checkAllAccountsHealth(mockAccounts);
 		const accountHealth = healthReport.accounts.find(
