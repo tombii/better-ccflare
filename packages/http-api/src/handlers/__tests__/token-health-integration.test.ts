@@ -1,8 +1,12 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync, unlinkSync } from "node:fs";
+import type { DatabaseOperations } from "@better-ccflare/database";
+import { DatabaseFactory } from "@better-ccflare/database";
 import {
 	checkAllAccountsHealth,
 	getAccountsNeedingReauth,
 } from "@better-ccflare/proxy";
+import { createAccountTokenHealthHandler } from "../token-health";
 
 // Mock database operations for testing
 const mockAccounts = [
@@ -268,5 +272,67 @@ describe("Error Handling", () => {
 			const healthReport = checkAllAccountsHealth(malformedAccounts);
 			expect(healthReport.accounts).toHaveLength(1);
 		}).not.toThrow();
+	});
+});
+
+// Conventional test pattern (mirrors account-remove-handler.test.ts). Requires
+// the generated `inline-*-worker.ts` build artifacts to be present.
+const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-account-token-health-handler.db`;
+
+describe("createAccountTokenHealthHandler — HTTP response codes", () => {
+	let dbOps: DatabaseOperations;
+
+	function cleanupDbFiles() {
+		for (const suffix of ["", "-wal", "-shm"]) {
+			try {
+				const p = `${TEST_DB_PATH}${suffix}`;
+				if (existsSync(p)) unlinkSync(p);
+			} catch {
+				// best-effort cleanup
+			}
+		}
+	}
+
+	beforeEach(() => {
+		cleanupDbFiles();
+		DatabaseFactory.initialize(TEST_DB_PATH);
+		dbOps = DatabaseFactory.getInstance();
+	});
+
+	afterEach(() => {
+		// Close BEFORE unlinking: deleting the file under an open connection
+		// makes close()'s `PRAGMA wal_checkpoint(TRUNCATE)` fail with
+		// SQLITE_IOERR_VNODE, surfacing as an unhandled error between tests.
+		DatabaseFactory.reset();
+		cleanupDbFiles();
+	});
+
+	it("returns 400 when the account name is empty", async () => {
+		const handler = createAccountTokenHealthHandler(dbOps, "");
+		const response = await handler();
+		expect(response.status).toBe(400);
+	});
+
+	it("returns 404 when the account does not exist", async () => {
+		const handler = createAccountTokenHealthHandler(dbOps, "missing-account");
+		const response = await handler();
+		expect(response.status).toBe(404);
+	});
+
+	it("returns 200 with token health data when the account exists", async () => {
+		await dbOps
+			.getAdapter()
+			.run(
+				"INSERT INTO accounts (id, name, provider, refresh_token, created_at) VALUES (?, ?, ?, ?, ?)",
+				["uuid-1", "healthy-account", "anthropic", "rt", Date.now()],
+			);
+
+		const handler = createAccountTokenHealthHandler(dbOps, "healthy-account");
+		const response = await handler();
+		expect(response.status).toBe(200);
+
+		const body = (await response.json()) as { success: boolean; data: unknown };
+		expect(body.success).toBe(true);
+		expect(body.data).toBeDefined();
 	});
 });
