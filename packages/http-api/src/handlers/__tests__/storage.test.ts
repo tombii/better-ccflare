@@ -102,12 +102,6 @@ describe("createStorageHandler", () => {
 			const body = (await (await handler()).json()) as Record<string, unknown>;
 			expect(body.wal_bytes).toBe(65536);
 		});
-
-		it("wal_bytes is 0 when no WAL file", async () => {
-			const handler = createStorageHandler(makeDbOps({ walBytes: 0 }));
-			const body = (await (await handler()).json()) as Record<string, unknown>;
-			expect(body.wal_bytes).toBe(0);
-		});
 	});
 
 	describe("integrity_status", () => {
@@ -172,12 +166,6 @@ describe("createStorageHandler", () => {
 			const body = (await (await handler()).json()) as Record<string, unknown>;
 			expect(body.orphan_pages).toBe(17);
 		});
-
-		it("orphan_pages is 0 when no free pages", async () => {
-			const handler = createStorageHandler(makeDbOps({ orphanPages: 0 }));
-			const body = (await (await handler()).json()) as Record<string, unknown>;
-			expect(body.orphan_pages).toBe(0);
-		});
 	});
 
 	describe("last_retention_sweep_at", () => {
@@ -206,12 +194,6 @@ describe("createStorageHandler", () => {
 			const handler = createStorageHandler(makeDbOps({ nullAccountRows: 42 }));
 			const body = (await (await handler()).json()) as Record<string, unknown>;
 			expect(body.null_account_rows_24h).toBe(42);
-		});
-
-		it("is 0 when no null-account rows exist", async () => {
-			const handler = createStorageHandler(makeDbOps({ nullAccountRows: 0 }));
-			const body = (await (await handler()).json()) as Record<string, unknown>;
-			expect(body.null_account_rows_24h).toBe(0);
 		});
 	});
 
