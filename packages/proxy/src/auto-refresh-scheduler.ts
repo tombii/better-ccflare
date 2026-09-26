@@ -74,8 +74,11 @@ function isLocalRefusal(status: number, body: string | null): boolean {
 	}
 }
 
-function isZaiPeakHour(ts = Date.now()): boolean {
+export function isZaiPeakHour(ts = Date.now()): boolean {
 	const d = new Date(ts);
+	const sgtDayMs = d.getTime() + 8 * 60 * 60 * 1000;
+	const sgtDay = new Date(sgtDayMs).getUTCDay();
+	if (sgtDay === 0 || sgtDay === 6) return false;
 	const sgtHour = (d.getUTCHours() + d.getUTCMinutes() / 60 + 8) % 24;
 	return sgtHour >= 14 && sgtHour < 18;
 }
