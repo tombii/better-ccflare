@@ -82,6 +82,23 @@ export interface AnthropicTerminalRecoveryOptions {
 	 * back to releasing the reader lock only.
 	 */
 	drainAbort?: AbortController;
+	/**
+	 * Signals that the *downstream* client disconnected, without ever
+	 * calling this stream's own `cancel()` lifecycle method. This stream is
+	 * wrapped by `teeStream` (stream-tee.ts) in response-handler.ts; that
+	 * outer tee's `cancel()` handler deliberately drains this stream's
+	 * reader to `done` instead of calling `.cancel()` on it — calling
+	 * `.cancel()` here would make `pull()`'s read loop below resolve
+	 * `done: true` immediately, short-circuiting the outer drain-to-done
+	 * loop and reintroducing the Bun native-buffer leak (#273). Because of
+	 * that, this stream's own `cancel()` handler (and the `clientCancelled`
+	 * flag it sets) never runs on that path. This signal is the side
+	 * channel that lets `determineTerminalState()` still report
+	 * `client_cancelled` once the outer drain reaches the `done` branch in
+	 * `pull()` below — see stream-tee.ts's `onCancel` option, wired to this
+	 * signal by response-handler.ts.
+	 */
+	clientDisconnectSignal?: AbortSignal;
 	onRecovery?: (reason: AnthropicTerminalRecoveryReason) => void;
 	onCancelError?: (
 		error: unknown,
@@ -117,6 +134,7 @@ export function createAnthropicTerminalRecoveryStream(
 	const drainDeadlineMs =
 		options.drainDeadlineMs ?? ANTHROPIC_DRAIN_DEADLINE_MS;
 	const drainAbort = options.drainAbort;
+	const clientDisconnectSignal = options.clientDisconnectSignal;
 	const reader = upstream.getReader();
 	const decoder = new TextDecoder();
 
@@ -135,6 +153,14 @@ export function createAnthropicTerminalRecoveryStream(
 	// surface as `done:true` in pull(). Client cancels are not a proxy defect
 	// or upstream failure; recording them as `truncated` would poison the
 	// success metrics with routine Esc / tool-interrupt aborts.
+	//
+	// Set from two places: this stream's own `cancel()` handler below (the
+	// direct case, still reachable when something other than the
+	// response-handler.ts + stream-tee.ts pairing consumes this stream
+	// directly, e.g. some unit tests), and the `clientDisconnectSignal`
+	// side-channel (the indirect case — see that option's doc comment —
+	// which is what actually fires on the real request-handling path, since
+	// the outer tee never calls this stream's `.cancel()`).
 	let clientCancelled = false;
 	const openContentBlocks = new Set<number>();
 	let finalized = false;
@@ -223,7 +249,8 @@ export function createAnthropicTerminalRecoveryStream(
 		// mid-conversation. The caller (response-handler) preserves the
 		// pre-existing header-based success for this state, so the only
 		// observable change is the new column recording what happened.
-		if (clientCancelled) return "client_cancelled";
+		if (clientCancelled || clientDisconnectSignal?.aborted)
+			return "client_cancelled";
 		// Explicit upstream failure takes precedence over anything observed in
 		// the partial body — a mid-stream error event is the most authoritative
 		// signal we have, even if a stop_reason delta happened to land first.

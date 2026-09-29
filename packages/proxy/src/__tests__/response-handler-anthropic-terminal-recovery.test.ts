@@ -366,21 +366,16 @@ describe("forwardToClient SSE terminal-state propagation", () => {
 		}
 	});
 
-	// Pre-existing failure, not a regression: reproduced on main before the
-	// stream-tee.ts client-disconnect fix in this commit. Propagating
-	// "client_cancelled" requires calling reader.cancel() on the inner
-	// createAnthropicTerminalRecoveryStream so its own cancel() handler sets
-	// streamTerminalState — but that reader is the same one relied on by the
-	// manual drain-to-done workaround for the Bun native-body leak (#273):
-	// once cancel() is called, reader.read() resolves done:true immediately
-	// and the drain never actually runs, silently reintroducing #273 on this
-	// path. The stream-tee.ts fix in this commit does make onClose fire on
-	// disconnect (so handleEnd now runs at all, fixing the usage-collector
-	// leak this suite doesn't cover), but streamTerminalState stays null
-	// here rather than "client_cancelled" until a way to signal
-	// cancellation into the inner stream without touching its reader is
-	// found. Tracked as a follow-up, not fixed here.
-	it.skip("preserves success:true and records state=client_cancelled when the client disconnects mid-stream", async () => {
+	// Regression coverage for #348 (Anthropic-recovery-stream gap): the outer
+	// stream-tee.ts cancel() handler deliberately never calls .cancel() on the
+	// inner createAnthropicTerminalRecoveryStream (that would short-circuit
+	// its drain-to-done loop and reintroduce the Bun native-buffer leak,
+	// #273). Instead, response-handler.ts wires a side-channel
+	// clientDisconnectSignal into the inner stream so determineTerminalState
+	// can still classify this as "client_cancelled" once the outer tee's
+	// drain reaches the inner stream's own done branch — without ever
+	// invoking the inner stream's cancel() lifecycle method.
+	it("preserves success:true and records state=client_cancelled when the client disconnects mid-stream", async () => {
 		// Claude Code cancels streams routinely (Esc, tool interrupts,
 		// client aborts). Those are NOT upstream failures or proxy defects
 		// — recording them as success:false would poison the success-rate
@@ -405,8 +400,17 @@ describe("forwardToClient SSE terminal-state propagation", () => {
 
 		try {
 			const requestId = "client-cancelled-request";
+			// Never calls controller.close() on its own — the upstream keeps
+			// the connection open (as a real Anthropic stream would while
+			// still generating). The outer tee's drain-to-done loop is what
+			// eventually observes `done`, once the (real) upstream connection
+			// tears down after the client walks away. Simulated here by
+			// closing shortly after cancel() fires, so the drain resolves
+			// deterministically instead of hanging forever.
+			let sourceController: ReadableStreamDefaultController<Uint8Array>;
 			const source = new ReadableStream<Uint8Array>({
 				start(controller) {
+					sourceController = controller;
 					controller.enqueue(bytes(terminalDelta));
 				},
 			});
@@ -433,12 +437,16 @@ describe("forwardToClient SSE terminal-state propagation", () => {
 
 			// Client disconnect — simulates user hitting Esc mid-response.
 			// We cancel the downstream reader directly and swallow any
-			// upstream-cancel rejection (the immediateStream source has
-			// already closed, so cancelling it surfaces "Invalid state" —
-			// irrelevant to the recording semantics we're testing).
+			// upstream-cancel rejection.
 			const reader = response.body?.getReader();
 			await reader.cancel("client disconnect").catch(() => undefined);
-			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// Simulate the real upstream connection eventually tearing down
+			// after the client walks away, so the outer tee's drain-to-done
+			// loop (which must keep running unmodified per #273/#382) has
+			// something to resolve against.
+			sourceController.close();
+			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			// Find the end emitted with client_cancelled (the close path
 			// from cancel()) — there may be a subsequent error end from the

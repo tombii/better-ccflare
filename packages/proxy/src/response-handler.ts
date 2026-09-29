@@ -412,9 +412,20 @@ export async function forwardToClient(
 				.includes("text/event-stream") ??
 				false);
 		let streamTerminalState: AnthropicTerminalState | null = null;
+		// Side channel for #348: the outer teeStream's cancel() (below)
+		// deliberately never calls .cancel() on this inner recovery stream —
+		// doing so would short-circuit its drain-to-done loop and reintroduce
+		// the Bun native-buffer leak (#273). This controller lets teeStream's
+		// onCancel flag the disconnect into the inner stream's
+		// determineTerminalState() without going through the inner stream's
+		// own cancel() lifecycle method at all.
+		const clientDisconnectController = isAnthropicMessagesSseResponse
+			? new AbortController()
+			: null;
 		const responseBody = isAnthropicMessagesSseResponse
 			? createAnthropicTerminalRecoveryStream(response.body, {
 					drainAbort,
+					clientDisconnectSignal: clientDisconnectController?.signal,
 					onRecovery(reason) {
 						log.warn("anthropic_terminal_message_stop_recovered", {
 							requestId,
@@ -457,6 +468,23 @@ export async function forwardToClient(
 		const passthroughBody = teeStream(responseBody, {
 			onChunk,
 			onClose,
+			onCancel: isAnthropicMessagesSseResponse
+				? () => {
+						clientDisconnectController?.abort();
+						// onClose (below, same cancel() call) reads
+						// streamTerminalState synchronously and immediately —
+						// it does not wait for the inner stream's own
+						// drain-triggered onTerminalState, which only fires
+						// later once the outer drain-to-done loop reaches the
+						// inner stream's `done` branch. Set it eagerly here so
+						// onClose observes the correct state right away;
+						// client_cancelled always wins in
+						// determineTerminalState()'s precedence order, so this
+						// can't be stale-overwritten by a later onTerminalState
+						// call.
+						streamTerminalState = "client_cancelled";
+					}
+				: undefined,
 			onError,
 		});
 		// Keep provider/accounting observers on the unmodified upstream bytes.
