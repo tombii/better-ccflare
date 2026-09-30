@@ -24,6 +24,7 @@ import {
 	releaseAutoRefreshPrompt,
 } from "./auto-refresh-prompt-pool";
 import {
+	hasChineseHolidayCalendar,
 	isChinesePublicHoliday,
 	refreshChineseHolidays,
 } from "./chinese-holidays";
@@ -123,6 +124,7 @@ export class AutoRefreshScheduler {
 	private checkInterval = 60000; // Check every minute
 	// Last Chinese holiday feed refresh attempt (DeepSeek peak-hours exemption)
 	private lastHolidayRefreshAt = 0;
+	private holidayRefresh: Promise<unknown> | null = null;
 	// Track the rate_limit_reset timestamp for each account when we last refreshed it
 	// This allows us to detect when a new window has started (different rate_limit_reset)
 	private lastRefreshResetTime: Map<string, number> = new Map();
@@ -1608,16 +1610,30 @@ export class AutoRefreshScheduler {
 		const now = Date.now();
 		if (now - this.lastHolidayRefreshAt >= HOLIDAY_REFRESH_INTERVAL_MS) {
 			this.lastHolidayRefreshAt = now;
-			void refreshChineseHolidays()
+			this.holidayRefresh = refreshChineseHolidays()
 				.then((ok) => {
 					if (!ok) {
 						this.lastHolidayRefreshAt =
 							now - HOLIDAY_REFRESH_INTERVAL_MS + HOLIDAY_RETRY_INTERVAL_MS;
 					}
 				})
-				.catch(() => {});
+				.catch(() => {})
+				.finally(() => {
+					this.holidayRefresh = null;
+				});
 		}
 		for (const [provider, isPeak] of Object.entries(PEAK_HOUR_CHECKS)) {
+			// DeepSeek's decision depends on the holiday calendar. If no calendar
+			// covers this year yet (e.g. first tick after startup in 2027+), wait for
+			// the in-flight refresh so a holiday isn't classified as a peak weekday.
+			// Only DeepSeek waits; zai is ordered first and never blocked.
+			if (
+				provider === "deepseek" &&
+				this.holidayRefresh &&
+				!hasChineseHolidayCalendar(new Date().getUTCFullYear())
+			) {
+				await this.holidayRefresh;
+			}
 			await this.checkPeakHoursPauseForProvider(provider, isPeak());
 		}
 	}

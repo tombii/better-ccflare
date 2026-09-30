@@ -42,6 +42,14 @@ export function isChinesePublicHoliday(date: string): boolean {
 	return EMBEDDED_HOLIDAYS.some(([from, to]) => date >= from && date <= to);
 }
 
+/** Whether any calendar (feed or embedded) covers the given year. */
+export function hasChineseHolidayCalendar(year: number): boolean {
+	return (
+		feedDaysByYear.has(year) ||
+		EMBEDDED_HOLIDAYS.some(([from]) => from.startsWith(`${year}-`))
+	);
+}
+
 /**
  * Fetch the holiday feed for the given years. Failures (network, 404 for a
  * year not yet published) are logged and leave the previous data in place.

@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, it, mock, setSystemTime } from "bun:test";
 import { AutoRefreshScheduler } from "../auto-refresh-scheduler";
+import { resetChineseHolidayCache } from "../chinese-holidays";
 
 type Row = {
 	id: string;
@@ -13,7 +14,10 @@ type Row = {
 	pause_reason: string | null;
 };
 
-function makeScheduler(rowsByProvider: Record<string, Row[]>) {
+function makeScheduler(
+	rowsByProvider: Record<string, Row[]>,
+	{ skipHolidayFetch = true } = {},
+) {
 	const run = mock(async (_sql: string, _params?: unknown[]) => {});
 	const db = {
 		query: mock(async (_sql: string, params: unknown[]) => {
@@ -29,9 +33,11 @@ function makeScheduler(rowsByProvider: Record<string, Row[]>) {
 		} as never,
 	);
 	// Skip the holiday feed fetch (no network in tests)
-	(
-		scheduler as unknown as { lastHolidayRefreshAt: number }
-	).lastHolidayRefreshAt = Number.MAX_SAFE_INTEGER;
+	if (skipHolidayFetch) {
+		(
+			scheduler as unknown as { lastHolidayRefreshAt: number }
+		).lastHolidayRefreshAt = Number.MAX_SAFE_INTEGER;
+	}
 	return { scheduler, run };
 }
 
@@ -83,5 +89,31 @@ describe("checkPeakHoursPause", () => {
 		});
 		await tick(scheduler);
 		expect(run).not.toHaveBeenCalled();
+	});
+
+	it("waits for the holiday calendar before judging a year with no embedded data", async () => {
+		// Wed 2027-03-10 02:00 UTC: weekday peak window, but a feed holiday.
+		setSystemTime(new Date(Date.UTC(2027, 2, 10, 2, 0)));
+		resetChineseHolidayCache();
+		const realFetch = globalThis.fetch;
+		globalThis.fetch = (async (url: string) => {
+			await new Promise((r) => setTimeout(r, 20));
+			return String(url).endsWith("/2027.json")
+				? Response.json({
+						days: [{ name: "x", date: "2027-03-10", isOffDay: true }],
+					})
+				: new Response("nf", { status: 404 });
+		}) as unknown as typeof fetch;
+		try {
+			const { scheduler, run } = makeScheduler(
+				{ deepseek: [{ id: "d1", name: "ds", paused: 0, pause_reason: null }] },
+				{ skipHolidayFetch: false },
+			);
+			await tick(scheduler);
+			expect(run).not.toHaveBeenCalled();
+		} finally {
+			globalThis.fetch = realFetch;
+			resetChineseHolidayCache();
+		}
 	});
 });
