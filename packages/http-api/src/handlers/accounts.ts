@@ -3197,10 +3197,12 @@ export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			// Only zai accounts support peak hours pause
-			if (account.provider !== "zai") {
+			// Only zai and deepseek accounts support peak hours pause
+			if (account.provider !== "zai" && account.provider !== "deepseek") {
 				return errorResponse(
-					BadRequest("Peak hours pause is only available for Zai accounts"),
+					BadRequest(
+						"Peak hours pause is only available for Zai and DeepSeek accounts",
+					),
 				);
 			}
 

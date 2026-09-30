@@ -5,7 +5,9 @@ import { formatRelativeReset } from "../../lib/pool-usage";
 import { cn } from "../../lib/utils";
 import {
 	isAnthropicPeakHour,
+	isDeepseekPeakHour,
 	isZaiPeakHour,
+	loadChineseHolidays,
 	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
 } from "../../utils/provider-utils";
@@ -196,6 +198,10 @@ export function RateLimitProgress({
 		});
 		return unregisterInterval;
 	}, []);
+
+	useEffect(() => {
+		if (provider === "deepseek") void loadChineseHolidays();
+	}, [provider]);
 
 	// Codex has no usage-polling endpoint, so gaps in its data are routine (the
 	// weekly percentage arrives only piggybacked on real traffic). The weekly bar
@@ -552,6 +558,7 @@ export function RateLimitProgress({
 
 	const isZaiPeak = provider === "zai" && isZaiPeakHour(now);
 	const isAnthropicPeak = provider === "anthropic" && isAnthropicPeakHour(now);
+	const isDeepseekPeak = provider === "deepseek" && isDeepseekPeakHour(now);
 	const throttledWindowSet = new Set(usageThrottledWindows);
 
 	// The throttle notice normally rides along inside the throttled window's row.
@@ -603,6 +610,24 @@ export function RateLimitProgress({
 						/>
 						{isAnthropicPeak
 							? "Peak hours (5–11am PT, weekdays)"
+							: "Off-peak hours"}
+					</span>
+				</div>
+			)}
+			{provider === "deepseek" && (
+				<div className="flex items-center gap-2">
+					<span
+						className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${
+							isDeepseekPeak
+								? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+								: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+						}`}
+					>
+						<span
+							className={`h-1.5 w-1.5 rounded-full ${isDeepseekPeak ? "bg-orange-500" : "bg-green-500"}`}
+						/>
+						{isDeepseekPeak
+							? "Peak hours (01–04, 06–10 UTC, weekdays)"
 							: "Off-peak hours"}
 					</span>
 				</div>

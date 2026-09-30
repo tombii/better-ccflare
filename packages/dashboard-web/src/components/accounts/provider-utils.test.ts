@@ -17,6 +17,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
+	isDeepseekPeakHour,
 	isZaiPeakHour,
 	providerShowsWeeklyUsage,
 } from "../../utils/provider-utils";
@@ -141,5 +142,18 @@ describe("isZaiPeakHour", () => {
 		// Just verify it doesn't throw and returns a boolean when called with
 		// no arguments (exercises the `ts ?? Date.now()` default).
 		expect(typeof isZaiPeakHour()).toBe("boolean");
+	});
+});
+
+describe("isDeepseekPeakHour", () => {
+	it("is peak on a weekday inside either window", () => {
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 2, 0))).toBe(true);
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 8, 30))).toBe(true);
+	});
+
+	it("is off-peak outside the windows, on weekends, and on Chinese holidays", () => {
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 4, 0))).toBe(false);
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 26, 2, 0))).toBe(false);
+		expect(isDeepseekPeakHour(Date.UTC(2026, 1, 16, 2, 0))).toBe(false);
 	});
 });

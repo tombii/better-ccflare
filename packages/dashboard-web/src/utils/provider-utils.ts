@@ -148,3 +148,72 @@ export function isAnthropicPeakHour(ts?: number): boolean {
 	const utcHour = d.getUTCHours() + d.getUTCMinutes() / 60;
 	return utcHour >= 13 && utcHour < 19;
 }
+
+/** Chinese public holidays (Beijing dates) used as a fallback until/unless the feed loads. */
+const EMBEDDED_CN_HOLIDAYS: ReadonlyArray<readonly [string, string]> = [
+	["2026-01-01", "2026-01-03"],
+	["2026-02-15", "2026-02-23"],
+	["2026-04-04", "2026-04-06"],
+	["2026-05-01", "2026-05-05"],
+	["2026-06-19", "2026-06-21"],
+	["2026-09-25", "2026-09-27"],
+	["2026-10-01", "2026-10-07"],
+];
+const CN_HOLIDAY_FEED =
+	"https://raw.githubusercontent.com/NateScarlet/holiday-cn/master";
+const cnHolidayFeedByYear = new Map<number, Set<string>>();
+const cnHolidayFeedRequested = new Set<number>();
+
+/**
+ * Best-effort fetch of the yearly Chinese holiday feed (same source the proxy
+ * uses). Safe to call repeatedly; each year is requested once per page load.
+ */
+export async function loadChineseHolidays(
+	years: number[] = [
+		new Date().getUTCFullYear(),
+		new Date().getUTCFullYear() + 1,
+	],
+): Promise<void> {
+	for (const year of years) {
+		if (cnHolidayFeedRequested.has(year)) continue;
+		cnHolidayFeedRequested.add(year);
+		try {
+			const res = await fetch(`${CN_HOLIDAY_FEED}/${year}.json`);
+			if (!res.ok) continue;
+			const body = (await res.json()) as {
+				days?: Array<{ date?: string; isOffDay?: boolean }>;
+			};
+			if (!Array.isArray(body.days)) continue;
+			cnHolidayFeedByYear.set(
+				year,
+				new Set(
+					body.days
+						.filter((d) => d.isOffDay === true && typeof d.date === "string")
+						.map((d) => d.date as string),
+				),
+			);
+		} catch {
+			// Offline or blocked — embedded table / weekday rule still applies.
+		}
+	}
+}
+
+function isChineseHoliday(date: string): boolean {
+	const feed = cnHolidayFeedByYear.get(Number(date.slice(0, 4)));
+	if (feed) return feed.has(date);
+	return EMBEDDED_CN_HOLIDAYS.some(([from, to]) => date >= from && date <= to);
+}
+
+/**
+ * Check if a given timestamp (default: now) falls within DeepSeek peak hours.
+ * Peak hours are 01:00–04:00 and 06:00–10:00 UTC, Monday–Friday, excluding
+ * Chinese public holidays.
+ */
+export function isDeepseekPeakHour(ts?: number): boolean {
+	const d = new Date(ts ?? Date.now());
+	const day = d.getUTCDay();
+	if (day === 0 || day === 6) return false;
+	if (isChineseHoliday(d.toISOString().slice(0, 10))) return false;
+	const utcHour = d.getUTCHours() + d.getUTCMinutes() / 60;
+	return (utcHour >= 1 && utcHour < 4) || (utcHour >= 6 && utcHour < 10);
+}

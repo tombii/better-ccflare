@@ -213,18 +213,24 @@ export function AccountListItem({
 										/>
 									</div>
 								)}
-							{account.provider === "zai" && onPeakHoursPauseToggle && (
-								<div className="flex items-center gap-2">
-									<span className="text-xs text-muted-foreground">
-										Peak hours pause:
-									</span>
-									<Switch
-										checked={account.peakHoursPauseEnabled ?? false}
-										onCheckedChange={() => onPeakHoursPauseToggle(account)}
-										title="Automatically pause this account during Zai peak hours (14:00–18:00 SGT)"
-									/>
-								</div>
-							)}
+							{(account.provider === "zai" ||
+								account.provider === "deepseek") &&
+								onPeakHoursPauseToggle && (
+									<div className="flex items-center gap-2">
+										<span className="text-xs text-muted-foreground">
+											Peak hours pause:
+										</span>
+										<Switch
+											checked={account.peakHoursPauseEnabled ?? false}
+											onCheckedChange={() => onPeakHoursPauseToggle(account)}
+											title={
+												account.provider === "deepseek"
+													? "Automatically pause this account during DeepSeek peak hours (01:00–04:00 and 06:00–10:00 UTC, weekdays, excluding Chinese public holidays)"
+													: "Automatically pause this account during Zai peak hours (14:00–18:00 SGT)"
+											}
+										/>
+									</div>
+								)}
 						</div>
 						<div className="flex items-center gap-2">
 							<p className="text-sm text-muted-foreground">
