@@ -103,6 +103,9 @@ export function isDeepseekPeakHour(ts = Date.now()): boolean {
 	return (utcHour >= 1 && utcHour < 4) || (utcHour >= 6 && utcHour < 10);
 }
 
+const HOLIDAY_REFRESH_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+const HOLIDAY_RETRY_INTERVAL_MS = 60 * 60 * 1000;
+
 /** Providers whose accounts support opt-in peak-hours auto-pause. */
 const PEAK_HOUR_CHECKS: Record<string, (ts?: number) => boolean> = {
 	zai: isZaiPeakHour,
@@ -114,11 +117,12 @@ const PEAK_HOUR_CHECKS: Record<string, (ts?: number) => boolean> = {
  * and sends dummy messages when their usage window resets
  */
 export class AutoRefreshScheduler {
-	private lastHolidayRefreshAt = 0;
 	private db: BunSqlAdapter;
 	private proxyContext: ProxyContext;
 	private unregisterInterval: (() => void) | null = null;
 	private checkInterval = 60000; // Check every minute
+	// Last Chinese holiday feed refresh attempt (DeepSeek peak-hours exemption)
+	private lastHolidayRefreshAt = 0;
 	// Track the rate_limit_reset timestamp for each account when we last refreshed it
 	// This allows us to detect when a new window has started (different rate_limit_reset)
 	private lastRefreshResetTime: Map<string, number> = new Map();
@@ -1598,10 +1602,20 @@ export class AutoRefreshScheduler {
 		// first tick after startup, then weekly: next year's schedule is published
 		// around Nov/Dec, so a weekly retry picks it up (current + next year are
 		// requested each time). Failures fall back to cached/embedded data.
+		// Fire-and-forget so slow feed timeouts never delay pause/resume checks;
+		// stamped up front so ticks don't start overlapping refreshes. A transient
+		// failure is retried after an hour instead of a week.
 		const now = Date.now();
-		if (now - this.lastHolidayRefreshAt >= 7 * 24 * 60 * 60 * 1000) {
+		if (now - this.lastHolidayRefreshAt >= HOLIDAY_REFRESH_INTERVAL_MS) {
 			this.lastHolidayRefreshAt = now;
-			await refreshChineseHolidays();
+			void refreshChineseHolidays()
+				.then((ok) => {
+					if (!ok) {
+						this.lastHolidayRefreshAt =
+							now - HOLIDAY_REFRESH_INTERVAL_MS + HOLIDAY_RETRY_INTERVAL_MS;
+					}
+				})
+				.catch(() => {});
 		}
 		for (const [provider, isPeak] of Object.entries(PEAK_HOUR_CHECKS)) {
 			await this.checkPeakHoursPauseForProvider(provider, isPeak());

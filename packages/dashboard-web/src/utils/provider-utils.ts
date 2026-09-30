@@ -162,11 +162,15 @@ const EMBEDDED_CN_HOLIDAYS: ReadonlyArray<readonly [string, string]> = [
 const CN_HOLIDAY_FEED =
 	"https://raw.githubusercontent.com/NateScarlet/holiday-cn/master";
 const cnHolidayFeedByYear = new Map<number, Set<string>>();
-const cnHolidayFeedRequested = new Set<number>();
+const cnHolidayLastAttempt = new Map<number, number>();
+const CN_HOLIDAY_RETRY_MS = 60 * 60 * 1000;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Best-effort fetch of the yearly Chinese holiday feed (same source the proxy
- * uses). Safe to call repeatedly; each year is requested once per page load.
+ * uses). Safe to call repeatedly: loaded years are skipped and failed or
+ * not-yet-published years are retried at most hourly. Mirrors the proxy copy
+ * in packages/proxy/src/chinese-holidays.ts (keep the embedded table in sync).
  */
 export async function loadChineseHolidays(
 	years: number[] = [
@@ -175,23 +179,28 @@ export async function loadChineseHolidays(
 	],
 ): Promise<void> {
 	for (const year of years) {
-		if (cnHolidayFeedRequested.has(year)) continue;
-		cnHolidayFeedRequested.add(year);
+		if (cnHolidayFeedByYear.has(year)) continue;
+		const last = cnHolidayLastAttempt.get(year);
+		if (last !== undefined && Date.now() - last < CN_HOLIDAY_RETRY_MS) continue;
+		cnHolidayLastAttempt.set(year, Date.now());
 		try {
 			const res = await fetch(`${CN_HOLIDAY_FEED}/${year}.json`);
 			if (!res.ok) continue;
 			const body = (await res.json()) as {
 				days?: Array<{ date?: string; isOffDay?: boolean }>;
 			};
-			if (!Array.isArray(body.days)) continue;
-			cnHolidayFeedByYear.set(
-				year,
-				new Set(
-					body.days
-						.filter((d) => d.isOffDay === true && typeof d.date === "string")
-						.map((d) => d.date as string),
-				),
-			);
+			const offDays = Array.isArray(body.days)
+				? body.days
+						.filter(
+							(d) =>
+								d.isOffDay === true &&
+								typeof d.date === "string" &&
+								ISO_DATE.test(d.date),
+						)
+						.map((d) => d.date as string)
+				: [];
+			if (offDays.length === 0) continue;
+			cnHolidayFeedByYear.set(year, new Set(offDays));
 		} catch {
 			// Offline or blocked — embedded table / weekday rule still applies.
 		}

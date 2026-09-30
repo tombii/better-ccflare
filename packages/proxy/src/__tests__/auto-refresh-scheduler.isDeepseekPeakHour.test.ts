@@ -7,7 +7,7 @@
  *
  * Reference calendar (2026-09, UTC): 21 Mon, 22 Tue, 23 Wed, 26 Sat, 27 Sun
  */
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { isDeepseekPeakHour } from "../auto-refresh-scheduler";
 import {
 	refreshChineseHolidays,
@@ -15,6 +15,8 @@ import {
 } from "../chinese-holidays";
 
 describe("isDeepseekPeakHour", () => {
+	beforeEach(() => resetChineseHolidayCache());
+
 	it("is peak inside the first window (Wed 02:00 UTC)", () => {
 		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 2, 0))).toBe(true);
 	});
@@ -42,13 +44,13 @@ describe("isDeepseekPeakHour", () => {
 	});
 
 	it("is off-peak on a Chinese public holiday falling on a weekday", () => {
-		// Wed 2026-09-... no; use Mon 2026-02-16 (Spring Festival) and Wed 2026-10-07
+		// Mon 2026-02-16 (Spring Festival) and Wed 2026-10-07 (National Day)
 		expect(isDeepseekPeakHour(Date.UTC(2026, 1, 16, 2, 0))).toBe(false);
 		expect(isDeepseekPeakHour(Date.UTC(2026, 9, 7, 8, 0))).toBe(false);
 	});
 
 	it("is peak on the first working day after a holiday", () => {
-		// Fri 2026-10-09 is a normal workday after National Day
+		// Thu 2026-10-08 is a normal workday after National Day
 		expect(isDeepseekPeakHour(Date.UTC(2026, 9, 8, 8, 0))).toBe(true);
 	});
 });
@@ -89,5 +91,47 @@ describe("holiday feed", () => {
 				new Response("nf", { status: 404 })) as unknown as typeof fetch,
 		);
 		expect(isDeepseekPeakHour(Date.UTC(2026, 1, 16, 2, 0))).toBe(false);
+	});
+
+	it("ignores an empty feed and reports failure", async () => {
+		resetChineseHolidayCache();
+		const ok = await refreshChineseHolidays([2026], feedResponse([]));
+		expect(ok).toBe(false);
+		expect(isDeepseekPeakHour(Date.UTC(2026, 1, 16, 2, 0))).toBe(false);
+	});
+
+	it("ignores malformed dates in the feed", async () => {
+		resetChineseHolidayCache();
+		const ok = await refreshChineseHolidays(
+			[2027],
+			feedResponse([{ name: "x", date: "not-a-date", isOffDay: true }]),
+		);
+		expect(ok).toBe(false);
+	});
+
+	it("reports success for a good feed and for a 404 (unpublished year)", async () => {
+		resetChineseHolidayCache();
+		expect(
+			await refreshChineseHolidays(
+				[2027],
+				feedResponse([{ name: "x", date: "2027-03-10", isOffDay: true }]),
+			),
+		).toBe(true);
+		expect(
+			await refreshChineseHolidays(
+				[2028],
+				(async () =>
+					new Response("nf", { status: 404 })) as unknown as typeof fetch,
+			),
+		).toBe(true);
+		resetChineseHolidayCache();
+	});
+
+	it("reports failure on network error", async () => {
+		expect(
+			await refreshChineseHolidays([2026], (async () => {
+				throw new Error("offline");
+			}) as unknown as typeof fetch),
+		).toBe(false);
 	});
 });
