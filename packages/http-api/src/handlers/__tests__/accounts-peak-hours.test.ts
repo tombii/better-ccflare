@@ -75,4 +75,15 @@ describe("GET /api/accounts peakHours field", () => {
 		expect(byName.an?.peakHours).toEqual({ active: true });
 		expect(byName.ds?.peakHours).toEqual({ active: false });
 	});
+
+	it("does not break the list for prototype-named providers", async () => {
+		await insert("proto", "__proto__");
+		await insert("ctor", "constructor");
+		await insert("ds", "deepseek");
+		setSystemTime(new Date(Date.UTC(2026, 8, 23, 2, 0)));
+		const byName = Object.fromEntries((await list()).map((a) => [a.name, a]));
+		expect(byName.proto?.peakHours).toBeNull();
+		expect(byName.ctor?.peakHours).toBeNull();
+		expect(byName.ds?.peakHours).toEqual({ active: true });
+	});
 });

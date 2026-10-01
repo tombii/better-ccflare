@@ -229,7 +229,7 @@ export function RateLimitProgress({
 		if (provider === "deepseek" && peakHours) {
 			return (
 				<div className={cn("space-y-3", className)}>
-					<DeepseekPeakBadge isPeak={peakHours?.active ?? false} />
+					<DeepseekPeakBadge isPeak={peakHours.active} />
 				</div>
 			);
 		}

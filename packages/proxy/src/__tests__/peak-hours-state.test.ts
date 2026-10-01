@@ -34,6 +34,21 @@ describe("getPeakHoursState", () => {
 		expect(getPeakHoursState("codex", Date.UTC(2026, 8, 23, 15))).toBeNull();
 	});
 
+	it("returns null for unknown and prototype-named providers", () => {
+		const ts = Date.UTC(2026, 8, 23, 15);
+		for (const p of [
+			"__proto__",
+			"constructor",
+			"toString",
+			"nope",
+			"",
+			null,
+		]) {
+			expect(getPeakHoursState(p, ts)).toBeNull();
+		}
+		expect(getPeakHoursState(undefined, ts)).toBeNull();
+	});
+
 	it("reports deepseek, zai and anthropic activity", () => {
 		// Wed 02:00 UTC: deepseek peak only
 		const t1 = Date.UTC(2026, 8, 23, 2, 0);

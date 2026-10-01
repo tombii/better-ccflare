@@ -108,6 +108,9 @@ export function isDeepseekPeakHour(ts = Date.now()): boolean {
  * Anthropic OAuth peak hours: weekdays 5am-11am PT (13:00-19:00 UTC). During
  * these windows 5-hour sessions consume a larger share of the weekly budget.
  * Informational only: not part of the peak-hours auto-pause.
+ * Keep in sync with the dashboard copy in
+ * packages/dashboard-web/src/utils/provider-utils.ts (used by RequestsTab for
+ * historical request timestamps).
  */
 export function isAnthropicPeakHour(ts = Date.now()): boolean {
 	const d = new Date(ts);
@@ -136,10 +139,14 @@ export function getPeakHoursState(
 	provider: string | null | undefined,
 	ts = Date.now(),
 ): { active: boolean } | null {
+	// Own-property lookup: "__proto__"/"constructor" must not hit inherited props
+	const key = provider ?? "";
 	const check =
-		provider === "anthropic"
+		key === "anthropic"
 			? isAnthropicPeakHour
-			: PEAK_HOUR_CHECKS[provider ?? ""];
+			: Object.hasOwn(PEAK_HOUR_CHECKS, key)
+				? PEAK_HOUR_CHECKS[key]
+				: undefined;
 	return check ? { active: check(ts) } : null;
 }
 

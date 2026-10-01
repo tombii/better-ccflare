@@ -139,6 +139,9 @@ export function isZaiPeakHour(ts?: number): boolean {
  * Check if a given timestamp (default: now) falls within Anthropic OAuth peak hours.
  * Peak hours are weekdays 5am–11am PT (1pm–7pm UTC), Monday–Friday.
  * During these windows, 5-hour sessions consume a larger share of the weekly budget.
+ * Keep in sync with isAnthropicPeakHour in
+ * packages/proxy/src/auto-refresh-scheduler.ts. This copy exists for
+ * RequestsTab's historical timestamps; live state comes from /api/accounts.
  */
 export function isAnthropicPeakHour(ts?: number): boolean {
 	const d = new Date(ts ?? Date.now());

@@ -745,4 +745,49 @@ describe("RateLimitProgress — threshold tooltip wording", () => {
 		expect(html).toContain("usage is 20%");
 		expect(html).not.toContain("past the threshold");
 	});
+
+	describe("peak-hours badge", () => {
+		const renderBadge = (
+			provider: string,
+			peakHours?: { active: boolean } | null,
+		) =>
+			renderToStaticMarkup(
+				<RateLimitProgress
+					resetIso={new Date(Date.now() + 60 * 60 * 1000).toISOString()}
+					usageUtilization={10}
+					usageWindow="five_hour"
+					provider={provider}
+					peakHours={peakHours}
+				/>,
+			);
+
+		for (const provider of ["zai", "anthropic"]) {
+			it(`shows peak and off-peak badges for ${provider}`, () => {
+				expect(renderBadge(provider, { active: true })).toContain("Peak hours");
+				const off = renderBadge(provider, { active: false });
+				expect(off).toContain("Off-peak hours");
+				expect(off).not.toContain("Peak hours (");
+			});
+
+			it(`hides the badge for ${provider} without peakHours`, () => {
+				for (const p of [undefined, null]) {
+					const html = renderBadge(provider, p);
+					expect(html).not.toContain("Peak hours");
+					expect(html).not.toContain("Off-peak");
+				}
+			});
+		}
+
+		it("shows peak and off-peak badges for deepseek (no usage windows)", () => {
+			const render = (peakHours?: { active: boolean } | null) =>
+				renderToStaticMarkup(
+					<RateLimitProgress provider="deepseek" peakHours={peakHours} />,
+				);
+			expect(render({ active: true })).toMatch(/Peak/);
+			expect(render({ active: true })).not.toContain("Off-peak");
+			expect(render({ active: false })).toContain("Off-peak");
+			expect(render(null)).toBe("");
+			expect(render(undefined)).toBe("");
+		});
+	});
 });
