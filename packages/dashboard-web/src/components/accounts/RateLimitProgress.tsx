@@ -5,7 +5,9 @@ import { formatRelativeReset } from "../../lib/pool-usage";
 import { cn } from "../../lib/utils";
 import {
 	isAnthropicPeakHour,
+	isDeepseekPeakHour,
 	isZaiPeakHour,
+	loadChineseHolidays,
 	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
 } from "../../utils/provider-utils";
@@ -171,6 +173,25 @@ function computeProjectedMessage(
 	return `Resets ${formatDuration(timeToExhaustMs - remaining)} before exhaustion`;
 }
 
+function DeepseekPeakBadge({ isPeak }: { isPeak: boolean }) {
+	return (
+		<div className="flex items-center gap-2">
+			<span
+				className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${
+					isPeak
+						? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+						: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+				}`}
+			>
+				<span
+					className={`h-1.5 w-1.5 rounded-full ${isPeak ? "bg-orange-500" : "bg-green-500"}`}
+				/>
+				{isPeak ? "Peak hours (01–04, 06–10 UTC, weekdays)" : "Off-peak hours"}
+			</span>
+		</div>
+	);
+}
+
 export function RateLimitProgress({
 	resetIso,
 	usageUtilization,
@@ -197,6 +218,10 @@ export function RateLimitProgress({
 		return unregisterInterval;
 	}, []);
 
+	useEffect(() => {
+		if (provider === "deepseek") void loadChineseHolidays();
+	}, [provider]);
+
 	// Codex has no usage-polling endpoint, so gaps in its data are routine (the
 	// weekly percentage arrives only piggybacked on real traffic). The weekly bar
 	// is its only quota bar and must stay on screen through those gaps, saying
@@ -205,8 +230,17 @@ export function RateLimitProgress({
 
 	// Allow null resetIso for providers that show usage data (like NanoGPT in PayG mode)
 	// but still render null if there's no resetIso and no usage data to show
-	if (!isCodex && !resetIso && !usageData && !usageRateLimitedUntil)
+	if (!isCodex && !resetIso && !usageData && !usageRateLimitedUntil) {
+		// DeepSeek has no usage windows, but its peak/off-peak status still matters.
+		if (provider === "deepseek") {
+			return (
+				<div className={cn("space-y-3", className)}>
+					<DeepseekPeakBadge isPeak={isDeepseekPeakHour(now)} />
+				</div>
+			);
+		}
 		return null;
+	}
 
 	// Show explicit rate-limited state when the Anthropic usage API returned 429
 	// and we have no cached data to show.
@@ -552,6 +586,7 @@ export function RateLimitProgress({
 
 	const isZaiPeak = provider === "zai" && isZaiPeakHour(now);
 	const isAnthropicPeak = provider === "anthropic" && isAnthropicPeakHour(now);
+	const isDeepseekPeak = provider === "deepseek" && isDeepseekPeakHour(now);
 	const throttledWindowSet = new Set(usageThrottledWindows);
 
 	// The throttle notice normally rides along inside the throttled window's row.
@@ -607,6 +642,7 @@ export function RateLimitProgress({
 					</span>
 				</div>
 			)}
+			{provider === "deepseek" && <DeepseekPeakBadge isPeak={isDeepseekPeak} />}
 			{hasOrphanThrottledWindow && usageThrottledUntil != null && (
 				<div className="flex items-center justify-between">
 					<span className="text-xs text-amber-600 dark:text-amber-400">
