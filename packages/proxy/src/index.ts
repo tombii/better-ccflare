@@ -9,7 +9,10 @@ export {
 	listProviders,
 	registerProvider,
 } from "@better-ccflare/providers";
-export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
+export {
+	AutoRefreshScheduler,
+	getPeakHoursState,
+} from "./auto-refresh-scheduler";
 export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export {
 	CircuitBreaker,

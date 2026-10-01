@@ -42,6 +42,7 @@ import {
 	clearFamilyExhaustionForAccount,
 	clearOpenAICompatibleModelCacheForAccount,
 	clearPendingRotation,
+	getPeakHoursState,
 	getUsageThrottleStatus,
 	refreshCodexUsageForAccount,
 	restartUsagePollingForAccount,
@@ -759,6 +760,7 @@ export function createAccountsListHandler(
 					autoPauseOnOverageEnabled:
 						account.auto_pause_on_overage_enabled === 1,
 					peakHoursPauseEnabled: account.peak_hours_pause_enabled === 1,
+					peakHours: getPeakHoursState(account.provider, now),
 					usagePauseFiveHourThreshold:
 						account.usage_pause_five_hour_threshold ?? null,
 					usagePauseWeeklyThreshold:
