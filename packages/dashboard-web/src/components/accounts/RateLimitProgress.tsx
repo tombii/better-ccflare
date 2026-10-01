@@ -4,10 +4,6 @@ import { useEffect, useState } from "react";
 import { formatRelativeReset } from "../../lib/pool-usage";
 import { cn } from "../../lib/utils";
 import {
-	isAnthropicPeakHour,
-	isDeepseekPeakHour,
-	isZaiPeakHour,
-	loadChineseHolidays,
 	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
 } from "../../utils/provider-utils";
@@ -29,6 +25,7 @@ interface RateLimitProgressProps {
 	usageThrottledUntil?: number | null; // Timestamp (ms) until proactive usage throttling clears
 	usageThrottledWindows?: string[]; // Exact usage windows currently being throttled
 	provider: string;
+	peakHours?: { active: boolean } | null; // Server-computed peak state (/api/accounts)
 	className?: string;
 	showWeekly?: boolean; // Whether to show weekly usage as well
 	pauseThresholdFiveHour?: number | null; // Pause at this percent of the 5-hour window; null = off
@@ -201,6 +198,7 @@ export function RateLimitProgress({
 	usageThrottledUntil,
 	usageThrottledWindows = [],
 	provider,
+	peakHours = null,
 	className,
 	showWeekly = false,
 	pauseThresholdFiveHour = null,
@@ -218,10 +216,6 @@ export function RateLimitProgress({
 		return unregisterInterval;
 	}, []);
 
-	useEffect(() => {
-		if (provider === "deepseek") void loadChineseHolidays();
-	}, [provider]);
-
 	// Codex has no usage-polling endpoint, so gaps in its data are routine (the
 	// weekly percentage arrives only piggybacked on real traffic). The weekly bar
 	// is its only quota bar and must stay on screen through those gaps, saying
@@ -232,10 +226,10 @@ export function RateLimitProgress({
 	// but still render null if there's no resetIso and no usage data to show
 	if (!isCodex && !resetIso && !usageData && !usageRateLimitedUntil) {
 		// DeepSeek has no usage windows, but its peak/off-peak status still matters.
-		if (provider === "deepseek") {
+		if (provider === "deepseek" && peakHours) {
 			return (
 				<div className={cn("space-y-3", className)}>
-					<DeepseekPeakBadge isPeak={isDeepseekPeakHour(now)} />
+					<DeepseekPeakBadge isPeak={peakHours.active} />
 				</div>
 			);
 		}
@@ -584,9 +578,7 @@ export function RateLimitProgress({
 		});
 	}
 
-	const isZaiPeak = provider === "zai" && isZaiPeakHour(now);
-	const isAnthropicPeak = provider === "anthropic" && isAnthropicPeakHour(now);
-	const isDeepseekPeak = provider === "deepseek" && isDeepseekPeakHour(now);
+	const isPeak = peakHours?.active ?? false;
 	const throttledWindowSet = new Set(usageThrottledWindows);
 
 	// The throttle notice normally rides along inside the throttled window's row.
@@ -608,41 +600,41 @@ export function RateLimitProgress({
 
 	return (
 		<div className={cn("space-y-3", className)}>
-			{provider === "zai" && (
+			{provider === "zai" && peakHours && (
 				<div className="flex items-center gap-2">
 					<span
 						className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${
-							isZaiPeak
+							isPeak
 								? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
 								: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
 						}`}
 					>
 						<span
-							className={`h-1.5 w-1.5 rounded-full ${isZaiPeak ? "bg-orange-500" : "bg-green-500"}`}
+							className={`h-1.5 w-1.5 rounded-full ${isPeak ? "bg-orange-500" : "bg-green-500"}`}
 						/>
-						{isZaiPeak ? "Peak hours (14:00–18:00 SGT)" : "Off-peak hours"}
+						{isPeak ? "Peak hours (14:00–18:00 SGT)" : "Off-peak hours"}
 					</span>
 				</div>
 			)}
-			{provider === "anthropic" && (
+			{provider === "anthropic" && peakHours && (
 				<div className="flex items-center gap-2">
 					<span
 						className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${
-							isAnthropicPeak
+							isPeak
 								? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
 								: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
 						}`}
 					>
 						<span
-							className={`h-1.5 w-1.5 rounded-full ${isAnthropicPeak ? "bg-orange-500" : "bg-green-500"}`}
+							className={`h-1.5 w-1.5 rounded-full ${isPeak ? "bg-orange-500" : "bg-green-500"}`}
 						/>
-						{isAnthropicPeak
-							? "Peak hours (5–11am PT, weekdays)"
-							: "Off-peak hours"}
+						{isPeak ? "Peak hours (5–11am PT, weekdays)" : "Off-peak hours"}
 					</span>
 				</div>
 			)}
-			{provider === "deepseek" && <DeepseekPeakBadge isPeak={isDeepseekPeak} />}
+			{provider === "deepseek" && peakHours && (
+				<DeepseekPeakBadge isPeak={isPeak} />
+			)}
 			{hasOrphanThrottledWindow && usageThrottledUntil != null && (
 				<div className="flex items-center justify-between">
 					<span className="text-xs text-amber-600 dark:text-amber-400">

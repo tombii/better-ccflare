@@ -414,6 +414,11 @@ export interface AccountResponse {
 	autoRefreshEnabled: boolean;
 	autoPauseOnOverageEnabled?: boolean;
 	peakHoursPauseEnabled?: boolean;
+	/**
+	 * Runtime-only, server-computed peak-hours state (not persisted). `null` for
+	 * providers without a peak concept.
+	 */
+	peakHours?: { active: boolean } | null;
 	usagePauseFiveHourThreshold: number | null; // Stored 5-hour percentage; null = never set
 	usagePauseWeeklyThreshold: number | null; // Stored weekly percentage; null = never set
 	usagePauseFiveHourEnabled: boolean; // Whether the 5-hour threshold is in force

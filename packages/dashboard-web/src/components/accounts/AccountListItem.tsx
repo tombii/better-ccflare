@@ -582,6 +582,7 @@ export function AccountListItem({
 					usageThrottledUntil={account.usageThrottledUntil}
 					usageThrottledWindows={account.usageThrottledWindows}
 					provider={account.provider}
+					peakHours={account.peakHours}
 					showWeekly={providerShowsWeeklyUsage(account.provider)}
 					pauseThresholdFiveHour={
 						supportsUsagePauseThreshold(account.provider) &&

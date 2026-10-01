@@ -8,9 +8,8 @@
  * been fetched successfully overrides the embedded data for that year; years
  * with neither fall back to the plain weekday rule.
  *
- * The dashboard mirrors this logic in
- * packages/dashboard-web/src/utils/provider-utils.ts — keep the embedded
- * table and validation in sync.
+ * The dashboard no longer mirrors this: it reads the server-computed
+ * `peakHours` field on /api/accounts.
  */
 import { Logger } from "@better-ccflare/logger";
 
