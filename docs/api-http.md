@@ -195,10 +195,13 @@ List all configured accounts with their current status.
     "rateLimitReset": "2024-12-17T10:30:00.000Z",
     "rateLimitRemaining": 100,
     "sessionInfo": "Session: 25 requests",
-    "autoFallbackEnabled": false
+    "autoFallbackEnabled": false,
+    "peakHours": { "active": false }
   }
 ]
 ```
+
+`peakHours` is computed by the server on each request and is `null` for providers with no peak-hours concept. Currently `deepseek`, `zai` and `anthropic` report `{ "active": boolean }`. For DeepSeek and Zai it uses the same check as peak-hours auto-pause; Anthropic is informational only.
 
 **Example:**
 ```bash
