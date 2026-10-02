@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
 	existsSync,
 	mkdtempSync,
@@ -243,6 +243,7 @@ describe("Logger — console formatting laziness", () => {
 	it("does not emit on logBus when there are no listeners and still logs to console when enabled", () => {
 		const l = new Logger("t", LogLevel.INFO);
 		const spy: string[] = [];
+		const emitSpy = spyOn(logBus, "emit");
 		const orig = console.log;
 		console.log = (m: string) => spy.push(m);
 		try {
@@ -252,6 +253,9 @@ describe("Logger — console formatting laziness", () => {
 			setConsoleLogging(null);
 			console.log = orig;
 		}
+		const emitCalls = emitSpy.mock.calls.length;
+		emitSpy.mockRestore();
+		expect(emitCalls).toBe(0);
 		expect(spy.length).toBe(1);
 		expect(spy[0]).toContain("INFO: [t] hello");
 	});
