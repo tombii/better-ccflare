@@ -233,7 +233,14 @@ async function getCachedOrPersistedCodexUsage(
 			// The cache's window type still declares `utilization: number`, while a
 			// normalized window may legitimately be unknown (null). Storing it is
 			// intended: every reader re-normalizes, and null renders as N/A.
-			usageCache.set(accountId, normalizedUsage as AnyUsageData);
+			// Normalization keeps the windows only; carry the payload's own
+			// credits through it so a recovered record cannot read as "no credits".
+			usageCache.set(
+				accountId,
+				(usage.credits
+					? { ...normalizedUsage, credits: usage.credits }
+					: normalizedUsage) as AnyUsageData,
+			);
 			log.debug(`Recovered Codex usage from stored payload for ${accountName}`);
 			return normalizedUsage;
 		} catch (error) {
@@ -620,8 +627,16 @@ export function createAccountsListHandler(
 						usageThrottleSettings,
 						now,
 						// Display path: surface ALL per-model caps (m3 amber highlight);
-						// routing-side model matching happens in proxy.ts only.
-						{ scopedMode: "all" },
+						// routing-side model matching happens in proxy.ts only. A spent
+						// window served on extra usage is not throttled there either.
+						{
+							scopedMode: "all",
+							extraUsageAvailable:
+								getRepresentativeUsageSnapshotForProvider(
+									fullUsageData as AnyUsageData,
+									account.provider ?? "anthropic",
+								)?.extraUsageAvailable === true,
+						},
 					);
 					usageThrottledUntil = usageThrottleStatus.throttleUntil;
 					usageThrottledWindows = usageThrottleStatus.throttledWindows;

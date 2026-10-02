@@ -178,6 +178,28 @@ export function parseCodexCreditsHeaders(
 	};
 }
 
+/**
+ * Merge a Codex usage update into what was known before, for credits only.
+ *
+ * An update that does not report credits — a response without both
+ * `x-codex-credits-*` flags, a usage body without a `credits` block — says
+ * nothing about them, so it must not erase credits an earlier response or poll
+ * reported: callers replace the whole cached record, and losing `credits` would
+ * take a spent account that is serving on them out of rotation until the next
+ * report. The update's windows always win, and an update that does report
+ * credits replaces them, including "none left". If the credits did run out
+ * unreported, the provider's own refusal benches the account through the
+ * normal rate-limit path.
+ */
+export function carryForwardCodexCredits(
+	previous: UsageData | null | undefined,
+	next: UsageData,
+): UsageData {
+	if (next.credits !== undefined) return next;
+	const known = previous?.credits;
+	return known ? { ...next, credits: known } : next;
+}
+
 export function parseCodexUsageHeaders(
 	headers: Headers,
 	options: ParseCodexUsageHeadersOptions = {},

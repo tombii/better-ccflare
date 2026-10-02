@@ -1,8 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import { setUseExtraUsage } from "@better-ccflare/core";
 import type { Account } from "@better-ccflare/types";
 import {
 	collectWindows,
 	createUsageThrottledResponse,
+	getAccountUsageThrottleUntil,
 	getUsageThrottleStatus,
 	getUsageThrottleUntil,
 } from "../usage-throttling";
@@ -428,5 +430,80 @@ describe("collectWindows with a single flat window", () => {
 			"monthly",
 		]);
 		expect(windows.find((w) => w.window === "weekly")?.utilization).toBe(95);
+	});
+});
+
+describe("usage throttling with extra usage", () => {
+	const now = Date.UTC(2026, 3, 28, 12, 0, 0);
+	const resetAt = new Date(now + 2 * 60 * 60 * 1000).toISOString();
+	const settings = { fiveHourEnabled: true, weeklyEnabled: true };
+	const spent = {
+		five_hour: { utilization: 100, resets_at: resetAt },
+		seven_day: { utilization: 10, resets_at: null },
+	};
+
+	afterEach(() => {
+		setUseExtraUsage(false);
+	});
+
+	it("still paces a spent window back to its reset without extra usage", () => {
+		expect(getUsageThrottleUntil(spent, settings, now)).toBe(
+			new Date(resetAt).getTime(),
+		);
+	});
+
+	it("does not throttle a spent window that extra usage is serving", () => {
+		const status = getUsageThrottleStatus(spent, settings, now, {
+			extraUsageAvailable: true,
+		});
+		expect(status.throttleUntil).toBeNull();
+		expect(status.throttledWindows).toEqual([]);
+	});
+
+	it("keeps pacing a window that is over pace but not spent", () => {
+		const overPace = {
+			five_hour: { utilization: 80, resets_at: resetAt },
+			seven_day: { utilization: 10, resets_at: null },
+		};
+		expect(
+			getUsageThrottleUntil(overPace, settings, now, {
+				extraUsageAvailable: true,
+			}),
+		).not.toBeNull();
+	});
+
+	describe("getAccountUsageThrottleUntil — the routing decision", () => {
+		const codexWithCredits = {
+			...spent,
+			credits: { has_credits: true, unlimited: false, balance: "5" },
+		};
+
+		it("throttles a spent Codex account while the switch is off", () => {
+			expect(
+				getAccountUsageThrottleUntil("codex", codexWithCredits, settings, now),
+			).toBe(new Date(resetAt).getTime());
+		});
+
+		it("lets a spent Codex account with credits through once the switch is on", () => {
+			setUseExtraUsage(true);
+			expect(
+				getAccountUsageThrottleUntil("codex", codexWithCredits, settings, now),
+			).toBeNull();
+		});
+
+		it("still throttles a spent account that has no credits, switch on", () => {
+			setUseExtraUsage(true);
+			expect(
+				getAccountUsageThrottleUntil(
+					"codex",
+					{
+						...spent,
+						credits: { has_credits: false, unlimited: false, balance: "0" },
+					},
+					settings,
+					now,
+				),
+			).toBe(new Date(resetAt).getTime());
+		});
 	});
 });

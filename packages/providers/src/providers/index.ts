@@ -31,6 +31,7 @@ export {
 	CODEX_VERSION,
 	CodexOAuthProvider,
 	CodexProvider,
+	carryForwardCodexCredits,
 	codexWindowRolledOver,
 	extractChatgptAccountId,
 	fetchCodexUsageData,

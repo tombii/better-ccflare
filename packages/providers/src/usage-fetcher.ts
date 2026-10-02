@@ -30,6 +30,7 @@ import {
 	type NanoGPTUsageData,
 } from "./nanogpt-usage-fetcher";
 import { extractChatgptAccountId } from "./providers/codex/account-id";
+import { carryForwardCodexCredits } from "./providers/codex/usage";
 import { fetchCodexUsageData } from "./providers/codex/usage-endpoint";
 import {
 	codexWindowRolledOver,
@@ -1454,7 +1455,12 @@ class UsageCache {
 						Date.now(),
 						slot,
 					);
-					this.install(accountId, result.data);
+					// A poll without a `credits` block must not erase credits the
+					// traffic path learned (see carryForwardCodexCredits).
+					this.install(
+						accountId,
+						carryForwardCodexCredits(previous, result.data),
+					);
 					if (rolledOver) {
 						const callback = this.windowResetCallbacks.get(accountId);
 						if (callback) {

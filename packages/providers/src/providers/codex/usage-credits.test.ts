@@ -6,7 +6,7 @@
  * `UsageData.credits`.
  */
 import { describe, expect, it } from "bun:test";
-import { parseCodexUsageHeaders } from "./usage";
+import { carryForwardCodexCredits, parseCodexUsageHeaders } from "./usage";
 import { parseCodexUsagePayload } from "./usage-endpoint";
 
 const NOW_MS = 1_800_000_000_000;
@@ -147,5 +147,42 @@ describe("parseCodexUsagePayload — credits", () => {
 			expect(usage?.seven_day?.utilization).toBe(100);
 			expect(usage).not.toHaveProperty("credits");
 		}
+	});
+});
+
+describe("carryForwardCodexCredits", () => {
+	const known = { has_credits: true, unlimited: false, balance: "12" };
+	const windows = {
+		seven_day: { utilization: 100, resets_at: "2030-01-04T00:00:00.000Z" },
+	};
+
+	it("keeps credits an earlier report established when the update says nothing about them", () => {
+		expect(
+			carryForwardCodexCredits({ ...windows, credits: known }, windows),
+		).toEqual({ ...windows, credits: known });
+	});
+
+	it("takes the update's own credits, including running out", () => {
+		const none = { has_credits: false, unlimited: false, balance: "0" };
+		expect(
+			carryForwardCodexCredits(
+				{ ...windows, credits: known },
+				{ ...windows, credits: none },
+			).credits,
+		).toEqual(none);
+	});
+
+	it("always takes the update's windows", () => {
+		const update = {
+			seven_day: { utilization: 40, resets_at: "2030-01-11T00:00:00.000Z" },
+		};
+		expect(
+			carryForwardCodexCredits({ ...windows, credits: known }, update),
+		).toEqual({ ...update, credits: known });
+	});
+
+	it("invents nothing when no credits were ever reported", () => {
+		expect(carryForwardCodexCredits(null, windows)).toEqual(windows);
+		expect(carryForwardCodexCredits(windows, windows)).toEqual(windows);
 	});
 });
