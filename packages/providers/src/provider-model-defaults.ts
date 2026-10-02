@@ -49,6 +49,7 @@ const derivedByAccount = new Map<string, Record<string, string>>();
 /** Same, but for the provider as a whole — see setDerived… below. */
 const derivedByProvider: ProviderModelDefaultOverrides = {};
 
+// Key format: `${provider}\0${accountId}`.
 function derivedKey(provider: string, accountId: string): string {
 	return `${provider}\0${accountId}`;
 }
@@ -93,6 +94,17 @@ export function hasDerivedProviderModelDefaults(
 	accountId: string,
 ): boolean {
 	return derivedByAccount.has(derivedKey(provider, accountId));
+}
+
+/** Drop every derived per-account map for a removed account. */
+export function clearDerivedProviderModelDefaultsForAccount(
+	accountId: string,
+): void {
+	for (const key of derivedByAccount.keys()) {
+		if (key.slice(key.indexOf("\0") + 1) === accountId) {
+			derivedByAccount.delete(key);
+		}
+	}
 }
 
 /** Test seam: both derived maps are process-wide and leak between cases. */

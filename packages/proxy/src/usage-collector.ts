@@ -126,15 +126,22 @@ function parseSSELine(line: string): { event?: string; data?: string } {
 	return {};
 }
 
-function shouldParseSSEData(data: string, eventType: string): boolean {
+export function shouldParseSSEData(data: string, eventType: string): boolean {
 	if (!data.startsWith("{")) return false;
 
 	switch (eventType) {
 		case "message_start":
 		case "message_delta":
 		case "content_block_start":
-		case "content_block_delta":
 			return true;
+		case "content_block_delta":
+			// Text/tool deltas carry no usage; only parse when a usage/message/
+			// response key could be present (false positives are harmless).
+			return (
+				data.includes('"usage"') ||
+				data.includes('"message_') ||
+				data.includes('"response.')
+			);
 		default:
 			return (
 				data.includes("usage") ||

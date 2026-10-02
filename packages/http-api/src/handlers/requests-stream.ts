@@ -1,10 +1,14 @@
 import { type RequestEvt, requestEvents } from "@better-ccflare/core";
+import { SSE_KEEPALIVE_INTERVAL_MS, startSseKeepalive } from "./sse-keepalive";
 
-export function createRequestsStreamHandler() {
+export function createRequestsStreamHandler(
+	keepaliveIntervalMs = SSE_KEEPALIVE_INTERVAL_MS,
+) {
 	return (req: Request): Response => {
 		// Store the write handler outside to access it in cancel
 		let writeHandler: ((data: RequestEvt) => void) | null = null;
 		let isClosed = false;
+		let stopKeepalive: () => void = () => {};
 
 		const stream = new ReadableStream({
 			start(controller) {
@@ -20,6 +24,7 @@ export function createRequestsStreamHandler() {
 					} catch (_error) {
 						// Stream is closed or errored
 						isClosed = true;
+						stopKeepalive();
 						if (writeHandler) {
 							requestEvents.off("event", writeHandler);
 							writeHandler = null;
@@ -33,10 +38,23 @@ export function createRequestsStreamHandler() {
 
 				// Listen for events
 				requestEvents.on("event", writeHandler);
+
+				stopKeepalive = startSseKeepalive(
+					controller,
+					keepaliveIntervalMs,
+					() => {
+						isClosed = true;
+						if (writeHandler) {
+							requestEvents.off("event", writeHandler);
+							writeHandler = null;
+						}
+					},
+				);
 			},
 			cancel() {
 				// Cleanup only this specific listener
 				isClosed = true;
+				stopKeepalive();
 				if (writeHandler) {
 					requestEvents.off("event", writeHandler);
 					writeHandler = null;
@@ -46,6 +64,7 @@ export function createRequestsStreamHandler() {
 
 		// Clean up on abort signal
 		req.signal?.addEventListener("abort", () => {
+			stopKeepalive();
 			if (!isClosed) {
 				isClosed = true;
 				if (writeHandler) {

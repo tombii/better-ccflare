@@ -8,6 +8,7 @@ import { Logger } from "@better-ccflare/logger";
 import type { AlertsConfigPayload } from "@better-ccflare/types";
 import { getAlertsConfig, setAlertsConfig } from "../services/alerts";
 import type { APIContext } from "../types";
+import { SSE_KEEPALIVE_INTERVAL_MS, startSseKeepalive } from "./sse-keepalive";
 
 const log = new Logger("AlertsHandler");
 
@@ -103,10 +104,13 @@ export function createAlertsAcknowledgeAllHandler(context: APIContext) {
 	};
 }
 
-export function createAlertsStreamHandler() {
+export function createAlertsStreamHandler(
+	keepaliveIntervalMs = SSE_KEEPALIVE_INTERVAL_MS,
+) {
 	return (req: Request): Response => {
 		let writeHandler: ((data: AlertEvt) => void) | null = null;
 		let isClosed = false;
+		let stopKeepalive: () => void = () => {};
 		const stream = new ReadableStream({
 			start(controller) {
 				const encoder = new TextEncoder();
@@ -118,6 +122,7 @@ export function createAlertsStreamHandler() {
 						);
 					} catch (_error) {
 						isClosed = true;
+						stopKeepalive();
 						if (writeHandler) {
 							alertEvents.off("event", writeHandler);
 							writeHandler = null;
@@ -126,9 +131,21 @@ export function createAlertsStreamHandler() {
 				};
 				controller.enqueue(encoder.encode("event: connected\ndata: ok\n\n"));
 				alertEvents.on("event", writeHandler);
+				stopKeepalive = startSseKeepalive(
+					controller,
+					keepaliveIntervalMs,
+					() => {
+						isClosed = true;
+						if (writeHandler) {
+							alertEvents.off("event", writeHandler);
+							writeHandler = null;
+						}
+					},
+				);
 			},
 			cancel() {
 				isClosed = true;
+				stopKeepalive();
 				if (writeHandler) {
 					alertEvents.off("event", writeHandler);
 					writeHandler = null;
@@ -136,6 +153,7 @@ export function createAlertsStreamHandler() {
 			},
 		});
 		req.signal?.addEventListener("abort", () => {
+			stopKeepalive();
 			if (!isClosed) {
 				isClosed = true;
 				if (writeHandler) {

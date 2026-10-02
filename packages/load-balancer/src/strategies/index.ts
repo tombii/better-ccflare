@@ -201,11 +201,10 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		const bypassHeader = meta.headers?.get("x-better-ccflare-bypass-session");
 		const bypassSession = bypassHeader === "true";
 
-		this.log.info(
-			`Bypass header: ${bypassHeader}, bypassSession: ${bypassSession}`,
-		);
-
 		if (bypassSession) {
+			this.log.info(
+				`Bypass header: ${bypassHeader}, bypassSession: ${bypassSession}`,
+			);
 			this.log.info("Session tracking bypassed due to bypass header");
 		}
 

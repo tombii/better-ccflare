@@ -204,3 +204,41 @@ describe("teeStream", () => {
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	});
 });
+
+describe("teeStream collect:false", () => {
+	it("passes data through and calls onClose with an empty buffer", async () => {
+		const { stream } = makeTrackedUpstream([textChunk("a"), textChunk("b")]);
+		let closedWith: Uint8Array[] | null = null;
+		let chunkBytes = 0;
+		const out = teeStream(stream, {
+			collect: false,
+			onChunk: (c) => {
+				chunkBytes += c.length;
+			},
+			onClose: (b) => {
+				closedWith = b;
+			},
+		});
+		const received = await readAll(out);
+		expect(new TextDecoder().decode(combineChunks(received))).toBe("ab");
+		expect(chunkBytes).toBe(2);
+		expect(closedWith).toEqual([]);
+	});
+
+	it("still finalizes and drains on cancel without buffering", async () => {
+		const tracked = makeTrackedUpstream([textChunk("a"), textChunk("b")]);
+		let closedWith: Uint8Array[] | null = null;
+		const out = teeStream(tracked.stream, {
+			collect: false,
+			onClose: (b) => {
+				closedWith = b;
+			},
+		});
+		const reader = out.getReader();
+		await reader.read();
+		await reader.cancel();
+		await new Promise((r) => setTimeout(r, 20));
+		expect(closedWith).toEqual([]);
+		expect(tracked.wasExhausted()).toBe(true);
+	});
+});

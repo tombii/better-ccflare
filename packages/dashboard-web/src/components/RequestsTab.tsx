@@ -18,7 +18,7 @@ import {
 	User,
 	X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { api, type RequestPayload, type RequestSummary } from "../api";
 import { API_LIMITS } from "../constants";
 import { useAccounts, useApiKeys, useRequests } from "../hooks/queries";
@@ -57,6 +57,10 @@ export function RequestsTab() {
 		new Set(),
 	);
 	const [modalRequest, setModalRequest] = useState<RequestPayload | null>(null);
+	const modalSummaryRef = useRef<{
+		id: string;
+		summary: RequestSummary;
+	} | null>(null);
 	const [accountFilter, setAccountFilter] = useState<string>("all");
 	const [agentFilter, setAgentFilter] = useState<string>("all");
 	const [apiKeyFilter, setApiKeyFilter] = useState<string>("all");
@@ -105,6 +109,22 @@ export function RequestsTab() {
 						),
 		};
 	}, [requestsData]);
+
+	// Keep the open modal's summary after its request is pruned from the bounded list.
+	const liveModalSummary = modalRequest
+		? data?.summaries.get(modalRequest.id)
+		: undefined;
+	if (modalRequest && liveModalSummary) {
+		modalSummaryRef.current = {
+			id: modalRequest.id,
+			summary: liveModalSummary,
+		};
+	}
+	const modalSummary =
+		liveModalSummary ??
+		(modalSummaryRef.current?.id === modalRequest?.id
+			? modalSummaryRef.current?.summary
+			: undefined);
 
 	// Filter dropdown options come from dedicated endpoints (not from the loaded
 	// requests slice) so every configured account/API key is selectable, even
@@ -985,7 +1005,7 @@ export function RequestsTab() {
 			{modalRequest && (
 				<RequestDetailsModal
 					request={modalRequest}
-					summary={data?.summaries.get(modalRequest.id)}
+					summary={modalSummary}
 					isOpen={true}
 					onClose={() => setModalRequest(null)}
 				/>

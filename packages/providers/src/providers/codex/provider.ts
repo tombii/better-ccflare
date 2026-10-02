@@ -539,6 +539,8 @@ export interface CodexProviderOptionsForTests {
 export const CODEX_STREAM_DRAIN_DEADLINE_MS = 30_000;
 const CODEX_CONTINUATION_TTL_MS = 30 * 60 * 1000;
 const CODEX_CONTINUATION_MAX_LANES = 2_048;
+const UUID_RE =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class CodexProvider extends BaseProvider {
 	name = "codex";
@@ -1396,11 +1398,7 @@ export class CodexProvider extends BaseProvider {
 		if (typeof raw !== "string") return null;
 		const normalized = raw.trim();
 		if (normalized.length === 0) return null;
-		return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-			normalized,
-		)
-			? normalized.toLowerCase()
-			: normalized;
+		return UUID_RE.test(normalized) ? normalized.toLowerCase() : normalized;
 	}
 
 	private sweepContinuationState(now: number): void {

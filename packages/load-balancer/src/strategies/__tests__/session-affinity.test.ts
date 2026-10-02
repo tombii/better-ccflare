@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import { SessionAffinityStrategy } from "@better-ccflare/load-balancer";
 import type {
 	Account,
@@ -251,5 +251,54 @@ describe("SessionAffinityStrategy", () => {
 				]),
 			).toBeNull();
 		});
+	});
+});
+
+describe("SessionAffinityStrategy map maintenance", () => {
+	it("evicts the least-recently-touched client, not the oldest-assigned", () => {
+		const strategy = new SessionAffinityStrategy(60_000, 2);
+		strategy.initialize(new MockStore());
+		const x = makeAccount({ id: "x" });
+		const y = makeAccount({ id: "y" });
+		const t0 = Date.now();
+		try {
+			// Spaced beyond the recent-pick window so ranking ties fall to input order.
+			setSystemTime(t0);
+			strategy.select([y, x], metaFor("a")); // a -> y
+			setSystemTime(t0 + 1_000);
+			strategy.select([x, y], metaFor("b")); // b -> x
+			setSystemTime(t0 + 2_000);
+			strategy.select([y, x], metaFor("a")); // touch a
+			setSystemTime(t0 + 3_000);
+			strategy.select([x, y], metaFor("c")); // evicts b, not a
+			expect(strategy.affinityEntries).toBe(2);
+
+			setSystemTime(t0 + 4_000);
+			// a survived: still pinned to y although x ranks first.
+			expect(strategy.select([x, y], metaFor("a"))[0].id).toBe("y");
+			setSystemTime(t0 + 5_000);
+			// b was evicted: re-assigned by ranking (y first) instead of pinned to x.
+			expect(strategy.select([y, x], metaFor("b"))[0].id).toBe("y");
+		} finally {
+			setSystemTime();
+		}
+	});
+
+	it("sweeps expired entries on select", () => {
+		const strategy = new SessionAffinityStrategy(1_000, 100);
+		strategy.initialize(new MockStore());
+		const accounts = [makeAccount({ id: "x" })];
+		const t0 = Date.now();
+		try {
+			setSystemTime(t0);
+			strategy.select(accounts, metaFor("a"));
+			strategy.select(accounts, metaFor("b"));
+			expect(strategy.affinityEntries).toBe(2);
+			setSystemTime(t0 + 2_000);
+			strategy.select(accounts, metaFor(null));
+			expect(strategy.affinityEntries).toBe(0);
+		} finally {
+			setSystemTime();
+		}
 	});
 });

@@ -104,6 +104,30 @@ describe("CacheBodyStore", () => {
 	// -----------------------------------------------------------------------
 
 	describe("stageRequest skips", () => {
+		it("drops an oversized body without evicting existing staged entries", () => {
+			cacheBodyStore.stageRequest(
+				"req-normal",
+				"account-a",
+				makeBody(),
+				makeHeaders(),
+				"/v1/messages",
+			);
+			const hint = new TextEncoder().encode('{"cache_control":{}}');
+			const huge = new Uint8Array(64 * 1024 * 1024 + 1);
+			huge.set(hint);
+			cacheBodyStore.stageRequest(
+				"req-huge",
+				"account-b",
+				huge.buffer as ArrayBuffer,
+				makeHeaders(),
+				"/v1/messages",
+			);
+			cacheBodyStore.onSummary("req-normal", 10);
+			cacheBodyStore.onSummary("req-huge", 10);
+			expect(cacheBodyStore.getLastCachedRequest("account-a")).not.toBeNull();
+			expect(cacheBodyStore.getLastCachedRequest("account-b")).toBeNull();
+		});
+
 		it("skips when disabled", () => {
 			cacheBodyStore.setEnabled(false);
 			cacheBodyStore.stageRequest(
@@ -879,5 +903,26 @@ describe("CacheBodyStore", () => {
 				'{"model":"y","system":[{"type":"text","text":"cached","cache_control":{"type":"ephemeral"}}]}',
 			);
 		});
+	});
+});
+
+describe("CacheBodyStore staging byte budget", () => {
+	it("evicts oldest staged entries when total bytes exceed the budget", () => {
+		const pad = "x".repeat(20 * 1024 * 1024);
+		const big = () =>
+			makeBody(`{"cache_control":{"type":"ephemeral"},"pad":"${pad}"}`);
+		for (const id of ["r1", "r2", "r3", "r4"]) {
+			cacheBodyStore.stageRequest(
+				id,
+				"acc",
+				big(),
+				makeHeaders(),
+				"/v1/messages",
+			);
+		}
+		cacheBodyStore.onSummary("r1", 10);
+		expect(cacheBodyStore.getLastCachedRequest("acc")).toBeNull();
+		cacheBodyStore.onSummary("r4", 10);
+		expect(cacheBodyStore.getLastCachedRequest("acc")).not.toBeNull();
 	});
 });

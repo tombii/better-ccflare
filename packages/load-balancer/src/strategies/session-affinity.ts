@@ -155,20 +155,13 @@ export class SessionAffinityStrategy implements LoadBalancingStrategy {
 
 	/**
 	 * Bound the affinity map: when it is full, evict the least-recently-touched
-	 * entry (smallest assignedAt) before inserting a new one. O(n) only when at
-	 * capacity, which only happens under pathological unique-clientId input.
+	 * entry (first in Map order, which is maintained in touch order) before
+	 * inserting a new one.
 	 */
 	private evictOldestIfFull(): void {
 		if (this.affinity.size < this.maxAffinityEntries) return;
-		let oldestKey: string | null = null;
-		let oldestAt = Number.POSITIVE_INFINITY;
-		for (const [key, entry] of this.affinity) {
-			if (entry.assignedAt < oldestAt) {
-				oldestAt = entry.assignedAt;
-				oldestKey = key;
-			}
-		}
-		if (oldestKey !== null) this.affinity.delete(oldestKey);
+		const oldestKey = this.affinity.keys().next().value;
+		if (oldestKey !== undefined) this.affinity.delete(oldestKey);
 	}
 
 	peek(accounts: Account[]): string | null {
@@ -194,11 +187,11 @@ export class SessionAffinityStrategy implements LoadBalancingStrategy {
 
 		// GC expired affinity entries so the map doesn't grow unboundedly and so
 		// long-idle clients are re-balanced onto the currently least-loaded
-		// account rather than re-pinned to a possibly-stale one.
+		// account rather than re-pinned to a possibly-stale one. The map is kept
+		// in touch order, so the sweep stops at the first live entry.
 		for (const [clientId, entry] of this.affinity) {
-			if (now - entry.assignedAt >= this.affinityTtlMs) {
-				this.affinity.delete(clientId);
-			}
+			if (now - entry.assignedAt < this.affinityTtlMs) break;
+			this.affinity.delete(clientId);
 		}
 
 		const clientId = meta.clientSessionId ?? null;
@@ -212,6 +205,8 @@ export class SessionAffinityStrategy implements LoadBalancingStrategy {
 					// STICKY hit: keep the client on its account (prompt-cache reuse).
 					// Refresh assignedAt so an active session keeps its mapping alive.
 					mapping.assignedAt = now;
+					this.affinity.delete(clientId);
+					this.affinity.set(clientId, mapping);
 					const others = this.rankByLeastUsed(
 						available.filter((a) => a.id !== mapped.id),
 						now,

@@ -11,6 +11,7 @@ export function teeStream(
 		onClose?: (buffered: Uint8Array[]) => void;
 		onError?: (error: Error) => void;
 		maxBytes?: number; // Max bytes to buffer (default: 1MB)
+		collect?: boolean; // Set false to skip buffering; onClose receives []
 	} = {},
 ): ReadableStream<Uint8Array> {
 	const {
@@ -18,6 +19,7 @@ export function teeStream(
 		onClose,
 		onError,
 		maxBytes = BUFFER_SIZES.STREAM_TEE_MAX_BYTES,
+		collect = true,
 	} = options;
 	const reader = upstream.getReader();
 	const buffered: Uint8Array[] = [];
@@ -40,7 +42,9 @@ export function teeStream(
 				controller.enqueue(value);
 
 				// Buffer for analytics if under limit
-				if (!truncated && totalBytes + value.length <= maxBytes) {
+				if (!collect) {
+					// Caller does not use the buffer
+				} else if (!truncated && totalBytes + value.length <= maxBytes) {
 					buffered.push(value);
 					totalBytes += value.length;
 				} else if (!truncated) {
