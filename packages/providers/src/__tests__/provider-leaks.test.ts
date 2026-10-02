@@ -21,6 +21,16 @@ describe("derived defaults per-account removal", () => {
 		expect(hasDerivedProviderModelDefaults("codex", "a2")).toBe(true);
 		clearDerivedProviderModelDefaults();
 	});
+
+	it("does not remove an account whose id has the removed id as a suffix", () => {
+		clearDerivedProviderModelDefaults();
+		setDerivedProviderModelDefaults("codex", "a1", { opus: "x" });
+		setDerivedProviderModelDefaults("codex", "xa1", { opus: "y" });
+		clearDerivedProviderModelDefaultsForAccount("a1");
+		expect(hasDerivedProviderModelDefaults("codex", "a1")).toBe(false);
+		expect(hasDerivedProviderModelDefaults("codex", "xa1")).toBe(true);
+		clearDerivedProviderModelDefaults();
+	});
 });
 
 describe("UsageCache.stopPolling", () => {
