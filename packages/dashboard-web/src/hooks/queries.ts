@@ -294,7 +294,8 @@ export const useRequests = (limit: number, _refetchInterval?: number) => {
 		},
 		staleTime: Infinity, // Consider data fresh until manually refetched
 		gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
-		// Remove refetchInterval - SSE stream handles real-time updates
+		// SSE stream handles real-time updates; override the global polling default
+		refetchInterval: false,
 	});
 };
 
@@ -302,6 +303,11 @@ export const useLogHistory = () => {
 	return useQuery({
 		queryKey: queryKeys.logHistory(),
 		queryFn: () => api.getLogHistory(),
+		// Live logs arrive over SSE; a refetch would overwrite them with a
+		// full log-file read. Only (re)load history when the tab mounts.
+		refetchInterval: false,
+		refetchOnWindowFocus: false,
+		staleTime: 0,
 	});
 };
 

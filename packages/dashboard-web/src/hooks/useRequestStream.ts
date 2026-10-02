@@ -55,6 +55,27 @@ const getOrCreateCleanupInterval = () => {
 	return globalCleanupInterval;
 };
 
+function pruneDetailsMap(
+	map: Map<string, RequestResponse>,
+	requests: RequestPayload[],
+): Map<string, RequestResponse> {
+	if (map.size === 0) return map;
+	const ids = new Set(requests.map((r) => r.id));
+	let stale = false;
+	for (const id of map.keys()) {
+		if (!ids.has(id)) {
+			stale = true;
+			break;
+		}
+	}
+	if (!stale) return map;
+	const pruned = new Map<string, RequestResponse>();
+	for (const [id, value] of map) {
+		if (ids.has(id)) pruned.set(id, value);
+	}
+	return pruned;
+}
+
 export function useRequestStream(limit = 200) {
 	const queryClient = useQueryClient();
 	const connectionKey = `requests-stream-${limit}`;
@@ -183,10 +204,14 @@ export function useRequestStream(limit = 200) {
 							}
 
 							// Add new placeholder at the beginning
+							const nextRequests = [placeholder, ...current.requests].slice(
+								0,
+								limit,
+							);
 							return {
 								...current,
-								requests: [placeholder, ...current.requests].slice(0, limit),
-								detailsMap: currentDetailsMap,
+								requests: nextRequests,
+								detailsMap: pruneDetailsMap(currentDetailsMap, nextRequests),
 							};
 						}
 						// Update details map with summary
@@ -232,10 +257,17 @@ export function useRequestStream(limit = 200) {
 									},
 								};
 							}
-							return { ...current, requests: newRequests, detailsMap: map };
+							return {
+								...current,
+								requests: newRequests,
+								detailsMap: pruneDetailsMap(map, newRequests),
+							};
 						}
 
-						return { ...current, detailsMap: map };
+						return {
+							...current,
+							detailsMap: pruneDetailsMap(map, current.requests),
+						};
 					},
 				);
 			} catch (error) {
