@@ -20,6 +20,7 @@ const CLEANUP_INTERVAL = 30000; // 30 seconds
 const CONNECTION_TIMEOUT = 60000; // 1 minute
 const HEARTBEAT_INTERVAL = 15000; // 15 seconds
 const RECONNECT_MAX_DELAY = 30000;
+const HIDDEN_RECONNECT_THRESHOLD = 30000;
 
 // EventSource.readyState values, as numbers so the helpers below stay pure
 const ES_OPEN = 1;
@@ -80,8 +81,16 @@ export function reconnectDelay(
 	return Math.round(base + random() * base * 0.25);
 }
 
-export function shouldReconnectOnWake(readyState: number | undefined): boolean {
-	return readyState !== ES_OPEN;
+export function shouldReconnectOnWake(
+	readyState: number | undefined,
+	hiddenMs = 0,
+	isOnlineEvent = false,
+): boolean {
+	return (
+		readyState !== ES_OPEN ||
+		isOnlineEvent ||
+		hiddenMs > HIDDEN_RECONNECT_THRESHOLD
+	);
 }
 
 export function shouldReconnectOnHeartbeat(readyState: number): boolean {
@@ -408,8 +417,14 @@ export function useRequestStream(limit = 200) {
 			clearTimeout(retryTimerRef.current);
 			retryTimerRef.current = null;
 		}
+		const pooled = CONNECTION_POOL.get(connectionKey);
+		if (pooled) {
+			pooled.connection.close();
+			clearInterval(pooled.heartbeat);
+			CONNECTION_POOL.delete(connectionKey);
+		}
 		connect(0, true);
-	}, [connect]);
+	}, [connect, connectionKey]);
 	reconnectNowRef.current = reconnectNow;
 
 	useEffect(() => {
@@ -418,27 +433,37 @@ export function useRequestStream(limit = 200) {
 
 		// A sleeping laptop or backgrounded tab can kill the stream silently, so
 		// refetch the snapshot and reconnect (if needed) when we come back.
-		const recover = () => {
+		let hiddenAt: number | null = null;
+		const recover = (hiddenMs: number, isOnlineEvent: boolean) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.requests(limit) });
 			if (
 				shouldReconnectOnWake(
 					CONNECTION_POOL.get(connectionKey)?.connection.readyState,
+					hiddenMs,
+					isOnlineEvent,
 				)
 			) {
 				reconnectNow();
 			}
 		};
 		const onVisibilityChange = () => {
-			if (document.visibilityState === "visible") recover();
+			if (document.visibilityState === "hidden") {
+				hiddenAt = Date.now();
+				return;
+			}
+			const hiddenMs = hiddenAt === null ? 0 : Date.now() - hiddenAt;
+			hiddenAt = null;
+			recover(hiddenMs, false);
 		};
+		const onOnline = () => recover(0, true);
 		document.addEventListener("visibilitychange", onVisibilityChange);
-		window.addEventListener("online", recover);
+		window.addEventListener("online", onOnline);
 
 		// Cleanup function
 		return () => {
 			isMountedRef.current = false;
 			document.removeEventListener("visibilitychange", onVisibilityChange);
-			window.removeEventListener("online", recover);
+			window.removeEventListener("online", onOnline);
 			if (retryTimerRef.current) {
 				clearTimeout(retryTimerRef.current);
 				retryTimerRef.current = null;

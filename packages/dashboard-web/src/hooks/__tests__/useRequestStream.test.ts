@@ -57,3 +57,18 @@ describe("shouldReconnectOnHeartbeat", () => {
 		expect(shouldReconnectOnHeartbeat(1)).toBe(false);
 	});
 });
+
+describe("shouldReconnectOnWake forced reconnects", () => {
+	it("forces a reconnect on an online event even when OPEN", () => {
+		expect(shouldReconnectOnWake(1, 0, true)).toBe(true);
+	});
+
+	it("forces a reconnect after being hidden longer than 30s", () => {
+		expect(shouldReconnectOnWake(1, 30001)).toBe(true);
+	});
+
+	it("does not reconnect an OPEN stream after a brief hide", () => {
+		expect(shouldReconnectOnWake(1, 30000)).toBe(false);
+		expect(shouldReconnectOnWake(1, 500)).toBe(false);
+	});
+});
