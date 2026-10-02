@@ -57,6 +57,7 @@ import type {
 	RequestTransformer,
 } from "@better-ccflare/types";
 import {
+	type CodexCreditsData,
 	computeReauthDeadline,
 	isEligibleForReauthDeadline,
 	REQUEST_TRANSFORMERS,
@@ -122,6 +123,7 @@ function hasWindowInfo(window: {
 type CodexUsageInput = {
 	five_hour?: { utilization: number | null; resets_at: string | null } | null;
 	seven_day?: { utilization: number | null; resets_at: string | null } | null;
+	credits?: CodexCreditsData | null;
 };
 
 /**
@@ -163,9 +165,13 @@ function normalizeCodexUsageData(
 	// The percentage alone must be enough — a weekly value recovered from
 	// usage_snapshots may have no reset stored (accounts.rate_limit_reset keeps
 	// only the soonest one), and requiring a reset here is what used to discard it.
-	return hasWindowInfo(five_hour) || hasWindowInfo(seven_day)
-		? { five_hour, seven_day }
-		: null;
+	if (!hasWindowInfo(five_hour) && !hasWindowInfo(seven_day)) return null;
+	// Credits pass through untouched: the status label and the throttle display
+	// read them (via the shared usage snapshot) to agree with routing, which
+	// keeps serving a spent account that has credits when extra usage is on.
+	return usage.credits
+		? { five_hour, seven_day, credits: usage.credits }
+		: { five_hour, seven_day };
 }
 
 /**
@@ -233,14 +239,7 @@ async function getCachedOrPersistedCodexUsage(
 			// The cache's window type still declares `utilization: number`, while a
 			// normalized window may legitimately be unknown (null). Storing it is
 			// intended: every reader re-normalizes, and null renders as N/A.
-			// Normalization keeps the windows only; carry the payload's own
-			// credits through it so a recovered record cannot read as "no credits".
-			usageCache.set(
-				accountId,
-				(usage.credits
-					? { ...normalizedUsage, credits: usage.credits }
-					: normalizedUsage) as AnyUsageData,
-			);
+			usageCache.set(accountId, normalizedUsage as AnyUsageData);
 			log.debug(`Recovered Codex usage from stored payload for ${accountName}`);
 			return normalizedUsage;
 		} catch (error) {

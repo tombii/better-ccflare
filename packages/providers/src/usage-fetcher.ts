@@ -4,7 +4,10 @@ import {
 	isUseExtraUsageEnabled,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
-import { supportsUsageTracking } from "@better-ccflare/types";
+import {
+	type CodexCreditsData,
+	supportsUsageTracking,
+} from "@better-ccflare/types";
 import {
 	type AlibabaCodingPlanUsageData,
 	fetchAlibabaCodingPlanUsageData,
@@ -96,11 +99,7 @@ export interface UsageSpend {
  * keeps serving after a window reaches 100%, the way the official Codex CLI
  * experiences it. `balance` is kept as the provider's own decimal string.
  */
-export interface CodexCredits {
-	has_credits: boolean;
-	unlimited: boolean;
-	balance: string | null;
-}
+export type CodexCredits = CodexCreditsData;
 
 export interface UsageData {
 	// Core windows — present on legacy payloads but ABSENT on limits[]-only
