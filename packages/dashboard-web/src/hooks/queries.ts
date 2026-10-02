@@ -1,6 +1,7 @@
 import { getModelDisplayName } from "@better-ccflare/core";
 import type { AgentUpdatePayload } from "@better-ccflare/types";
 import { COMMON_MODELS } from "@better-ccflare/types";
+import { REFRESH_INTERVALS } from "@better-ccflare/ui-constants";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type RequestPayload, type RequestSummary } from "../api";
 import { queryKeys } from "../lib/query-keys";
@@ -294,8 +295,10 @@ export const useRequests = (limit: number, _refetchInterval?: number) => {
 		},
 		staleTime: Infinity, // Consider data fresh until manually refetched
 		gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
-		// SSE stream handles real-time updates; override the global polling default
-		refetchInterval: false,
+		// SSE is the primary source of live updates; this slow poll is only a
+		// fallback in case the stream dies for good (heartbeat close / max retries)
+		refetchInterval: REFRESH_INTERVALS.slow,
+		refetchIntervalInBackground: false,
 	});
 };
 
