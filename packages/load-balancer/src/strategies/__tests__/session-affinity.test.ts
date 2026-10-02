@@ -253,3 +253,30 @@ describe("SessionAffinityStrategy", () => {
 		});
 	});
 });
+
+describe("SessionAffinityStrategy map maintenance", () => {
+	it("evicts the least-recently-touched client, not the oldest-assigned", () => {
+		const strategy = new SessionAffinityStrategy(60_000, 2);
+		strategy.initialize(new MockStore());
+		const accounts = [makeAccount({ id: "x" }), makeAccount({ id: "y" })];
+		strategy.select(accounts, metaFor("a"));
+		strategy.select(accounts, metaFor("b"));
+		strategy.select(accounts, metaFor("a"));
+		strategy.select(accounts, metaFor("c"));
+		expect(strategy.affinityEntries).toBe(2);
+		const before = strategy.affinityEntries;
+		strategy.select(accounts, metaFor("a"));
+		expect(strategy.affinityEntries).toBe(before);
+	});
+
+	it("sweeps expired entries on select", async () => {
+		const strategy = new SessionAffinityStrategy(20, 100);
+		strategy.initialize(new MockStore());
+		const accounts = [makeAccount({ id: "x" })];
+		strategy.select(accounts, metaFor("a"));
+		strategy.select(accounts, metaFor("b"));
+		await new Promise((r) => setTimeout(r, 40));
+		strategy.select(accounts, metaFor(null));
+		expect(strategy.affinityEntries).toBe(0);
+	});
+});
