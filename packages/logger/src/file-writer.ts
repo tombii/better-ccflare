@@ -162,8 +162,7 @@ export class LogFileWriter implements Disposable {
 		}
 
 		try {
-			const content = await Bun.file(this.logFile).text();
-			const lines = content.trim().split("\n").filter(Boolean);
+			const lines = await this.readTailLines(limit);
 
 			// Return the last N logs
 			return lines
@@ -179,6 +178,26 @@ export class LogFileWriter implements Disposable {
 		} catch (_e) {
 			console.error("Failed to read logs:", _e);
 			return [];
+		}
+	}
+
+	// Reads only as much of the file's tail as needed to yield `limit`
+	// non-empty lines, doubling the window until enough lines are found.
+	private async readTailLines(limit: number): Promise<string[]> {
+		const file = Bun.file(this.logFile);
+		const size = file.size;
+		let window = 256 * 1024;
+		while (true) {
+			const start = Math.max(0, size - window);
+			const text = await file.slice(start, size).text();
+			const lines = text.split("\n");
+			// A window starting mid-file begins with a partial line; drop it.
+			if (start > 0) lines.shift();
+			const nonEmpty = lines.filter((l) => l.trim().length > 0);
+			if (start === 0 || nonEmpty.length > limit) {
+				return nonEmpty;
+			}
+			window *= 2;
 		}
 	}
 

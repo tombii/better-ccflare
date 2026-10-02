@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LogEvent } from "@better-ccflare/types";
 import { LogFileWriter } from "./file-writer";
-import { Logger, LogLevel, logBus } from "./index";
+import { Logger, LogLevel, logBus, setConsoleLogging } from "./index";
 
 describe("LogFileWriter.write — non-serializable payloads", () => {
 	let logDir: string;
@@ -176,5 +182,77 @@ describe("Logger.error — non-serializable data does not crash the caller", () 
 
 		expect(() => logger.error("boom", hostile)).not.toThrow();
 		expect(captured.length).toBe(1);
+	});
+});
+
+describe("LogFileWriter.readLogs — tail reading", () => {
+	let logDir: string;
+	let savedLogDir: string | undefined;
+	let writer: LogFileWriter;
+
+	beforeEach(() => {
+		savedLogDir = process.env.BETTER_CCFLARE_LOG_DIR;
+		logDir = mkdtempSync(join(tmpdir(), "better-ccflare-logger-tail-"));
+		process.env.BETTER_CCFLARE_LOG_DIR = logDir;
+		writer = new LogFileWriter();
+	});
+
+	afterEach(() => {
+		writer.close();
+		if (savedLogDir === undefined) delete process.env.BETTER_CCFLARE_LOG_DIR;
+		else process.env.BETTER_CCFLARE_LOG_DIR = savedLogDir;
+		rmSync(logDir, { recursive: true, force: true });
+	});
+
+	function seed(lines: string[]): void {
+		writer.close();
+		writeFileSync(join(logDir, "app.log"), `${lines.join("\n")}\n`);
+	}
+
+	const ev = (i: number, pad = 0): string =>
+		JSON.stringify({ ts: i, level: "INFO", msg: `m${i}${"x".repeat(pad)}` });
+
+	it("returns the last N events from a file larger than the read window", async () => {
+		seed(Array.from({ length: 3000 }, (_, i) => ev(i, 200)));
+		const logs = await writer.readLogs(5);
+		expect(logs.map((l) => l.ts)).toEqual([2995, 2996, 2997, 2998, 2999]);
+	});
+
+	it("returns everything when the file has fewer lines than the limit", async () => {
+		seed(Array.from({ length: 3 }, (_, i) => ev(i)));
+		const logs = await writer.readLogs(1000);
+		expect(logs.map((l) => l.ts)).toEqual([0, 1, 2]);
+	});
+
+	it("skips unparseable lines like before", async () => {
+		seed([ev(1), "not json", ev(3)]);
+		const logs = await writer.readLogs(10);
+		expect(logs.map((l) => l.ts)).toEqual([1, 3]);
+	});
+
+	it("handles limit larger than the window on a large file", async () => {
+		seed(Array.from({ length: 3000 }, (_, i) => ev(i, 200)));
+		const logs = await writer.readLogs(2500);
+		expect(logs.length).toBe(2500);
+		expect(logs[0].ts).toBe(500);
+		expect(logs[2499].ts).toBe(2999);
+	});
+});
+
+describe("Logger — console formatting laziness", () => {
+	it("does not emit on logBus when there are no listeners and still logs to console when enabled", () => {
+		const l = new Logger("t", LogLevel.INFO);
+		const spy: string[] = [];
+		const orig = console.log;
+		console.log = (m: string) => spy.push(m);
+		try {
+			setConsoleLogging(true);
+			l.info("hello", { a: 1 });
+		} finally {
+			setConsoleLogging(null);
+			console.log = orig;
+		}
+		expect(spy.length).toBe(1);
+		expect(spy[0]).toContain("INFO: [t] hello");
 	});
 });
