@@ -62,7 +62,7 @@ export function shouldRefetchOnOpen(
 	return hasOpenedBefore || retryCount > 0;
 }
 
-function pruneDetailsMap(
+export function pruneDetailsMap(
 	map: Map<string, RequestResponse>,
 	requests: RequestPayload[],
 ): Map<string, RequestResponse> {

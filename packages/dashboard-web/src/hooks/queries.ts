@@ -3,8 +3,56 @@ import type { AgentUpdatePayload } from "@better-ccflare/types";
 import { COMMON_MODELS } from "@better-ccflare/types";
 import { REFRESH_INTERVALS } from "@better-ccflare/ui-constants";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type RequestPayload, type RequestSummary } from "../api";
+import {
+	api,
+	type RequestPayload,
+	type RequestResponse,
+	type RequestSummary,
+} from "../api";
 import { queryKeys } from "../lib/query-keys";
+import { pruneDetailsMap } from "./useRequestStream";
+
+type RequestsCache = {
+	requests: RequestPayload[];
+	detailsMap: Map<string, RequestResponse>;
+};
+
+/**
+ * Merge a fresh server snapshot with rows the SSE stream added to the cache
+ * while the refetch was in flight. Cached rows absent from the snapshot and
+ * newer than its newest row are kept (the server read its snapshot before
+ * they landed); older absent rows were pruned server-side and are dropped.
+ */
+export function mergeRequestSnapshot(
+	snapshot: RequestsCache,
+	cached: RequestsCache | undefined,
+	limit: number,
+): RequestsCache {
+	if (!cached) return snapshot;
+	const snapshotIds = new Set(snapshot.requests.map((r) => r.id));
+	const newest = snapshot.requests.reduce(
+		(max, r) => Math.max(max, r.meta?.timestamp ?? 0),
+		0,
+	);
+	const carried = cached.requests.filter(
+		(r) => !snapshotIds.has(r.id) && (r.meta?.timestamp ?? 0) > newest,
+	);
+	if (carried.length === 0) return snapshot;
+
+	const cachedDetails =
+		cached.detailsMap instanceof Map
+			? cached.detailsMap
+			: new Map((cached.detailsMap as RequestResponse[]).map((s) => [s.id, s]));
+	const requests = [...carried, ...snapshot.requests]
+		.sort((a, b) => (b.meta?.timestamp ?? 0) - (a.meta?.timestamp ?? 0))
+		.slice(0, limit);
+	const detailsMap = new Map(snapshot.detailsMap);
+	for (const r of carried) {
+		const details = cachedDetails.get(r.id);
+		if (details) detailsMap.set(r.id, details);
+	}
+	return { requests, detailsMap: pruneDetailsMap(detailsMap, requests) };
+}
 
 /**
  * Build a lightweight RequestPayload from a RequestSummary.
@@ -279,6 +327,7 @@ export const useAnomalyInsights = (timeRange: string) => {
 };
 
 export const useRequests = (limit: number, _refetchInterval?: number) => {
+	const queryClient = useQueryClient();
 	return useQuery({
 		queryKey: queryKeys.requests(limit),
 		queryFn: async () => {
@@ -291,7 +340,11 @@ export const useRequests = (limit: number, _refetchInterval?: number) => {
 			);
 			const requests: RequestPayload[] =
 				requestsSummary.map(summaryToPlaceholder);
-			return { requests, detailsMap };
+			return mergeRequestSnapshot(
+				{ requests, detailsMap },
+				queryClient.getQueryData<RequestsCache>(queryKeys.requests(limit)),
+				limit,
+			);
 		},
 		staleTime: Infinity, // Consider data fresh until manually refetched
 		gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
