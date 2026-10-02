@@ -135,6 +135,10 @@ class CacheBodyStore {
 		// prompt-cache markers won't create cache entries, nothing to keep alive.
 		if (!hasCacheControlHint(body)) return;
 
+		// A single body over the byte cap can never fit; drop it rather than
+		// evicting every older staged entry first.
+		if (body.byteLength > MAX_STAGING_BYTES) return;
+
 		const sanitizedHeaders: Record<string, string> = {};
 		headers.forEach((value, key) => {
 			if (!STRIP_HEADERS.has(key.toLowerCase())) {

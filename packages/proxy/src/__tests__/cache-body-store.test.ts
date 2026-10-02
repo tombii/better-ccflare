@@ -104,6 +104,30 @@ describe("CacheBodyStore", () => {
 	// -----------------------------------------------------------------------
 
 	describe("stageRequest skips", () => {
+		it("drops an oversized body without evicting existing staged entries", () => {
+			cacheBodyStore.stageRequest(
+				"req-normal",
+				"account-a",
+				makeBody(),
+				makeHeaders(),
+				"/v1/messages",
+			);
+			const hint = new TextEncoder().encode('{"cache_control":{}}');
+			const huge = new Uint8Array(64 * 1024 * 1024 + 1);
+			huge.set(hint);
+			cacheBodyStore.stageRequest(
+				"req-huge",
+				"account-b",
+				huge.buffer as ArrayBuffer,
+				makeHeaders(),
+				"/v1/messages",
+			);
+			cacheBodyStore.onSummary("req-normal", 10);
+			cacheBodyStore.onSummary("req-huge", 10);
+			expect(cacheBodyStore.getLastCachedRequest("account-a")).not.toBeNull();
+			expect(cacheBodyStore.getLastCachedRequest("account-b")).toBeNull();
+		});
+
 		it("skips when disabled", () => {
 			cacheBodyStore.setEnabled(false);
 			cacheBodyStore.stageRequest(
