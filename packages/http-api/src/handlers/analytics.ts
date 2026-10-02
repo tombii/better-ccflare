@@ -61,7 +61,19 @@ export function createAnalyticsHandler(context: APIContext) {
 			}>(
 				`
 				WITH filtered_requests AS (
-					SELECT * FROM requests r
+					SELECT
+						r.total_tokens,
+						r.cost_usd,
+						r.billing_type,
+						r.response_time_ms,
+						r.success,
+						r.output_tokens_per_second,
+						r.account_used,
+						r.input_tokens,
+						r.cache_read_input_tokens,
+						r.cache_creation_input_tokens,
+						r.output_tokens
+					FROM requests r
 					WHERE ${whereClause}
 				)
 				SELECT
