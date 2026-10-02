@@ -11,7 +11,7 @@ async function renameMaxTokens(request: Request): Promise<Request> {
 	}
 
 	const bodyText = await request.clone().text();
-	if (!bodyText.includes("max_tokens")) {
+	if (!bodyText.includes("max_tokens") && !bodyText.includes("\\u")) {
 		return request;
 	}
 

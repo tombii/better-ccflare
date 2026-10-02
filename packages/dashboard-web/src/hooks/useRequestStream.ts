@@ -55,6 +55,13 @@ const getOrCreateCleanupInterval = () => {
 	return globalCleanupInterval;
 };
 
+export function shouldRefetchOnOpen(
+	hasOpenedBefore: boolean,
+	retryCount: number,
+): boolean {
+	return hasOpenedBefore || retryCount > 0;
+}
+
 function pruneDetailsMap(
 	map: Map<string, RequestResponse>,
 	requests: RequestPayload[],
@@ -305,11 +312,18 @@ export function useRequestStream(limit = 200) {
 			const es = new EventSource("/api/requests/stream");
 
 			// Setup event handlers
+			let hasOpened = false;
 			es.addEventListener("open", () => {
 				if (!isMountedRef.current) {
 					es.close();
 					return;
 				}
+				if (shouldRefetchOnOpen(hasOpened, retryCount)) {
+					queryClient.invalidateQueries({
+						queryKey: queryKeys.requests(limit),
+					});
+				}
+				hasOpened = true;
 				console.log(`SSE connection established: ${connectionKey}`);
 			});
 
@@ -353,7 +367,7 @@ export function useRequestStream(limit = 200) {
 
 			return es;
 		},
-		[connectionKey, handleMessage, setupHeartbeat],
+		[connectionKey, handleMessage, setupHeartbeat, queryClient, limit],
 	);
 
 	useEffect(() => {
