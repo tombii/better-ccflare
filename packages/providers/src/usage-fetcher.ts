@@ -1140,6 +1140,8 @@ class UsageCache {
 		}
 		if (this.tokenProviders.has(accountId)) {
 			this.tokenProviders.delete(accountId);
+			this.providerTypes.delete(accountId);
+			this.customEndpoints.delete(accountId);
 			this.failureCounts.delete(accountId);
 			this.windowResetCallbacks.delete(accountId);
 			this.capacityRestoredCallbacks.delete(accountId);
@@ -1185,9 +1187,13 @@ class UsageCache {
 			customEndpoint,
 		);
 		this.inFlightFetches.set(accountId, promise);
-		promise.finally(() => {
-			this.inFlightFetches.delete(accountId);
-		});
+		promise
+			.finally(() => {
+				if (this.inFlightFetches.get(accountId) === promise) {
+					this.inFlightFetches.delete(accountId);
+				}
+			})
+			.catch(() => {});
 		return promise;
 	}
 

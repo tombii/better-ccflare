@@ -27,6 +27,7 @@ import {
 import { Logger } from "@better-ccflare/logger";
 import {
 	type AnyUsageData,
+	clearDerivedProviderModelDefaultsForAccount,
 	fetchUsageData,
 	getRepresentativeUtilization,
 	getRepresentativeUtilizationForProvider,
@@ -1121,6 +1122,7 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 			clearCodexModelCacheForAccount(accountId);
 			clearOpenAICompatibleModelCacheForAccount(accountId);
 			clearFamilyExhaustionForAccount(accountId);
+			clearDerivedProviderModelDefaultsForAccount(accountId);
 
 			return jsonResponse({
 				success: true,

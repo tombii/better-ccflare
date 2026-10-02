@@ -95,6 +95,16 @@ export function hasDerivedProviderModelDefaults(
 	return derivedByAccount.has(derivedKey(provider, accountId));
 }
 
+/** Drop every derived per-account map for a removed account. */
+export function clearDerivedProviderModelDefaultsForAccount(
+	accountId: string,
+): void {
+	const suffix = `\0${accountId}`;
+	for (const key of derivedByAccount.keys()) {
+		if (key.endsWith(suffix)) derivedByAccount.delete(key);
+	}
+}
+
 /** Test seam: both derived maps are process-wide and leak between cases. */
 export function clearDerivedProviderModelDefaults(): void {
 	derivedByAccount.clear();
