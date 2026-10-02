@@ -19,9 +19,10 @@ type RequestsCache = {
 
 /**
  * Merge a fresh server snapshot with rows the SSE stream added to the cache
- * while the refetch was in flight. Cached rows absent from the snapshot and
- * newer than its newest row are kept (the server read its snapshot before
- * they landed); older absent rows were pruned server-side and are dropped.
+ * while the refetch was in flight. Cached rows absent from the snapshot are
+ * kept (timestamps are request start times, so a long-running request can be
+ * older than the snapshot's newest row), except those older than the oldest
+ * row of a full snapshot, which the server pruned by `limit`.
  */
 export function mergeRequestSnapshot(
 	snapshot: RequestsCache,
@@ -30,12 +31,12 @@ export function mergeRequestSnapshot(
 ): RequestsCache {
 	if (!cached) return snapshot;
 	const snapshotIds = new Set(snapshot.requests.map((r) => r.id));
-	const newest = snapshot.requests.reduce(
-		(max, r) => Math.max(max, r.meta?.timestamp ?? 0),
-		0,
-	);
+	const oldest =
+		snapshot.requests.length >= limit
+			? Math.min(...snapshot.requests.map((r) => r.meta?.timestamp ?? 0))
+			: -Infinity;
 	const carried = cached.requests.filter(
-		(r) => !snapshotIds.has(r.id) && (r.meta?.timestamp ?? 0) > newest,
+		(r) => !snapshotIds.has(r.id) && (r.meta?.timestamp ?? 0) >= oldest,
 	);
 	if (carried.length === 0) return snapshot;
 

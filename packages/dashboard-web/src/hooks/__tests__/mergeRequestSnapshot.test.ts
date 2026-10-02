@@ -34,15 +34,44 @@ describe("mergeRequestSnapshot", () => {
 		expect(merged.detailsMap.has("c")).toBe(true);
 	});
 
-	it("does not carry over older rows the server already pruned", () => {
+	it("does not carry over rows older than a full snapshot's oldest row", () => {
+		const snapshot = state([
+			["c", 300],
+			["b", 200],
+		]);
+		const cached = state([
+			["c", 300],
+			["b", 200],
+			["a", 100],
+		]);
+		const merged = mergeRequestSnapshot(snapshot, cached, 2);
+		expect(ids(merged)).toEqual(["c", "b"]);
+		expect(merged.detailsMap.has("a")).toBe(false);
+	});
+
+	it("carries over a long-running request older than the newest snapshot row", () => {
+		const snapshot = state([
+			["b", 200],
+			["a0", 50],
+		]);
+		const cached = state([
+			["b", 200],
+			["a", 100],
+			["a0", 50],
+		]);
+		const merged = mergeRequestSnapshot(snapshot, cached, 2);
+		expect(ids(merged)).toEqual(["b", "a"]);
+		expect(merged.detailsMap.has("a")).toBe(true);
+	});
+
+	it("carries over all absent rows when the snapshot is not full", () => {
 		const snapshot = state([["b", 200]]);
 		const cached = state([
 			["b", 200],
 			["a", 100],
 		]);
 		const merged = mergeRequestSnapshot(snapshot, cached, 10);
-		expect(ids(merged)).toEqual(["b"]);
-		expect(merged.detailsMap.has("a")).toBe(false);
+		expect(ids(merged)).toEqual(["b", "a"]);
 	});
 
 	it("dedupes by id, preferring the snapshot row", () => {
