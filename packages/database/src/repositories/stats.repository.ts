@@ -109,10 +109,16 @@ export class StatsRepository {
 	/**
 	 * Get account statistics with success rates
 	 * This consolidates the duplicated logic between cli-commands and http-api
+	 *
+	 * @param sinceMs - When given (and includeUnauthenticated is true), only
+	 *   requests after this timestamp (ms since epoch) are counted. Omit for the
+	 *   lifetime view. Ignored on the includeUnauthenticated=false path, which
+	 *   reads a precomputed accounts.request_count counter.
 	 */
 	async getAccountStats(
 		limit = 10,
 		includeUnauthenticated = true,
+		sinceMs?: number,
 	): Promise<AccountStats[]> {
 		// Get account request counts
 		let accountStats: Array<{
@@ -123,6 +129,8 @@ export class StatsRepository {
 		}>;
 
 		if (includeUnauthenticated) {
+			const windowClause = sinceMs !== undefined ? "WHERE r.timestamp > ?" : "";
+			const windowParams = sinceMs !== undefined ? [sinceMs] : [];
 			accountStats = await this.adapter.query<{
 				id: string;
 				name: string;
@@ -137,12 +145,13 @@ export class StatsRepository {
 					COALESCE(MAX(a.total_requests), 0) as "totalRequests"
 				FROM requests r
 				LEFT JOIN accounts a ON a.id = r.account_used
+				${windowClause}
 				GROUP BY 1, 2
 				HAVING COUNT(r.id) > 0
 				ORDER BY "requestCount" DESC
 				LIMIT ?
 			`,
-				[NO_ACCOUNT_ID, NO_ACCOUNT_ID, limit],
+				[NO_ACCOUNT_ID, NO_ACCOUNT_ID, ...windowParams, limit],
 			);
 		} else {
 			accountStats = await this.adapter.query<{
@@ -172,20 +181,28 @@ export class StatsRepository {
 		const accountIds = accountStats.map((a) => a.id);
 		const placeholders = accountIds.map(() => "?").join(",");
 
-		// COALESCE maps NULL account_used (current encoding for requests with
-		// no attributed account) to NO_ACCOUNT_ID so they match the synthetic
-		// id produced by the LEFT JOIN above. Legacy rows whose account_used
-		// is literally 'no_account' also collapse into the same bucket, so
-		// we don't regress any pre-NULL-encoding data.
+		// Legacy rows whose account_used is literally 'no_account' and rows with
+		// NULL account_used (current encoding for requests with no attributed
+		// account) both land in the NO_ACCOUNT_ID bucket produced by the LEFT
+		// JOIN above. The WHERE keeps a bare `account_used IN (...)` so it can use
+		// the account_used index (the literal NO_ACCOUNT_ID stays in the IN list
+		// for legacy rows), and only adds `OR account_used IS NULL` when the
+		// NO_ACCOUNT_ID bucket was actually requested.
 		//
-		// GROUP BY 1 references the COALESCE output column instead of repeating
-		// the expression with another bind parameter. BunSqlAdapter's placeholder
-		// renumberer assigns each bare `?` a fresh $N independently, so SELECT /
-		// WHERE / GROUP BY would otherwise render as COALESCE(..., $1) /
-		// COALESCE(..., $2) / COALESCE(..., $(N+2)). PostgreSQL treats those as
-		// distinct expression trees and rejects the query with SQLSTATE 42803
-		// ("column ... must appear in the GROUP BY clause"). SQLite does not
-		// enforce that, which is why the SQLite-only test suite passed.
+		// The SELECT still maps NULL to NO_ACCOUNT_ID via COALESCE, and GROUP BY 1
+		// references that output column instead of repeating the expression with
+		// another bind parameter. BunSqlAdapter's placeholder renumberer assigns
+		// each bare `?` a fresh $N independently, so SELECT / GROUP BY would
+		// otherwise render as COALESCE(..., $1) / COALESCE(..., $2).
+		// PostgreSQL treats those as distinct expression trees and rejects the
+		// query with SQLSTATE 42803 ("column ... must appear in the GROUP BY
+		// clause"). SQLite does not enforce that, which is why the SQLite-only
+		// test suite passed.
+		const includesNoAccount = accountIds.includes(NO_ACCOUNT_ID);
+		const accountPredicate = includesNoAccount
+			? `(account_used IN (${placeholders}) OR account_used IS NULL)`
+			: `account_used IN (${placeholders})`;
+		const successWindow = sinceMs !== undefined ? " AND timestamp > ?" : "";
 		const successRates = await this.adapter.query<{
 			accountId: string;
 			total: number;
@@ -196,9 +213,13 @@ export class StatsRepository {
 				COUNT(*) as total,
 				SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) as successful
 			FROM requests
-			WHERE COALESCE(account_used, ?) IN (${placeholders})
+			WHERE ${accountPredicate}${successWindow}
 			GROUP BY 1`,
-			[NO_ACCOUNT_ID, NO_ACCOUNT_ID, ...accountIds],
+			[
+				NO_ACCOUNT_ID,
+				...accountIds,
+				...(sinceMs !== undefined ? [sinceMs] : []),
+			],
 		);
 
 		// Create a map for O(1) lookup
@@ -239,6 +260,11 @@ export class StatsRepository {
 	 *
 	 * @param sinceMs - Only include requests after this timestamp (ms since epoch).
 	 * @param limit - Maximum number of groups to return.
+	 *
+	 * Implemented as a plain GROUP BY aggregate (count / first / latest
+	 * timestamp) joined back to the latest row of each group. Ties on the
+	 * latest timestamp within a group resolve to the smallest request id.
+	 * The unattributed bucket (NULL and legacy 'no_account') is a single group.
 	 */
 	async getRecentErrorGroups(
 		sinceMs: number,
@@ -261,42 +287,53 @@ export class StatsRepository {
 			rate_limited_reason: unknown;
 			rate_limited_at: unknown;
 		}>(
-			`WITH ranked AS (
-				SELECT r.id, r.timestamp, r.error_message, r.account_used, r.model,
-				       r.status_code, r.path, r.failover_attempts,
-				       ROW_NUMBER() OVER (
-				         PARTITION BY r.error_message, COALESCE(r.account_used, ?)
-				         ORDER BY r.timestamp DESC
-				       ) AS rn,
-				       COUNT(*)         OVER (PARTITION BY r.error_message, COALESCE(r.account_used, ?)) AS occurrence_count,
-				       MIN(r.timestamp) OVER (PARTITION BY r.error_message, COALESCE(r.account_used, ?)) AS first_seen
-				FROM requests r
-				WHERE r.error_message IS NOT NULL
-				  AND r.error_message != ''
-				  AND r.timestamp > ?
+			`WITH grouped AS (
+				SELECT g.error_message, g.account_key,
+				       COUNT(*)         AS occurrence_count,
+				       MIN(g.timestamp) AS first_seen,
+				       MAX(g.timestamp) AS latest_timestamp
+				FROM (
+					SELECT r.error_message, COALESCE(r.account_used, ?) AS account_key, r.timestamp
+					FROM requests r
+					WHERE r.error_message IS NOT NULL
+					  AND r.error_message != ''
+					  AND r.timestamp > ?
+				) g
+				GROUP BY 1, 2
+				ORDER BY latest_timestamp DESC
+				LIMIT ?
 			)
 			SELECT
-				ranked.id              AS latest_request_id,
-				ranked.timestamp       AS latest_timestamp,
-				ranked.error_message   AS error_code,
-				ranked.account_used    AS account_id,
-				ranked.model,
-				ranked.status_code,
-				ranked.path,
-				ranked.failover_attempts,
-				ranked.occurrence_count,
-				ranked.first_seen,
+				r.id                   AS latest_request_id,
+				r.timestamp            AS latest_timestamp,
+				r.error_message        AS error_code,
+				r.account_used         AS account_id,
+				r.model,
+				r.status_code,
+				r.path,
+				r.failover_attempts,
+				grouped.occurrence_count,
+				grouped.first_seen,
 				a.name                 AS account_name,
 				a.provider             AS provider,
 				a.rate_limited_until   AS rate_limited_until,
 				a.rate_limited_reason  AS rate_limited_reason,
 				a.rate_limited_at      AS rate_limited_at
-			FROM ranked
-			LEFT JOIN accounts a ON a.id = ranked.account_used
-			WHERE ranked.rn = 1
-			ORDER BY ranked.timestamp DESC
-			LIMIT ?`,
-			[NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, sinceMs, limit],
+			FROM grouped
+			JOIN requests r
+			  ON r.error_message = grouped.error_message
+			 AND r.timestamp = grouped.latest_timestamp
+			 AND COALESCE(r.account_used, ?) = grouped.account_key
+			LEFT JOIN accounts a ON a.id = r.account_used
+			WHERE NOT EXISTS (
+				SELECT 1 FROM requests r2
+				WHERE r2.error_message = grouped.error_message
+				  AND r2.timestamp = grouped.latest_timestamp
+				  AND COALESCE(r2.account_used, ?) = grouped.account_key
+				  AND r2.id < r.id
+			)
+			ORDER BY r.timestamp DESC, r.id`,
+			[NO_ACCOUNT_ID, sinceMs, limit, NO_ACCOUNT_ID, NO_ACCOUNT_ID],
 		);
 
 		return rows.map((row) => {
@@ -339,10 +376,16 @@ export class StatsRepository {
 
 	/**
 	 * Get top models by usage
+	 * @param limit - Maximum number of models to return.
+	 * @param sinceMs - When given, only requests after this timestamp (ms since
+	 *   epoch) are counted; percentages are relative to that window.
 	 */
 	async getTopModels(
 		limit = 5,
+		sinceMs?: number,
 	): Promise<Array<{ model: string; count: number; percentage: number }>> {
+		const windowClause = sinceMs !== undefined ? "AND timestamp > ?" : "";
+		const windowParams = sinceMs !== undefined ? [sinceMs] : [];
 		const rows = await this.adapter.query<{
 			model: string;
 			count: unknown;
@@ -353,20 +396,20 @@ export class StatsRepository {
 					model,
 					COUNT(*) as count
 				FROM requests
-				WHERE model IS NOT NULL
+				WHERE model IS NOT NULL ${windowClause}
 				GROUP BY model
 			),
 			total AS (
-				SELECT COUNT(*) as total FROM requests WHERE model IS NOT NULL
+				SELECT SUM(count) as total FROM model_counts
 			)
 			SELECT
 				mc.model,
 				mc.count,
-				ROUND(CAST(CAST(mc.count AS REAL) / t.total * 100 AS NUMERIC), 2) as percentage
+				ROUND(CAST(CAST(mc.count AS REAL) / CAST(t.total AS REAL) * 100 AS NUMERIC), 2) as percentage
 			FROM model_counts mc, total t
 			ORDER BY mc.count DESC
 			LIMIT ?`,
-			[limit],
+			[...windowParams, limit],
 		);
 		return rows.map((r) => ({
 			model: r.model,
@@ -386,16 +429,18 @@ export class StatsRepository {
 			successRate: number;
 		}>
 	> {
-		// Get API key request counts
-		const apiKeyStats = await this.adapter.query<{
+		// Single GROUP BY pass: request count and success count together.
+		const rawStats = await this.adapter.query<{
 			id: string;
 			name: string;
 			requests: number;
+			successful: unknown;
 		}>(
 			`SELECT
 				api_key_id as id,
 				api_key_name as name,
-				COUNT(*) as requests
+				COUNT(*) as requests,
+				SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) as successful
 			FROM requests
 			WHERE api_key_id IS NOT NULL
 			GROUP BY api_key_id, api_key_name
@@ -403,46 +448,25 @@ export class StatsRepository {
 			ORDER BY requests DESC`,
 		);
 
+		// Safety: only expose valid non-empty string ids
+		const apiKeyStats = rawStats.filter(
+			(a) => typeof a.id === "string" && a.id.length > 0 && a.id.length < 256,
+		);
 		if (apiKeyStats.length === 0) return [];
 
-		// Calculate success rate per API key
-		// Security: apiKeyIds are sourced directly from database query results above,
-		// ensuring they are safe strings from the api_key_id column (UUID format).
-		// The placeholder construction is safe because we validate the array is non-empty
-		// and use parameterized queries for the actual values.
-		const apiKeyIds = apiKeyStats
-			.map((a) => a.id)
-			.filter((id) => {
-				// Additional safety: ensure ID is a valid non-empty string
-				return typeof id === "string" && id.length > 0 && id.length < 256;
-			});
-
-		if (apiKeyIds.length === 0) return [];
-
-		const placeholders = apiKeyIds.map(() => "?").join(",");
-
-		const successRates = await this.adapter.query<{
-			apiKeyId: string;
-			total: number;
-			successful: number;
-		}>(
-			`SELECT
-				api_key_id as "apiKeyId",
-				COUNT(*) as total,
-				SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) as successful
-			FROM requests
-			WHERE api_key_id IN (${placeholders})
-			GROUP BY api_key_id`,
-			apiKeyIds,
-		);
-
-		// Create a map for O(1) lookup
+		// The success rate is per key id (across any renamed api_key_name rows),
+		// so fold the per-(id, name) groups back together by id.
+		const totals = new Map<string, { total: number; successful: number }>();
+		for (const row of apiKeyStats) {
+			const t = totals.get(row.id) ?? { total: 0, successful: 0 };
+			t.total += Number(row.requests) || 0;
+			t.successful += Number(row.successful) || 0;
+			totals.set(row.id, t);
+		}
 		const successRateMap = new Map(
-			successRates.map((sr) => [
-				sr.apiKeyId,
-				Number(sr.total) > 0
-					? Math.round((Number(sr.successful) / Number(sr.total)) * 100)
-					: 0,
+			[...totals].map(([id, t]) => [
+				id,
+				t.total > 0 ? Math.round((t.successful / t.total) * 100) : 0,
 			]),
 		);
 
