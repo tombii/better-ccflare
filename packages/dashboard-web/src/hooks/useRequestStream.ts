@@ -332,6 +332,9 @@ export function useRequestStream(limit = 200) {
 			es.addEventListener("error", (error) => {
 				console.error(`SSE connection error (${connectionKey}):`, error);
 
+				// Stop the browser's built-in auto-reconnect; we manage retries ourselves
+				es.close();
+
 				// Remove from pool
 				const pooled = CONNECTION_POOL.get(connectionKey);
 				if (pooled) {
