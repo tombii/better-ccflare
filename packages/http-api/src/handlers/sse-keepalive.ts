@@ -5,7 +5,8 @@ const PING = new TextEncoder().encode(": ping\n\n");
 /**
  * Sends an SSE comment ping on an interval so idle streams are not closed by
  * the server or intermediaries. Returns a stop function; the timer also stops
- * itself (and calls `onFail`) when the enqueue throws.
+ * itself (and calls `onFail`) when the enqueue throws. Pings are skipped while
+ * the stream is backed up so an unread queue cannot grow.
  */
 export function startSseKeepalive(
 	controller: ReadableStreamDefaultController<Uint8Array>,
@@ -13,6 +14,7 @@ export function startSseKeepalive(
 	onFail: () => void,
 ): () => void {
 	const timer = setInterval(() => {
+		if (controller.desiredSize !== null && controller.desiredSize <= 0) return;
 		try {
 			controller.enqueue(PING);
 		} catch (_error) {
