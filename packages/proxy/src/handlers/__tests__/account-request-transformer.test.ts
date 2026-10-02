@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { logBus } from "@better-ccflare/logger";
 import type { Account, LogEvent } from "@better-ccflare/types";
 import { applyAccountRequestTransformer } from "../account-request-transformer";
@@ -195,5 +195,22 @@ describe("applyAccountRequestTransformer", () => {
 			msg: "Unknown account request transformer; request left unchanged",
 			data: { requestTransformer: "toString" },
 		});
+	});
+});
+
+describe("applyAccountRequestTransformer parsing cost", () => {
+	it("returns the same request without parsing when max_tokens is absent", async () => {
+		const request = jsonRequest({ model: "o1", messages: [] });
+		const parse = spyOn(JSON, "parse");
+		try {
+			const transformed = await applyAccountRequestTransformer(
+				request,
+				account(TRANSFORMER),
+			);
+			expect(transformed).toBe(request);
+			expect(parse).not.toHaveBeenCalled();
+		} finally {
+			parse.mockRestore();
+		}
 	});
 });

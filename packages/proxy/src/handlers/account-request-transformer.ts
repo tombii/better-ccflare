@@ -10,9 +10,14 @@ async function renameMaxTokens(request: Request): Promise<Request> {
 		return request;
 	}
 
+	const bodyText = await request.clone().text();
+	if (!bodyText.includes("max_tokens")) {
+		return request;
+	}
+
 	let body: unknown;
 	try {
-		body = JSON.parse(await request.clone().text());
+		body = JSON.parse(bodyText);
 	} catch {
 		return request;
 	}

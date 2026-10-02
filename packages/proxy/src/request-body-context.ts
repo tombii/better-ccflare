@@ -141,3 +141,56 @@ export class RequestBodyContext {
 		});
 	}
 }
+
+export interface OutgoingBody {
+	text: string;
+	model: string;
+	getJson(): RequestJsonBody | null;
+}
+
+/**
+ * Reads the body of the request about to be sent upstream. When the provider
+ * returned `sourceRequest` untouched its body is exactly `sourceBuffer`, so the
+ * model comes from the already-parsed context and the JSON is only parsed if
+ * `getJson()` is called.
+ */
+export async function readOutgoingBody(
+	request: Request,
+	sourceRequest: Request,
+	sourceContext: RequestBodyContext,
+	sourceBuffer: ArrayBuffer | null,
+): Promise<OutgoingBody> {
+	const untouchedModel =
+		request === sourceRequest && sourceBuffer ? sourceContext.getModel() : null;
+	if (sourceBuffer && untouchedModel !== null) {
+		const text = decoder.decode(sourceBuffer);
+		let json: RequestJsonBody | null | undefined;
+		return {
+			text,
+			model: untouchedModel,
+			getJson() {
+				if (json === undefined) {
+					try {
+						json = JSON.parse(text);
+					} catch {
+						json = null;
+					}
+				}
+				return json ?? null;
+			},
+		};
+	}
+
+	const text = await request.clone().text();
+	let json: RequestJsonBody | null = null;
+	try {
+		json = JSON.parse(text);
+	} catch {
+		// ignore
+	}
+	return {
+		text,
+		model: (json?.model as string | undefined) ?? "",
+		getJson: () => json,
+	};
+}

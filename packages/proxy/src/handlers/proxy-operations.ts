@@ -31,7 +31,7 @@ import type {
 import { cacheBodyStore } from "../cache-body-store";
 import { ensureCodexModelDefaults } from "../codex-model-catalog";
 import { extractGatewayHintHeadersFromRequest } from "../gateway-hint-headers";
-import { RequestBodyContext } from "../request-body-context";
+import { RequestBodyContext, readOutgoingBody } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
 import { applyAccountRequestTransformer } from "./account-request-transformer";
@@ -1019,15 +1019,14 @@ export async function proxyWithAccount(
 		// cloning the Request for retries tees the body into a branch nothing
 		// reads on the no-retry path, retaining its native buffer per request
 		// (#382).
-		const transformedBodyText = await initialTransformedRequest.clone().text();
-		let transformedBodyJson: Record<string, unknown> | null = null;
-		try {
-			transformedBodyJson = JSON.parse(transformedBodyText);
-		} catch {
-			// ignore
-		}
-		const transformedModel =
-			(transformedBodyJson?.model as string | undefined) ?? "";
+		const outgoingBody = await readOutgoingBody(
+			initialTransformedRequest,
+			providerRequest,
+			effectiveBodyContext,
+			effectiveBodyBuffer,
+		);
+		const transformedBodyText = outgoingBody.text;
+		const transformedModel = outgoingBody.model;
 
 		/**
 		 * The single source of truth for "the request currently in flight on this
@@ -1069,13 +1068,14 @@ export async function proxyWithAccount(
 			if (model !== undefined) outgoing.model = model;
 		};
 
-		if (
+		const transformedBodyJson =
 			transformedModel &&
 			cacheControlRejectors.has(
 				cacheControlRejectorKey(account.id, transformedModel),
-			) &&
-			transformedBodyJson
-		) {
+			)
+				? outgoingBody.getJson()
+				: null;
+		if (transformedBodyJson) {
 			stripCacheControlFromOpenAIRequest(
 				transformedBodyJson as unknown as Parameters<
 					typeof stripCacheControlFromOpenAIRequest
