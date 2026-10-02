@@ -1,6 +1,7 @@
 import {
 	type AccountUsageSnapshot,
 	CLAUDE_CLI_VERSION,
+	isUseExtraUsageEnabled,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { supportsUsageTracking } from "@better-ccflare/types";
@@ -87,6 +88,19 @@ export interface UsageSpend {
 	disabled_reason?: string | null;
 }
 
+/**
+ * Purchased credits Codex reports next to the plan windows — as the
+ * `x-codex-credits-*` response headers and as the `credits` block of the
+ * `wham/usage` body. With credits (or an unlimited allowance) the upstream
+ * keeps serving after a window reaches 100%, the way the official Codex CLI
+ * experiences it. `balance` is kept as the provider's own decimal string.
+ */
+export interface CodexCredits {
+	has_credits: boolean;
+	unlimited: boolean;
+	balance: string | null;
+}
+
 export interface UsageData {
 	// Core windows — present on legacy payloads but ABSENT on limits[]-only
 	// payloads (Anthropic is migrating the flat windows into the generic limits[]).
@@ -103,6 +117,8 @@ export interface UsageData {
 	// entries. Per-model weekly caps (Fable/Opus/Sonnet) live ONLY here.
 	limits?: UsageLimit[];
 	spend?: UsageSpend;
+	// Codex only: purchased credits beyond the plan windows.
+	credits?: CodexCredits;
 	// Allow any additional fields Anthropic might add in the future
 	[key: string]: UsageWindow | ExtraUsage | UsageLimit[] | UsageSpend | unknown;
 }
@@ -783,10 +799,56 @@ function plainUsageSnapshot(
 ): AccountUsageSnapshot | null {
 	const utilization = getRepresentativeUtilizationForProvider(data, provider);
 	if (utilization === null) return null;
-	return {
+	const snapshot: AccountUsageSnapshot = {
 		utilization,
 		resetMs: getRepresentativeUsageResetMs(data, provider),
 	};
+	// Policy and fact together: the operator allows extra usage AND the
+	// provider says there is some. The window itself is reported unchanged —
+	// only whether it shuts the account out differs.
+	if (isUseExtraUsageEnabled() && hasExtraUsageCapacity(data, provider)) {
+		snapshot.extraUsageAvailable = true;
+	}
+	return snapshot;
+}
+
+/**
+ * Whether the provider reports billed capacity that keeps serving after the
+ * plan window is spent. A fact about the account only; whether to use it is
+ * the "use extra usage" setting's call (see plainUsageSnapshot).
+ *
+ * - codex: purchased credits or an unlimited allowance (`credits`).
+ * - anthropic: overage that is enabled and not yet used up. The 2026 `spend`
+ *   block wins over the legacy `extra_usage` one, the same precedence as
+ *   resolveOverageStatus in proxy/handlers/model-capacity.ts.
+ *
+ * Anything else, or a missing signal, is no capacity: unproven extra usage
+ * must not let a spent account back into selection.
+ */
+export function hasExtraUsageCapacity(
+	data: AnyUsageData | null | undefined,
+	provider: string,
+): boolean {
+	if (!data || typeof data !== "object") return false;
+	const d = data as UsageData;
+	if (provider === "codex") {
+		return d.credits?.unlimited === true || d.credits?.has_credits === true;
+	}
+	if (provider === "anthropic") {
+		if (d.spend && typeof d.spend.enabled === "boolean") {
+			return (
+				d.spend.enabled &&
+				!(typeof d.spend.percent === "number" && d.spend.percent >= 100)
+			);
+		}
+		if (d.extra_usage && typeof d.extra_usage.is_enabled === "boolean") {
+			return (
+				d.extra_usage.is_enabled &&
+				!(d.extra_usage.utilization != null && d.extra_usage.utilization >= 100)
+			);
+		}
+	}
+	return false;
 }
 
 /**

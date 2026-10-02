@@ -1800,6 +1800,11 @@ export class AutoRefreshScheduler {
 		// The same predicate the selector and /health use, staleness guard
 		// included: a 100% reading whose reset has already passed is the poller
 		// lagging behind a rollover, not an exhausted window.
+		//
+		// Deliberately WITHOUT the snapshot's extraUsageAvailable: an account
+		// serving on extra usage still has a spent window, and a probe sent to
+		// it now would only be billed against that extra usage while learning
+		// nothing the traffic path is not already reporting.
 		if (!isUsageExhausted(utilization, resetMs, now)) return false;
 
 		const until =

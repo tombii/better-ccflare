@@ -28,6 +28,7 @@ import { Logger } from "@better-ccflare/logger";
 import {
 	type AnyUsageData,
 	fetchUsageData,
+	getRepresentativeUsageSnapshotForProvider,
 	getRepresentativeUtilization,
 	getRepresentativeUtilizationForProvider,
 	getRepresentativeWindow,
@@ -659,6 +660,13 @@ export function createAccountsListHandler(
 							fullUsageData,
 							account.provider ?? "anthropic",
 						),
+						// Same snapshot account selection admits on, so the label
+						// cannot say "exhausted" for an account it is still routing.
+						usageExtraUsageAvailable:
+							getRepresentativeUsageSnapshotForProvider(
+								fullUsageData as AnyUsageData | null,
+								account.provider ?? "anthropic",
+							)?.extraUsageAvailable === true,
 					},
 					now,
 				);

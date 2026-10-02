@@ -20,6 +20,13 @@ export const DEFAULT_STRATEGY = StrategyName.Session;
 export interface AccountUsageSnapshot {
 	utilization: number;
 	resetMs: number | null;
+	/**
+	 * True when the provider reports billed capacity beyond the plan window
+	 * (Codex credits, Anthropic extra usage) AND the operator has allowed
+	 * spending it — see extra-usage.ts. A spent window is then not a reason to
+	 * leave the account out. Absent means no.
+	 */
+	extraUsageAvailable?: boolean;
 }
 
 /**
@@ -28,13 +35,21 @@ export interface AccountUsageSnapshot {
  * surfaces from contradicting each other. A known reset in the past means
  * the snapshot predates the window reset: do not claim exhaustion from stale
  * data. An unknown reset trusts the (max 10-minute-old) usage cache.
+ *
+ * `extraUsageAvailable` (from the snapshot) means the provider will keep
+ * serving past the spent window on billed extra usage and the operator has
+ * allowed it, so the window no longer makes the account unusable. Callers that
+ * hold a snapshot pass its field through; omitting it keeps the plain window
+ * check, which is what code deciding whether to *probe* an account wants.
  */
 export function isUsageExhausted(
 	utilization: number | null,
 	resetMs: number | null | undefined,
 	now: number,
+	extraUsageAvailable = false,
 ): boolean {
 	return (
+		!extraUsageAvailable &&
 		utilization !== null &&
 		utilization >= 100 &&
 		(resetMs == null || resetMs > now)
@@ -50,7 +65,15 @@ export function isAccountAvailable(
 	now = Date.now(),
 	usage?: AccountUsageSnapshot,
 ): boolean {
-	if (usage && isUsageExhausted(usage.utilization, usage.resetMs, now)) {
+	if (
+		usage &&
+		isUsageExhausted(
+			usage.utilization,
+			usage.resetMs,
+			now,
+			usage.extraUsageAvailable,
+		)
+	) {
 		return false;
 	}
 	return (
