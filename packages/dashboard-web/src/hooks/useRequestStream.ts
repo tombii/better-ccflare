@@ -55,6 +55,12 @@ const getOrCreateCleanupInterval = () => {
 	return globalCleanupInterval;
 };
 
+let requestsSseSeq = 0;
+
+export function getRequestsSseSeq(): number {
+	return requestsSseSeq;
+}
+
 export function shouldRefetchOnOpen(
 	hasOpenedBefore: boolean,
 	retryCount: number,
@@ -62,7 +68,7 @@ export function shouldRefetchOnOpen(
 	return hasOpenedBefore || retryCount > 0;
 }
 
-export function pruneDetailsMap(
+function pruneDetailsMap(
 	map: Map<string, RequestResponse>,
 	requests: RequestPayload[],
 ): Map<string, RequestResponse> {
@@ -126,6 +132,7 @@ export function useRequestStream(limit = 200) {
 					  }
 					| { type: "summary"; payload: RequestResponse };
 
+				requestsSseSeq++;
 				queryClient.setQueryData(
 					queryKeys.requests(limit),
 					(

@@ -3,56 +3,28 @@ import type { AgentUpdatePayload } from "@better-ccflare/types";
 import { COMMON_MODELS } from "@better-ccflare/types";
 import { REFRESH_INTERVALS } from "@better-ccflare/ui-constants";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-	api,
-	type RequestPayload,
-	type RequestResponse,
-	type RequestSummary,
-} from "../api";
+import { api, type RequestPayload, type RequestSummary } from "../api";
 import { queryKeys } from "../lib/query-keys";
-import { pruneDetailsMap } from "./useRequestStream";
-
-type RequestsCache = {
-	requests: RequestPayload[];
-	detailsMap: Map<string, RequestResponse>;
-};
+import { getRequestsSseSeq } from "./useRequestStream";
 
 /**
- * Merge a fresh server snapshot with rows the SSE stream added to the cache
- * while the refetch was in flight. Cached rows absent from the snapshot are
- * kept (timestamps are request start times, so a long-running request can be
- * older than the snapshot's newest row), except those older than the oldest
- * row of a full snapshot, which the server pruned by `limit`.
+ * Fetch a snapshot, retrying while SSE events arrive mid-fetch so the cache is
+ * only ever replaced by a snapshot that already includes those events.
  */
-export function mergeRequestSnapshot(
-	snapshot: RequestsCache,
-	cached: RequestsCache | undefined,
-	limit: number,
-): RequestsCache {
-	if (!cached) return snapshot;
-	const snapshotIds = new Set(snapshot.requests.map((r) => r.id));
-	const oldest =
-		snapshot.requests.length >= limit
-			? Math.min(...snapshot.requests.map((r) => r.meta?.timestamp ?? 0))
-			: -Infinity;
-	const carried = cached.requests.filter(
-		(r) => !snapshotIds.has(r.id) && (r.meta?.timestamp ?? 0) >= oldest,
-	);
-	if (carried.length === 0) return snapshot;
-
-	const cachedDetails =
-		cached.detailsMap instanceof Map
-			? cached.detailsMap
-			: new Map((cached.detailsMap as RequestResponse[]).map((s) => [s.id, s]));
-	const requests = [...carried, ...snapshot.requests]
-		.sort((a, b) => (b.meta?.timestamp ?? 0) - (a.meta?.timestamp ?? 0))
-		.slice(0, limit);
-	const detailsMap = new Map(snapshot.detailsMap);
-	for (const r of carried) {
-		const details = cachedDetails.get(r.id);
-		if (details) detailsMap.set(r.id, details);
-	}
-	return { requests, detailsMap: pruneDetailsMap(detailsMap, requests) };
+export async function fetchStableSnapshot<T>(
+	fetchSnapshot: () => Promise<T>,
+	getSeq: () => number,
+	maxAttempts: number,
+): Promise<T> {
+	let snapshot: T;
+	let attempt = 0;
+	do {
+		const seq = getSeq();
+		snapshot = await fetchSnapshot();
+		attempt++;
+		if (getSeq() === seq) break;
+	} while (attempt < maxAttempts);
+	return snapshot;
 }
 
 /**
@@ -328,24 +300,23 @@ export const useAnomalyInsights = (timeRange: string) => {
 };
 
 export const useRequests = (limit: number, _refetchInterval?: number) => {
-	const queryClient = useQueryClient();
 	return useQuery({
 		queryKey: queryKeys.requests(limit),
 		queryFn: async () => {
 			// Fetch only the summary endpoint - it has everything the list view needs.
 			// Full request/response bodies are lazy-loaded per row when needed
 			// (modal open, copy-as-JSON) via /api/requests/payload/:id.
-			const requestsSummary = await api.getRequestsSummary(limit);
+			const requestsSummary = await fetchStableSnapshot(
+				() => api.getRequestsSummary(limit),
+				getRequestsSseSeq,
+				3,
+			);
 			const detailsMap = new Map(
 				requestsSummary.map((summary) => [summary.id, summary]),
 			);
 			const requests: RequestPayload[] =
 				requestsSummary.map(summaryToPlaceholder);
-			return mergeRequestSnapshot(
-				{ requests, detailsMap },
-				queryClient.getQueryData<RequestsCache>(queryKeys.requests(limit)),
-				limit,
-			);
+			return { requests, detailsMap };
 		},
 		staleTime: Infinity, // Consider data fresh until manually refetched
 		gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
