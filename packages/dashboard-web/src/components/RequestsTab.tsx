@@ -57,7 +57,10 @@ export function RequestsTab() {
 		new Set(),
 	);
 	const [modalRequest, setModalRequest] = useState<RequestPayload | null>(null);
-	const modalSummaryRef = useRef<{ id: string; summary: RequestSummary } | null>(null);
+	const modalSummaryRef = useRef<{
+		id: string;
+		summary: RequestSummary;
+	} | null>(null);
 	const [accountFilter, setAccountFilter] = useState<string>("all");
 	const [agentFilter, setAgentFilter] = useState<string>("all");
 	const [apiKeyFilter, setApiKeyFilter] = useState<string>("all");
@@ -112,7 +115,10 @@ export function RequestsTab() {
 		? data?.summaries.get(modalRequest.id)
 		: undefined;
 	if (modalRequest && liveModalSummary) {
-		modalSummaryRef.current = { id: modalRequest.id, summary: liveModalSummary };
+		modalSummaryRef.current = {
+			id: modalRequest.id,
+			summary: liveModalSummary,
+		};
 	}
 	const modalSummary =
 		liveModalSummary ??

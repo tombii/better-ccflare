@@ -39,11 +39,14 @@ describe("applyAccountRequestTransformer", () => {
 	});
 
 	it("renames max_tokens written with a unicode escape in the key", async () => {
-		const request = new Request("https://upstream.example/v1/chat/completions", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: '{"model":"o1","max\\u005ftokens":5}',
-		});
+		const request = new Request(
+			"https://upstream.example/v1/chat/completions",
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: '{"model":"o1","max\\u005ftokens":5}',
+			},
+		);
 		const transformed = await applyAccountRequestTransformer(
 			request,
 			account(TRANSFORMER),
