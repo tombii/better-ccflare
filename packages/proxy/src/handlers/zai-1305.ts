@@ -81,16 +81,14 @@ export async function peekSseForZai1305(response: Response): Promise<boolean> {
 	let buffered = "";
 	const decoder = new TextDecoder();
 	const deadline = Date.now() + SSE_PEEK_TIMEOUT_MS;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<"timeout">((resolve) => {
+		timer = setTimeout(() => resolve("timeout"), SSE_PEEK_TIMEOUT_MS);
+	});
 	try {
 		while (buffered.length < SSE_PEEK_MAX_BYTES) {
-			const remaining = deadline - Date.now();
-			if (remaining <= 0) break;
-			const result = await Promise.race([
-				reader.read(),
-				new Promise<"timeout">((resolve) =>
-					setTimeout(() => resolve("timeout"), remaining),
-				),
-			]);
+			if (deadline - Date.now() <= 0) break;
+			const result = await Promise.race([reader.read(), timeout]);
 			if (result === "timeout") break;
 			const { value, done } = result;
 			if (done) break;
@@ -103,6 +101,7 @@ export async function peekSseForZai1305(response: Response): Promise<boolean> {
 	} catch {
 		// If we can't read the stream, treat as no match.
 	} finally {
+		clearTimeout(timer);
 		// On the timeout path a read is still pending on this reader. Do NOT
 		// await reader.cancel() here to settle it first — on a cloned (tee'd)
 		// stream, cancelling one branch while a read on that branch is still

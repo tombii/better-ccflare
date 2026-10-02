@@ -35,6 +35,9 @@ const CACHEABLE_PATH = "/v1/messages";
 /** Maximum number of in-flight staging entries. Oldest is evicted when exceeded. */
 const MAX_STAGING_ENTRIES = 200;
 
+/** Maximum total body bytes held in the staging map. Oldest is evicted when exceeded. */
+const MAX_STAGING_BYTES = 64 * 1024 * 1024;
+
 /** Maximum age for a staging entry before it is swept out. */
 const STAGING_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -47,23 +50,9 @@ const CACHE_CONTROL_HINTS: Uint8Array[] = [
 	new TextEncoder().encode('"cache-control"'),
 ];
 
-function containsBytes(haystack: Uint8Array, needle: Uint8Array): boolean {
-	const hLen = haystack.length;
-	const nLen = needle.length;
-	if (nLen === 0) return true;
-	if (nLen > hLen) return false;
-	outer: for (let i = 0; i <= hLen - nLen; i++) {
-		for (let j = 0; j < nLen; j++) {
-			if (haystack[i + j] !== needle[j]) continue outer;
-		}
-		return true;
-	}
-	return false;
-}
-
 function hasCacheControlHint(body: ArrayBuffer): boolean {
-	const bytes = new Uint8Array(body);
-	return CACHE_CONTROL_HINTS.some((hint) => containsBytes(bytes, hint));
+	const bytes = Buffer.from(body);
+	return CACHE_CONTROL_HINTS.some((hint) => bytes.indexOf(hint) !== -1);
 }
 
 export interface CachedRequestEntry {
@@ -108,6 +97,9 @@ class CacheBodyStore {
 		{ accountId: string; entry: CachedRequestEntry }
 	>();
 
+	/** Sum of body byte lengths currently in `staging`. */
+	private stagingBytes = 0;
+
 	/** accountId → last request that created a cache entry. */
 	private lastCachedRequest = new Map<string, CachedRequestEntry>();
 
@@ -118,6 +110,7 @@ class CacheBodyStore {
 		this.enabled = enabled;
 		if (!enabled) {
 			this.staging.clear();
+			this.stagingBytes = 0;
 			this.lastCachedRequest.clear();
 		}
 	}
@@ -149,6 +142,8 @@ class CacheBodyStore {
 			}
 		});
 
+		this.deleteStaged(requestId);
+		this.stagingBytes += body.byteLength;
 		this.staging.set(requestId, {
 			accountId,
 			entry: {
@@ -159,22 +154,17 @@ class CacheBodyStore {
 			},
 		});
 
-		// Enforce size cap: evict oldest entry if over limit.
-		if (this.staging.size > MAX_STAGING_ENTRIES) {
-			let oldestId: string | null = null;
-			let oldestTimestamp = Infinity;
-			for (const [id, staged] of this.staging) {
-				if (staged.entry.timestamp < oldestTimestamp) {
-					oldestTimestamp = staged.entry.timestamp;
-					oldestId = id;
-				}
-			}
-			if (oldestId !== null) {
-				this.staging.delete(oldestId);
-				log.warn(
-					`Staging cap (${MAX_STAGING_ENTRIES}) exceeded — evicted oldest entry (requestId=${oldestId})`,
-				);
-			}
+		// Enforce entry-count and byte caps: evict oldest (Map insertion order).
+		while (
+			this.staging.size > MAX_STAGING_ENTRIES ||
+			this.stagingBytes > MAX_STAGING_BYTES
+		) {
+			const oldestId = this.staging.keys().next().value;
+			if (oldestId === undefined) break;
+			this.deleteStaged(oldestId);
+			log.warn(
+				`Staging cap (${MAX_STAGING_ENTRIES} entries / ${MAX_STAGING_BYTES} bytes) exceeded — evicted oldest entry (requestId=${oldestId})`,
+			);
 		}
 
 		// Sweep stale entries on every stage call.
@@ -187,6 +177,13 @@ class CacheBodyStore {
 	 * the staging map from leaking memory.
 	 */
 	discardStaged(requestId: string): void {
+		this.deleteStaged(requestId);
+	}
+
+	private deleteStaged(requestId: string): void {
+		const staged = this.staging.get(requestId);
+		if (!staged) return;
+		this.stagingBytes -= staged.entry.body.byteLength;
 		this.staging.delete(requestId);
 	}
 
@@ -199,7 +196,7 @@ class CacheBodyStore {
 		let swept = 0;
 		for (const [id, staged] of this.staging) {
 			if (staged.entry.timestamp < cutoff) {
-				this.staging.delete(id);
+				this.deleteStaged(id);
 				swept++;
 			}
 		}
@@ -219,7 +216,7 @@ class CacheBodyStore {
 		cacheCreationInputTokens: number | undefined,
 	): void {
 		const staged = this.staging.get(requestId);
-		this.staging.delete(requestId);
+		this.deleteStaged(requestId);
 
 		if (!staged) return;
 

@@ -881,3 +881,24 @@ describe("CacheBodyStore", () => {
 		});
 	});
 });
+
+describe("CacheBodyStore staging byte budget", () => {
+	it("evicts oldest staged entries when total bytes exceed the budget", () => {
+		const pad = "x".repeat(20 * 1024 * 1024);
+		const big = () =>
+			makeBody(`{"cache_control":{"type":"ephemeral"},"pad":"${pad}"}`);
+		for (const id of ["r1", "r2", "r3", "r4"]) {
+			cacheBodyStore.stageRequest(
+				id,
+				"acc",
+				big(),
+				makeHeaders(),
+				"/v1/messages",
+			);
+		}
+		cacheBodyStore.onSummary("r1", 10);
+		expect(cacheBodyStore.getLastCachedRequest("acc")).toBeNull();
+		cacheBodyStore.onSummary("r4", 10);
+		expect(cacheBodyStore.getLastCachedRequest("acc")).not.toBeNull();
+	});
+});
