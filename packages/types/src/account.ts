@@ -172,6 +172,17 @@ export interface UsageSpend {
 	disabled_reason?: string | null;
 }
 
+/**
+ * Codex purchased credits beyond the plan windows: the `x-codex-credits-*`
+ * response headers and the usage endpoint's `credits` block. With credits (or
+ * an unlimited allowance) the provider keeps serving after a window is spent.
+ */
+export interface CodexCreditsData {
+	has_credits: boolean;
+	unlimited: boolean;
+	balance: string | null;
+}
+
 export interface AnthropicUsageData {
 	five_hour?: UsageWindowData;
 	seven_day?: UsageWindowData;
@@ -184,6 +195,8 @@ export interface AnthropicUsageData {
 	// disambiguate with Array.isArray(usageData.limits).
 	limits?: UsageLimit[];
 	spend?: UsageSpend;
+	// Codex only; the account list keeps it so its labels match routing.
+	credits?: CodexCreditsData;
 }
 
 // Usage data types for NanoGPT accounts

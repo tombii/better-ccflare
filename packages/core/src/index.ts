@@ -38,6 +38,7 @@ export type ModelMappingData = {
 export type ModelFallback = { [modelFamily: string]: string };
 export * from "./alert-events";
 export * from "./auth-failure-events";
+export * from "./extra-usage";
 export * from "./force-account-model";
 export {
 	type IntervalConfig,

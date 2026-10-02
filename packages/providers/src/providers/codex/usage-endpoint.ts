@@ -1,5 +1,5 @@
 import { Logger } from "@better-ccflare/logger";
-import type { UsageData, UsageWindow } from "../../usage-fetcher";
+import type { CodexCredits, UsageData, UsageWindow } from "../../usage-fetcher";
 import { CODEX_USER_AGENT } from "./provider";
 
 const log = new Logger("CodexUsageEndpoint");
@@ -48,6 +48,11 @@ export interface CodexUsagePayload {
 		limit_reached?: boolean;
 		primary_window?: CodexUsageWindowPayload | null;
 		secondary_window?: CodexUsageWindowPayload | null;
+	} | null;
+	credits?: {
+		has_credits?: unknown;
+		unlimited?: unknown;
+		balance?: unknown;
 	} | null;
 }
 
@@ -139,7 +144,7 @@ export function parseCodexUsagePayload(
 	const rateLimit = (body as CodexUsagePayload).rate_limit;
 	if (typeof rateLimit !== "object" || rateLimit === null) return null;
 
-	const usage: Pick<UsageData, "five_hour" | "seven_day"> = {};
+	const usage: Pick<UsageData, "five_hour" | "seven_day" | "credits"> = {};
 	for (const raw of [rateLimit.primary_window, rateLimit.secondary_window]) {
 		if (typeof raw !== "object" || raw === null) continue;
 		const slot = slotFor(raw.limit_window_seconds);
@@ -148,7 +153,31 @@ export function parseCodexUsagePayload(
 		if (window) usage[slot] = window;
 	}
 
-	return usage.five_hour || usage.seven_day ? usage : null;
+	if (!usage.five_hour && !usage.seven_day) return null;
+	const credits = toCredits((body as CodexUsagePayload).credits);
+	if (credits) usage.credits = credits;
+	return usage;
+}
+
+/**
+ * The body's `credits` block, in the same shape the response headers produce
+ * (see parseCodexCreditsHeaders): both flags must be real booleans, and the
+ * balance is kept as a string whichever way the body encodes it.
+ */
+function toCredits(raw: CodexUsagePayload["credits"]): CodexCredits | null {
+	if (typeof raw !== "object" || raw === null) return null;
+	if (
+		typeof raw.has_credits !== "boolean" ||
+		typeof raw.unlimited !== "boolean"
+	)
+		return null;
+	const balance =
+		typeof raw.balance === "string" && raw.balance.trim() !== ""
+			? raw.balance.trim()
+			: isFiniteNumber(raw.balance)
+				? String(raw.balance)
+				: null;
+	return { has_credits: raw.has_credits, unlimited: raw.unlimited, balance };
 }
 
 export function readCodexPlanType(body: unknown): string | null {

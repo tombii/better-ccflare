@@ -12,6 +12,7 @@ This guide covers all configuration options for better-ccflare, including file-b
 - [Model Catalog](#model-catalog)
 - [Editable Provider Model Defaults](#editable-provider-model-defaults)
 - [Force Account Model](#force-account-model)
+- [Use Extra Usage](#use-extra-usage)
 - [Runtime Configuration API](#runtime-configuration-api)
 - [Example Configurations](#example-configurations)
 - [Auto-Fallback Setup](#auto-fallback-setup)
@@ -150,6 +151,7 @@ These environment variables are not stored in the configuration file and must be
 | `CCFLARE_DISABLE_COMBO_SESSION_FALLBACK` | **Legacy.** The setting now lives in Settings → Advanced → Combo Session Fallback and is read from the config file only. This variable is adopted into that setting once, at boot, when the config field is absent — so an install that was using it keeps behaving the same — and is never consulted again. It inverts on the way in: the switch says whether the fallthrough is *allowed*. Blocking the fallthrough is now the default for new installs | adopted once, then ignored | `CCFLARE_DISABLE_COMBO_SESSION_FALLBACK=true` |
 | — (no env var) | Whether saved combos take part in routing at all. Config-file-only (`combos_enabled`), no environment override — the `BETTER_CCFLARE_SHOW_COMBOS` env var that used to gate the Combos tab's visibility has been removed; the tab is now always visible and this switch controls routing only. Manage via Settings → Advanced → Combos, or `GET`/`POST /api/config/combos-enabled`. See [FEATURE_COMBOS.md](../FEATURE_COMBOS.md) | `false` | n/a — config file or API only |
 | — (no env var) | Whether the model a client asks for must be the model that is sent (`force_account_model`), skipping combos, agent model preferences, and provider default-model mapping. See [Force Account Model](#force-account-model) below. Deliberately ships without an env var, matching the combo switches | `false` | n/a — config file or API only |
+| `CCFLARE_USE_EXTRA_USAGE` | **Seed only.** Initial value for Settings → Advanced → Use Extra Usage (`use_extra_usage`), for installs configured from the environment such as containers. Adopted into the config file once, at boot, only when the field is absent, and never consulted again — the dashboard owns the switch afterwards. Accepts `1/true/yes/on` and `0/false/no/off`; anything else is ignored. See [Use Extra Usage](#use-extra-usage) below | adopted once, then ignored | `CCFLARE_USE_EXTRA_USAGE=true` |
 | `CCFLARE_ENABLE_HEADING_PROJECT_ATTRIBUTION` | When project attribution finds no `x-better-ccflare-project`/`x-project` header and no workspace path in the system prompt, it can fall back to the first eligible H1 heading (`# Heading`) in the system prompt as the project name. This heading is usually the client's own prompt boilerplate (e.g. a coding assistant's `# Harness` or `# Scratchpad Directory` section), not a real project identifier, so this fallback is off by default (#413). Enable only if your client's system prompt reliably opens with a real project-identifying H1 | `false` | `CCFLARE_ENABLE_HEADING_PROJECT_ATTRIBUTION=true` |
 | `MODEL_SCOPED_CAPACITY_ROUTING` | `off` leaves account selection unchanged. `exhausted` skips an account for a request when its weekly per-model-family cap (`limits[] kind=weekly_scoped`, e.g. a Fable/Opus/Sonnet-specific quota) is at/above 100% with a future reset AND overage cannot serve the account (`spend`/`extra_usage` signal unavailable; unknown or available fails open) — both in normal and combo-slot routing. Observed `out_of_credits` 429s additionally sideline the (account, family) pair for 5 minutes to bridge telemetry lag. When every candidate account for a model family is filtered out, the request gets a `429` with `error.type: rate_limit_error` and `error.code: model_family_exhausted` (capped Retry-After) instead of exhausting the per-account failover loop against accounts already known to reject that family. Telemetry can lag up to the poll interval; with polling degraded, expect one probe 429 per family every ~5 minutes. Same as the `model_scoped_capacity_routing` config file field; env var takes precedence | `off` | `MODEL_SCOPED_CAPACITY_ROUTING=exhausted` |
 | `BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS` | Discover agents distributed by Claude Code plugins (reads `~/.claude/plugins/installed_plugins.json`) | `false` | `BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS=true` |
@@ -330,6 +332,21 @@ Internal probes (auto-refresh, keepalive) are exempt: they send a compiled-in mo
 This is off by default because it changes what a Claude family model name means for the install: with it on, asking for a Claude model no longer silently reaches an OpenAI-compatible account through a mapping.
 
 Manage this via the dashboard (Settings → Advanced → Force Account Model) or the API — see [api-http.md](api-http.md#get-apiconfigforce-account-model).
+
+## Use Extra Usage
+
+`use_extra_usage` (config file, off by default) decides what a spent plan window means for an account whose provider can still bill beyond the plan.
+
+Off, an account whose representative usage window (5-hour or weekly) reaches 100% is left out of selection until the window resets — the behavior every install had before this setting existed.
+
+On, the same account stays in rotation while its provider reports billed capacity beyond the plan, the way the provider's own client keeps working:
+
+- **Codex** — purchased credits or an unlimited allowance, read from the `x-codex-credits-has-credits` / `x-codex-credits-unlimited` / `x-codex-credits-balance` response headers and from the `credits` block of the usage endpoint.
+- **Anthropic** — extra usage that is enabled and not yet used up: the 2026 `spend` block when present, otherwise the legacy `extra_usage` block (the same precedence the per-model capacity check uses).
+
+Only admission changes. The window is still reported as it is; the account's rate-limit status reads `extra_usage (Nm)` instead of `usage_exhausted (Nm)`, it counts as routable rather than `usage_exhausted` on `/health`, and a pool-exhausted response does not name the window as the reason or wait on its reset. When the credits or the extra-usage budget run out, the provider refuses the request and the normal rate-limit handling takes the account out. The auto-refresh scheduler still skips probing an account whose window is spent, so probes never draw on extra usage.
+
+That traffic is billed, which is why this is off by default. Manage it via the dashboard (Settings → Advanced → Use Extra Usage) or the API — see [api-http.md](api-http.md#get-apiconfiguse-extra-usage). `CCFLARE_USE_EXTRA_USAGE` can seed it once on first boot.
 
 ## Runtime Configuration API
 

@@ -1,6 +1,7 @@
 import { getRateLimitResetStabilityMs, logError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
+	carryForwardCodexCredits,
 	codexWindowRolledOver,
 	type Provider,
 	parseCodexUsageHeaders,
@@ -142,7 +143,10 @@ export function updateAccountMetadata(
 				windowSlot,
 			);
 
-			usageCache.set(account.id, codexUsage);
+			usageCache.set(
+				account.id,
+				carryForwardCodexCredits(prevUsage, codexUsage),
+			);
 			log.debug(
 				`Updated Codex usage cache for ${account.name}: 5h=${codexUsage.five_hour?.utilization ?? "?"}%, 7d=${codexUsage.seven_day?.utilization ?? "?"}%`,
 			);
