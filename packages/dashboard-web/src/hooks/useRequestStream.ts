@@ -18,8 +18,12 @@ const CONNECTION_POOL = new Map<
 // Cleanup inactive connections periodically
 const CLEANUP_INTERVAL = 30000; // 30 seconds
 const CONNECTION_TIMEOUT = 60000; // 1 minute
-const MAX_RETRIES = 10;
 const HEARTBEAT_INTERVAL = 15000; // 15 seconds
+const RECONNECT_MAX_DELAY = 30000;
+
+// EventSource.readyState values, as numbers so the helpers below stay pure
+const ES_OPEN = 1;
+const ES_CLOSED = 2;
 
 // Global cleanup for connection pool
 let globalCleanupInterval: Timer | null = null;
@@ -68,6 +72,22 @@ export function shouldRefetchOnOpen(
 	return hasOpenedBefore || retryCount > 0;
 }
 
+export function reconnectDelay(
+	retryCount: number,
+	random: () => number = Math.random,
+): number {
+	const base = Math.min(1000 * 2 ** retryCount, RECONNECT_MAX_DELAY);
+	return Math.round(base + random() * base * 0.25);
+}
+
+export function shouldReconnectOnWake(readyState: number | undefined): boolean {
+	return readyState !== ES_OPEN;
+}
+
+export function shouldReconnectOnHeartbeat(readyState: number): boolean {
+	return readyState === ES_CLOSED;
+}
+
 function pruneDetailsMap(
 	map: Map<string, RequestResponse>,
 	requests: RequestPayload[],
@@ -93,21 +113,22 @@ export function useRequestStream(limit = 200) {
 	const queryClient = useQueryClient();
 	const connectionKey = `requests-stream-${limit}`;
 	const isMountedRef = useRef(true);
+	const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const reconnectNowRef = useRef<() => void>(() => {});
 
-	// Heartbeat to keep connection alive and detect dead connections
+	// Heartbeat to detect a source that was closed without reaching our error
+	// handler. CONNECTING is left alone: the browser or our error path is
+	// already handling it.
 	const setupHeartbeat = useCallback((es: EventSource, key: string) => {
 		return setInterval(() => {
-			if (
-				es.readyState === EventSource.CLOSED ||
-				es.readyState === EventSource.CONNECTING
-			) {
-				console.log(`Connection ${key} is not ready, cleaning up`);
+			if (shouldReconnectOnHeartbeat(es.readyState)) {
+				console.log(`Connection ${key} is closed, reconnecting`);
 				const pooled = CONNECTION_POOL.get(key);
 				if (pooled) {
 					clearInterval(pooled.heartbeat);
 					CONNECTION_POOL.delete(key);
 				}
-				es.close();
+				reconnectNowRef.current();
 			}
 		}, HEARTBEAT_INTERVAL);
 	}, []);
@@ -293,7 +314,7 @@ export function useRequestStream(limit = 200) {
 
 	// Connect with connection pooling
 	const connect = useCallback(
-		(retryCount = 0): EventSource => {
+		(retryCount = 0, forceRefetch = false): EventSource => {
 			// Ensure cleanup interval is running
 			getOrCreateCleanupInterval();
 
@@ -320,17 +341,19 @@ export function useRequestStream(limit = 200) {
 
 			// Setup event handlers
 			let hasOpened = false;
+			let attempt = retryCount;
 			es.addEventListener("open", () => {
 				if (!isMountedRef.current) {
 					es.close();
 					return;
 				}
-				if (shouldRefetchOnOpen(hasOpened, retryCount)) {
+				if (forceRefetch || shouldRefetchOnOpen(hasOpened, retryCount)) {
 					queryClient.invalidateQueries({
 						queryKey: queryKeys.requests(limit),
 					});
 				}
 				hasOpened = true;
+				attempt = 0;
 				console.log(`SSE connection established: ${connectionKey}`);
 			});
 
@@ -349,20 +372,19 @@ export function useRequestStream(limit = 200) {
 					CONNECTION_POOL.delete(connectionKey);
 				}
 
-				// Only reconnect if component is still mounted and we haven't exceeded max retries
-				if (isMountedRef.current && retryCount < MAX_RETRIES) {
-					const delay = Math.min(1000 * 2 ** retryCount, 30000);
+				if (isMountedRef.current) {
+					const delay = reconnectDelay(attempt);
 					console.log(
-						`Reconnecting ${connectionKey} in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`,
+						`Reconnecting ${connectionKey} in ${delay}ms (attempt ${attempt + 1})`,
 					);
 
-					setTimeout(() => {
+					if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+					retryTimerRef.current = setTimeout(() => {
+						retryTimerRef.current = null;
 						if (isMountedRef.current) {
-							connect(retryCount + 1);
+							connect(attempt + 1);
 						}
 					}, delay);
-				} else if (retryCount >= MAX_RETRIES) {
-					console.error(`Max retries reached for ${connectionKey}, giving up`);
 				}
 			});
 
@@ -380,13 +402,47 @@ export function useRequestStream(limit = 200) {
 		[connectionKey, handleMessage, setupHeartbeat, queryClient, limit],
 	);
 
+	const reconnectNow = useCallback(() => {
+		if (!isMountedRef.current) return;
+		if (retryTimerRef.current) {
+			clearTimeout(retryTimerRef.current);
+			retryTimerRef.current = null;
+		}
+		connect(0, true);
+	}, [connect]);
+	reconnectNowRef.current = reconnectNow;
+
 	useEffect(() => {
 		isMountedRef.current = true;
 		const es = connect();
 
+		// A sleeping laptop or backgrounded tab can kill the stream silently, so
+		// refetch the snapshot and reconnect (if needed) when we come back.
+		const recover = () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.requests(limit) });
+			if (
+				shouldReconnectOnWake(
+					CONNECTION_POOL.get(connectionKey)?.connection.readyState,
+				)
+			) {
+				reconnectNow();
+			}
+		};
+		const onVisibilityChange = () => {
+			if (document.visibilityState === "visible") recover();
+		};
+		document.addEventListener("visibilitychange", onVisibilityChange);
+		window.addEventListener("online", recover);
+
 		// Cleanup function
 		return () => {
 			isMountedRef.current = false;
+			document.removeEventListener("visibilitychange", onVisibilityChange);
+			window.removeEventListener("online", recover);
+			if (retryTimerRef.current) {
+				clearTimeout(retryTimerRef.current);
+				retryTimerRef.current = null;
+			}
 
 			const pooled = CONNECTION_POOL.get(connectionKey);
 			if (pooled) {
@@ -404,7 +460,7 @@ export function useRequestStream(limit = 200) {
 				es.close();
 			}
 		};
-	}, [connect, connectionKey]);
+	}, [connect, connectionKey, reconnectNow, queryClient, limit]);
 
 	// Global cleanup on unmount
 	useEffect(() => {
