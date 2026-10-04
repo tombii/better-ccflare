@@ -38,6 +38,14 @@ describe("createStatsHandler caching", () => {
 		expect(repo.getTopModels).toHaveBeenCalledTimes(1);
 	});
 
+	it("keeps per-account counts and top models lifetime, not windowed by ?since", async () => {
+		const { repo, dbOps } = makeDbOps();
+		const handler = createStatsHandler(dbOps);
+		await handler(u("?since=7"));
+		expect(repo.getAccountStats).toHaveBeenCalledWith(10, true);
+		expect(repo.getTopModels).toHaveBeenCalledWith();
+	});
+
 	it("dedups concurrent requests", async () => {
 		const { repo, dbOps } = makeDbOps();
 		const handler = createStatsHandler(dbOps);

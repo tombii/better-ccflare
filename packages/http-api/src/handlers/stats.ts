@@ -61,9 +61,9 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
 				] = await Promise.all([
 					statsRepository.getAggregatedStats(sinceMs),
 					statsRepository.getActiveAccountCount(),
-					statsRepository.getAccountStats(10, true, sinceMs),
+					statsRepository.getAccountStats(10, true),
 					statsRepository.getRecentErrorGroups(errorsSinceMs, 50),
-					statsRepository.getTopModels(5, sinceMs),
+					statsRepository.getTopModels(),
 				]);
 
 				const successRate =
