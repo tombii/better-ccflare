@@ -1,9 +1,8 @@
 const MAX_ENTRIES = 32;
 
-interface Entry<T> {
-	/** Resolved value, or the in-flight promise while loading. */
-	promise: Promise<T>;
-	/** Epoch ms when the entry expires; Infinity while still loading. */
+interface CompletedEntry<T> {
+	value: T;
+	/** Epoch ms when the entry expires. */
 	expiresAt: number;
 }
 
@@ -21,49 +20,59 @@ function startLoader<T>(loader: () => Promise<T>): Promise<T> {
  *
  * - Values are served from cache until `ttlMs` has elapsed.
  * - Concurrent `get` calls for the same key share a single loader promise.
+ *   In-flight loads live in their own map and are never evicted while running.
  * - Rejected loaders are never cached.
- * - At most 32 keys are kept (oldest inserted is evicted first), so varying
- *   query params cannot grow the cache without bound.
+ * - At most 32 completed keys are kept (oldest inserted is evicted first), so
+ *   varying query params cannot grow the cache without bound.
+ * - `clear()` drops completed and in-flight bookkeeping; a load that was
+ *   running during `clear()` does not repopulate the cache.
  */
 export function createTtlCache<T>(ttlMs: number, now: () => number = Date.now) {
-	const entries = new Map<string, Entry<T>>();
+	const completed = new Map<string, CompletedEntry<T>>();
+	const inFlight = new Map<string, Promise<T>>();
+	let generation = 0;
 
 	function get(key: string, loader: () => Promise<T>): Promise<T> {
-		const existing = entries.get(key);
-		if (existing && existing.expiresAt > now()) {
-			return existing.promise;
-		}
-		if (existing) entries.delete(key);
-
-		const entry: Entry<T> = {
-			promise: startLoader(loader),
-			expiresAt: Number.POSITIVE_INFINITY,
-		};
-		entries.set(key, entry);
-
-		while (entries.size > MAX_ENTRIES) {
-			const oldest = entries.keys().next().value;
-			if (oldest === undefined) break;
-			entries.delete(oldest);
+		const done = completed.get(key);
+		if (done) {
+			if (done.expiresAt > now()) return Promise.resolve(done.value);
+			completed.delete(key);
 		}
 
-		entry.promise.then(
-			() => {
-				// Only stamp the expiry if this entry is still the live one.
-				if (entries.get(key) === entry) entry.expiresAt = now() + ttlMs;
+		const running = inFlight.get(key);
+		if (running) return running;
+
+		const startedGeneration = generation;
+		const promise = startLoader(loader);
+		inFlight.set(key, promise);
+
+		promise.then(
+			(value) => {
+				// Ignore loads that were cleared away or superseded while running.
+				if (startedGeneration !== generation || inFlight.get(key) !== promise)
+					return;
+				inFlight.delete(key);
+				completed.set(key, { value, expiresAt: now() + ttlMs });
+				while (completed.size > MAX_ENTRIES) {
+					const oldest = completed.keys().next().value;
+					if (oldest === undefined) break;
+					completed.delete(oldest);
+				}
 			},
 			() => {
-				if (entries.get(key) === entry) entries.delete(key);
+				if (inFlight.get(key) === promise) inFlight.delete(key);
 			},
 		);
 
-		return entry.promise;
+		return promise;
 	}
 
 	return {
 		get,
 		clear(): void {
-			entries.clear();
+			generation++;
+			completed.clear();
+			inFlight.clear();
 		},
 	};
 }

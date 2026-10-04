@@ -77,4 +77,54 @@ describe("createTtlCache", () => {
 		await cache.get("a", loader);
 		expect(calls).toBe(2);
 	});
+
+	it("does not evict in-flight loads when the bound is exceeded", async () => {
+		const cache = createTtlCache<number>(1000, () => 0);
+		let aCalls = 0;
+		let releaseA: (v: number) => void = () => {};
+		const loaderA = () =>
+			new Promise<number>((r) => {
+				aCalls++;
+				releaseA = r;
+			});
+		const p1 = cache.get("A", loaderA);
+		for (let i = 0; i < 40; i++) await cache.get(`k${i}`, async () => i);
+		const p2 = cache.get("A", loaderA);
+		releaseA(9);
+		expect(await Promise.all([p1, p2])).toEqual([9, 9]);
+		expect(aCalls).toBe(1);
+		// The completed result is then served from cache.
+		expect(await cache.get("A", loaderA)).toBe(9);
+		expect(aCalls).toBe(1);
+	});
+
+	it("a load running during clear() does not repopulate the cache", async () => {
+		const cache = createTtlCache<number>(1000, () => 0);
+		let release: (v: number) => void = () => {};
+		const stale = cache.get(
+			"a",
+			() =>
+				new Promise<number>((r) => {
+					release = r;
+				}),
+		);
+		cache.clear();
+		release(1);
+		expect(await stale).toBe(1);
+		await Promise.resolve();
+		expect(await cache.get("a", async () => 2)).toBe(2);
+	});
+
+	it("clear() stops sharing an in-flight load", async () => {
+		const cache = createTtlCache<number>(1000, () => 0);
+		let calls = 0;
+		const loader = () =>
+			new Promise<number>(() => {
+				calls++;
+			});
+		cache.get("a", loader);
+		cache.clear();
+		cache.get("a", loader);
+		expect(calls).toBe(2);
+	});
 });
