@@ -209,6 +209,9 @@ const INC_VAC_SKIP_ESCALATE_AT = 3;
  */
 const INC_VACUUM_WORKER_TIMEOUT_MS = 120_000;
 
+/** How long getTableRowCounts() results are cached. */
+const TABLE_ROW_COUNTS_TTL_MS = 60_000;
+
 /**
  * DatabaseOperations using Repository Pattern
  * Provides a clean, organized interface for database operations
@@ -235,6 +238,18 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private originalAutoVacuumMode?: number;
 	/** Prevents concurrent compact() calls from spawning multiple vacuum workers */
 	private compacting = false;
+	/** Short-TTL cache of getTableRowCounts (the payload SUM is a full scan). */
+	private tableCountsCache: {
+		at: number;
+		value: Array<{ name: string; rowCount: number; dataBytes?: number }>;
+	} | null = null;
+	private tableCountsInflight: Promise<
+		Array<{ name: string; rowCount: number; dataBytes?: number }>
+	> | null = null;
+	/** Bumped on invalidation so an in-flight load cannot repopulate stale data. */
+	private tableCountsGeneration = 0;
+	/** Injectable clock (tests only). */
+	private tableCountsClock: () => number = () => Date.now();
 	/** Stop function returned by the multi-instance guard's heartbeat loop. */
 	private heartbeatStop: (() => Promise<void>) | null = null;
 	/**
@@ -1414,6 +1429,7 @@ OAuth tokens will need to be re-authenticated.
 		const removedPayloadsByAge =
 			await this.requests.deletePayloadsOlderThan(payloadCutoff);
 		const removedOrphans = await this.requests.deleteOrphanedPayloads();
+		this.invalidateTableRowCounts();
 
 		// Pass 2 — request metadata
 		let removedRequests = 0;
@@ -1425,10 +1441,19 @@ OAuth tokens will need to be re-authenticated.
 			removedRequests = await this.requests.deleteOlderThan(requestCutoff);
 		}
 
+		// Pass 2 deleted request rows too; drop counts cached before or during cleanup.
+		this.invalidateTableRowCounts();
+
 		return {
 			removedRequests,
 			removedPayloads: removedPayloadsByAge + removedOrphans,
 		};
+	}
+
+	private invalidateTableRowCounts(): void {
+		this.tableCountsCache = null;
+		this.tableCountsInflight = null;
+		this.tableCountsGeneration++;
 	}
 
 	async getTableRowCounts(): Promise<
@@ -1437,6 +1462,34 @@ OAuth tokens will need to be re-authenticated.
 		if (!this.adapter.isSQLite) {
 			return [];
 		}
+		const cached = this.tableCountsCache;
+		if (
+			cached &&
+			this.tableCountsClock() - cached.at < TABLE_ROW_COUNTS_TTL_MS
+		) {
+			return cached.value;
+		}
+		if (this.tableCountsInflight) {
+			return this.tableCountsInflight;
+		}
+		const generation = this.tableCountsGeneration;
+		const load = this.loadTableRowCounts().then((value) => {
+			if (generation === this.tableCountsGeneration) {
+				// Failures return [] — don't cache those.
+				if (value.length > 0) {
+					this.tableCountsCache = { at: this.tableCountsClock(), value };
+				}
+				this.tableCountsInflight = null;
+			}
+			return value;
+		});
+		this.tableCountsInflight = load;
+		return load;
+	}
+
+	private async loadTableRowCounts(): Promise<
+		Array<{ name: string; rowCount: number; dataBytes?: number }>
+	> {
 		try {
 			const tables = await this.adapter.query<{ name: string }>(
 				"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
