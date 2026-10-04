@@ -288,7 +288,7 @@ export class StatsRepository {
 					  AND r.timestamp > ?
 				) g
 				GROUP BY 1, 2
-				ORDER BY latest_timestamp DESC
+				ORDER BY latest_timestamp DESC, g.error_message, g.account_key
 				LIMIT ?
 			)
 			SELECT

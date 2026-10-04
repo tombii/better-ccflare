@@ -209,6 +209,9 @@ const INC_VAC_SKIP_ESCALATE_AT = 3;
  */
 const INC_VACUUM_WORKER_TIMEOUT_MS = 120_000;
 
+/** How long getTableRowCounts() results are cached. */
+const TABLE_ROW_COUNTS_TTL_MS = 60_000;
+
 /**
  * DatabaseOperations using Repository Pattern
  * Provides a clean, organized interface for database operations
@@ -1459,9 +1462,11 @@ OAuth tokens will need to be re-authenticated.
 		if (!this.adapter.isSQLite) {
 			return [];
 		}
-		const TTL_MS = 60_000;
 		const cached = this.tableCountsCache;
-		if (cached && this.tableCountsClock() - cached.at < TTL_MS) {
+		if (
+			cached &&
+			this.tableCountsClock() - cached.at < TABLE_ROW_COUNTS_TTL_MS
+		) {
 			return cached.value;
 		}
 		if (this.tableCountsInflight) {

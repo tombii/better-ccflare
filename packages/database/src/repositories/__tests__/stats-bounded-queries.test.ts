@@ -307,6 +307,25 @@ describe("StatsRepository.getRecentErrorGroups — equivalence", () => {
 		const result = await repo.getRecentErrorGroups(10, 2);
 		expect(result.map((g) => g.latestRequestId)).toEqual(["r6", "t1"]);
 	});
+
+	it("breaks latest-timestamp ties deterministically at the LIMIT boundary", async () => {
+		// Three groups tie on latest timestamp; insertion order is Z, M, A.
+		insertRequest(db, { id: "x1", ts: 500, acct: null, err: "Z" });
+		insertRequest(db, { id: "x2", ts: 500, acct: null, err: "M" });
+		insertRequest(db, { id: "x3", ts: 500, acct: null, err: "A" });
+		const result = await repo.getRecentErrorGroups(10, 2);
+		// Tiebreak is error_message ASC, so A and M are kept; Z is cut.
+		expect(result.map((g) => g.errorCode).sort()).toEqual(["A", "M"]);
+	});
+
+	it("breaks ties on account_key when error_message also ties", async () => {
+		insertAccount(db, "a1", "acct-one");
+		insertAccount(db, "a2", "acct-two");
+		insertRequest(db, { id: "y1", ts: 500, acct: "a2", err: "E" });
+		insertRequest(db, { id: "y2", ts: 500, acct: "a1", err: "E" });
+		const result = await repo.getRecentErrorGroups(10, 1);
+		expect(result.map((g) => g.accountId)).toEqual(["a1"]);
+	});
 });
 
 describe("StatsRepository — bounded top models / account stats / api keys", () => {
