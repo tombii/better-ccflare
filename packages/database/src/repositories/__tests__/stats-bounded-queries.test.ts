@@ -1,8 +1,7 @@
 /**
  * Tests for the bounded / simplified /api/stats queries on StatsRepository:
- * getRecentErrorGroups (GROUP BY rewrite), getTopModels (sinceMs window),
- * getAccountStats (sinceMs window + sargable account-id predicate) and
- * getApiKeyStats (single merged query).
+ * getRecentErrorGroups (GROUP BY rewrite), getTopModels, getAccountStats
+ * (sargable account-id predicate) and getApiKeyStats (single merged query).
  */
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -319,7 +318,7 @@ describe("StatsRepository — bounded top models / account stats / api keys", ()
 	});
 	afterEach(() => db.close());
 
-	it("getTopModels keeps the unbounded behaviour without sinceMs", async () => {
+	it("getTopModels returns lifetime counts and percentages", async () => {
 		insertRequest(db, { id: "1", ts: 10, acct: null, model: "a" });
 		insertRequest(db, { id: "2", ts: 20, acct: null, model: "a" });
 		insertRequest(db, { id: "3", ts: 30, acct: null, model: "a" });
@@ -334,22 +333,7 @@ describe("StatsRepository — bounded top models / account stats / api keys", ()
 		]);
 	});
 
-	it("getTopModels bounds counts and the percentage total by sinceMs", async () => {
-		insertRequest(db, { id: "1", ts: 10, acct: null, model: "a" });
-		insertRequest(db, { id: "2", ts: 20, acct: null, model: "a" });
-		insertRequest(db, { id: "3", ts: 30, acct: null, model: "a" });
-		insertRequest(db, { id: "4", ts: 40, acct: null, model: "b" });
-		insertRequest(db, { id: "5", ts: 50, acct: null, model: "c" });
-		insertRequest(db, { id: "6", ts: 60, acct: null, model: "c" });
-		const res = await repo.getTopModels(5, 25);
-		expect(res).toEqual([
-			{ model: "c", count: 2, percentage: 50 },
-			{ model: "a", count: 1, percentage: 25 },
-			{ model: "b", count: 1, percentage: 25 },
-		]);
-	});
-
-	it("getAccountStats bounds per-account counts by sinceMs", async () => {
+	it("getAccountStats counts lifetime requests and success rates", async () => {
 		insertAccount(db, "a1", "acct-one");
 		insertRequest(db, { id: "1", ts: 10, acct: "a1", success: true });
 		insertRequest(db, { id: "2", ts: 100, acct: "a1", success: false });
@@ -357,20 +341,12 @@ describe("StatsRepository — bounded top models / account stats / api keys", ()
 		insertRequest(db, { id: "4", ts: 120, acct: null, success: true });
 		insertRequest(db, { id: "5", ts: 5, acct: null, success: false });
 		const all = await repo.getAccountStats(10, true);
-		expect(all.find((r) => r.name === "acct-one")?.requestCount).toBe(3);
-		const win = await repo.getAccountStats(10, true, 50);
-		const one = win.find((r) => r.name === "acct-one");
-		expect(one?.requestCount).toBe(2);
-		expect(one?.successRate).toBe(50);
-		const none = win.find((r) => r.name === NO_ACCOUNT_ID);
-		expect(none?.requestCount).toBe(1);
-		expect(none?.successRate).toBe(100);
-	});
-
-	it("getAccountStats does not report accounts with no rows in the window", async () => {
-		insertAccount(db, "a1", "acct-one");
-		insertRequest(db, { id: "1", ts: 10, acct: "a1", success: true });
-		expect(await repo.getAccountStats(10, true, 50)).toEqual([]);
+		const one = all.find((r) => r.name === "acct-one");
+		expect(one?.requestCount).toBe(3);
+		expect(one?.successRate).toBe(67);
+		const none = all.find((r) => r.name === NO_ACCOUNT_ID);
+		expect(none?.requestCount).toBe(2);
+		expect(none?.successRate).toBe(50);
 	});
 
 	it("getApiKeyStats returns counts and success rates", async () => {

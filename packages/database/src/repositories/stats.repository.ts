@@ -110,15 +110,11 @@ export class StatsRepository {
 	 * Get account statistics with success rates
 	 * This consolidates the duplicated logic between cli-commands and http-api
 	 *
-	 * @param sinceMs - When given (and includeUnauthenticated is true), only
-	 *   requests after this timestamp (ms since epoch) are counted. Omit for the
-	 *   lifetime view. Ignored on the includeUnauthenticated=false path, which
-	 *   reads a precomputed accounts.request_count counter.
+	 * Counts are always lifetime (no time window).
 	 */
 	async getAccountStats(
 		limit = 10,
 		includeUnauthenticated = true,
-		sinceMs?: number,
 	): Promise<AccountStats[]> {
 		// Get account request counts
 		let accountStats: Array<{
@@ -129,8 +125,6 @@ export class StatsRepository {
 		}>;
 
 		if (includeUnauthenticated) {
-			const windowClause = sinceMs !== undefined ? "WHERE r.timestamp > ?" : "";
-			const windowParams = sinceMs !== undefined ? [sinceMs] : [];
 			accountStats = await this.adapter.query<{
 				id: string;
 				name: string;
@@ -145,13 +139,12 @@ export class StatsRepository {
 					COALESCE(MAX(a.total_requests), 0) as "totalRequests"
 				FROM requests r
 				LEFT JOIN accounts a ON a.id = r.account_used
-				${windowClause}
 				GROUP BY 1, 2
 				HAVING COUNT(r.id) > 0
 				ORDER BY "requestCount" DESC
 				LIMIT ?
 			`,
-				[NO_ACCOUNT_ID, NO_ACCOUNT_ID, ...windowParams, limit],
+				[NO_ACCOUNT_ID, NO_ACCOUNT_ID, limit],
 			);
 		} else {
 			accountStats = await this.adapter.query<{
@@ -202,7 +195,6 @@ export class StatsRepository {
 		const accountPredicate = includesNoAccount
 			? `(account_used IN (${placeholders}) OR account_used IS NULL)`
 			: `account_used IN (${placeholders})`;
-		const successWindow = sinceMs !== undefined ? " AND timestamp > ?" : "";
 		const successRates = await this.adapter.query<{
 			accountId: string;
 			total: number;
@@ -213,13 +205,9 @@ export class StatsRepository {
 				COUNT(*) as total,
 				SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) as successful
 			FROM requests
-			WHERE ${accountPredicate}${successWindow}
+			WHERE ${accountPredicate}
 			GROUP BY 1`,
-			[
-				NO_ACCOUNT_ID,
-				...accountIds,
-				...(sinceMs !== undefined ? [sinceMs] : []),
-			],
+			[NO_ACCOUNT_ID, ...accountIds],
 		);
 
 		// Create a map for O(1) lookup
@@ -377,15 +365,10 @@ export class StatsRepository {
 	/**
 	 * Get top models by usage
 	 * @param limit - Maximum number of models to return.
-	 * @param sinceMs - When given, only requests after this timestamp (ms since
-	 *   epoch) are counted; percentages are relative to that window.
 	 */
 	async getTopModels(
 		limit = 5,
-		sinceMs?: number,
 	): Promise<Array<{ model: string; count: number; percentage: number }>> {
-		const windowClause = sinceMs !== undefined ? "AND timestamp > ?" : "";
-		const windowParams = sinceMs !== undefined ? [sinceMs] : [];
 		const rows = await this.adapter.query<{
 			model: string;
 			count: unknown;
@@ -396,7 +379,7 @@ export class StatsRepository {
 					model,
 					COUNT(*) as count
 				FROM requests
-				WHERE model IS NOT NULL ${windowClause}
+				WHERE model IS NOT NULL
 				GROUP BY model
 			),
 			total AS (
@@ -409,7 +392,7 @@ export class StatsRepository {
 			FROM model_counts mc, total t
 			ORDER BY mc.count DESC
 			LIMIT ?`,
-			[...windowParams, limit],
+			[limit],
 		);
 		return rows.map((r) => ({
 			model: r.model,
