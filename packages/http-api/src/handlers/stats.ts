@@ -27,7 +27,7 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
 	// multiple tabs don't each re-run the aggregate queries.
 	const cache = createTtlCache<StatsPayload>(STATS_CACHE_TTL_MS);
 
-	return async (url: URL): Promise<Response> => {
+	const handler = async (url: URL): Promise<Response> => {
 		const statsRepository = dbOps.getStatsRepository();
 
 		// Parse optional ?since=<days> query parameter (default: 30, max: 365)
@@ -88,12 +88,19 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
 
 		return jsonResponse(response);
 	};
+
+	/** Drop cached payloads (call after history is deleted in-process). */
+	handler.clearCache = (): void => cache.clear();
+	return handler;
 }
 
 /**
  * Create a stats reset handler
  */
-export function createStatsResetHandler(dbOps: DatabaseOperations) {
+export function createStatsResetHandler(
+	dbOps: DatabaseOperations,
+	onReset?: () => void,
+) {
 	return async (): Promise<Response> => {
 		const adapter = dbOps.getAdapter();
 		// Clear request history
@@ -102,6 +109,10 @@ export function createStatsResetHandler(dbOps: DatabaseOperations) {
 		await adapter.run(
 			"UPDATE accounts SET request_count = 0, session_request_count = 0",
 		);
+
+		// Invalidate cached /api/stats payloads so the dashboard's immediate
+		// refetch does not see pre-reset numbers.
+		onReset?.();
 
 		return jsonResponse({
 			success: true,

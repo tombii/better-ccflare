@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { DatabaseOperations } from "@better-ccflare/database";
-import { createStatsHandler } from "../stats";
+import { createStatsHandler, createStatsResetHandler } from "../stats";
 
 function makeDbOps() {
 	const repo = {
@@ -67,5 +67,43 @@ describe("createStatsHandler caching", () => {
 		await createStatsHandler(dbOps)(u());
 		await createStatsHandler(dbOps)(u());
 		expect(repo.getAggregatedStats).toHaveBeenCalledTimes(2);
+	});
+
+	it("serves fresh data after clearCache()", async () => {
+		const { repo, dbOps } = makeDbOps();
+		const handler = createStatsHandler(dbOps);
+		const before = await (await handler(u())).json();
+		expect(before.totalRequests).toBe(10);
+		repo.getAggregatedStats.mockImplementation(async () => ({
+			totalRequests: 0,
+			successfulRequests: 0,
+			avgResponseTime: 0,
+			totalTokens: 0,
+			totalCostUsd: 0,
+			avgTokensPerSecond: null,
+		}));
+		handler.clearCache();
+		const after = await (await handler(u())).json();
+		expect(after.totalRequests).toBe(0);
+	});
+});
+
+describe("createStatsResetHandler", () => {
+	it("runs the onReset hook after deleting history", async () => {
+		const calls: string[] = [];
+		const dbOps = {
+			getAdapter: () => ({
+				run: async (sql: string) => {
+					calls.push(sql);
+				},
+			}),
+		} as unknown as DatabaseOperations;
+		const onReset = mock(() => {
+			calls.push("onReset");
+		});
+		const res = await createStatsResetHandler(dbOps, onReset)();
+		expect(res.status).toBe(200);
+		expect(onReset).toHaveBeenCalledTimes(1);
+		expect(calls[calls.length - 1]).toBe("onReset");
 	});
 });

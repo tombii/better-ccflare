@@ -183,7 +183,9 @@ export class APIRouter {
 			getVacuumStatus,
 		);
 		const statsHandler = createStatsHandler(dbOps);
-		const statsResetHandler = createStatsResetHandler(dbOps);
+		const statsResetHandler = createStatsResetHandler(dbOps, () =>
+			statsHandler.clearCache(),
+		);
 		const storageHandler = createStorageHandler(dbOps);
 		const integrityCheckHandler = createIntegrityCheckHandler(dbOps);
 		const accountsHandler = createAccountsListHandler(
@@ -247,7 +249,9 @@ export class APIRouter {
 		const agentsHandler = createAgentsListHandler(dbOps);
 		const workspacesHandler = createWorkspacesListHandler();
 		const requestsStreamHandler = createRequestsStreamHandler();
-		const cleanupHandler = createCleanupHandler(dbOps, config);
+		const cleanupHandler = createCleanupHandler(dbOps, config, () =>
+			statsHandler.clearCache(),
+		);
 		const systemInfoHandler = createSystemInfoHandler();
 		const versionCheckHandler = createVersionCheckHandler();
 
