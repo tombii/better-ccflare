@@ -40,6 +40,7 @@ describe("APIRouter — GET /api/sessions/:sessionId/account (#318)", () => {
 		const adapter = new BunSqlAdapter(db);
 		const dbOps = {
 			getAdapter: () => adapter,
+			onRequestsDeleted: () => () => {},
 			// No active API keys → auth disabled, isolating these tests to
 			// routing/decode-guard behavior.
 			countActiveApiKeys: async () => 0,

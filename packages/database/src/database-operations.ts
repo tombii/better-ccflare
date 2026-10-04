@@ -248,6 +248,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	> | null = null;
 	/** Bumped on invalidation so an in-flight load cannot repopulate stale data. */
 	private tableCountsGeneration = 0;
+	private readonly requestsDeletedListeners = new Set<() => void>();
 	/** Injectable clock (tests only). */
 	private tableCountsClock: () => number = () => Date.now();
 	/** Stop function returned by the multi-instance guard's heartbeat loop. */
@@ -1443,11 +1444,35 @@ OAuth tokens will need to be re-authenticated.
 
 		// Pass 2 deleted request rows too; drop counts cached before or during cleanup.
 		this.invalidateTableRowCounts();
+		this.notifyRequestsDeleted();
 
 		return {
 			removedRequests,
 			removedPayloads: removedPayloadsByAge + removedOrphans,
 		};
+	}
+
+	/**
+	 * Subscribe to request-history deletions performed by cleanupOldRequests()
+	 * (scheduled retention, CLI, maintenance endpoint). Lets derived caches
+	 * (e.g. /api/stats) drop stale data regardless of who triggered cleanup.
+	 * Returns an unsubscribe function.
+	 */
+	onRequestsDeleted(listener: () => void): () => void {
+		this.requestsDeletedListeners.add(listener);
+		return () => {
+			this.requestsDeletedListeners.delete(listener);
+		};
+	}
+
+	private notifyRequestsDeleted(): void {
+		for (const listener of [...this.requestsDeletedListeners]) {
+			try {
+				listener();
+			} catch (error) {
+				console.warn("[cleanup] requests-deleted listener failed:", error);
+			}
+		}
 	}
 
 	private invalidateTableRowCounts(): void {
