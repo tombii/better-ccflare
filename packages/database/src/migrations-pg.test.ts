@@ -364,6 +364,7 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			expect(gate).toBeGreaterThan(-1);
 			expect(gate).toBeLessThan(dropIdx);
 			expect(body.indexOf("SET lock_timeout = '5s'")).toBeLessThan(dropIdx);
+			expect(body.split(`"SET lock_timeout`).length - 1).toBe(1);
 			expect(body).toContain("RESET lock_timeout");
 			expect(body.indexOf("RESET lock_timeout")).toBeGreaterThan(
 				body.indexOf("finally"),
@@ -387,18 +388,33 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			expect(body).toContain("SET statement_timeout = 0");
 		});
 
+		it("lock_timeout is set once, before any DDL (invalid cleanup, creates, drops)", () => {
+			const body = fnBody("ensureRequestsIndexesPg");
+			const lock = body.indexOf("SET lock_timeout = '5s'");
+			expect(lock).toBeGreaterThan(body.indexOf("SET statement_timeout = 0"));
+			expect(lock).toBeLessThan(body.indexOf("NOT i.indisvalid"));
+			expect(lock).toBeLessThan(
+				body.indexOf("DROP INDEX IF EXISTS ${row.relname}"),
+			);
+			expect(lock).toBeLessThan(body.indexOf("conn.unsafe(index.sql)"));
+			expect(lock).toBeLessThan(body.indexOf("if (!newIndexesReady) return;"));
+		});
+
 		describe("ensureRequestsIndexesPg behaviour (fake adapter)", () => {
 			function fake(opts: {
 				failOn?: (q: string) => boolean;
 				validNames?: string[];
+				invalidNames?: string[];
+				failMessage?: string;
 			}) {
 				const statements: string[] = [];
 				let released = false;
 				const conn = {
 					unsafe: async (q: string) => {
 						statements.push(q.replace(/\s+/g, " ").trim());
-						if (opts.failOn?.(q)) throw new Error("boom");
-						if (q.includes("NOT i.indisvalid")) return [];
+						if (opts.failOn?.(q)) throw new Error(opts.failMessage ?? "boom");
+						if (q.includes("NOT i.indisvalid"))
+							return (opts.invalidNames ?? []).map((relname) => ({ relname }));
 						if (q.includes("i.indisvalid"))
 							return (opts.validNames ?? ["idx_requests_err_ts_cov"]).map(
 								(relname) => ({ relname }),
@@ -443,19 +459,67 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 				expect(st).toContain(
 					"DROP INDEX IF EXISTS idx_requests_client_session",
 				);
-				const lastCreate = st.findLastIndex((q) =>
-					q.startsWith("CREATE INDEX CONCURRENTLY"),
-				);
 				expect(
 					st.filter((q) => q.startsWith("CREATE INDEX CONCURRENTLY")).length,
 				).toBe(1);
-				expect(st.indexOf("SET lock_timeout = '5s'")).toBeGreaterThan(
-					lastCreate,
-				);
-				expect(st.indexOf("SET lock_timeout = '5s'")).toBeLessThan(
-					st.findIndex((q) => q.startsWith("DROP INDEX")),
-				);
 				expect(st.at(-2)).toBe("RESET lock_timeout");
+				expect(f.isReleased()).toBe(true);
+			});
+
+			it("SET lock_timeout precedes the invalid-index SELECT/DROP, every CREATE and every DROP", async () => {
+				const f = fake({ invalidNames: ["idx_requests_err_ts_cov"] });
+				await ensureRequestsIndexesPg(f.adapter);
+				const st = f.statements;
+				const lock = st.indexOf("SET lock_timeout = '5s'");
+				expect(lock).toBeGreaterThan(-1);
+				expect(st.filter((q) => q.startsWith("SET lock_timeout")).length).toBe(
+					1,
+				);
+				const ddlOrSelect = st
+					.map((q, i) => ({ q, i }))
+					.filter(
+						({ q }) =>
+							q.includes("NOT i.indisvalid") ||
+							q.startsWith("CREATE INDEX CONCURRENTLY") ||
+							q.startsWith("DROP INDEX"),
+					);
+				// invalid SELECT + invalid DROP + 1 CREATE + redundant drops + client_session drop
+				expect(ddlOrSelect.length).toBe(3 + dropped.length + 1);
+				for (const { i } of ddlOrSelect) expect(lock).toBeLessThan(i);
+			});
+
+			it("a lock timeout during CREATE issues no drops, resolves and cleans up", async () => {
+				const f = fake({
+					failMessage: "canceling statement due to lock timeout",
+					failOn: (q) => q.startsWith("CREATE INDEX CONCURRENTLY"),
+				});
+				await expect(
+					ensureRequestsIndexesPg(f.adapter),
+				).resolves.toBeUndefined();
+				expect(drops(f.statements)).toEqual([]);
+				expect(f.statements).toContain("RESET lock_timeout");
+				expect(f.statements).toContain("RESET statement_timeout");
+				expect(f.isReleased()).toBe(true);
+			});
+
+			it("a lock timeout during the invalid-index DROP issues no drops, resolves and cleans up", async () => {
+				const f = fake({
+					invalidNames: ["idx_requests_err_ts_cov"],
+					failMessage: "canceling statement due to lock timeout",
+					failOn: (q) =>
+						q.startsWith("DROP INDEX IF EXISTS idx_requests_err_ts_cov"),
+				});
+				await expect(
+					ensureRequestsIndexesPg(f.adapter),
+				).resolves.toBeUndefined();
+				expect(f.statements.some((q) => q.startsWith("CREATE INDEX"))).toBe(
+					false,
+				);
+				expect(f.statements.filter((q) => q.startsWith("DROP INDEX"))).toEqual([
+					"DROP INDEX IF EXISTS idx_requests_err_ts_cov",
+				]);
+				expect(f.statements).toContain("RESET lock_timeout");
+				expect(f.statements).toContain("RESET statement_timeout");
 				expect(f.isReleased()).toBe(true);
 			});
 
@@ -482,15 +546,15 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			);
 		});
 
-		it("the defensive client_session drop sits inside the gated lock_timeout block", () => {
+		it("the defensive client_session drop sits inside the gated drop block, after lock_timeout", () => {
 			const body = fnBody("ensureRequestsIndexesPg");
 			const gate = body.indexOf("if (!newIndexesReady) return;");
 			const lock = body.indexOf("SET lock_timeout = '5s'");
 			const drop = body.indexOf(
 				"DROP INDEX IF EXISTS idx_requests_client_session",
 			);
+			expect(drop).toBeGreaterThan(gate);
 			expect(drop).toBeGreaterThan(lock);
-			expect(lock).toBeGreaterThan(gate);
 		});
 
 		it("the PostgreSQL error index keeps error_message out of its key and INCLUDE list", () => {

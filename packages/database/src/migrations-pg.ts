@@ -762,9 +762,20 @@ const REDUNDANT_REQUEST_INDEXES_PG: readonly string[] = [
  *     before creating, and validity is re-checked afterwards.
  *   - The drops run only when the new index exists and is valid; otherwise
  *     the old indexes keep serving and the next startup retries.
- *   - The drops run under `lock_timeout = '5s'`: DROP INDEX needs ACCESS
- *     EXCLUSIVE on requests, and on a busy server we skip and retry on the
- *     next start rather than stall the proxy. Failures are warnings only.
+ *   - `lock_timeout = '5s'` is set right after lifting statement_timeout,
+ *     BEFORE any DDL, so it covers the invalid-index cleanup DROP, the
+ *     CONCURRENTLY builds (which wait for older transactions/snapshots) and
+ *     the redundant drops (DROP INDEX needs ACCESS EXCLUSIVE on requests).
+ *     On a busy server (e.g. a long-running transaction after a restart) a
+ *     step gives up instead of stalling startup. Any such failure is a
+ *     warning only: the new indexes count as NOT ready (no drops), a
+ *     cancelled CONCURRENTLY build leaves an INVALID index that the next
+ *     start's cleanup drops, and the whole thing is retried next start.
+ *
+ * Known limitation: lock_timeout bounds lock WAITS only, not the build
+ * itself (statement_timeout is 0 here). On a very large `requests` table the
+ * one-time CONCURRENTLY build still runs to completion, and since
+ * runMigrationsPg awaits this function, it delays startup until it finishes.
  */
 export async function ensureRequestsIndexesPg(
 	adapter: BunSqlAdapter,
@@ -783,6 +794,9 @@ export async function ensureRequestsIndexesPg(
 		let newIndexesReady = false;
 		try {
 			await conn.unsafe("SET statement_timeout = 0");
+			// Bound every lock WAIT from here on (invalid-index cleanup, the
+			// CONCURRENTLY builds and the drops). Set exactly once.
+			await conn.unsafe("SET lock_timeout = '5s'");
 			// Remove INVALID leftovers of an interrupted CONCURRENTLY build.
 			const invalid = (await conn.unsafe(
 				`SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
@@ -814,7 +828,6 @@ export async function ensureRequestsIndexesPg(
 		}
 		if (!newIndexesReady) return;
 		try {
-			await conn.unsafe("SET lock_timeout = '5s'");
 			for (const indexName of REDUNDANT_REQUEST_INDEXES_PG) {
 				await conn.unsafe(`DROP INDEX IF EXISTS ${indexName}`);
 			}
