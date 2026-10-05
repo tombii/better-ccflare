@@ -103,3 +103,95 @@ describe("requests indexes: drop of redundant indexes", () => {
 		db.close();
 	});
 });
+
+const FINAL_INDEXES = [
+	"idx_requests_account_timestamp",
+	"idx_requests_analytics_covering",
+	"idx_requests_api_key_timestamp",
+	"idx_requests_client_session",
+	"idx_requests_err_ts_cov",
+	"idx_requests_model_timestamp",
+	"idx_requests_summary_covering",
+];
+
+describe("requests indexes: final set", () => {
+	it("a fresh database has exactly the 7 approved indexes", () => {
+		const db = new Database(":memory:");
+		ensureSchema(db);
+		runMigrations(db);
+		expect(requestIndexNames(db)).toEqual(FINAL_INDEXES);
+		db.close();
+	});
+
+	it("an upgraded database converges to the same 7 indexes, idempotently", () => {
+		const db = new Database(":memory:");
+		ensureSchema(db);
+		runMigrations(db);
+		for (const sql of OLD_INDEX_SQL) {
+			db.run(sql);
+		}
+		runMigrations(db);
+		runMigrations(db);
+		expect(requestIndexNames(db)).toEqual(FINAL_INDEXES);
+		db.close();
+	});
+
+	function seeded(): Database {
+		const db = new Database(":memory:");
+		ensureSchema(db);
+		runMigrations(db);
+		const ins = db.prepare(
+			"INSERT INTO requests (id, timestamp, method, path, account_used, success, error_message, client_session_id) VALUES (?, ?, 'POST', '/v1/messages', ?, ?, ?, ?)",
+		);
+		const now = Date.now();
+		for (let i = 0; i < 3000; i++) {
+			const isErr = i % 50 === 0;
+			ins.run(
+				`r${i}`,
+				now - i * 1000,
+				`acc${i % 3}`,
+				isErr ? 0 : 1,
+				isErr ? "rate_limited" : null,
+				i % 10 === 0 ? `sess${i % 7}` : null,
+			);
+		}
+		db.run("ANALYZE");
+		return db;
+	}
+
+	function plan(db: Database, sql: string, params: unknown[]): string {
+		return (
+			db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...(params as never[])) as {
+				detail: string;
+			}[]
+		)
+			.map((r) => r.detail)
+			.join("\n");
+	}
+
+	it("the session lookup uses idx_requests_client_session", () => {
+		const db = seeded();
+		const p = plan(
+			db,
+			`SELECT account_used FROM requests
+			 WHERE client_session_id = ? AND account_used IS NOT NULL
+			 ORDER BY timestamp DESC, rowid DESC LIMIT 1`,
+			["sess3"],
+		);
+		expect(p).toContain("idx_requests_client_session");
+		db.close();
+	});
+
+	it("the error-group inner scan uses idx_requests_err_ts_cov", () => {
+		const db = seeded();
+		const p = plan(
+			db,
+			`SELECT r.error_message, COALESCE(r.account_used, ?) AS account_key, r.timestamp
+			 FROM requests r
+			 WHERE r.error_message IS NOT NULL AND r.error_message != '' AND r.timestamp > ?`,
+			["no_account", Date.now() - 86_400_000],
+		);
+		expect(p).toContain("idx_requests_err_ts_cov");
+		db.close();
+	});
+});

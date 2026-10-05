@@ -1073,6 +1073,21 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			             response_time_ms, account_used, model)`,
 		);
 
+		// 11. Partial covering index for the Errors tab grouping
+		// (getRecentErrorGroups in stats.repository.ts); mirrors SQLite.
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_err_ts_cov
+			 ON requests(timestamp DESC, account_used, error_message)
+			 WHERE error_message IS NOT NULL`,
+		);
+
+		// 12. Index for the session -> account lookup (sessions.ts); mirrors SQLite.
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_client_session
+			 ON requests(client_session_id, timestamp DESC)
+			 WHERE client_session_id IS NOT NULL`,
+		);
+
 		log.info("Performance indexes ensured");
 	} catch (_error) {
 		// Indexes may already exist

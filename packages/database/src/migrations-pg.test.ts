@@ -363,6 +363,20 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			expect(body.slice(catchIdx, catchIdx + 400)).toContain("log.warn");
 		});
 
+		it("runMigrationsPg creates the error-group and client-session indexes", () => {
+			const body = fnBody("runMigrationsPg");
+			expect(body).toMatch(
+				/CREATE INDEX IF NOT EXISTS\s+idx_requests_err_ts_cov\s+ON requests\(timestamp DESC, account_used, error_message\)\s+WHERE error_message IS NOT NULL/,
+			);
+			expect(body).toMatch(
+				/CREATE INDEX IF NOT EXISTS\s+idx_requests_client_session\s+ON requests\(client_session_id, timestamp DESC\)\s+WHERE client_session_id IS NOT NULL/,
+			);
+			// Create-before-drop ordering.
+			expect(body.indexOf("idx_requests_err_ts_cov")).toBeLessThan(
+				body.indexOf("DROP INDEX IF EXISTS"),
+			);
+		});
+
 		it("kept indexes are still created", () => {
 			for (const name of [
 				"idx_requests_account_timestamp",

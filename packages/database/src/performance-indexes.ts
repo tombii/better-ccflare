@@ -171,6 +171,30 @@ export function addPerformanceIndexes(db: Database): void {
 	);
 
 	// 11. Index for billing_type time-range queries used in analytics cost breakdown
+	// 11. Partial covering index for the Errors tab grouping
+	// (getRecentErrorGroups in stats.repository.ts). Only rows that carry an
+	// error_message are indexed (a small fraction of the table), so the
+	// `timestamp > ?` scan and the self-join probes on `timestamp = ?` never
+	// touch the heap for the ~99% healthy rows. `error_message != ''` stays a
+	// residual filter.
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_requests_err_ts_cov
+		ON requests(timestamp DESC, account_used, error_message)
+		WHERE error_message IS NOT NULL
+	`);
+	log.info("Added index: idx_requests_err_ts_cov");
+
+	// 12. Index for the session -> account lookup (sessions.ts):
+	//   WHERE client_session_id = ? AND account_used IS NOT NULL
+	//   ORDER BY timestamp DESC, rowid DESC LIMIT 1
+	// Without it an unknown session id forces a full table scan.
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_requests_client_session
+		ON requests(client_session_id, timestamp DESC)
+		WHERE client_session_id IS NOT NULL
+	`);
+	log.info("Added index: idx_requests_client_session");
+
 	log.info("Performance indexes added successfully");
 }
 
