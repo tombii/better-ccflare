@@ -167,20 +167,16 @@ The `requests` table logs all proxied requests for analytics and debugging.
 
 *Note: Columns marked with * are added via migrations and may not exist in databases created before the migration was introduced.
 
-**Indexes:**
-- `idx_requests_timestamp` on `timestamp DESC` for efficient time-based queries
-- `idx_requests_timestamp_account` on `timestamp DESC, account_used` for time-based account queries
-- `idx_requests_model_timestamp` on `model, timestamp DESC` WHERE `model IS NOT NULL` for model analytics
-- `idx_requests_success_timestamp` on `success, timestamp DESC` for success rate calculations
-- `idx_requests_account_timestamp` on `account_used, timestamp DESC` for per-account analytics
-- `idx_requests_cost_model` on `cost_usd, model, timestamp DESC` WHERE `cost_usd > 0 AND model IS NOT NULL` for cost analysis
-- `idx_requests_response_time` on `model, response_time_ms` WHERE `response_time_ms IS NOT NULL AND model IS NOT NULL` for response time analysis
-- `idx_requests_tokens` on `timestamp DESC, total_tokens` WHERE `total_tokens > 0` for token usage analysis
-- `idx_requests_api_key` on `api_key_id` WHERE `api_key_id IS NOT NULL` for API key filtering
+**Indexes** (the complete set; every other `requests` index from earlier versions is dropped at startup):
+- `idx_requests_account_timestamp` on `account_used, timestamp DESC` for per-account lookups and session stats
+- `idx_requests_model_timestamp` on `model, timestamp DESC` WHERE `model IS NOT NULL` for model analytics and top-models
 - `idx_requests_api_key_timestamp` on `api_key_id, timestamp DESC` WHERE `api_key_id IS NOT NULL` for API key analytics
-- `idx_requests_api_key` on `api_key_id` WHERE `api_key_id IS NOT NULL` for API key filtering
-- `idx_requests_api_key_timestamp` on `api_key_id, timestamp DESC` WHERE `api_key_id IS NOT NULL` for API key analytics with time-based queries
-- `idx_requests_project_timestamp` on `project, timestamp DESC` WHERE `project IS NOT NULL` for project-scoped analytics
+- `idx_requests_analytics_covering` on `timestamp, success, total_tokens, cost_usd, ...` (13 columns) for index-only analytics and stats aggregates over a time range
+- `idx_requests_summary_covering` on `timestamp DESC, id, account_used, status_code, ...` (14 columns), the timestamp-ordered scan behind the requests list, the retention `DELETE` batches and the alert sums
+- `idx_requests_err_ts_cov` on `timestamp DESC, account_used, error_message` WHERE `error_message IS NOT NULL` for the grouped error list
+- `idx_requests_client_session` on `client_session_id, timestamp DESC` WHERE `client_session_id IS NOT NULL` for the session-to-account lookup
+
+Each index is rewritten on every insert, usage update and retention delete, so the set is kept deliberately small. Eleven earlier indexes (`idx_requests_timestamp`, `idx_requests_account_used`, `idx_requests_timestamp_account`, `idx_requests_success_timestamp`, `idx_requests_cost_model`, `idx_requests_response_time`, `idx_requests_tokens`, `idx_requests_api_key`, `idx_requests_project_timestamp`, `idx_requests_cleanup`, `idx_requests_billing_type_timestamp`) were redundant or unusable and are removed with `DROP INDEX IF EXISTS` in both the SQLite and PostgreSQL migrations.
 
 ### request_payloads Table
 
@@ -446,7 +442,7 @@ LIMIT ?
 ### Index Strategy
 
 Current indexes optimize for:
-- **Time-series queries**: `idx_requests_timestamp` enables fast filtering and sorting by time
+- **Time-series queries**: the timestamp-leading covering indexes (`idx_requests_analytics_covering`, `idx_requests_summary_covering`) enable fast filtering and sorting by time
 - **Primary key lookups**: Automatic indexes on all primary keys
 - **Foreign key joins**: Automatic indexes for referential integrity
 
@@ -461,15 +457,7 @@ The database includes comprehensive performance indexes that are automatically a
 - `idx_accounts_session` on `session_start, session_request_count` WHERE `session_start IS NOT NULL` - For session management
 - `idx_accounts_request_count` on `request_count DESC, last_used` - For account ordering in load balancer
 
-**Request Table Indexes:**
-- `idx_requests_timestamp` on `timestamp DESC` - For time-based queries
-- `idx_requests_timestamp_account` on `timestamp DESC, account_used` - For time-based account queries
-- `idx_requests_model_timestamp` on `model, timestamp DESC` WHERE `model IS NOT NULL` - For model analytics
-- `idx_requests_success_timestamp` on `success, timestamp DESC` - For success rate calculations
-- `idx_requests_account_timestamp` on `account_used, timestamp DESC` - For per-account analytics
-- `idx_requests_cost_model` on `cost_usd, model, timestamp DESC` WHERE `cost_usd > 0 AND model IS NOT NULL` - For cost analysis
-- `idx_requests_response_time` on `model, response_time_ms` WHERE `response_time_ms IS NOT NULL AND model IS NOT NULL` - For response time analysis (p95 calculations)
-- `idx_requests_tokens` on `timestamp DESC, total_tokens` WHERE `total_tokens > 0` - For token usage analysis
+**Request Table Indexes:** see the index list under the `requests` table above.
 
 **OAuth Sessions Table Indexes:**
 - `idx_oauth_sessions_expires` on `expires_at` - For efficient cleanup of expired sessions
