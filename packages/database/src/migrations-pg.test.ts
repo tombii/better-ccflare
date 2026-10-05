@@ -31,6 +31,7 @@ import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ensureSchema, runMigrations } from "./migrations";
+import { ensureRequestsIndexesPg } from "./migrations-pg";
 
 const PG_SOURCE_PATH = path.join(__dirname, "migrations-pg.ts");
 
@@ -322,13 +323,18 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			return pgSource.slice(start, next === -1 ? undefined : next);
 		}
 
-		it("runMigrationsPg drops every redundant index with DROP INDEX IF EXISTS", () => {
-			const body = fnBody("runMigrationsPg");
+		it("ensureRequestsIndexesPg drops every redundant index with DROP INDEX IF EXISTS", () => {
+			const body = fnBody("ensureRequestsIndexesPg");
 			expect(body).toContain("DROP INDEX IF EXISTS ${indexName}");
-			const dropBlock = body.slice(body.indexOf("Drop redundant/unusable"));
 			for (const name of dropped) {
-				expect(dropBlock).toContain(`"${name}"`);
+				expect(pgSource).toContain(`"${name}"`);
 			}
+		});
+
+		it("runMigrationsPg delegates to ensureRequestsIndexesPg", () => {
+			expect(fnBody("runMigrationsPg")).toContain(
+				"await ensureRequestsIndexesPg(adapter)",
+			);
 		});
 
 		it("runMigrationsPg never recreates a dropped index", () => {
@@ -350,30 +356,127 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			}
 		});
 
-		it("the drops run in their own try/catch that logs a warning", () => {
-			const body = fnBody("runMigrationsPg");
-			const dropIdx = body.indexOf("DROP INDEX IF EXISTS");
-			expect(dropIdx).toBeGreaterThan(-1);
-			const tryIdx = body.lastIndexOf("try {", dropIdx);
+		it("the drops are gated on index creation, run under lock_timeout, and only warn on failure", () => {
+			const body = fnBody("ensureRequestsIndexesPg");
+			const gate = body.indexOf("if (!newIndexesReady) return;");
+			const dropIdx = body.indexOf("DROP INDEX IF EXISTS ${indexName}");
+			expect(gate).toBeGreaterThan(-1);
+			expect(gate).toBeLessThan(dropIdx);
+			expect(body.indexOf("SET lock_timeout = '5s'")).toBeLessThan(dropIdx);
+			expect(body).toContain("RESET lock_timeout");
+			expect(body.indexOf("RESET lock_timeout")).toBeGreaterThan(
+				body.indexOf("finally"),
+			);
 			const catchIdx = body.indexOf("} catch", dropIdx);
-			expect(tryIdx).toBeGreaterThan(-1);
-			expect(catchIdx).toBeGreaterThan(dropIdx);
-			// The index-creation try block (swallowing) must have closed before.
-			expect(body.slice(tryIdx, dropIdx)).not.toContain("} catch");
-			expect(body.slice(catchIdx, catchIdx + 400)).toContain("log.warn");
+			expect(body.slice(catchIdx, catchIdx + 300)).toContain("log.warn");
 		});
 
-		it("runMigrationsPg creates the error-group and client-session indexes", () => {
-			const body = fnBody("runMigrationsPg");
-			expect(body).toMatch(
-				/CREATE INDEX IF NOT EXISTS\s+idx_requests_err_ts_cov\s+ON requests\(timestamp DESC, account_used\)\s+WHERE error_message IS NOT NULL/,
+		it("new indexes are built CONCURRENTLY with invalid-index cleanup first", () => {
+			const body = fnBody("ensureRequestsIndexesPg");
+			expect(pgSource).toMatch(
+				/CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_err_ts_cov/,
 			);
-			expect(body).toMatch(
-				/CREATE INDEX IF NOT EXISTS\s+idx_requests_client_session\s+ON requests\(client_session_id, timestamp DESC\)\s+WHERE client_session_id IS NOT NULL/,
+			expect(pgSource).toMatch(
+				/CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_client_session/,
 			);
-			// Create-before-drop ordering.
-			expect(body.indexOf("idx_requests_err_ts_cov")).toBeLessThan(
-				body.indexOf("DROP INDEX IF EXISTS"),
+			expect(body).toContain("NOT i.indisvalid");
+			expect(body.indexOf("NOT i.indisvalid")).toBeLessThan(
+				body.indexOf("conn.unsafe(index.sql)"),
+			);
+			expect(body).toContain("SET statement_timeout = 0");
+		});
+
+		describe("ensureRequestsIndexesPg behaviour (fake adapter)", () => {
+			function fake(opts: {
+				failOn?: (q: string) => boolean;
+				validNames?: string[];
+			}) {
+				const statements: string[] = [];
+				let released = false;
+				const conn = {
+					unsafe: async (q: string) => {
+						statements.push(q.replace(/\s+/g, " ").trim());
+						if (opts.failOn?.(q)) throw new Error("boom");
+						if (q.includes("NOT i.indisvalid")) return [];
+						if (q.includes("i.indisvalid"))
+							return (
+								opts.validNames ?? [
+									"idx_requests_err_ts_cov",
+									"idx_requests_client_session",
+								]
+							).map((relname) => ({ relname }));
+						return [];
+					},
+					release: () => {
+						released = true;
+					},
+				};
+				// biome-ignore lint/suspicious/noExplicitAny: fake adapter for testing
+				const adapter = {
+					getSQL: () => ({ reserve: async () => conn }),
+				} as any;
+				return { adapter, statements, isReleased: () => released };
+			}
+			const drops = (st: string[]) =>
+				st.filter((q) => q.startsWith("DROP INDEX IF EXISTS idx_requests_"));
+
+			it("issues no DROP when a CONCURRENTLY create fails", async () => {
+				const f = fake({
+					failOn: (q) =>
+						q.includes("idx_requests_client_session") && q.includes("CREATE"),
+				});
+				await ensureRequestsIndexesPg(f.adapter);
+				expect(drops(f.statements)).toEqual([]);
+				expect(f.isReleased()).toBe(true);
+			});
+
+			it("issues no DROP when a new index is not valid after creation", async () => {
+				const f = fake({ validNames: ["idx_requests_err_ts_cov"] });
+				await ensureRequestsIndexesPg(f.adapter);
+				expect(drops(f.statements)).toEqual([]);
+			});
+
+			it("drops all redundant indexes under lock_timeout after the creates", async () => {
+				const f = fake({});
+				await ensureRequestsIndexesPg(f.adapter);
+				const st = f.statements;
+				expect(drops(st).length).toBe(dropped.length);
+				const lastCreate = st.findLastIndex((q) =>
+					q.startsWith("CREATE INDEX CONCURRENTLY"),
+				);
+				expect(
+					st.filter((q) => q.startsWith("CREATE INDEX CONCURRENTLY")).length,
+				).toBe(2);
+				expect(st.indexOf("SET lock_timeout = '5s'")).toBeGreaterThan(
+					lastCreate,
+				);
+				expect(st.indexOf("SET lock_timeout = '5s'")).toBeLessThan(
+					st.findIndex((q) => q.startsWith("DROP INDEX")),
+				);
+				expect(st.at(-2)).toBe("RESET lock_timeout");
+				expect(f.isReleased()).toBe(true);
+			});
+
+			it("a lock-timeout failure on DROP is a warning, not a crash", async () => {
+				const f = fake({
+					failOn: (q) =>
+						q.startsWith("DROP INDEX IF EXISTS idx_requests_timestamp") &&
+						!q.includes("_account"),
+				});
+				await expect(
+					ensureRequestsIndexesPg(f.adapter),
+				).resolves.toBeUndefined();
+				expect(f.statements).toContain("RESET lock_timeout");
+				expect(f.isReleased()).toBe(true);
+			});
+		});
+
+		it("creates the error-group and client-session indexes", () => {
+			expect(pgSource).toMatch(
+				/CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_err_ts_cov\s+ON requests\(timestamp DESC, account_used\)\s+WHERE error_message IS NOT NULL/,
+			);
+			expect(pgSource).toMatch(
+				/CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_client_session\s+ON requests\(client_session_id, timestamp DESC\)\s+WHERE client_session_id IS NOT NULL/,
 			);
 		});
 
@@ -381,9 +484,9 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			// PG btree entries are capped (~2.7KB): an oversized error_message in
 			// the key would make INSERT/UPDATE on requests fail. Only the partial
 			// predicate may reference the column.
-			const body = fnBody("runMigrationsPg");
+			const body = pgSource;
 			const start = body.indexOf(
-				"CREATE INDEX IF NOT EXISTS idx_requests_err_ts_cov",
+				"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_err_ts_cov",
 			);
 			expect(start).toBeGreaterThan(-1);
 			const stmt = body.slice(start, body.indexOf("`", start));
