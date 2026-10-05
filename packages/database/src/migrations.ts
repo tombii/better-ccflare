@@ -2,7 +2,10 @@ import type { Database } from "bun:sqlite";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Logger } from "@better-ccflare/logger";
-import { addPerformanceIndexes } from "./performance-indexes";
+import {
+	addPerformanceIndexes,
+	dropRedundantRequestIndexes,
+} from "./performance-indexes";
 
 const log = new Logger("DatabaseMigrations");
 
@@ -168,21 +171,6 @@ export function ensureSchema(db: Database): void {
 			gateway_hint_context_compacted TEXT
 		)
 	`);
-
-	// Create indexes for faster queries
-	db.run(
-		`CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp DESC)`,
-	);
-
-	// Index for JOIN performance with accounts table
-	db.run(
-		`CREATE INDEX IF NOT EXISTS idx_requests_account_used ON requests(account_used)`,
-	);
-
-	// Composite index for the main requests query (timestamp DESC with account_used for JOIN)
-	db.run(
-		`CREATE INDEX IF NOT EXISTS idx_requests_timestamp_account ON requests(timestamp DESC, account_used)`,
-	);
 
 	// Create alerts table for threshold and anomaly alert history
 	db.run(`
@@ -1569,6 +1557,8 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 		// Add performance indexes
 		addPerformanceIndexes(db);
+		// Then drop indexes that are redundant or unusable (create-before-drop)
+		dropRedundantRequestIndexes(db);
 
 		// Remove tier columns if they exist (cleanup migration)
 		// Use the column names we already defined above

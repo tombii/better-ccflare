@@ -647,7 +647,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async deleteOlderThan(cutoffTs: number): Promise<number> {
-		// The covering index idx_requests_cleanup makes each batch faster.
+		// The timestamp-leading indexes (e.g. idx_requests_summary_covering, which
+		// also carries id) satisfy each batch's subquery from the index alone.
 		// Batch size is configurable via BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE
 		// (default 200) — lower it if rows are large and batches are timing
 		// out against statement_timeout (#412).

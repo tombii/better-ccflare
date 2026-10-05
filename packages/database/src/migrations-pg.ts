@@ -156,17 +156,6 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 		)
 	`);
 
-	// Create indexes for requests
-	await adapter.unsafe(
-		`CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp DESC)`,
-	);
-	await adapter.unsafe(
-		`CREATE INDEX IF NOT EXISTS idx_requests_account_used ON requests(account_used)`,
-	);
-	await adapter.unsafe(
-		`CREATE INDEX IF NOT EXISTS idx_requests_timestamp_account ON requests(timestamp DESC, account_used)`,
-	);
-
 	// Create alerts table
 	await adapter.unsafe(`
 		CREATE TABLE IF NOT EXISTS alerts (
@@ -699,6 +688,175 @@ async function collapseAccountDuplicatesPreservingStatePg(
 }
 
 /**
+ * Indexes on `requests` added by this migration, built CONCURRENTLY.
+ *
+ * DIALECT DIFFERENCE vs SQLite for idx_requests_err_ts_cov: the SQLite variant
+ * carries error_message as a trailing key column so the grouping is
+ * index-only. PostgreSQL btree entries are capped at roughly 2.7KB, and
+ * INCLUDE columns share that limit, so an oversized error_message (stack
+ * traces, upstream bodies) would make INSERT/UPDATE on requests FAIL, and an
+ * existing oversized row would make the build fail. error_message is therefore
+ * referenced only in the partial predicate (the index still holds just the
+ * error rows); the message itself is read from the heap.
+ *
+ * DELIBERATELY NO client_session index on PostgreSQL (SQLite has one). The
+ * client_session_id column is client-controlled (taken from the request body's
+ * metadata.user_id) and uncapped TEXT. As a btree key, a value over ~2.7KB
+ * would make INSERTs on requests fail. On PostgreSQL the sessions lookup
+ * therefore stays an unindexed scan, as it was before. A future fix would need
+ * either a length cap at ingestion, or an expression index on
+ * left(client_session_id, N) together with a matching query predicate.
+ */
+const NEW_REQUEST_INDEXES_PG: ReadonlyArray<{ name: string; sql: string }> = [
+	{
+		// Partial index for the Errors tab grouping (getRecentErrorGroups).
+		name: "idx_requests_err_ts_cov",
+		sql: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_err_ts_cov
+			 ON requests(timestamp DESC, account_used)
+			 WHERE error_message IS NOT NULL`,
+	},
+];
+
+/**
+ * Redundant/unusable requests indexes (mirrors REDUNDANT_REQUEST_INDEXES in
+ * performance-indexes.ts). Dropped only once every NEW_REQUEST_INDEXES_PG
+ * entry exists and is valid.
+ */
+const REDUNDANT_REQUEST_INDEXES_PG: readonly string[] = [
+	"idx_requests_timestamp",
+	"idx_requests_account_used",
+	"idx_requests_timestamp_account",
+	"idx_requests_success_timestamp",
+	"idx_requests_cost_model",
+	"idx_requests_response_time",
+	"idx_requests_tokens",
+	"idx_requests_api_key",
+	"idx_requests_project_timestamp",
+	"idx_requests_cleanup",
+	"idx_requests_billing_type_timestamp",
+	// Hand-created per the old docs/deployment.md (never by the app).
+	"idx_requests_account",
+];
+
+/**
+ * Create the new `requests` indexes CONCURRENTLY, then drop the redundant
+ * ones. Exported for testing.
+ *
+ * Connection handling: everything runs on ONE connection reserved from the
+ * pool (`reserve()`), because
+ *   - the pool is multi-connection and BunSqlAdapter.transaction() does not
+ *     bind its statements to the transaction connection, so a plain
+ *     `SET lock_timeout` / `BEGIN; SET LOCAL ...` issued through
+ *     adapter.unsafe() could land on a different connection than the DROP;
+ *   - the pool's server-side statement_timeout (~7s, set in
+ *     DatabaseOperations) would cancel a CONCURRENTLY build on a large table,
+ *     leaving an INVALID index every startup. It is lifted for this connection
+ *     only, and RESET before the connection returns to the pool.
+ * Statements are sent via the simple-query protocol outside any transaction
+ * block, which is what CREATE INDEX CONCURRENTLY requires (runMigrationsPg is
+ * not wrapped in a transaction by its caller).
+ *
+ * Safety rules:
+ *   - A failed CONCURRENTLY build leaves an INVALID index that
+ *     `IF NOT EXISTS` would then skip forever, so invalid ones are dropped
+ *     before creating, and validity is re-checked afterwards.
+ *   - The drops run only when the new index exists and is valid; otherwise
+ *     the old indexes keep serving and the next startup retries.
+ *   - `lock_timeout = '5s'` is set right after lifting statement_timeout,
+ *     BEFORE any DDL, so it covers the invalid-index cleanup DROP, the
+ *     CONCURRENTLY builds (which wait for older transactions/snapshots) and
+ *     the redundant drops (DROP INDEX needs ACCESS EXCLUSIVE on requests).
+ *     On a busy server (e.g. a long-running transaction after a restart) a
+ *     step gives up instead of stalling startup. Any such failure is a
+ *     warning only: the new indexes count as NOT ready (no drops), a
+ *     cancelled CONCURRENTLY build leaves an INVALID index that the next
+ *     start's cleanup drops, and the whole thing is retried next start.
+ *
+ * Known limitation: lock_timeout bounds lock WAITS only, not the build
+ * itself (statement_timeout is 0 here). On a very large `requests` table the
+ * one-time CONCURRENTLY build still runs to completion, and since
+ * runMigrationsPg awaits this function, it delays startup until it finishes.
+ */
+export async function ensureRequestsIndexesPg(
+	adapter: BunSqlAdapter,
+): Promise<void> {
+	let conn: { unsafe(q: string): Promise<unknown>; release(): unknown };
+	try {
+		conn = await adapter.getSQL().reserve();
+	} catch (error) {
+		log.warn(
+			`Skipping requests index migration (no dedicated connection): ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return;
+	}
+	const names = NEW_REQUEST_INDEXES_PG.map((i) => `'${i.name}'`).join(", ");
+	try {
+		let newIndexesReady = false;
+		try {
+			await conn.unsafe("SET statement_timeout = 0");
+			// Bound every lock WAIT from here on (invalid-index cleanup, the
+			// CONCURRENTLY builds and the drops). Set exactly once.
+			await conn.unsafe("SET lock_timeout = '5s'");
+			// Remove INVALID leftovers of an interrupted CONCURRENTLY build.
+			const invalid = (await conn.unsafe(
+				`SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+				 WHERE NOT i.indisvalid AND c.relname IN (${names})`,
+			)) as Array<{ relname: string }>;
+			for (const row of invalid ?? []) {
+				log.warn(`Dropping invalid index ${row.relname} before rebuilding`);
+				await conn.unsafe(`DROP INDEX IF EXISTS ${row.relname}`);
+			}
+			for (const index of NEW_REQUEST_INDEXES_PG) {
+				await conn.unsafe(index.sql);
+			}
+			const valid = (await conn.unsafe(
+				`SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+				 WHERE i.indisvalid AND c.relname IN (${names})`,
+			)) as Array<{ relname: string }>;
+			newIndexesReady = NEW_REQUEST_INDEXES_PG.every((i) =>
+				(valid ?? []).some((r) => r.relname === i.name),
+			);
+			if (!newIndexesReady) {
+				log.warn(
+					"New requests indexes are not valid yet; keeping the old indexes",
+				);
+			}
+		} catch (error) {
+			log.warn(
+				`Failed to create new requests indexes; keeping the old indexes and retrying next start: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+		if (!newIndexesReady) return;
+		try {
+			for (const indexName of REDUNDANT_REQUEST_INDEXES_PG) {
+				await conn.unsafe(`DROP INDEX IF EXISTS ${indexName}`);
+			}
+			// Defensive: an unreleased earlier build created this index; it must
+			// not linger (see the note above NEW_REQUEST_INDEXES_PG). Kept out of
+			// the redundant list so it is not confused with the SQLite one.
+			await conn.unsafe("DROP INDEX IF EXISTS idx_requests_client_session");
+			log.debug("Redundant requests indexes dropped (if present)");
+		} catch (error) {
+			log.warn(
+				`Failed to drop redundant requests indexes (will retry next start): ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	} finally {
+		try {
+			await conn.unsafe("RESET lock_timeout");
+			await conn.unsafe("RESET statement_timeout");
+		} catch {
+			// Best effort: the connection is released regardless.
+		}
+		try {
+			await conn.release();
+		} catch {
+			// Nothing useful to do if the pool refuses the release.
+		}
+	}
+}
+
+/**
  * Run PostgreSQL-specific migrations
  */
 export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
@@ -977,26 +1135,12 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			`CREATE INDEX IF NOT EXISTS idx_api_keys_role ON api_keys(role)`,
 		);
 
-		// 1. Composite index on requests(timestamp, account_used) for time-based
-		// account queries. Used in analytics for filtering by time range and account.
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_timestamp_account
-			 ON requests(timestamp DESC, account_used)`,
-		);
-
 		// 2. Index on requests(model, timestamp) for model analytics.
 		// Used in model distribution and performance queries.
 		await adapter.unsafe(
 			`CREATE INDEX IF NOT EXISTS idx_requests_model_timestamp
 			 ON requests(model, timestamp DESC)
 			 WHERE model IS NOT NULL`,
-		);
-
-		// 3. Index on requests(success, timestamp) for success rate calculations.
-		// Used in analytics for calculating success rates over time.
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_success_timestamp
-			 ON requests(success, timestamp DESC)`,
 		);
 
 		// 4. Index on accounts(paused) for finding active accounts.
@@ -1015,27 +1159,6 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		);
 
 		// 6. Additional indexes based on observed query patterns
-
-		// Index for cost analysis queries
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_cost_model
-			 ON requests(cost_usd, model, timestamp DESC)
-			 WHERE cost_usd > 0 AND model IS NOT NULL`,
-		);
-
-		// Index for response time analysis (for p95 calculations)
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_response_time
-			 ON requests(model, response_time_ms)
-			 WHERE response_time_ms IS NOT NULL AND model IS NOT NULL`,
-		);
-
-		// Index for token usage analysis
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_tokens
-			 ON requests(timestamp DESC, total_tokens)
-			 WHERE total_tokens > 0`,
-		);
 
 		// Index for account name lookups (used in analytics joins)
 		await adapter.unsafe(
@@ -1075,37 +1198,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			 ON oauth_sessions(account_name, expires_at)`,
 		);
 
-		// Index for API key filtering
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_api_key
-			 ON requests(api_key_id)
-			 WHERE api_key_id IS NOT NULL`,
-		);
-
 		// Composite index for API key analytics (filtering + time-based queries)
 		await adapter.unsafe(
 			`CREATE INDEX IF NOT EXISTS idx_requests_api_key_timestamp
 			 ON requests(api_key_id, timestamp DESC)
 			 WHERE api_key_id IS NOT NULL`,
-		);
-
-		// Composite index for project analytics (filtering + time-based queries)
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_project_timestamp
-			 ON requests(project, timestamp DESC)
-			 WHERE project IS NOT NULL`,
-		);
-
-		// 7. Covering index for DELETE cleanup operations.
-		// Critical for performance of deleteOlderThan() which uses:
-		//   DELETE FROM requests WHERE id IN (SELECT id FROM requests WHERE timestamp < ? LIMIT ?)
-		// Without this covering index, the DB must hit the table to fetch id values
-		// after finding rows by timestamp. With this covering index (timestamp ASC,
-		// id), the entire subquery is satisfied from the index alone. ASC order
-		// matches the "timestamp < cutoff" comparison used in cleanup queries.
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_cleanup
-			 ON requests(timestamp ASC, id)`,
 		);
 
 		// 8. Covering index for request_payloads cleanup.
@@ -1145,17 +1242,14 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			             response_time_ms, account_used, model)`,
 		);
 
-		// 11. Index for billing_type time-range queries used in analytics cost breakdown
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_billing_type_timestamp
-			 ON requests(billing_type, timestamp DESC)
-			 WHERE billing_type IS NOT NULL`,
-		);
-
 		log.info("Performance indexes ensured");
 	} catch (_error) {
 		// Indexes may already exist
 	}
+
+	// Create the error-group/client-session indexes and drop the redundant
+	// requests indexes (see ensureRequestsIndexesPg for the safety rules).
+	await ensureRequestsIndexesPg(adapter);
 
 	// A usage-pause threshold written before the enabled flags existed was in
 	// force by virtue of being set at all; keep it that way (mirrors SQLite).
