@@ -9,7 +9,7 @@ This document describes the database indexes added to improve query performance 
 ### `requests` table (7 indexes)
 
 `requests` is the hottest table, and every index on it is rewritten on each
-INSERT, usage UPDATE and retention DELETE, so the set is kept minimal.
+INSERT, usage UPDATE and retention DELETE, so the set is kept minimal. SQLite has 7 indexes on `requests`; PostgreSQL has 6 (no `idx_requests_client_session`).
 
 | Index | Definition | Serves |
 |-------|------------|--------|
@@ -19,7 +19,7 @@ INSERT, usage UPDATE and retention DELETE, so the set is kept minimal.
 | `idx_requests_analytics_covering` | `(timestamp, success, total_tokens, cost_usd, billing_type, ...)` | Index-only analytics and stats aggregates |
 | `idx_requests_summary_covering` | `(timestamp DESC, id, account_used, status_code, ...)` | Timestamp-ordered scans, retention DELETE batches, alert sums |
 | `idx_requests_err_ts_cov` | SQLite: `(timestamp DESC, account_used, error_message)`; PostgreSQL: `(timestamp DESC, account_used)`; both WHERE `error_message IS NOT NULL` | Grouped error list (`getRecentErrorGroups`). PostgreSQL omits `error_message` from the key because btree entries (and `INCLUDE` columns) are capped at ~2.7KB and an oversized message would make writes fail |
-| `idx_requests_client_session` | `(client_session_id, timestamp DESC)` WHERE `client_session_id IS NOT NULL` | Session-to-account lookup |
+| `idx_requests_client_session` | SQLite only: `(client_session_id, timestamp DESC)` WHERE `client_session_id IS NOT NULL` | Session-to-account lookup. Deliberately not created on PostgreSQL: `client_session_id` is client-controlled, uncapped TEXT (from the request body's `metadata.user_id`) and a value over ~2.7KB would make inserts into `requests` fail as a btree key. On PostgreSQL the lookup stays an unindexed scan. A future fix needs a cap at ingestion, or an index on `left(client_session_id, N)` plus a matching query |
 
 Twelve older indexes were dropped (redundant prefixes of the above, or partial
 indexes whose predicate no query emits): `idx_requests_timestamp`,

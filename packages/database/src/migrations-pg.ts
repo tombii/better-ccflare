@@ -698,6 +698,14 @@ async function collapseAccountDuplicatesPreservingStatePg(
  * existing oversized row would make the build fail. error_message is therefore
  * referenced only in the partial predicate (the index still holds just the
  * error rows); the message itself is read from the heap.
+ *
+ * DELIBERATELY NO client_session index on PostgreSQL (SQLite has one). The
+ * client_session_id column is client-controlled (taken from the request body's
+ * metadata.user_id) and uncapped TEXT. As a btree key, a value over ~2.7KB
+ * would make INSERTs on requests fail. On PostgreSQL the sessions lookup
+ * therefore stays an unindexed scan, as it was before. A future fix would need
+ * either a length cap at ingestion, or an expression index on
+ * left(client_session_id, N) together with a matching query predicate.
  */
 const NEW_REQUEST_INDEXES_PG: ReadonlyArray<{ name: string; sql: string }> = [
 	{
@@ -706,13 +714,6 @@ const NEW_REQUEST_INDEXES_PG: ReadonlyArray<{ name: string; sql: string }> = [
 		sql: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_err_ts_cov
 			 ON requests(timestamp DESC, account_used)
 			 WHERE error_message IS NOT NULL`,
-	},
-	{
-		// Session -> account lookup (sessions.ts); mirrors SQLite.
-		name: "idx_requests_client_session",
-		sql: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_client_session
-			 ON requests(client_session_id, timestamp DESC)
-			 WHERE client_session_id IS NOT NULL`,
 	},
 ];
 
@@ -759,7 +760,7 @@ const REDUNDANT_REQUEST_INDEXES_PG: readonly string[] = [
  *   - A failed CONCURRENTLY build leaves an INVALID index that
  *     `IF NOT EXISTS` would then skip forever, so invalid ones are dropped
  *     before creating, and validity is re-checked afterwards.
- *   - The drops run only when both new indexes exist and are valid; otherwise
+ *   - The drops run only when the new index exists and is valid; otherwise
  *     the old indexes keep serving and the next startup retries.
  *   - The drops run under `lock_timeout = '5s'`: DROP INDEX needs ACCESS
  *     EXCLUSIVE on requests, and on a busy server we skip and retry on the
@@ -817,6 +818,10 @@ export async function ensureRequestsIndexesPg(
 			for (const indexName of REDUNDANT_REQUEST_INDEXES_PG) {
 				await conn.unsafe(`DROP INDEX IF EXISTS ${indexName}`);
 			}
+			// Defensive: an unreleased earlier build created this index; it must
+			// not linger (see the note above NEW_REQUEST_INDEXES_PG). Kept out of
+			// the redundant list so it is not confused with the SQLite one.
+			await conn.unsafe("DROP INDEX IF EXISTS idx_requests_client_session");
 			log.info("Redundant requests indexes dropped (if present)");
 		} catch (error) {
 			log.warn(

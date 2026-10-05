@@ -377,8 +377,8 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			expect(pgSource).toMatch(
 				/CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_err_ts_cov/,
 			);
-			expect(pgSource).toMatch(
-				/CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_client_session/,
+			expect(pgSource).not.toMatch(
+				/CREATE INDEX[^`]*idx_requests_client_session/,
 			);
 			expect(body).toContain("NOT i.indisvalid");
 			expect(body.indexOf("NOT i.indisvalid")).toBeLessThan(
@@ -400,12 +400,9 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 						if (opts.failOn?.(q)) throw new Error("boom");
 						if (q.includes("NOT i.indisvalid")) return [];
 						if (q.includes("i.indisvalid"))
-							return (
-								opts.validNames ?? [
-									"idx_requests_err_ts_cov",
-									"idx_requests_client_session",
-								]
-							).map((relname) => ({ relname }));
+							return (opts.validNames ?? ["idx_requests_err_ts_cov"]).map(
+								(relname) => ({ relname }),
+							);
 						return [];
 					},
 					release: () => {
@@ -424,7 +421,7 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			it("issues no DROP when a CONCURRENTLY create fails", async () => {
 				const f = fake({
 					failOn: (q) =>
-						q.includes("idx_requests_client_session") && q.includes("CREATE"),
+						q.includes("idx_requests_err_ts_cov") && q.includes("CREATE"),
 				});
 				await ensureRequestsIndexesPg(f.adapter);
 				expect(drops(f.statements)).toEqual([]);
@@ -432,7 +429,7 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			});
 
 			it("issues no DROP when a new index is not valid after creation", async () => {
-				const f = fake({ validNames: ["idx_requests_err_ts_cov"] });
+				const f = fake({ validNames: [] });
 				await ensureRequestsIndexesPg(f.adapter);
 				expect(drops(f.statements)).toEqual([]);
 			});
@@ -441,13 +438,17 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 				const f = fake({});
 				await ensureRequestsIndexesPg(f.adapter);
 				const st = f.statements;
-				expect(drops(st).length).toBe(dropped.length);
+				// redundant list + the defensive client_session drop
+				expect(drops(st).length).toBe(dropped.length + 1);
+				expect(st).toContain(
+					"DROP INDEX IF EXISTS idx_requests_client_session",
+				);
 				const lastCreate = st.findLastIndex((q) =>
 					q.startsWith("CREATE INDEX CONCURRENTLY"),
 				);
 				expect(
 					st.filter((q) => q.startsWith("CREATE INDEX CONCURRENTLY")).length,
-				).toBe(2);
+				).toBe(1);
 				expect(st.indexOf("SET lock_timeout = '5s'")).toBeGreaterThan(
 					lastCreate,
 				);
@@ -472,13 +473,24 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			});
 		});
 
-		it("creates the error-group and client-session indexes", () => {
+		it("creates the error-group index and deliberately no client-session index", () => {
 			expect(pgSource).toMatch(
 				/CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_err_ts_cov\s+ON requests\(timestamp DESC, account_used\)\s+WHERE error_message IS NOT NULL/,
 			);
-			expect(pgSource).toMatch(
-				/CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_client_session\s+ON requests\(client_session_id, timestamp DESC\)\s+WHERE client_session_id IS NOT NULL/,
+			expect(pgSource).not.toMatch(
+				/CREATE INDEX[^`]*idx_requests_client_session/,
 			);
+		});
+
+		it("the defensive client_session drop sits inside the gated lock_timeout block", () => {
+			const body = fnBody("ensureRequestsIndexesPg");
+			const gate = body.indexOf("if (!newIndexesReady) return;");
+			const lock = body.indexOf("SET lock_timeout = '5s'");
+			const drop = body.indexOf(
+				"DROP INDEX IF EXISTS idx_requests_client_session",
+			);
+			expect(drop).toBeGreaterThan(lock);
+			expect(lock).toBeGreaterThan(gate);
 		});
 
 		it("the PostgreSQL error index keeps error_message out of its key and INCLUDE list", () => {
