@@ -2709,7 +2709,12 @@ export function createPoolExhaustedResponse(
 		const usage = usageSnapshots?.get(account.id);
 		const usageExhausted =
 			usage !== undefined &&
-			isUsageExhausted(usage.utilization, usage.resetMs, now);
+			isUsageExhausted(
+				usage.utilization,
+				usage.resetMs,
+				now,
+				usage.extraUsageAvailable,
+			);
 
 		const reason: PoolExhaustionAccountReason = isCircuitOpen
 			? "circuit_open"
@@ -2758,7 +2763,12 @@ export function createPoolExhaustedResponse(
 		const usage = usageSnapshots?.get(account.id);
 		if (
 			usage &&
-			isUsageExhausted(usage.utilization, usage.resetMs, now) &&
+			isUsageExhausted(
+				usage.utilization,
+				usage.resetMs,
+				now,
+				usage.extraUsageAvailable,
+			) &&
 			usage.resetMs &&
 			usage.resetMs > now
 		) {

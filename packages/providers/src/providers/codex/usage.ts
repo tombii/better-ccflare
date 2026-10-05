@@ -1,4 +1,4 @@
-import type { UsageData, UsageWindow } from "../../usage-fetcher";
+import type { CodexCredits, UsageData, UsageWindow } from "../../usage-fetcher";
 
 export interface ParseCodexUsageHeadersOptions {
 	baseTimeMs?: number;
@@ -147,6 +147,59 @@ function readWindow(
 	};
 }
 
+function parseBooleanHeader(value: string | null): boolean | null {
+	if (value === null) return null;
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "true" || normalized === "1") return true;
+	if (normalized === "false" || normalized === "0") return false;
+	return null;
+}
+
+/**
+ * The `x-codex-credits-*` headers the official Codex CLI reads next to the
+ * window headers. Both flags must be present and readable; a half-reported
+ * credits state says nothing reliable, so it is left out rather than guessed.
+ */
+export function parseCodexCreditsHeaders(
+	headers: Headers,
+): CodexCredits | null {
+	const hasCredits = parseBooleanHeader(
+		headers.get("x-codex-credits-has-credits"),
+	);
+	const unlimited = parseBooleanHeader(
+		headers.get("x-codex-credits-unlimited"),
+	);
+	if (hasCredits === null || unlimited === null) return null;
+	const balance = headers.get("x-codex-credits-balance")?.trim();
+	return {
+		has_credits: hasCredits,
+		unlimited,
+		balance: balance ? balance : null,
+	};
+}
+
+/**
+ * Merge a Codex usage update into what was known before, for credits only.
+ *
+ * An update that does not report credits — a response without both
+ * `x-codex-credits-*` flags, a usage body without a `credits` block — says
+ * nothing about them, so it must not erase credits an earlier response or poll
+ * reported: callers replace the whole cached record, and losing `credits` would
+ * take a spent account that is serving on them out of rotation until the next
+ * report. The update's windows always win, and an update that does report
+ * credits replaces them, including "none left". If the credits did run out
+ * unreported, the provider's own refusal benches the account through the
+ * normal rate-limit path.
+ */
+export function carryForwardCodexCredits(
+	previous: UsageData | null | undefined,
+	next: UsageData,
+): UsageData {
+	if (next.credits !== undefined) return next;
+	const known = previous?.credits;
+	return known ? { ...next, credits: known } : next;
+}
+
 export function parseCodexUsageHeaders(
 	headers: Headers,
 	options: ParseCodexUsageHeadersOptions = {},
@@ -201,5 +254,9 @@ export function parseCodexUsageHeaders(
 	const usage: UsageData = {};
 	if (fiveHour) usage.five_hour = fiveHour;
 	if (sevenDay) usage.seven_day = sevenDay;
+	// Credits ride along with the windows they qualify; on their own they
+	// carry no utilization and so no opinion about admission.
+	const credits = parseCodexCreditsHeaders(headers);
+	if (credits) usage.credits = credits;
 	return usage;
 }

@@ -891,6 +891,41 @@ curl -X POST http://localhost:8080/api/config/force-account-model \
   -d '{"enabled": true}'
 ```
 
+#### GET /api/config/use-extra-usage
+
+Whether an account whose plan window is spent stays in rotation while its provider reports billed capacity beyond the plan (Codex credits, Anthropic extra usage). Config-file setting, off by default; `CCFLARE_USE_EXTRA_USAGE` can only seed it once — see [Use Extra Usage](configuration.md#use-extra-usage) in configuration.md.
+
+**Response:**
+```json
+{ "enabled": false, "source": "default" }
+```
+
+**Example:**
+```bash
+curl http://localhost:8080/api/config/use-extra-usage
+```
+
+#### POST /api/config/use-extra-usage
+
+Enable or disable serving on extra usage. Takes effect immediately, no restart required.
+
+**Request:**
+```json
+{ "enabled": true }
+```
+
+**Response:**
+```json
+{ "success": true, "enabled": true, "source": "file", "effective": true }
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/config/use-extra-usage \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+```
+
 ---
 
 ### Analytics

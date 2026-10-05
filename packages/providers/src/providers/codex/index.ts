@@ -19,7 +19,7 @@ export {
 	CODEX_VERSION,
 	CodexProvider,
 } from "./provider";
-export { parseCodexUsageHeaders } from "./usage";
+export { carryForwardCodexCredits, parseCodexUsageHeaders } from "./usage";
 export type {
 	CodexUsageFetchResult,
 	CodexUsagePayload,

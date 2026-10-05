@@ -126,6 +126,7 @@ export interface ConfigData {
 	combos_enabled?: boolean;
 	combo_session_fallback?: boolean;
 	force_account_model?: boolean;
+	use_extra_usage?: boolean;
 	provider_model_default_overrides?: ProviderModelDefaultOverrides;
 	agent_frontmatter_model_fallback?: boolean;
 	model_catalog_oauth_refresh_enabled?: boolean;
@@ -975,6 +976,51 @@ export class Config extends EventEmitter {
 
 	setForceAccountModel(value: boolean): void {
 		this.set("force_account_model", value);
+	}
+
+	/**
+	 * Whether an account whose plan window is spent stays routable while its
+	 * provider reports billed capacity beyond the plan — Codex credits,
+	 * Anthropic extra usage. The provider keeps serving such an account (the
+	 * official Codex CLI carries on against credits); without this switch it is
+	 * left out of selection until the window resets.
+	 *
+	 * Off by default: extra usage is billed, so spending it must be chosen.
+	 * Owned by the dashboard like the other routing switches; the environment
+	 * can only seed it once (adoptUseExtraUsageFromEnv).
+	 */
+	getUseExtraUsage(): boolean {
+		return this.resolveFlag(this.data.use_extra_usage, false).value;
+	}
+
+	/** "file" once anyone has set it, "default" while nobody has. */
+	getUseExtraUsageSource(): "file" | "default" {
+		return this.resolveFlag(this.data.use_extra_usage, false).source;
+	}
+
+	setUseExtraUsage(value: boolean): void {
+		this.set("use_extra_usage", value);
+	}
+
+	/**
+	 * Seed "use extra usage" from CCFLARE_USE_EXTRA_USAGE, once, for installs
+	 * configured from the environment (containers) — then the dashboard owns
+	 * it. Only an unset switch is seeded, and the value is written to the
+	 * config file, so a later deliberate change is never undone and the
+	 * dashboard never draws a switch an environment variable silently
+	 * overrides. Returns a line for the caller to log, or null when nothing
+	 * was adopted (absent, unreadable, or already set).
+	 */
+	adoptUseExtraUsageFromEnv(): string | null {
+		if (this.getUseExtraUsageSource() !== "default") return null;
+		const raw = process.env.CCFLARE_USE_EXTRA_USAGE?.trim();
+		if (!raw) return null;
+		let value: boolean;
+		if (/^(1|true|yes|on)$/i.test(raw)) value = true;
+		else if (/^(0|false|no|off)$/i.test(raw)) value = false;
+		else return null;
+		this.setUseExtraUsage(value);
+		return `use extra usage ${value ? "enabled" : "disabled"}: adopted from CCFLARE_USE_EXTRA_USAGE, which only seeds the setting — change it in Settings → Advanced`;
 	}
 
 	getProviderModelDefaultOverrides(): ProviderModelDefaultOverrides {

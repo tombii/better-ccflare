@@ -458,6 +458,12 @@ export class APIRouter {
 		this.handlers.set("POST:/api/config/force-account-model", (req) =>
 			configHandlers.setForceAccountModel(req),
 		);
+		this.handlers.set("GET:/api/config/use-extra-usage", () =>
+			configHandlers.getUseExtraUsage(),
+		);
+		this.handlers.set("POST:/api/config/use-extra-usage", (req) =>
+			configHandlers.setUseExtraUsage(req),
+		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
 		this.handlers.set("GET:/api/version/check", () => versionCheckHandler());

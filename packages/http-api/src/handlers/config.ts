@@ -10,6 +10,7 @@ import {
 	STRATEGIES,
 	type StrategyName,
 	setForceAccountModel as setForceAccountModelFlag,
+	setUseExtraUsage as setUseExtraUsageFlag,
 	TIME_CONSTANTS,
 	validateNumber,
 	validateString,
@@ -468,6 +469,35 @@ export function createConfigHandlers(
 				enabled: body.enabled,
 				source: config.getForceAccountModelSource(),
 				effective: config.getForceAccountModel(),
+			});
+		},
+
+		getUseExtraUsage: (): Response => {
+			return jsonResponse({
+				enabled: config.getUseExtraUsage(),
+				source: config.getUseExtraUsageSource(),
+			});
+		},
+
+		setUseExtraUsage: async (req: Request): Promise<Response> => {
+			const body = await req.json();
+			if (typeof body.enabled !== "boolean") {
+				return errorResponse(
+					BadRequest(
+						"Invalid use extra usage payload: expected 'enabled' to be a boolean",
+					),
+				);
+			}
+			config.setUseExtraUsage(body.enabled);
+			// Push the effective value into the core mirror the usage snapshot
+			// reads (providers cannot depend on config), so the switch takes
+			// effect without a restart.
+			setUseExtraUsageFlag(config.getUseExtraUsage());
+			return jsonResponse({
+				success: true,
+				enabled: body.enabled,
+				source: config.getUseExtraUsageSource(),
+				effective: config.getUseExtraUsage(),
 			});
 		},
 

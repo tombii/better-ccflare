@@ -66,6 +66,8 @@ describe("parseCodexUsagePayload", () => {
 				utilization: 43,
 				resets_at: new Date((NOW_S + 500_000) * 1000).toISOString(),
 			},
+			// The body's credits block rides along (see usage-credits.test.ts).
+			credits: { has_credits: false, unlimited: false, balance: null },
 		});
 	});
 
@@ -92,7 +94,7 @@ describe("parseCodexUsagePayload", () => {
 			NOW_MS,
 		);
 
-		expect(Object.keys(usage ?? {})).toEqual(["seven_day"]);
+		expect(Object.keys(usage ?? {})).toEqual(["seven_day", "credits"]);
 		expect(usage?.five_hour).toBeUndefined();
 	});
 
@@ -178,7 +180,10 @@ describe("parseCodexUsagePayload", () => {
 			NOW_MS,
 		);
 
-		expect(usage).toEqual({ five_hour: { utilization: 9, resets_at: null } });
+		expect(usage).toEqual({
+			five_hour: { utilization: 9, resets_at: null },
+			credits: { has_credits: false, unlimited: false, balance: null },
+		});
 	});
 
 	it("returns null for bodies without rate_limit", () => {

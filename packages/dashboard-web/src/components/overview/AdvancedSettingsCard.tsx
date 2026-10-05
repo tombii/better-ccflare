@@ -111,6 +111,39 @@ const ADVANCED_SETTINGS_ITEMS: AdvancedSettingItem[] = [
 			</ConfigFlagDialog>
 		),
 	},
+	{
+		id: "use-extra-usage",
+		title: "Use Extra Usage",
+		description:
+			"Keep serving an account past a spent plan window on its credits or extra usage.",
+		dialog: (
+			<ConfigFlagDialog
+				title="Use Extra Usage"
+				description="Whether a spent plan window takes an account out of rotation when it can still be billed beyond the plan."
+				path="/api/config/use-extra-usage"
+				switchLabel="Keep serving on credits / extra usage after the plan limit"
+			>
+				<p>
+					Off by default: once an account's 5-hour or weekly window reaches
+					100%, it is left out of selection until the window resets.
+				</p>
+				<p>
+					On, an account whose provider still reports billed capacity beyond the
+					plan stays in rotation — the same way the provider's own client keeps
+					working:
+				</p>
+				<ul className="ml-4 list-disc space-y-0.5">
+					<li>Codex: purchased credits, or an unlimited allowance</li>
+					<li>Anthropic: extra usage that is enabled and not yet used up</li>
+				</ul>
+				<p>
+					That traffic is billed. Its status reads <code>extra_usage</code>{" "}
+					until the window resets. When the credits or the extra-usage budget
+					run out, the provider's own refusal takes the account out as usual.
+				</p>
+			</ConfigFlagDialog>
+		),
+	},
 ];
 
 export function AdvancedSettingsCard() {
