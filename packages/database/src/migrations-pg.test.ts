@@ -366,7 +366,7 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 		it("runMigrationsPg creates the error-group and client-session indexes", () => {
 			const body = fnBody("runMigrationsPg");
 			expect(body).toMatch(
-				/CREATE INDEX IF NOT EXISTS\s+idx_requests_err_ts_cov\s+ON requests\(timestamp DESC, account_used, error_message\)\s+WHERE error_message IS NOT NULL/,
+				/CREATE INDEX IF NOT EXISTS\s+idx_requests_err_ts_cov\s+ON requests\(timestamp DESC, account_used\)\s+WHERE error_message IS NOT NULL/,
 			);
 			expect(body).toMatch(
 				/CREATE INDEX IF NOT EXISTS\s+idx_requests_client_session\s+ON requests\(client_session_id, timestamp DESC\)\s+WHERE client_session_id IS NOT NULL/,
@@ -375,6 +375,22 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			expect(body.indexOf("idx_requests_err_ts_cov")).toBeLessThan(
 				body.indexOf("DROP INDEX IF EXISTS"),
 			);
+		});
+
+		it("the PostgreSQL error index keeps error_message out of its key and INCLUDE list", () => {
+			// PG btree entries are capped (~2.7KB): an oversized error_message in
+			// the key would make INSERT/UPDATE on requests fail. Only the partial
+			// predicate may reference the column.
+			const body = fnBody("runMigrationsPg");
+			const start = body.indexOf(
+				"CREATE INDEX IF NOT EXISTS idx_requests_err_ts_cov",
+			);
+			expect(start).toBeGreaterThan(-1);
+			const stmt = body.slice(start, body.indexOf("`", start));
+			const [beforeWhere, wherePart] = stmt.split("WHERE");
+			expect(beforeWhere).not.toContain("error_message");
+			expect(beforeWhere).not.toContain("INCLUDE");
+			expect(wherePart).toContain("error_message IS NOT NULL");
 		});
 
 		it("kept indexes are still created", () => {

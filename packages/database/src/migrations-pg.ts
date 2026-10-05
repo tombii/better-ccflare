@@ -1073,11 +1073,19 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			             response_time_ms, account_used, model)`,
 		);
 
-		// 11. Partial covering index for the Errors tab grouping
-		// (getRecentErrorGroups in stats.repository.ts); mirrors SQLite.
+		// 11. Partial index for the Errors tab grouping
+		// (getRecentErrorGroups in stats.repository.ts).
+		// DIALECT DIFFERENCE vs SQLite: the SQLite variant carries error_message
+		// as a trailing key column so the grouping is index-only. PostgreSQL
+		// btree entries are capped at roughly 2.7KB, and INCLUDE columns share
+		// that limit, so an oversized error_message (stack traces, upstream
+		// bodies) would make INSERT/UPDATE on requests FAIL, and an existing
+		// oversized row would make this build fail. error_message is therefore
+		// referenced only in the partial predicate (the index still holds just
+		// the error rows); the message itself is read from the heap.
 		await adapter.unsafe(
 			`CREATE INDEX IF NOT EXISTS idx_requests_err_ts_cov
-			 ON requests(timestamp DESC, account_used, error_message)
+			 ON requests(timestamp DESC, account_used)
 			 WHERE error_message IS NOT NULL`,
 		);
 

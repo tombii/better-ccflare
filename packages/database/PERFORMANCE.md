@@ -18,7 +18,7 @@ INSERT, usage UPDATE and retention DELETE, so the set is kept minimal.
 | `idx_requests_api_key_timestamp` | `(api_key_id, timestamp DESC)` WHERE `api_key_id IS NOT NULL` | API key analytics |
 | `idx_requests_analytics_covering` | `(timestamp, success, total_tokens, cost_usd, billing_type, ...)` | Index-only analytics and stats aggregates |
 | `idx_requests_summary_covering` | `(timestamp DESC, id, account_used, status_code, ...)` | Timestamp-ordered scans, retention DELETE batches, alert sums |
-| `idx_requests_err_ts_cov` | `(timestamp DESC, account_used, error_message)` WHERE `error_message IS NOT NULL` | Grouped error list (`getRecentErrorGroups`) |
+| `idx_requests_err_ts_cov` | SQLite: `(timestamp DESC, account_used, error_message)`; PostgreSQL: `(timestamp DESC, account_used)`; both WHERE `error_message IS NOT NULL` | Grouped error list (`getRecentErrorGroups`). PostgreSQL omits `error_message` from the key because btree entries (and `INCLUDE` columns) are capped at ~2.7KB and an oversized message would make writes fail |
 | `idx_requests_client_session` | `(client_session_id, timestamp DESC)` WHERE `client_session_id IS NOT NULL` | Session-to-account lookup |
 
 Eleven older indexes were dropped (redundant prefixes of the above, or partial
