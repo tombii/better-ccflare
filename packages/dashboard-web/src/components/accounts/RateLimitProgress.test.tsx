@@ -609,6 +609,41 @@ describe("RateLimitProgress", () => {
 	});
 });
 
+describe("RateLimitProgress — codex credits vs xAI credits", () => {
+	const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+	it("does not label Codex usage (purchased-credits block) as Grok credits", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				usageUtilization={40}
+				usageWindow="five_hour"
+				usageData={{
+					five_hour: { utilization: 40, resets_at: future },
+					seven_day: { utilization: 20, resets_at: future },
+					credits: { has_credits: true, unlimited: false, balance: "5" },
+				}}
+				provider="codex"
+				showWeekly
+			/>,
+		);
+		expect(html).not.toContain("Grok credits");
+		expect(html).toContain("Usage (5-hour)");
+	});
+
+	it("still labels real xAI credits as Grok credits", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				usageUtilization={30}
+				usageWindow="credits"
+				usageData={{ credits: { utilization: 30, resets_at: future } }}
+				provider="xai"
+				showWeekly
+			/>,
+		);
+		expect(html).toContain("Grok credits");
+	});
+});
+
 describe("RateLimitProgress — usage pause threshold marker", () => {
 	const anthropicUsage: AnthropicUsageData = {
 		five_hour: {

@@ -308,7 +308,13 @@ export function RateLimitProgress({
 		usageData && ("time_limit" in usageData || "tokens_limit" in usageData);
 
 	// Check if this is xAI/Grok usage data
-	const isXaiData = usageData && "credits" in usageData;
+	// Codex also carries a `credits` key (purchased-credits block with no
+	// `utilization`), so require the xAI shape rather than the key alone.
+	const isXaiData =
+		usageData &&
+		"credits" in usageData &&
+		typeof (usageData.credits as { utilization?: unknown } | null)
+			?.utilization === "number";
 
 	// Check if this is Alibaba Coding Plan usage data
 	const isAlibabaData =
