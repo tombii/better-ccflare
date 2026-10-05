@@ -11,6 +11,15 @@ const log = new Logger("PerformanceIndexes");
  * INSERT/UPDATE/DELETE. Dropped via `DROP INDEX IF EXISTS` on every startup;
  * their CREATE statements must NOT come back (they would be recreated).
  * Mirrored by runMigrationsPg() in migrations-pg.ts.
+ *
+ * Why idx_requests_account_used and idx_requests_api_key are safe to drop:
+ * both are covered by surviving composites (account_timestamp,
+ * api_key_timestamp) for filtered queries, and the lifetime (no time bound)
+ * scans that used them are served by rowid-ordered table scans; in production
+ * timestamp order is approximately rowid order, so those scans lose nothing.
+ * Caveat: the q15/q18 benchmark queries showed a regression without the
+ * dedicated single-column index on synthetic data where timestamp order does
+ * not track rowid order; that is not the production shape, so it was accepted.
  */
 export const REDUNDANT_REQUEST_INDEXES = [
 	"idx_requests_timestamp",
@@ -36,7 +45,7 @@ export function dropRedundantRequestIndexes(db: Database): void {
 	for (const name of REDUNDANT_REQUEST_INDEXES) {
 		db.run(`DROP INDEX IF EXISTS ${name}`);
 	}
-	log.info(
+	log.debug(
 		`Dropped ${REDUNDANT_REQUEST_INDEXES.length} redundant requests indexes (if present)`,
 	);
 }
@@ -48,9 +57,7 @@ export function dropRedundantRequestIndexes(db: Database): void {
 export function addPerformanceIndexes(db: Database): void {
 	log.info("Adding performance indexes...");
 
-	// 1. Composite index on requests(timestamp, account_used) for time-based account queries
-	// Used in analytics for filtering by time range and account
-	// 2. Index on requests(model, timestamp) for model analytics
+	// 1. Index on requests(model, timestamp) for model analytics
 	// Used in model distribution and performance queries
 	db.run(`
 		CREATE INDEX IF NOT EXISTS idx_requests_model_timestamp 
@@ -59,7 +66,7 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_requests_model_timestamp");
 
-	// 4. Index on accounts(paused) for finding active accounts
+	// 2. Index on accounts(paused) for finding active accounts
 	// Used in load balancer to quickly filter active accounts
 	db.run(`
 		CREATE INDEX IF NOT EXISTS idx_accounts_paused 
@@ -68,7 +75,7 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_accounts_paused");
 
-	// 5. Index on requests(account_used, timestamp) for per-account analytics
+	// 3. Index on requests(account_used, timestamp) for per-account analytics
 	// Used in account performance queries
 	db.run(`
 		CREATE INDEX IF NOT EXISTS idx_requests_account_timestamp 
@@ -76,7 +83,7 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_requests_account_timestamp");
 
-	// 6. Additional indexes based on observed query patterns
+	// 4. Additional indexes based on observed query patterns
 	// Index for account name lookups (used in analytics joins)
 	db.run(`
 		CREATE INDEX IF NOT EXISTS idx_accounts_name 
@@ -129,7 +136,7 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_requests_api_key_timestamp");
 
-	// 8. Covering index for request_payloads cleanup
+	// 5. Covering index for request_payloads cleanup
 	// Used by deletePayloadsOlderThan() which uses similar pattern:
 	//   DELETE FROM request_payloads WHERE id IN (SELECT id FROM request_payloads WHERE timestamp < ? LIMIT ?)
 	// Note: timestamp may be NULL for legacy rows, so we use partial index where timestamp IS NOT NULL
@@ -142,7 +149,7 @@ export function addPerformanceIndexes(db: Database): void {
 		"Added index: idx_request_payloads_cleanup (covering index for payload DELETE operations)",
 	);
 
-	// 9. Covering index for the Requests tab summary query
+	// 6. Covering index for the Requests tab summary query
 	// Powers: SELECT r.*, a.name FROM requests r LEFT JOIN accounts a ON r.account_used = a.id
 	//         ORDER BY r.timestamp DESC LIMIT ?
 	// Including the most-queried scalar columns lets SQLite satisfy the query from the index
@@ -158,7 +165,7 @@ export function addPerformanceIndexes(db: Database): void {
 		"Added index: idx_requests_summary_covering (covering index for Requests tab list query)",
 	);
 
-	// 10. Covering index for analytics aggregate queries (timestamp range scans)
+	// 7. Covering index for analytics aggregate queries (timestamp range scans)
 	// Powers the analytics handler's WHERE timestamp > ? GROUP BY ts aggregate queries.
 	// Includes aggregate columns so SQLite can compute SUM/AVG/COUNT without heap lookups.
 	// Column order: timestamp first (range filter), then aggregate columns.
@@ -173,8 +180,7 @@ export function addPerformanceIndexes(db: Database): void {
 		"Added index: idx_requests_analytics_covering (covering index for analytics aggregate queries)",
 	);
 
-	// 11. Index for billing_type time-range queries used in analytics cost breakdown
-	// 11. Partial covering index for the Errors tab grouping
+	// 8. Partial covering index for the Errors tab grouping
 	// (getRecentErrorGroups in stats.repository.ts). Only rows that carry an
 	// error_message are indexed (a small fraction of the table), so the
 	// `timestamp > ?` scan and the self-join probes on `timestamp = ?` never
@@ -187,7 +193,7 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_requests_err_ts_cov");
 
-	// 12. Index for the session -> account lookup (sessions.ts):
+	// 9. Index for the session -> account lookup (sessions.ts):
 	//   WHERE client_session_id = ? AND account_used IS NOT NULL
 	//   ORDER BY timestamp DESC, rowid DESC LIMIT 1
 	// Without it an unknown session id forces a full table scan.
