@@ -294,10 +294,88 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 	});
 
 	it("spot check: newly-ported performance indexes exist in migrations-pg.ts", () => {
-		expect(pgSource).toContain("idx_requests_cleanup");
 		expect(pgSource).toContain("idx_request_payloads_cleanup");
 		expect(pgSource).toContain("idx_requests_summary_covering");
 		expect(pgSource).toContain("idx_requests_analytics_covering");
+	});
+
+	describe("redundant requests indexes", () => {
+		const dropped = [
+			"idx_requests_timestamp",
+			"idx_requests_account_used",
+			"idx_requests_timestamp_account",
+			"idx_requests_success_timestamp",
+			"idx_requests_cost_model",
+			"idx_requests_response_time",
+			"idx_requests_tokens",
+			"idx_requests_api_key",
+			"idx_requests_project_timestamp",
+			"idx_requests_cleanup",
+			"idx_requests_billing_type_timestamp",
+		];
+
+		/** Slice of source for one exported function (up to the next top-level export). */
+		function fnBody(name: string): string {
+			const start = pgSource.indexOf(`export async function ${name}(`);
+			expect(start).toBeGreaterThan(-1);
+			const next = pgSource.indexOf("\nexport ", start + 1);
+			return pgSource.slice(start, next === -1 ? undefined : next);
+		}
+
+		it("runMigrationsPg drops every redundant index with DROP INDEX IF EXISTS", () => {
+			const body = fnBody("runMigrationsPg");
+			expect(body).toContain("DROP INDEX IF EXISTS ${indexName}");
+			const dropBlock = body.slice(body.indexOf("Drop redundant/unusable"));
+			for (const name of dropped) {
+				expect(dropBlock).toContain(`"${name}"`);
+			}
+		});
+
+		it("runMigrationsPg never recreates a dropped index", () => {
+			for (const name of dropped) {
+				expect(pgSource).not.toMatch(
+					new RegExp(`CREATE INDEX IF NOT EXISTS\\s+${name}\\b`),
+				);
+			}
+		});
+
+		it("ensureSchemaPg no longer creates the dropped baseline indexes", () => {
+			const body = fnBody("ensureSchemaPg");
+			for (const name of [
+				"idx_requests_timestamp",
+				"idx_requests_account_used",
+				"idx_requests_timestamp_account",
+			]) {
+				expect(body).not.toContain(name);
+			}
+		});
+
+		it("the drops run in their own try/catch that logs a warning", () => {
+			const body = fnBody("runMigrationsPg");
+			const dropIdx = body.indexOf("DROP INDEX IF EXISTS");
+			expect(dropIdx).toBeGreaterThan(-1);
+			const tryIdx = body.lastIndexOf("try {", dropIdx);
+			const catchIdx = body.indexOf("} catch", dropIdx);
+			expect(tryIdx).toBeGreaterThan(-1);
+			expect(catchIdx).toBeGreaterThan(dropIdx);
+			// The index-creation try block (swallowing) must have closed before.
+			expect(body.slice(tryIdx, dropIdx)).not.toContain("} catch");
+			expect(body.slice(catchIdx, catchIdx + 400)).toContain("log.warn");
+		});
+
+		it("kept indexes are still created", () => {
+			for (const name of [
+				"idx_requests_account_timestamp",
+				"idx_requests_model_timestamp",
+				"idx_requests_api_key_timestamp",
+				"idx_requests_summary_covering",
+				"idx_requests_analytics_covering",
+			]) {
+				expect(pgSource).toMatch(
+					new RegExp(`CREATE INDEX IF NOT EXISTS\\s+${name}\\b`),
+				);
+			}
+		});
 	});
 });
 
@@ -347,7 +425,13 @@ describe.skipIf(!livePgAvailable)(
 				const cleanupIndex = await adapter.get<{ exists: number }>(
 					`SELECT COUNT(*) AS exists FROM pg_indexes WHERE indexname = 'idx_requests_cleanup'`,
 				);
-				expect(cleanupIndex?.exists ?? 0).toBeGreaterThan(0);
+				// idx_requests_cleanup was dropped as redundant.
+				expect(Number(cleanupIndex?.exists ?? 0)).toBe(0);
+
+				const summaryCoveringIndex = await adapter.get<{ exists: number }>(
+					`SELECT COUNT(*) AS exists FROM pg_indexes WHERE indexname = 'idx_requests_summary_covering'`,
+				);
+				expect(Number(summaryCoveringIndex?.exists ?? 0)).toBeGreaterThan(0);
 
 				const analyticsCoveringIndex = await adapter.get<{ exists: number }>(
 					`SELECT COUNT(*) AS exists FROM pg_indexes WHERE indexname = 'idx_requests_analytics_covering'`,

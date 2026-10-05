@@ -156,17 +156,6 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 		)
 	`);
 
-	// Create indexes for requests
-	await adapter.unsafe(
-		`CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp DESC)`,
-	);
-	await adapter.unsafe(
-		`CREATE INDEX IF NOT EXISTS idx_requests_account_used ON requests(account_used)`,
-	);
-	await adapter.unsafe(
-		`CREATE INDEX IF NOT EXISTS idx_requests_timestamp_account ON requests(timestamp DESC, account_used)`,
-	);
-
 	// Create alerts table
 	await adapter.unsafe(`
 		CREATE TABLE IF NOT EXISTS alerts (
@@ -977,26 +966,12 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			`CREATE INDEX IF NOT EXISTS idx_api_keys_role ON api_keys(role)`,
 		);
 
-		// 1. Composite index on requests(timestamp, account_used) for time-based
-		// account queries. Used in analytics for filtering by time range and account.
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_timestamp_account
-			 ON requests(timestamp DESC, account_used)`,
-		);
-
 		// 2. Index on requests(model, timestamp) for model analytics.
 		// Used in model distribution and performance queries.
 		await adapter.unsafe(
 			`CREATE INDEX IF NOT EXISTS idx_requests_model_timestamp
 			 ON requests(model, timestamp DESC)
 			 WHERE model IS NOT NULL`,
-		);
-
-		// 3. Index on requests(success, timestamp) for success rate calculations.
-		// Used in analytics for calculating success rates over time.
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_success_timestamp
-			 ON requests(success, timestamp DESC)`,
 		);
 
 		// 4. Index on accounts(paused) for finding active accounts.
@@ -1015,27 +990,6 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		);
 
 		// 6. Additional indexes based on observed query patterns
-
-		// Index for cost analysis queries
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_cost_model
-			 ON requests(cost_usd, model, timestamp DESC)
-			 WHERE cost_usd > 0 AND model IS NOT NULL`,
-		);
-
-		// Index for response time analysis (for p95 calculations)
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_response_time
-			 ON requests(model, response_time_ms)
-			 WHERE response_time_ms IS NOT NULL AND model IS NOT NULL`,
-		);
-
-		// Index for token usage analysis
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_tokens
-			 ON requests(timestamp DESC, total_tokens)
-			 WHERE total_tokens > 0`,
-		);
 
 		// Index for account name lookups (used in analytics joins)
 		await adapter.unsafe(
@@ -1075,37 +1029,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			 ON oauth_sessions(account_name, expires_at)`,
 		);
 
-		// Index for API key filtering
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_api_key
-			 ON requests(api_key_id)
-			 WHERE api_key_id IS NOT NULL`,
-		);
-
 		// Composite index for API key analytics (filtering + time-based queries)
 		await adapter.unsafe(
 			`CREATE INDEX IF NOT EXISTS idx_requests_api_key_timestamp
 			 ON requests(api_key_id, timestamp DESC)
 			 WHERE api_key_id IS NOT NULL`,
-		);
-
-		// Composite index for project analytics (filtering + time-based queries)
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_project_timestamp
-			 ON requests(project, timestamp DESC)
-			 WHERE project IS NOT NULL`,
-		);
-
-		// 7. Covering index for DELETE cleanup operations.
-		// Critical for performance of deleteOlderThan() which uses:
-		//   DELETE FROM requests WHERE id IN (SELECT id FROM requests WHERE timestamp < ? LIMIT ?)
-		// Without this covering index, the DB must hit the table to fetch id values
-		// after finding rows by timestamp. With this covering index (timestamp ASC,
-		// id), the entire subquery is satisfied from the index alone. ASC order
-		// matches the "timestamp < cutoff" comparison used in cleanup queries.
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_cleanup
-			 ON requests(timestamp ASC, id)`,
 		);
 
 		// 8. Covering index for request_payloads cleanup.
@@ -1145,16 +1073,41 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			             response_time_ms, account_used, model)`,
 		);
 
-		// 11. Index for billing_type time-range queries used in analytics cost breakdown
-		await adapter.unsafe(
-			`CREATE INDEX IF NOT EXISTS idx_requests_billing_type_timestamp
-			 ON requests(billing_type, timestamp DESC)
-			 WHERE billing_type IS NOT NULL`,
-		);
-
 		log.info("Performance indexes ensured");
 	} catch (_error) {
 		// Indexes may already exist
+	}
+
+	// Drop redundant/unusable requests indexes (mirrors
+	// REDUNDANT_REQUEST_INDEXES in performance-indexes.ts). Runs AFTER the
+	// create block above, in its own try/catch so a failed drop is visible
+	// instead of being swallowed with the "already exists" errors. Plain
+	// DROP INDEX (not CONCURRENTLY): CONCURRENTLY cannot run inside a
+	// transaction block, and Bun.SQL's unsafe() with no params is a simple-query
+	// call, so each statement auto-commits on its own. DROP INDEX takes a brief
+	// ACCESS EXCLUSIVE lock on requests, but it is metadata-only and fast;
+	// IF EXISTS makes it a cheap no-op on every later startup.
+	try {
+		for (const indexName of [
+			"idx_requests_timestamp",
+			"idx_requests_account_used",
+			"idx_requests_timestamp_account",
+			"idx_requests_success_timestamp",
+			"idx_requests_cost_model",
+			"idx_requests_response_time",
+			"idx_requests_tokens",
+			"idx_requests_api_key",
+			"idx_requests_project_timestamp",
+			"idx_requests_cleanup",
+			"idx_requests_billing_type_timestamp",
+		]) {
+			await adapter.unsafe(`DROP INDEX IF EXISTS ${indexName}`);
+		}
+		log.info("Redundant requests indexes dropped (if present)");
+	} catch (error) {
+		log.warn(
+			`Failed to drop redundant requests indexes: ${error instanceof Error ? error.message : String(error)}`,
+		);
 	}
 
 	// A usage-pause threshold written before the enabled flags existed was in

@@ -4,6 +4,41 @@ import { Logger } from "@better-ccflare/logger";
 const log = new Logger("PerformanceIndexes");
 
 /**
+ * Indexes on `requests` that earlier versions created and that are now
+ * dropped. Each was either never usable by any query (partial-index predicate
+ * the code never emits, or a leading column nothing filters on) or a strict
+ * prefix/subset of a surviving index, while still costing a write on every
+ * INSERT/UPDATE/DELETE. Dropped via `DROP INDEX IF EXISTS` on every startup;
+ * their CREATE statements must NOT come back (they would be recreated).
+ * Mirrored by runMigrationsPg() in migrations-pg.ts.
+ */
+export const REDUNDANT_REQUEST_INDEXES = [
+	"idx_requests_timestamp",
+	"idx_requests_account_used",
+	"idx_requests_timestamp_account",
+	"idx_requests_success_timestamp",
+	"idx_requests_cost_model",
+	"idx_requests_response_time",
+	"idx_requests_tokens",
+	"idx_requests_api_key",
+	"idx_requests_project_timestamp",
+	"idx_requests_cleanup",
+	"idx_requests_billing_type_timestamp",
+] as const;
+
+/**
+ * Drop the redundant `requests` indexes (no-op when already gone).
+ */
+export function dropRedundantRequestIndexes(db: Database): void {
+	for (const name of REDUNDANT_REQUEST_INDEXES) {
+		db.run(`DROP INDEX IF EXISTS ${name}`);
+	}
+	log.info(
+		`Dropped ${REDUNDANT_REQUEST_INDEXES.length} redundant requests indexes (if present)`,
+	);
+}
+
+/**
  * Add performance indexes to improve query performance
  * This migration adds indexes based on common query patterns in the application
  */
@@ -12,12 +47,6 @@ export function addPerformanceIndexes(db: Database): void {
 
 	// 1. Composite index on requests(timestamp, account_used) for time-based account queries
 	// Used in analytics for filtering by time range and account
-	db.run(`
-		CREATE INDEX IF NOT EXISTS idx_requests_timestamp_account 
-		ON requests(timestamp DESC, account_used)
-	`);
-	log.info("Added index: idx_requests_timestamp_account");
-
 	// 2. Index on requests(model, timestamp) for model analytics
 	// Used in model distribution and performance queries
 	db.run(`
@@ -26,14 +55,6 @@ export function addPerformanceIndexes(db: Database): void {
 		WHERE model IS NOT NULL
 	`);
 	log.info("Added index: idx_requests_model_timestamp");
-
-	// 3. Index on requests(success, timestamp) for success rate calculations
-	// Used in analytics for calculating success rates over time
-	db.run(`
-		CREATE INDEX IF NOT EXISTS idx_requests_success_timestamp 
-		ON requests(success, timestamp DESC)
-	`);
-	log.info("Added index: idx_requests_success_timestamp");
 
 	// 4. Index on accounts(paused) for finding active accounts
 	// Used in load balancer to quickly filter active accounts
@@ -53,31 +74,6 @@ export function addPerformanceIndexes(db: Database): void {
 	log.info("Added index: idx_requests_account_timestamp");
 
 	// 6. Additional indexes based on observed query patterns
-
-	// Index for cost analysis queries
-	db.run(`
-		CREATE INDEX IF NOT EXISTS idx_requests_cost_model 
-		ON requests(cost_usd, model, timestamp DESC) 
-		WHERE cost_usd > 0 AND model IS NOT NULL
-	`);
-	log.info("Added index: idx_requests_cost_model");
-
-	// Index for response time analysis (for p95 calculations)
-	db.run(`
-		CREATE INDEX IF NOT EXISTS idx_requests_response_time 
-		ON requests(model, response_time_ms) 
-		WHERE response_time_ms IS NOT NULL AND model IS NOT NULL
-	`);
-	log.info("Added index: idx_requests_response_time");
-
-	// Index for token usage analysis
-	db.run(`
-		CREATE INDEX IF NOT EXISTS idx_requests_tokens 
-		ON requests(timestamp DESC, total_tokens) 
-		WHERE total_tokens > 0
-	`);
-	log.info("Added index: idx_requests_tokens");
-
 	// Index for account name lookups (used in analytics joins)
 	db.run(`
 		CREATE INDEX IF NOT EXISTS idx_accounts_name 
@@ -122,14 +118,6 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_oauth_sessions_account_name");
 
-	// Index for API key filtering
-	db.run(`
-		CREATE INDEX IF NOT EXISTS idx_requests_api_key
-		ON requests(api_key_id)
-		WHERE api_key_id IS NOT NULL
-	`);
-	log.info("Added index: idx_requests_api_key");
-
 	// Composite index for API key analytics (filtering + time-based queries)
 	db.run(`
 		CREATE INDEX IF NOT EXISTS idx_requests_api_key_timestamp
@@ -137,28 +125,6 @@ export function addPerformanceIndexes(db: Database): void {
 		WHERE api_key_id IS NOT NULL
 	`);
 	log.info("Added index: idx_requests_api_key_timestamp");
-
-	// Composite index for project analytics (filtering + time-based queries)
-	db.run(`
-		CREATE INDEX IF NOT EXISTS idx_requests_project_timestamp
-		ON requests(project, timestamp DESC)
-		WHERE project IS NOT NULL
-	`);
-	log.info("Added index: idx_requests_project_timestamp");
-
-	// 7. Covering index for DELETE cleanup operations
-	// Critical for performance of deleteOlderThan() which uses:
-	//   DELETE FROM requests WHERE id IN (SELECT id FROM requests WHERE timestamp < ? LIMIT ?)
-	// Without this covering index, SQLite must hit the table to fetch id values after finding rows by timestamp.
-	// With this covering index (timestamp ASC, id), the entire subquery is satisfied from the index alone.
-	// ASC order matches the "timestamp < cutoff" comparison used in cleanup queries.
-	db.run(`
-		CREATE INDEX IF NOT EXISTS idx_requests_cleanup
-		ON requests(timestamp ASC, id)
-	`);
-	log.info(
-		"Added index: idx_requests_cleanup (covering index for DELETE operations)",
-	);
 
 	// 8. Covering index for request_payloads cleanup
 	// Used by deletePayloadsOlderThan() which uses similar pattern:
@@ -205,13 +171,6 @@ export function addPerformanceIndexes(db: Database): void {
 	);
 
 	// 11. Index for billing_type time-range queries used in analytics cost breakdown
-	db.run(`
-		CREATE INDEX IF NOT EXISTS idx_requests_billing_type_timestamp
-		ON requests(billing_type, timestamp DESC)
-		WHERE billing_type IS NOT NULL
-	`);
-	log.info("Added index: idx_requests_billing_type_timestamp");
-
 	log.info("Performance indexes added successfully");
 }
 
