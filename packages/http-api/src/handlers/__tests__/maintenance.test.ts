@@ -49,13 +49,6 @@ function makeDbOps(
 // ---------------------------------------------------------------------------
 
 describe("createCleanupHandler", () => {
-	it("invokes the onHistoryDeleted hook after cleanup", async () => {
-		const hook = mock(() => {});
-		const handler = createCleanupHandler(makeDbOps(), makeConfig(), hook);
-		await handler();
-		expect(hook).toHaveBeenCalledTimes(1);
-	});
-
 	describe("CleanupResponse shape", () => {
 		it("includes payloadCutoffIso in the response body", async () => {
 			const handler = createCleanupHandler(makeDbOps(), makeConfig());

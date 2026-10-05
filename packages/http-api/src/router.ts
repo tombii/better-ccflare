@@ -183,6 +183,12 @@ export class APIRouter {
 			getVacuumStatus,
 		);
 		const statsHandler = createStatsHandler(dbOps);
+		// cleanupOldRequests() calls made in THIS process (scheduled retention,
+		// maintenance endpoint) invalidate the cached /api/stats payloads. The CLI
+		// (`--clear-history`) runs in a separate process and does not reach this
+		// listener; /api/stats may then serve stale data for up to its TTL (10s).
+		// The router is built once per process, so the unsubscribe is not held.
+		dbOps.onRequestsDeleted(() => statsHandler.clearCache());
 		const statsResetHandler = createStatsResetHandler(dbOps, () =>
 			statsHandler.clearCache(),
 		);
@@ -249,9 +255,7 @@ export class APIRouter {
 		const agentsHandler = createAgentsListHandler(dbOps);
 		const workspacesHandler = createWorkspacesListHandler();
 		const requestsStreamHandler = createRequestsStreamHandler();
-		const cleanupHandler = createCleanupHandler(dbOps, config, () =>
-			statsHandler.clearCache(),
-		);
+		const cleanupHandler = createCleanupHandler(dbOps, config);
 		const systemInfoHandler = createSystemInfoHandler();
 		const versionCheckHandler = createVersionCheckHandler();
 

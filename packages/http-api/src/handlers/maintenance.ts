@@ -6,7 +6,6 @@ import type { CleanupResponse } from "../types";
 export function createCleanupHandler(
 	dbOps: DatabaseOperations,
 	config: Config,
-	onHistoryDeleted?: () => void,
 ) {
 	return async (): Promise<Response> => {
 		const requestDays = config.getRequestRetentionDays();
@@ -20,8 +19,6 @@ export function createCleanupHandler(
 			payloadMs,
 			requestMs,
 		);
-		// Request history changed; drop any cached /api/stats payloads.
-		onHistoryDeleted?.();
 		const [tableRowCounts, dbSizeBytes] = await Promise.all([
 			dbOps.getTableRowCounts(),
 			dbOps.getDbSizeBytes(),
