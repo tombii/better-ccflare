@@ -21,13 +21,13 @@ INSERT, usage UPDATE and retention DELETE, so the set is kept minimal.
 | `idx_requests_err_ts_cov` | SQLite: `(timestamp DESC, account_used, error_message)`; PostgreSQL: `(timestamp DESC, account_used)`; both WHERE `error_message IS NOT NULL` | Grouped error list (`getRecentErrorGroups`). PostgreSQL omits `error_message` from the key because btree entries (and `INCLUDE` columns) are capped at ~2.7KB and an oversized message would make writes fail |
 | `idx_requests_client_session` | `(client_session_id, timestamp DESC)` WHERE `client_session_id IS NOT NULL` | Session-to-account lookup |
 
-Eleven older indexes were dropped (redundant prefixes of the above, or partial
+Twelve older indexes were dropped (redundant prefixes of the above, or partial
 indexes whose predicate no query emits): `idx_requests_timestamp`,
 `idx_requests_account_used`, `idx_requests_timestamp_account`,
 `idx_requests_success_timestamp`, `idx_requests_cost_model`,
 `idx_requests_response_time`, `idx_requests_tokens`, `idx_requests_api_key`,
 `idx_requests_project_timestamp`, `idx_requests_cleanup`,
-`idx_requests_billing_type_timestamp`. They are removed by `DROP INDEX IF
+`idx_requests_billing_type_timestamp`, and `idx_requests_account` (never created by the app; it came from the old deployment docs). They are removed by `DROP INDEX IF
 EXISTS` in `migrations.ts` (SQLite) and `migrations-pg.ts` (PostgreSQL); the
 list lives in `REDUNDANT_REQUEST_INDEXES` in `src/performance-indexes.ts`.
 Never re-add a CREATE for them or they will be dropped again on every start.

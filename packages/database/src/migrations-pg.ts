@@ -733,6 +733,8 @@ const REDUNDANT_REQUEST_INDEXES_PG: readonly string[] = [
 	"idx_requests_project_timestamp",
 	"idx_requests_cleanup",
 	"idx_requests_billing_type_timestamp",
+	// Hand-created per the old docs/deployment.md (never by the app).
+	"idx_requests_account",
 ];
 
 /**

@@ -24,6 +24,9 @@ export const REDUNDANT_REQUEST_INDEXES = [
 	"idx_requests_project_timestamp",
 	"idx_requests_cleanup",
 	"idx_requests_billing_type_timestamp",
+	// Never created by the app: the old docs/deployment.md told operators to
+	// create it by hand, so installs that followed it still carry it.
+	"idx_requests_account",
 ] as const;
 
 /**

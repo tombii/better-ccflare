@@ -1,7 +1,7 @@
 /**
  * Index set on the `requests` table (SQLite).
  *
- * 11 redundant/unusable indexes were dropped because every one of them slows
+ * 12 redundant/unusable indexes were dropped because every one of them slows
  * each INSERT/UPDATE/DELETE on the hottest table. These tests pin the final
  * set and check that the drop is idempotent on databases that still carry the
  * old indexes.
@@ -31,6 +31,8 @@ const DROPPED_INDEXES = [
 	"idx_requests_project_timestamp",
 	"idx_requests_cleanup",
 	"idx_requests_billing_type_timestamp",
+	// Created by the old docs/deployment.md instructions, never by the app.
+	"idx_requests_account",
 ];
 
 /** Old (pre-drop) definitions, used to simulate an upgraded database. */
@@ -46,6 +48,7 @@ const OLD_INDEX_SQL = [
 	"CREATE INDEX idx_requests_project_timestamp ON requests(project, timestamp DESC) WHERE project IS NOT NULL",
 	"CREATE INDEX idx_requests_cleanup ON requests(timestamp ASC, id)",
 	"CREATE INDEX idx_requests_billing_type_timestamp ON requests(billing_type, timestamp DESC) WHERE billing_type IS NOT NULL",
+	"CREATE INDEX idx_requests_account ON requests(account_used)",
 ];
 
 function requestIndexNames(db: Database): string[] {
@@ -59,7 +62,7 @@ function requestIndexNames(db: Database): string[] {
 }
 
 describe("requests indexes: drop of redundant indexes", () => {
-	it("REDUNDANT_REQUEST_INDEXES lists exactly the 11 approved names", () => {
+	it("REDUNDANT_REQUEST_INDEXES lists exactly the 12 approved names", () => {
 		expect([...REDUNDANT_REQUEST_INDEXES].sort()).toEqual(
 			[...DROPPED_INDEXES].sort(),
 		);

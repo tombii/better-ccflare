@@ -313,6 +313,7 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			"idx_requests_project_timestamp",
 			"idx_requests_cleanup",
 			"idx_requests_billing_type_timestamp",
+			"idx_requests_account",
 		];
 
 		/** Slice of source for one exported function (up to the next top-level export). */
