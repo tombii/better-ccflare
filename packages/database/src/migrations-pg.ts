@@ -822,7 +822,7 @@ export async function ensureRequestsIndexesPg(
 			// not linger (see the note above NEW_REQUEST_INDEXES_PG). Kept out of
 			// the redundant list so it is not confused with the SQLite one.
 			await conn.unsafe("DROP INDEX IF EXISTS idx_requests_client_session");
-			log.info("Redundant requests indexes dropped (if present)");
+			log.debug("Redundant requests indexes dropped (if present)");
 		} catch (error) {
 			log.warn(
 				`Failed to drop redundant requests indexes (will retry next start): ${error instanceof Error ? error.message : String(error)}`,
