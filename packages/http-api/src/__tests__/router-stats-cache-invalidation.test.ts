@@ -1,8 +1,9 @@
 /**
  * Router wiring: the /api/stats TTL cache must be cleared whenever
  * DatabaseOperations reports that request history was deleted, so every
- * cleanupOldRequests() caller (scheduled retention, CLI, maintenance
- * endpoint) is covered, not just the HTTP cleanup route.
+ * in-process cleanupOldRequests() caller (scheduled retention, maintenance
+ * endpoint) is covered, not just the HTTP cleanup route. The CLI runs in a
+ * separate process and is not covered.
  */
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";

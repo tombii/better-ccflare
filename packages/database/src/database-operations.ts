@@ -1424,38 +1424,52 @@ OAuth tokens will need to be re-authenticated.
 		removedPayloads: number;
 	}> {
 		const now = Date.now();
-
-		// Pass 1 — payloads
-		const payloadCutoff = now - payloadRetentionMs;
-		const removedPayloadsByAge =
-			await this.requests.deletePayloadsOlderThan(payloadCutoff);
-		const removedOrphans = await this.requests.deleteOrphanedPayloads();
-		this.invalidateTableRowCounts();
-
-		// Pass 2 — request metadata
+		let removedPayloads = 0;
 		let removedRequests = 0;
-		if (
-			typeof requestRetentionMs === "number" &&
-			Number.isFinite(requestRetentionMs)
-		) {
-			const requestCutoff = now - requestRetentionMs;
-			removedRequests = await this.requests.deleteOlderThan(requestCutoff);
+		// Set once pass 2 starts: a batched delete that throws midway may already
+		// have removed rows whose count is lost with the exception.
+		let requestPassStarted = false;
+		try {
+			// Pass 1 — payloads
+			const payloadCutoff = now - payloadRetentionMs;
+			const removedPayloadsByAge =
+				await this.requests.deletePayloadsOlderThan(payloadCutoff);
+			const removedOrphans = await this.requests.deleteOrphanedPayloads();
+			removedPayloads = removedPayloadsByAge + removedOrphans;
+			this.invalidateTableRowCounts();
+
+			// Pass 2 — request metadata
+			if (
+				typeof requestRetentionMs === "number" &&
+				Number.isFinite(requestRetentionMs)
+			) {
+				const requestCutoff = now - requestRetentionMs;
+				requestPassStarted = true;
+				removedRequests = await this.requests.deleteOlderThan(requestCutoff);
+				requestPassStarted = false;
+			}
+		} finally {
+			// Runs on success and on a throwing pass (original error still
+			// propagates). Drop counts cached before or during cleanup.
+			this.invalidateTableRowCounts();
+			// Only request rows feed /api/stats; payload-only deletions and no-op
+			// runs leave derived caches valid, so don't notify for them.
+			if (removedRequests > 0 || requestPassStarted) {
+				this.notifyRequestsDeleted();
+			}
 		}
 
-		// Pass 2 deleted request rows too; drop counts cached before or during cleanup.
-		this.invalidateTableRowCounts();
-		this.notifyRequestsDeleted();
-
-		return {
-			removedRequests,
-			removedPayloads: removedPayloadsByAge + removedOrphans,
-		};
+		return { removedRequests, removedPayloads };
 	}
 
 	/**
-	 * Subscribe to request-history deletions performed by cleanupOldRequests()
-	 * (scheduled retention, CLI, maintenance endpoint). Lets derived caches
-	 * (e.g. /api/stats) drop stale data regardless of who triggered cleanup.
+	 * Subscribe to request-row deletions performed by cleanupOldRequests() on
+	 * THIS DatabaseOperations instance (scheduled retention, maintenance
+	 * endpoint). Fires only when request rows were (or may have been, if a pass
+	 * threw midway) deleted, not for no-op or payload-only runs.
+	 * In-process only: the CLI (`--clear-history`) cleans up from a separate
+	 * process, so it never triggers listeners in a running server; caches there
+	 * can stay stale until their own TTL expires.
 	 * Returns an unsubscribe function.
 	 */
 	onRequestsDeleted(listener: () => void): () => void {
