@@ -277,7 +277,7 @@ RUN cd apps/server && bun build src/server.ts --compile --outfile dist/better-cc
 RUN cd apps/cli && bun build src/cli.ts --compile --outfile dist/better-ccflare-cli
 
 # Runtime stage
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \

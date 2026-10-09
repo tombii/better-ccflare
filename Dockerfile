@@ -3,11 +3,12 @@
 
 ARG VERSION=latest
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
-# Install required dependencies
+# Install required dependencies (and apply pending security updates, e.g. perl-base)
 RUN apt-get update && \
-    apt-get install -y \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
       sqlite3 \
       ca-certificates \
       curl \
