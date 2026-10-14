@@ -113,8 +113,12 @@ function makeDbOps(opts: MockDbOpsOptions = {}): DatabaseOperations {
 	// Default well below the 16 GiB full-check threshold so full checks run
 	// normally; tests that exercise the size-skip path pass a large value.
 	const getDbSizeBytes = mock(async () => opts.dbSizeBytes ?? 1024);
+	const truncateWal = mock(() => ({ busy: false, log: 0, checkpointed: 0 }));
 
 	return {
+		// A resolvable path stands in for SQLite; no path for PostgreSQL.
+		isSQLite: opts.dbPath !== undefined,
+		truncateWal,
 		runQuickIntegrityCheck,
 		runFullIntegrityCheck,
 		markIntegrityCheckRunning,
@@ -434,5 +438,49 @@ describe("startFullIntegrityCheckBackground", () => {
 		).mock.calls.at(-1);
 		expect(lastCall?.[0]).toBe("full");
 		expect(lastCall?.[1]).toBe("corrupt");
+	});
+});
+
+describe("WAL truncate after an integrity check", () => {
+	afterEach(() => {
+		delete process.env.CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES;
+	});
+
+	it("runs a TRUNCATE checkpoint once the worker check has finished", async () => {
+		const dbOps = makeDbOps({ dbPath: "/tmp/anything" });
+		const out = await runIntegrityCheckOnDemand(dbOps, "quick");
+		expect(out.ok).toBe(true);
+		expect(dbOps.truncateWal).toHaveBeenCalledTimes(1);
+	});
+
+	it("runs after a failed check too", async () => {
+		workerResultByKind.full = { ok: false, error: "boom" };
+		const dbOps = makeDbOps({ dbPath: "/tmp/anything" });
+		const out = await runIntegrityCheckOnDemand(dbOps, "full");
+		expect(out.ok && out.result).toBe("corrupt");
+		expect(dbOps.truncateWal).toHaveBeenCalledTimes(1);
+	});
+
+	it("is skipped when CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES=0", async () => {
+		process.env.CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES = "0";
+		const dbOps = makeDbOps({ dbPath: "/tmp/anything" });
+		await runIntegrityCheckOnDemand(dbOps, "quick");
+		expect(dbOps.truncateWal).not.toHaveBeenCalled();
+	});
+
+	it("is skipped for non-SQLite backends", async () => {
+		const dbOps = makeDbOps({ dbPath: undefined });
+		await runIntegrityCheckOnDemand(dbOps, "quick");
+		expect(dbOps.truncateWal).not.toHaveBeenCalled();
+	});
+
+	it("a busy or throwing checkpoint doesn't affect the check result", async () => {
+		const dbOps = makeDbOps({ dbPath: "/tmp/anything" });
+		(dbOps.truncateWal as ReturnType<typeof mock>).mockImplementation(() => {
+			throw new Error("SQLITE_BUSY: database is locked");
+		});
+		const out = await runIntegrityCheckOnDemand(dbOps, "quick");
+		expect(out.ok && out.result).toBe("ok");
+		expect(dbOps.recordIntegrityResult).toHaveBeenCalledWith("quick", "ok");
 	});
 });

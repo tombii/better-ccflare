@@ -2,6 +2,7 @@ import { TIME_CONSTANTS } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { runIntegrityCheckInWorker } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
+import { truncateWalAfterIntegrityCheck } from "./wal-truncate";
 
 /**
  * Periodic integrity scheduler. Two probes run on independent timers:
@@ -223,6 +224,20 @@ export function startIntegrityScheduler(
  * returns `{ result: "ok", error: null }` because nothing is corrupt.
  */
 async function runCheckLocked(
+	dbOps: DatabaseOperations,
+	kind: "quick" | "full",
+): Promise<{ result: "ok" | "corrupt"; error: string | null; skipped?: true }> {
+	try {
+		return await runCheckAndRecord(dbOps, kind);
+	} finally {
+		// The worker held a read snapshot for the whole check, which keeps the
+		// WAL from being reset; trim it now rather than at the next periodic
+		// tick. Non-blocking and never throws (see wal-truncate.ts).
+		truncateWalAfterIntegrityCheck(dbOps);
+	}
+}
+
+async function runCheckAndRecord(
 	dbOps: DatabaseOperations,
 	kind: "quick" | "full",
 ): Promise<{ result: "ok" | "corrupt"; error: string | null; skipped?: true }> {

@@ -114,6 +114,11 @@ export {
 } from "./response-handler";
 export type { ProxyRequest, ProxyResponse } from "./types";
 export type { UsageCollectorHealth } from "./usage-collector";
+export {
+	startWalTruncateJob,
+	truncateWalAfterIntegrityCheck,
+	truncateWalQuietly,
+} from "./wal-truncate";
 export type {
 	ChunkMessage,
 	ControlMessage,

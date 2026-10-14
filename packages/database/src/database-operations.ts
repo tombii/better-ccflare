@@ -66,7 +66,86 @@ export interface DatabaseConfig {
 	retry?: DatabaseRetryConfig;
 	/** Page size in bytes - default 2048 (2KB), recommend 4096 (4KB) for better memory efficiency */
 	pageSize?: number;
+	/**
+	 * `PRAGMA journal_size_limit` in bytes: the size the -wal file is trimmed
+	 * back to whenever SQLite resets the WAL. Undefined leaves SQLite's
+	 * default (no limit). Defaults to `CCFLARE_WAL_SIZE_LIMIT_BYTES` /
+	 * 64 MiB — see `resolveWalSizeLimitBytes()`.
+	 */
+	journalSizeLimitBytes?: number;
 }
+
+/** Default `journal_size_limit` for the main SQLite connection (64 MiB). */
+export const DEFAULT_WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Resolve the main connection's `journal_size_limit` from
+ * `CCFLARE_WAL_SIZE_LIMIT_BYTES`: unset/empty → 64 MiB; positive integer →
+ * that many bytes; `0` → `undefined` (don't issue the PRAGMA, keep SQLite's
+ * "no limit" default); anything else → warn + default.
+ */
+export function resolveWalSizeLimitBytes(
+	raw: string | undefined = process.env.CCFLARE_WAL_SIZE_LIMIT_BYTES,
+): number | undefined {
+	if (raw === undefined || raw.trim() === "") {
+		return DEFAULT_WAL_SIZE_LIMIT_BYTES;
+	}
+	const parsed = Number(raw);
+	if (!Number.isInteger(parsed) || parsed < 0) {
+		console.warn(
+			`Invalid CCFLARE_WAL_SIZE_LIMIT_BYTES="${raw}", using default ${DEFAULT_WAL_SIZE_LIMIT_BYTES}`,
+		);
+		return DEFAULT_WAL_SIZE_LIMIT_BYTES;
+	}
+	if (parsed === 0) return undefined;
+	return parsed;
+}
+
+/** Default interval for the periodic `wal_checkpoint(TRUNCATE)` (minutes). */
+export const DEFAULT_WAL_TRUNCATE_INTERVAL_MINUTES = 10;
+
+/**
+ * Resolve the periodic `wal_checkpoint(TRUNCATE)` interval from
+ * `CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES`: unset/empty → 10; positive
+ * integer → that many minutes; `0` → `null` (disabled, including the
+ * checkpoint after integrity checks); anything else → warn + default.
+ */
+export function resolveWalTruncateIntervalMinutes(
+	raw: string | undefined = process.env.CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES,
+): number | null {
+	if (raw === undefined || raw.trim() === "") {
+		return DEFAULT_WAL_TRUNCATE_INTERVAL_MINUTES;
+	}
+	const parsed = Number(raw);
+	if (!Number.isInteger(parsed) || parsed < 0) {
+		console.warn(
+			`Invalid CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES="${raw}", using default ${DEFAULT_WAL_TRUNCATE_INTERVAL_MINUTES}`,
+		);
+		return DEFAULT_WAL_TRUNCATE_INTERVAL_MINUTES;
+	}
+	if (parsed === 0) return null;
+	return parsed;
+}
+
+/** Outcome of {@link DatabaseOperations.truncateWal}. */
+export type WalTruncateResult =
+	| {
+			/** True when the checkpoint could not complete (a reader or writer
+			 *  held the WAL); the -wal file is left as is until the next try. */
+			busy: boolean;
+			/** WAL frames at checkpoint time (`-1` if not in WAL mode). */
+			log: number;
+			/** WAL frames copied back into the database file. */
+			checkpointed: number;
+			error?: undefined;
+	  }
+	| {
+			/** SQLITE_BUSY / SQLITE_LOCKED raised as an exception. */
+			busy: true;
+			log: -1;
+			checkpointed: -1;
+			error: string;
+	  };
 
 export interface DatabaseRetryConfig {
 	/** Maximum number of retry attempts for database operations */
@@ -178,6 +257,16 @@ function configureSqlite(db: Database, config: DatabaseConfig): void {
 		// Add checkpoint interval for WAL mode (1000 pages = ~4MB with 4KB pages)
 		// Higher threshold reduces checkpoint frequency for better throughput under high traffic
 		db.run("PRAGMA wal_autocheckpoint = 1000");
+
+		// Trim the -wal file back to this size whenever the WAL is reset.
+		// Without a limit the file stays at its high-water mark indefinitely:
+		// a long-lived reader (e.g. a scheduled integrity check on a multi-GB
+		// DB) stops checkpoints from resetting the WAL, it grows, and the disk
+		// space is never given back. That grows the data dir and, in a
+		// memory-limited container, the page cache charged to the cgroup.
+		if (config.journalSizeLimitBytes !== undefined) {
+			db.run(`PRAGMA journal_size_limit = ${config.journalSizeLimitBytes}`);
+		}
 	} catch (error) {
 		console.error("Database configuration failed:", error);
 		throw new Error(`Failed to configure SQLite database: ${error}`);
@@ -334,6 +423,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			synchronous: "FULL",
 			mmapSize: 0,
 			pageSize: 2048,
+			journalSizeLimitBytes: resolveWalSizeLimitBytes(),
 			...dbConfig,
 		};
 
@@ -1618,6 +1708,48 @@ OAuth tokens will need to be re-authenticated.
 
 	async dispose(): Promise<void> {
 		await this.close();
+	}
+
+	/**
+	 * Run `PRAGMA wal_checkpoint(TRUNCATE)` on the main connection without
+	 * blocking: copy the WAL back into the database and truncate the -wal
+	 * file to zero bytes. SQLite only; returns `null` for PostgreSQL.
+	 *
+	 * `busy_timeout` is set to 0 for the call so that, if another connection
+	 * (a reader, the vacuum/integrity workers, a second process) is holding
+	 * the WAL, SQLite returns busy straight away instead of spinning in the
+	 * busy handler on the event loop for up to `busyTimeoutMs`. A busy or
+	 * locked checkpoint is harmless — `wal_autocheckpoint` and the next call
+	 * will catch up — so it is reported in the result, never thrown.
+	 */
+	truncateWal(): WalTruncateResult | null {
+		const db = this.sqliteDb;
+		if (!db) return null;
+		const previous = db.query("PRAGMA busy_timeout").get() as {
+			timeout: number;
+		} | null;
+		try {
+			db.run("PRAGMA busy_timeout = 0");
+			const row = db.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as {
+				busy: number;
+				log: number;
+				checkpointed: number;
+			} | null;
+			return {
+				busy: (row?.busy ?? 0) !== 0,
+				log: row?.log ?? -1,
+				checkpointed: row?.checkpointed ?? -1,
+			};
+		} catch (error) {
+			return {
+				busy: true,
+				log: -1,
+				checkpointed: -1,
+				error: error instanceof Error ? error.message : String(error),
+			};
+		} finally {
+			db.run(`PRAGMA busy_timeout = ${previous?.timeout ?? 0}`);
+		}
 	}
 
 	// Optimize database periodically to maintain performance (SQLite only)
