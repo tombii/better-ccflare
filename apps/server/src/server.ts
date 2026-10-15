@@ -631,6 +631,112 @@ export function startApiKeyUsagePolling(
 	}
 }
 
+/**
+ * Dependencies for {@link createUsagePollingRestarter}.
+ *
+ * Everything the callback needs is injected rather than closed over. The
+ * callback used to be defined inline inside `startServer()`, which meant the
+ * production wiring — the only place an account added at runtime is actually
+ * handed to a poller — could not be exercised without booting a whole server.
+ * That is how PR #487 shipped with OpenRouter never polled while every
+ * helper-level test stayed green: the helpers were tested, the wiring that
+ * called them was not.
+ *
+ * `startRefreshBackedPolling` and `intervalMs` are injected (instead of the
+ * callback reaching for module-level `startUsagePollingWithRefresh` and
+ * `config.getUsagePollIntervalMs()`) so the factory is pure with respect to
+ * config and a test can drive it with mocks.
+ */
+export interface UsagePollingRestarterDeps {
+	serverId: string;
+	dbOps: DatabaseOperations;
+	usageCache: UsageCacheRegistrar & { stopPolling(accountId: string): void };
+	/** Starts refresh-backed polling; `startUsagePollingWithRefresh` at runtime. */
+	startRefreshBackedPolling: (account: Account, intervalMs: number) => void;
+	intervalMs: number;
+	log: Logger;
+}
+
+/**
+ * Build the `registerPollingRestarter` callback for one server.
+ *
+ * This is the callback every runtime account-add path reaches through
+ * `registerPollingRestarter`, so it must never throw: the caller is a
+ * best-effort hook that must not fail the HTTP response. Returns `true` when
+ * polling was actually registered, `false` otherwise (unknown account,
+ * unsupported provider, or missing credentials).
+ */
+export function createUsagePollingRestarter(
+	deps: UsagePollingRestarterDeps,
+): (accountId: string) => Promise<boolean> {
+	const {
+		serverId,
+		dbOps,
+		usageCache,
+		startRefreshBackedPolling,
+		intervalMs,
+		log,
+	} = deps;
+	return async (accountId: string) => {
+		const account = await dbOps.getAccount(accountId);
+		if (!account) {
+			log.warn(
+				`Cannot restart usage polling: account ${accountId} not found on ${serverId}`,
+			);
+			return false;
+		}
+		// API-key providers (Kilo, OpenRouter, NanoGPT, Zai, Minimax) authenticate
+		// with `api_key` alone, so they must be handled before the
+		// refresh-backed branch below: `supportsUsagePollingForAccount` excludes
+		// them by design, and even if it did not, the token check and the
+		// refresh-backed token provider both expect an access/refresh token.
+		if (isApiKeyUsagePollingProvider(account.provider)) {
+			usageCache.stopPolling(accountId);
+			const started = startApiKeyUsagePolling(
+				account,
+				usageCache,
+				intervalMs,
+				dbOps,
+				log,
+			);
+			if (started) {
+				log.info(
+					`Restarting usage polling for account ${account.name} on ${serverId}`,
+				);
+			} else {
+				// Debug, not warn: startApiKeyUsagePolling already warned about the
+				// missing API key, and the caller is a best-effort account-creation
+				// hook that must not fail the HTTP response.
+				log.debug(
+					`Cannot restart usage polling: account ${account.name} has no API key`,
+				);
+			}
+			return started;
+		}
+		if (!supportsUsagePollingForAccount(account)) {
+			// Debug, not warn: every account creation now asks to start polling,
+			// so this fires routinely for the many API-key providers that have
+			// no usage endpoint. That is the expected answer, not a problem.
+			log.debug(
+				`Cannot restart usage polling: account ${account.name} does not support usage polling (provider or custom endpoint)`,
+			);
+			return false;
+		}
+		if (!account.access_token && !account.refresh_token) {
+			log.warn(
+				`Cannot restart usage polling: account ${account.name} has no tokens`,
+			);
+			return false;
+		}
+		log.info(
+			`Restarting usage polling for account ${account.name} on ${serverId}`,
+		);
+		usageCache.stopPolling(accountId);
+		startRefreshBackedPolling(account, intervalMs);
+		return true;
+	};
+}
+
 // Helper function to resolve dashboard assets with fallback
 function resolveDashboardAsset(assetPath: string): string | null {
 	try {
@@ -1629,70 +1735,21 @@ export default async function startServer(options?: {
 		log.info(`Cleared refresh cache for account ${accountId} on ${serverId}`);
 	});
 
-	// Register this server's usage polling restart capability
-	registerPollingRestarter(serverId, async (accountId: string) => {
-		const account = await dbOps.getAccount(accountId);
-		if (!account) {
-			log.warn(
-				`Cannot restart usage polling: account ${accountId} not found on ${serverId}`,
-			);
-			return false;
-		}
-		// API-key providers (Kilo, OpenRouter, NanoGPT, Zai, Minimax) authenticate
-		// with `api_key` alone, so they must be handled before the
-		// refresh-backed branch below: `supportsUsagePollingForAccount` excludes
-		// them by design, and even if it did not, the token check and the
-		// refresh-backed token provider both expect an access/refresh token.
-		if (isApiKeyUsagePollingProvider(account.provider)) {
-			usageCache.stopPolling(accountId);
-			const started = startApiKeyUsagePolling(
-				account,
-				usageCache,
-				config.getUsagePollIntervalMs(),
-				dbOps,
-				log,
-			);
-			if (started) {
-				log.info(
-					`Restarting usage polling for account ${account.name} on ${serverId}`,
-				);
-			} else {
-				// Debug, not warn: startApiKeyUsagePolling already warned about the
-				// missing API key, and the caller is a best-effort account-creation
-				// hook that must not fail the HTTP response.
-				log.debug(
-					`Cannot restart usage polling: account ${account.name} has no API key`,
-				);
-			}
-			return started;
-		}
-		if (!supportsUsagePollingForAccount(account)) {
-			// Debug, not warn: every account creation now asks to start polling,
-			// so this fires routinely for the many API-key providers that have
-			// no usage endpoint. That is the expected answer, not a problem.
-			log.debug(
-				`Cannot restart usage polling: account ${account.name} does not support usage polling (provider or custom endpoint)`,
-			);
-			return false;
-		}
-		if (!account.access_token && !account.refresh_token) {
-			log.warn(
-				`Cannot restart usage polling: account ${account.name} has no tokens`,
-			);
-			return false;
-		}
-		log.info(
-			`Restarting usage polling for account ${account.name} on ${serverId}`,
-		);
-		usageCache.stopPolling(accountId);
-		startUsagePollingWithRefresh(
-			account,
-			proxyContext,
-			0,
-			config.getUsagePollIntervalMs(),
-		);
-		return true;
-	});
+	// Register this server's usage polling restart capability. The callback body
+	// lives in createUsagePollingRestarter so the real runtime wiring — not just
+	// the helpers it calls — is exercised by tests.
+	registerPollingRestarter(
+		serverId,
+		createUsagePollingRestarter({
+			serverId,
+			dbOps,
+			usageCache,
+			log,
+			intervalMs: config.getUsagePollIntervalMs(),
+			startRefreshBackedPolling: (account, intervalMs) =>
+				startUsagePollingWithRefresh(account, proxyContext, 0, intervalMs),
+		}),
+	);
 
 	// Register this server's Codex usage refresher (the dashboard refresh
 	// button). It reads the free ChatGPT usage endpoint first and falls back
