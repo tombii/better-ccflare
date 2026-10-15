@@ -9,11 +9,15 @@ import {
 	applyUsagePauseThresholds,
 	bootstrapMinimaxUsagePolling,
 	createRefreshBackedTokenProvider,
+	createUsagePollingRestarter,
 	createUsageSnapshotRecorder,
+	isApiKeyUsagePollingProvider,
 	registerMinimaxUsagePolling,
+	startApiKeyUsagePolling,
 	supportsRefreshBackedUsagePolling,
 	supportsUsagePollingForAccount,
 	type UsageCacheRegistrar,
+	type UsagePollingRestarterDeps,
 } from "./server";
 
 describe("supportsRefreshBackedUsagePolling", () => {
@@ -1184,6 +1188,31 @@ describe("startServer() wiring guards", () => {
 		// warnings — not omitted or a string literal.
 		expect(argList[4]).toBe("log");
 	});
+
+	// Same structural guard, for the two PR #487 wiring points. The reviewer
+	// finding on that PR was that the factory tests and the helper tests can
+	// all stay green while the call sites in startServer() are deleted — which
+	// is precisely how the original OpenRouter gap shipped (a passing fetcher
+	// test plus no server-side registration). These guards go RED the moment
+	// either invocation leaves startServer(), even with every helper intact.
+	it("registers the usage-polling restarter via createUsagePollingRestarter inside startServer()", () => {
+		const body = readStartServerBody();
+		expect(body).toMatch(/registerPollingRestarter\s*\(/);
+		// Require the factory call, not just the register call: passing a bare
+		// inline arrow here would compile while bypassing the tested factory.
+		expect(body).toMatch(/createUsagePollingRestarter\s*\(/);
+	});
+
+	it("bootstraps API-key provider polling via startApiKeyUsagePolling inside startServer()", () => {
+		const body = readStartServerBody();
+		// Without this, an OpenRouter account present at boot is never polled
+		// until something else registers it — the exact reported symptom.
+		expect(body).toMatch(/startApiKeyUsagePolling\s*\(/);
+		// The boot loop must iterate the shared provider list rather than
+		// hardcoding a single provider, or adding a provider to the list would
+		// silently not take effect at boot.
+		expect(body).toMatch(/API_KEY_USAGE_POLLING_PROVIDERS/);
+	});
 });
 
 describe("createRefreshBackedTokenProvider", () => {
@@ -1500,3 +1529,402 @@ describe("applyUsagePauseThresholds — switched-off windows", () => {
 
 // shouldRunVacuumCatchUp() moved to ./vacuum-scheduler.test.ts alongside the
 // module it now lives in (internal-5).
+
+describe("isApiKeyUsagePollingProvider", () => {
+	it("accepts every API-key usage-polling provider", () => {
+		expect(isApiKeyUsagePollingProvider("kilo")).toBe(true);
+		expect(isApiKeyUsagePollingProvider("openrouter")).toBe(true);
+		expect(isApiKeyUsagePollingProvider("nanogpt")).toBe(true);
+		expect(isApiKeyUsagePollingProvider("zai")).toBe(true);
+		expect(isApiKeyUsagePollingProvider("minimax")).toBe(true);
+	});
+
+	it("rejects refresh-backed providers and everything that is not a provider", () => {
+		// anthropic/codex/xai are refresh-backed: their accounts carry
+		// access/refresh tokens, not an api_key, and the restarter handles them
+		// on the other branch.
+		expect(isApiKeyUsagePollingProvider("anthropic")).toBe(false);
+		expect(isApiKeyUsagePollingProvider("codex")).toBe(false);
+		expect(isApiKeyUsagePollingProvider("xai")).toBe(false);
+		expect(isApiKeyUsagePollingProvider("qwen")).toBe(false);
+		expect(isApiKeyUsagePollingProvider("alibaba-coding-plan")).toBe(false);
+		expect(isApiKeyUsagePollingProvider(null)).toBe(false);
+		expect(isApiKeyUsagePollingProvider(undefined)).toBe(false);
+		expect(isApiKeyUsagePollingProvider("")).toBe(false);
+	});
+});
+
+// Shared wiring for API-key providers (Kilo, OpenRouter, NanoGPT, Zai). The
+// boot bootstrap loop in startServer() and the runtime polling restarter both
+// call this, so these tests pin the per-provider positional contract of
+// startPolling — the one thing that silently regresses if the helper is
+// rewritten without matching the original inline blocks.
+describe("startApiKeyUsagePolling", () => {
+	function makeAccount(
+		overrides: Partial<{
+			id: string;
+			name: string;
+			provider: string;
+			api_key: string | null;
+			custom_endpoint: string | null;
+		}> = {},
+	) {
+		return {
+			id: "acc-1",
+			name: "api-key-account-1",
+			provider: "openrouter",
+			api_key: "test-key",
+			custom_endpoint: null,
+			...overrides,
+		} as unknown as Parameters<typeof startApiKeyUsagePolling>[0];
+	}
+
+	function makeRegistrar() {
+		const startPolling = mock(
+			(
+				_accountId: string,
+				_tokenProvider: () => Promise<string>,
+				_provider: string,
+				_intervalMs: number,
+				..._rest: unknown[]
+			) => {},
+		);
+		return {
+			registrar: { startPolling } as unknown as UsageCacheRegistrar,
+			startPolling,
+		};
+	}
+
+	function makeDbOps(): DatabaseOperations {
+		return {
+			recordUsageSnapshot: async () => {},
+			getAccount: async () => null,
+			resetAccountSession: async () => {},
+		} as unknown as DatabaseOperations;
+	}
+
+	it("does not register polling for a refresh-backed provider", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ provider: "anthropic", api_key: null }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(false);
+		expect(startPolling).toHaveBeenCalledTimes(0);
+	});
+
+	it("does not register polling when the account has no API key", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ provider: "openrouter", api_key: null }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(false);
+		expect(startPolling).toHaveBeenCalledTimes(0);
+	});
+
+	it("registers OpenRouter polling without an onSnapshot callback", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ id: "or-1", name: "openrouter-1", provider: "openrouter" }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		expect(startPolling).toHaveBeenCalledTimes(1);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[0]).toBe("or-1");
+		expect(call?.[2]).toBe("openrouter");
+		expect(call?.[3]).toBe(30_000);
+		// OpenRouter is a credit-balance provider: the balance comes from its own
+		// key endpoint, so there is no window history to snapshot. Arg 9
+		// (onSnapshot) must stay undefined or the dashboard would fill with
+		// meaningless rows.
+		expect(call?.[8]).toBeUndefined();
+	});
+
+	it("registers Kilo polling without an onSnapshot callback", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ id: "kilo-1", name: "kilo-1", provider: "kilo" }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		expect(startPolling).toHaveBeenCalledTimes(1);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[0]).toBe("kilo-1");
+		expect(call?.[2]).toBe("kilo");
+		expect(call?.[3]).toBe(30_000);
+		expect(call?.[8]).toBeUndefined();
+	});
+
+	it("passes NanoGPT's custom endpoint (arg 5) and records snapshots (arg 9)", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({
+				id: "ng-1",
+				name: "nanogpt-1",
+				provider: "nanogpt",
+				custom_endpoint: "https://nano-gpt.example/api",
+			}),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[2]).toBe("nanogpt");
+		// NanoGPT's usage endpoint is relative to the account's custom endpoint.
+		expect(call?.[4]).toBe("https://nano-gpt.example/api");
+		expect(typeof call?.[8]).toBe("function");
+	});
+
+	it("passes Zai an onWindowReset (arg 6) and an onSnapshot (arg 9)", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ id: "zai-1", name: "zai-1", provider: "zai" }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[2]).toBe("zai");
+		// Zai resets its session when the quota window rolls over, and records
+		// snapshots so applyUsagePauseThresholds can act on them.
+		expect(typeof call?.[5]).toBe("function");
+		expect(typeof call?.[8]).toBe("function");
+	});
+
+	it("the registered token provider returns the account's API key", async () => {
+		const { registrar, startPolling } = makeRegistrar();
+		startApiKeyUsagePolling(
+			makeAccount({ provider: "openrouter", api_key: "secret-key" }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		const tokenProvider = startPolling.mock.calls[0]?.[1];
+		expect(await tokenProvider()).toBe("secret-key");
+	});
+
+	it("delegates Minimax to the Minimax wiring, registering exactly once", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ id: "mm-1", name: "minimax-1", provider: "minimax" }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		expect(startPolling).toHaveBeenCalledTimes(1);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[0]).toBe("mm-1");
+		expect(call?.[2]).toBe("minimax");
+		expect(typeof call?.[8]).toBe("function");
+	});
+});
+
+// The regression these tests exist for: the `registerPollingRestarter` callback
+// is the ONLY path that registers polling for an account added at runtime, and
+// it used to be an inline closure inside startServer() that no test could reach.
+// PR #487 shipped with OpenRouter never polled — the helpers below it were all
+// individually tested and green, but nothing ran the wiring that calls them.
+// These tests drive the real callback returned by createUsagePollingRestarter,
+// so deleting the API-key branch inside it goes RED.
+describe("createUsagePollingRestarter", () => {
+	const INTERVAL_MS = 90_000;
+
+	function makeAccount(overrides: Partial<Account> = {}): Account {
+		return {
+			id: "acc-1",
+			name: "account-1",
+			provider: "openrouter",
+			api_key: "sk-test",
+			access_token: null,
+			refresh_token: null,
+			custom_endpoint: null,
+			...overrides,
+		} as unknown as Account;
+	}
+
+	function makeHarness(account: Account | null) {
+		const startPolling = mock((..._args: unknown[]) => {});
+		const stopPolling = mock((_accountId: string) => {});
+		const startRefreshBackedPolling = mock(
+			(_account: Account, _intervalMs: number) => {},
+		);
+		// A mock logger keeps the callback's log lines out of the test output and
+		// lets a case assert on the level chosen (info vs debug vs warn) if needed.
+		const log = {
+			info: mock((..._args: unknown[]) => {}),
+			warn: mock((..._args: unknown[]) => {}),
+			debug: mock((..._args: unknown[]) => {}),
+		};
+		const dbOps = {
+			getAccount: async () => account,
+			recordUsageSnapshot: async () => {},
+			resetAccountSession: async () => {},
+		} as unknown as DatabaseOperations;
+		const restarter = createUsagePollingRestarter({
+			serverId: "server-8081",
+			dbOps,
+			usageCache: {
+				startPolling,
+				stopPolling,
+			} as unknown as UsagePollingRestarterDeps["usageCache"],
+			startRefreshBackedPolling,
+			intervalMs: INTERVAL_MS,
+			log: log as unknown as Logger,
+		});
+		return {
+			restarter,
+			startPolling,
+			stopPolling,
+			startRefreshBackedPolling,
+			log,
+		};
+	}
+
+	it("registers polling for a runtime-added OpenRouter account (PR #487 regression)", async () => {
+		const account = makeAccount({
+			id: "or-1",
+			name: "openrouter-1",
+			provider: "openrouter",
+			api_key: "sk-test",
+		});
+		const { restarter, startPolling } = makeHarness(account);
+
+		const result = await restarter("or-1");
+
+		expect(result).toBe(true);
+		expect(startPolling).toHaveBeenCalledTimes(1);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[0]).toBe("or-1");
+		expect(call?.[2]).toBe("openrouter");
+		expect(call?.[3]).toBe(INTERVAL_MS);
+		const tokenProvider = call?.[1] as () => Promise<string>;
+		expect(await tokenProvider()).toBe("sk-test");
+	});
+
+	it("registers polling for a runtime-added Kilo account", async () => {
+		const account = makeAccount({
+			id: "kilo-1",
+			name: "kilo-1",
+			provider: "kilo",
+			api_key: "kilo-key",
+		});
+		const { restarter, startPolling } = makeHarness(account);
+
+		const result = await restarter("kilo-1");
+
+		expect(result).toBe(true);
+		expect(startPolling).toHaveBeenCalledTimes(1);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[0]).toBe("kilo-1");
+		expect(call?.[2]).toBe("kilo");
+		const tokenProvider = call?.[1] as () => Promise<string>;
+		expect(await tokenProvider()).toBe("kilo-key");
+	});
+
+	it("returns false and registers nothing when an API-key account has no key", async () => {
+		const account = makeAccount({
+			id: "or-2",
+			name: "openrouter-2",
+			provider: "openrouter",
+			api_key: null,
+		});
+		const { restarter, startPolling } = makeHarness(account);
+
+		const result = await restarter("or-2");
+
+		expect(result).toBe(false);
+		expect(startPolling).toHaveBeenCalledTimes(0);
+	});
+
+	it("starts refresh-backed polling for an anthropic account with a token", async () => {
+		const account = makeAccount({
+			id: "an-1",
+			name: "primary",
+			provider: "anthropic",
+			api_key: null,
+			access_token: "access-token",
+		});
+		const { restarter, stopPolling, startRefreshBackedPolling } =
+			makeHarness(account);
+
+		const result = await restarter("an-1");
+
+		expect(result).toBe(true);
+		// The refresh-backed path stops any stale poller first, then hands the
+		// account to startUsagePollingWithRefresh via the injected starter.
+		expect(stopPolling).toHaveBeenCalledWith("an-1");
+		expect(startRefreshBackedPolling).toHaveBeenCalledTimes(1);
+		expect(startRefreshBackedPolling.mock.calls[0]?.[0]).toBe(account);
+		expect(startRefreshBackedPolling.mock.calls[0]?.[1]).toBe(INTERVAL_MS);
+	});
+
+	it("returns false for a non-pollable provider (qwen)", async () => {
+		const account = makeAccount({
+			id: "qw-1",
+			name: "qwen-1",
+			provider: "qwen",
+			api_key: "sk-qwen",
+		});
+		const { restarter, startPolling, startRefreshBackedPolling } =
+			makeHarness(account);
+
+		const result = await restarter("qw-1");
+
+		expect(result).toBe(false);
+		expect(startPolling).toHaveBeenCalledTimes(0);
+		expect(startRefreshBackedPolling).toHaveBeenCalledTimes(0);
+	});
+
+	it("returns false for an unknown account", async () => {
+		const { restarter, startPolling, startRefreshBackedPolling, log } =
+			makeHarness(null);
+
+		const result = await restarter("missing-1");
+
+		expect(result).toBe(false);
+		expect(startPolling).toHaveBeenCalledTimes(0);
+		expect(startRefreshBackedPolling).toHaveBeenCalledTimes(0);
+		expect(log.warn).toHaveBeenCalledTimes(1);
+	});
+
+	it("returns false for a refresh-backed account with no tokens", async () => {
+		const account = makeAccount({
+			id: "an-2",
+			name: "no-tokens",
+			provider: "anthropic",
+			api_key: null,
+			access_token: null,
+			refresh_token: null,
+		});
+		const { restarter, startRefreshBackedPolling, stopPolling } =
+			makeHarness(account);
+
+		const result = await restarter("an-2");
+
+		expect(result).toBe(false);
+		expect(startRefreshBackedPolling).toHaveBeenCalledTimes(0);
+		// No poller was started, so nothing should have been torn down either.
+		expect(stopPolling).toHaveBeenCalledTimes(0);
+	});
+});
