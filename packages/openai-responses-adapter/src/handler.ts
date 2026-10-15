@@ -482,6 +482,21 @@ export async function handleResponsesRequest(
 			{ status: 400, headers: { "Content-Type": "application/json" } },
 		);
 	}
+	// `model` is forwarded to mapGptModelToClaudeFamily(), which calls
+	// toLowerCase() on it — a non-string value would throw out of the handler
+	// and surface as a 500 instead of a client error.
+	if (typeof body.model !== "string") {
+		return new Response(
+			JSON.stringify({
+				type: "error",
+				error: {
+					type: "invalid_request_error",
+					message: "model must be a string",
+				},
+			}),
+			{ status: 400, headers: { "Content-Type": "application/json" } },
+		);
+	}
 	if (typeof body.input === "string") {
 		body = {
 			...body,

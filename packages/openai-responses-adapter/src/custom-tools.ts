@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ResponsesRequest, ResponsesTool } from "./types";
+import type { ResponseItem, ResponsesRequest, ResponsesTool } from "./types";
 
 /** Collect Responses Lite tool declarations without changing native input. */
 export function getRequestTools(
@@ -7,7 +7,17 @@ export function getRequestTools(
 ): ResponsesTool[] {
 	const declarations: ResponsesTool[] = [];
 	if (Array.isArray(req.input)) {
-		for (const item of req.input) {
+		for (const rawItem of req.input as unknown[]) {
+			// `input` is untrusted client JSON: skip anything that is not a plain
+			// object before reading `.type`.
+			if (
+				rawItem === null ||
+				typeof rawItem !== "object" ||
+				Array.isArray(rawItem)
+			) {
+				continue;
+			}
+			const item = rawItem as ResponseItem;
 			if (item.type === "additional_tools" && Array.isArray(item.tools)) {
 				declarations.push(...item.tools);
 			}
@@ -24,10 +34,20 @@ function flattenTools(tools: ResponsesTool[]): ResponsesTool[] {
 		namespace?: string,
 		description?: string,
 	): void => {
-		for (const tool of declarations) {
+		for (const rawTool of declarations as unknown[]) {
+			// Tool declarations are untrusted client JSON as well, so a null,
+			// primitive or array entry must not be dereferenced.
+			if (
+				rawTool === null ||
+				typeof rawTool !== "object" ||
+				Array.isArray(rawTool)
+			) {
+				continue;
+			}
+			const tool = rawTool as ResponsesTool;
 			if (tool.type === "namespace") {
 				visit(
-					tool.tools,
+					Array.isArray(tool.tools) ? tool.tools : [],
 					namespace ? `${namespace}.${tool.name}` : tool.name,
 					[description, tool.description].filter(Boolean).join("\n\n"),
 				);
@@ -60,12 +80,17 @@ export function getTranslatedToolName(
 	name: string,
 	namespace?: string,
 ): string {
-	if (!namespace) return name;
+	// `name` comes from untrusted client JSON and is not guaranteed to be a
+	// string; the namespace branch below would otherwise throw on `.replace`.
+	// Only a string is used verbatim — anything else degrades to an empty name
+	// rather than being coerced, so a hostile toString cannot throw either.
+	const safeName = typeof name === "string" ? name : "";
+	if (!namespace) return safeName;
 	const digest = createHash("sha256")
-		.update(JSON.stringify([namespace, name]))
+		.update(JSON.stringify([namespace, safeName]))
 		.digest("hex")
 		.slice(0, 24);
-	return `ns_${digest}_${name.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 36)}`;
+	return `ns_${digest}_${safeName.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 36)}`;
 }
 
 export function getResponseToolIdentity(

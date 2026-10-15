@@ -109,6 +109,14 @@ function translateContentItem(c: {
 	image_url?: string;
 	file_id?: string;
 }): AnthropicTextContent | AnthropicImageContent {
+	// Parts come from untrusted client JSON and are not guaranteed to be plain
+	// objects; reading `.type` off a null, primitive or array part would throw
+	// out of the handler. Fall back to empty text, as the unknown-type path
+	// below does.
+	if (c === null || typeof c !== "object" || Array.isArray(c)) {
+		return { type: "text", text: "" };
+	}
+
 	if (c.type === "input_text" || c.type === "output_text") {
 		return { type: "text", text: c.text ?? "" };
 	}
@@ -169,12 +177,37 @@ export function translateRequestToAnthropic(
 	const messages: AnthropicMessage[] = [];
 	const developerBlocks: string[] = [];
 
-	for (const item of req.input) {
+	for (const rawItem of req.input as unknown[]) {
+		// `input` is untrusted client JSON, so an item is only safe to read once
+		// it is known to be a plain object — reading `.type` off a null,
+		// primitive or array item would throw out of the handler as a 500.
+		if (
+			rawItem === null ||
+			typeof rawItem !== "object" ||
+			Array.isArray(rawItem)
+		) {
+			continue;
+		}
+		const item = rawItem as ResponseItem;
+		// A present-but-non-string `type` matches no branch below, so it would
+		// fall through silently; skip it here rather than coercing it to a
+		// string for the comparisons.
+		if (item.type !== undefined && typeof item.type !== "string") {
+			continue;
+		}
+
 		if (item.type === "message" || item.type === undefined) {
+			const rawContent: unknown = item.content;
+			// A message whose content is neither the string shorthand nor a
+			// parts array has nothing to translate; skip it rather than
+			// emitting an empty-content message.
+			if (typeof rawContent !== "string" && !Array.isArray(rawContent)) {
+				continue;
+			}
 			const content: AnthropicContent[] =
-				typeof item.content === "string"
-					? [{ type: "text", text: item.content }]
-					: item.content.map((c) => translateContentItem(c));
+				typeof rawContent === "string"
+					? [{ type: "text", text: rawContent }]
+					: rawContent.map((c) => translateContentItem(c));
 			// developer role is used by Codex CLI, and system role by Codex
 			// VS Code clients, for system-level instructions. Anthropic
 			// /v1/messages does not accept either role in the messages array
@@ -221,7 +254,9 @@ export function translateRequestToAnthropic(
 						content:
 							typeof item.output === "string"
 								? item.output
-								: item.output.map((c) => translateContentItem(c)),
+								: Array.isArray(item.output)
+									? item.output.map((c) => translateContentItem(c))
+									: "",
 					},
 				],
 			});
