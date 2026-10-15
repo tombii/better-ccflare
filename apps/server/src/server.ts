@@ -465,6 +465,172 @@ export function bootstrapMinimaxUsagePolling(
 	return registered;
 }
 
+/**
+ * Providers whose usage is polled with a static API key rather than an
+ * OAuth/refresh token.
+ *
+ * Every entry here authenticates with `api_key` alone — there is no
+ * `access_token`/`refresh_token` to rotate — which is exactly why
+ * {@link supportsRefreshBackedUsagePolling} excludes them and why the
+ * refresh-backed restarter path below cannot serve them. Keep this list in
+ * sync with the `supportsUsageTracking: true` entries in
+ * `provider-config.ts` that are not refresh-backed (anthropic/codex/xai).
+ */
+const API_KEY_USAGE_POLLING_PROVIDERS = [
+	"kilo",
+	"openrouter",
+	"nanogpt",
+	"zai",
+	"minimax",
+] as const;
+
+/**
+ * Human-readable provider labels for usage-polling log lines. Mirrors the
+ * wording of the per-provider bootstrap blocks in `startServer()`.
+ */
+const API_KEY_USAGE_POLLING_LABELS: Record<string, string> = {
+	kilo: "Kilo Gateway",
+	openrouter: "OpenRouter",
+	nanogpt: "NanoGPT",
+	zai: "Zai",
+	minimax: "Minimax",
+};
+
+/**
+ * Whether an account's usage is polled with a static API key.
+ *
+ * Deliberately separate from {@link supportsUsagePollingForAccount}: that
+ * function gates the refresh-backed bootstrap filter, and widening it would
+ * pull API-key-only accounts into `refreshBackedUsageAccounts`, which expects
+ * `access_token`/`refresh_token` and would log spurious "no token, skipping"
+ * warnings for them.
+ */
+export function isApiKeyUsagePollingProvider(
+	provider: string | null | undefined,
+): boolean {
+	return (
+		typeof provider === "string" &&
+		(API_KEY_USAGE_POLLING_PROVIDERS as readonly string[]).includes(provider)
+	);
+}
+
+/**
+ * Register usage polling for a single API-key provider account.
+ *
+ * Extracted so the boot bootstrap in `startServer()` and the runtime
+ * `registerPollingRestarter` callback share ONE wiring per provider. They used
+ * to be independent: the bootstrap blocks covered accounts present at boot,
+ * while the restarter only handled refresh-backed providers, so an account
+ * added at runtime was never polled until the process restarted. OpenRouter
+ * had no bootstrap block at all and therefore no path to polling whatsoever —
+ * its credit balance never appeared on the dashboard.
+ *
+ * Per-provider wiring mirrors the original bootstrap blocks exactly:
+ * - Kilo / OpenRouter are credit-balance providers with no window to reset and
+ *   no snapshot history, so they get no callbacks.
+ * - NanoGPT passes its custom endpoint (its usage API is endpoint-relative)
+ *   and records snapshots.
+ * - Zai resets the account session on window rollover and records snapshots.
+ * - Minimax delegates to {@link registerMinimaxUsagePolling}, which owns the
+ *   same API-key contract and is unit-tested directly.
+ *
+ * Returns true if polling was registered, false if the provider is not
+ * API-key pollable or the account has no API key.
+ */
+export function startApiKeyUsagePolling(
+	account: Account,
+	usageCache: UsageCacheRegistrar,
+	intervalMs: number,
+	dbOps: DatabaseOperations,
+	logger?: Logger,
+): boolean {
+	if (!isApiKeyUsagePollingProvider(account.provider)) return false;
+
+	if (!account.api_key) {
+		const label =
+			API_KEY_USAGE_POLLING_LABELS[account.provider] ?? account.provider;
+		logger?.warn(
+			`${label} account ${account.name ?? account.id} has no API key, skipping usage polling`,
+		);
+		return false;
+	}
+
+	// Minimax owns an extracted, directly-tested helper; delegate rather than
+	// duplicating its wiring here.
+	if (account.provider === "minimax") {
+		return registerMinimaxUsagePolling(
+			account,
+			usageCache,
+			intervalMs,
+			dbOps,
+			logger,
+		);
+	}
+
+	// Read the key lazily so a rotated key is picked up on the next poll
+	// without restarting the poller, matching the bootstrap blocks.
+	const apiKeyProvider = async () => account.api_key || "";
+	const snapshotRecorder = createUsageSnapshotRecorder(
+		account,
+		dbOps,
+		logger ?? new Logger("ApiKeyUsagePolling"),
+	);
+
+	switch (account.provider) {
+		case "kilo":
+		case "openrouter":
+			// Credit-balance providers: the balance is read from the provider's
+			// own account/key endpoint, so there is no window reset to react to
+			// and no window snapshot to record.
+			usageCache.startPolling(
+				account.id,
+				apiKeyProvider,
+				account.provider,
+				intervalMs,
+			);
+			return true;
+
+		case "nanogpt":
+			usageCache.startPolling(
+				account.id,
+				apiKeyProvider,
+				account.provider,
+				intervalMs,
+				account.custom_endpoint,
+				undefined,
+				undefined,
+				undefined,
+				snapshotRecorder,
+			);
+			return true;
+
+		case "zai":
+			usageCache.startPolling(
+				account.id,
+				apiKeyProvider,
+				account.provider,
+				intervalMs,
+				undefined, // customEndpoint
+				(accountId) => {
+					dbOps
+						.resetAccountSession(accountId, Date.now())
+						.catch((err) =>
+							logger?.warn(
+								`Failed to reset session for Zai account ${accountId} on window reset: ${err}`,
+							),
+						);
+				},
+				undefined,
+				undefined,
+				snapshotRecorder,
+			);
+			return true;
+
+		default:
+			return false;
+	}
+}
+
 // Helper function to resolve dashboard assets with fallback
 function resolveDashboardAsset(assetPath: string): string | null {
 	try {
@@ -1472,6 +1638,34 @@ export default async function startServer(options?: {
 			);
 			return false;
 		}
+		// API-key providers (Kilo, OpenRouter, NanoGPT, Zai, Minimax) authenticate
+		// with `api_key` alone, so they must be handled before the
+		// refresh-backed branch below: `supportsUsagePollingForAccount` excludes
+		// them by design, and even if it did not, the token check and the
+		// refresh-backed token provider both expect an access/refresh token.
+		if (isApiKeyUsagePollingProvider(account.provider)) {
+			usageCache.stopPolling(accountId);
+			const started = startApiKeyUsagePolling(
+				account,
+				usageCache,
+				config.getUsagePollIntervalMs(),
+				dbOps,
+				log,
+			);
+			if (started) {
+				log.info(
+					`Restarting usage polling for account ${account.name} on ${serverId}`,
+				);
+			} else {
+				// Debug, not warn: startApiKeyUsagePolling already warned about the
+				// missing API key, and the caller is a best-effort account-creation
+				// hook that must not fail the HTTP response.
+				log.debug(
+					`Cannot restart usage polling: account ${account.name} has no API key`,
+				);
+			}
+			return started;
+		}
 		if (!supportsUsagePollingForAccount(account)) {
 			// Debug, not warn: every account creation now asks to start polling,
 			// so this fires routinely for the many API-key providers that have
@@ -1971,123 +2165,44 @@ Available endpoints:
 		);
 	}
 
-	// Start usage polling for NanoGPT accounts (PayG with optional subscription tracking)
-	const nanogptAccounts = accounts.filter((a) => a.provider === "nanogpt");
-	if (nanogptAccounts.length > 0) {
+	// Start usage polling for API-key providers (Kilo Gateway, OpenRouter,
+	// NanoGPT, Zai) through the shared helper, which owns each provider's
+	// wiring and is the same entry point the runtime polling restarter uses.
+	// Sharing it means an account added at runtime is registered exactly like
+	// one present at boot; previously OpenRouter had no bootstrap block at all,
+	// so its credit balance never appeared on the dashboard.
+	//
+	// Minimax is deliberately excluded here: it keeps its dedicated, directly
+	// tested bootstrap block below at boot, and the shared helper covers it on
+	// the runtime restarter path, so the provider is never registered twice.
+	const apiKeyPollingProviders = API_KEY_USAGE_POLLING_PROVIDERS.filter(
+		(provider) => provider !== "minimax",
+	);
+	for (const provider of apiKeyPollingProviders) {
+		const label = API_KEY_USAGE_POLLING_LABELS[provider] ?? provider;
+		const providerAccounts = accounts.filter((a) => a.provider === provider);
+		if (providerAccounts.length === 0) {
+			log.info(`No ${label} accounts found, usage polling will not start`);
+			continue;
+		}
 		log.info(
-			`Found ${nanogptAccounts.length} NanoGPT accounts, starting usage polling...`,
+			`Found ${providerAccounts.length} ${label} accounts, starting usage polling...`,
 		);
-		for (const account of nanogptAccounts) {
-			log.debug(`Processing NanoGPT account: ${account.name}`, {
-				accountId: account.id,
-				hasApiKey: !!account.api_key,
-				paused: account.paused,
-				customEndpoint: account.custom_endpoint,
-			});
-
-			if (account.api_key) {
-				// NanoGPT uses API key authentication, no token refresh needed
-				// Create a simple token provider that returns the API key
-				const apiKeyProvider = async () => account.api_key || "";
-
-				// Start usage polling with the API key
-				usageCache.startPolling(
-					account.id,
-					apiKeyProvider,
-					account.provider,
+		for (const account of providerAccounts) {
+			// The helper emits the per-account "no API key" warning itself, so a
+			// failed registration needs no extra log line here.
+			if (
+				startApiKeyUsagePolling(
+					account,
+					usageCache,
 					config.getUsagePollIntervalMs(),
-					account.custom_endpoint,
-					undefined,
-					undefined,
-					undefined,
-					createUsageSnapshotRecorder(account, dbOps, log),
-				);
-				log.info(`Started usage polling for NanoGPT account ${account.name}`);
-			} else {
-				log.warn(
-					`NanoGPT account ${account.name} has no API key, skipping usage polling`,
-				);
+					dbOps,
+					log,
+				)
+			) {
+				log.info(`Started usage polling for ${label} account ${account.name}`);
 			}
 		}
-	} else {
-		log.info(`No NanoGPT accounts found, usage polling will not start`);
-	}
-
-	// Start usage polling for Zai accounts
-	const zaiAccounts = accounts.filter((a) => a.provider === "zai");
-	if (zaiAccounts.length > 0) {
-		log.info(
-			`Found ${zaiAccounts.length} Zai accounts, starting usage polling...`,
-		);
-		for (const account of zaiAccounts) {
-			log.debug(`Processing Zai account: ${account.name}`, {
-				accountId: account.id,
-				hasApiKey: !!account.api_key,
-				paused: account.paused,
-			});
-
-			if (account.api_key) {
-				// Zai uses API key authentication, no token refresh needed
-				// Create a simple token provider that returns the API key
-				const apiKeyProvider = async () => account.api_key || "";
-
-				// Start usage polling with the API key
-				usageCache.startPolling(
-					account.id,
-					apiKeyProvider,
-					account.provider,
-					config.getUsagePollIntervalMs(),
-					undefined, // customEndpoint
-					(accountId) => {
-						dbOps
-							.resetAccountSession(accountId, Date.now())
-							.catch((err) =>
-								log.warn(
-									`Failed to reset session for Zai account ${accountId} on window reset: ${err}`,
-								),
-							);
-					},
-					undefined,
-					undefined,
-					createUsageSnapshotRecorder(account, dbOps, log),
-				);
-				log.info(`Started usage polling for Zai account ${account.name}`);
-			} else {
-				log.warn(
-					`Zai account ${account.name} has no API key, skipping usage polling`,
-				);
-			}
-		}
-	} else {
-		log.info(`No Zai accounts found, usage polling will not start`);
-	}
-
-	// Start usage polling for Kilo Gateway accounts
-	const kiloAccounts = accounts.filter((a) => a.provider === "kilo");
-	if (kiloAccounts.length > 0) {
-		log.info(
-			`Found ${kiloAccounts.length} Kilo Gateway accounts, starting usage polling...`,
-		);
-		for (const account of kiloAccounts) {
-			if (account.api_key) {
-				const apiKeyProvider = async () => account.api_key || "";
-				usageCache.startPolling(
-					account.id,
-					apiKeyProvider,
-					account.provider,
-					config.getUsagePollIntervalMs(),
-				);
-				log.info(
-					`Started usage polling for Kilo Gateway account ${account.name}`,
-				);
-			} else {
-				log.warn(
-					`Kilo Gateway account ${account.name} has no API key, skipping usage polling`,
-				);
-			}
-		}
-	} else {
-		log.info(`No Kilo Gateway accounts found, usage polling will not start`);
 	}
 
 	// Start usage polling for Minimax accounts (Token Plan `remains` endpoint)

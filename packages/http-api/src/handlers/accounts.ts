@@ -1894,6 +1894,10 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 				`Successfully added Minimax account: ${name} (Priority ${priority})`,
 			);
 
+			// The server only starts usage polling for accounts that existed
+			// at boot, so a runtime add would never be polled until restart.
+			await startUsagePollingForNewAccount(accountId, name);
+
 			// Get the created account for response
 			const account = await db.get<{
 				id: string;
@@ -2239,6 +2243,11 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 			log.info(
 				`Successfully added NanoGPT account: ${name} (Priority ${priority})`,
 			);
+
+			// The server only starts usage polling for accounts that existed
+			// at boot, so a runtime add would never be polled until restart.
+			await startUsagePollingForNewAccount(accountId, name);
+
 			// Get the created account for response
 			const account = await db.get<{
 				id: string;
@@ -4223,6 +4232,10 @@ export function createKiloAccountAddHandler(dbOps: DatabaseOperations) {
 				`Successfully added Kilo Gateway account: ${name} (Priority ${priority})`,
 			);
 
+			// The server only starts usage polling for accounts that existed
+			// at boot, so a runtime add would never be polled until restart.
+			await startUsagePollingForNewAccount(accountId, name);
+
 			const account = await db.get<{
 				id: string;
 				name: string;
@@ -4541,6 +4554,10 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
 			log.info(
 				`Successfully added OpenRouter account: ${name} (Priority ${priority})`,
 			);
+
+			// The server only starts usage polling for accounts that existed
+			// at boot, so a runtime add would never be polled until restart.
+			await startUsagePollingForNewAccount(accountId, name);
 
 			const account = await db.get<{
 				id: string;

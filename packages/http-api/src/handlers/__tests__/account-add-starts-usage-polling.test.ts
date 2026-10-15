@@ -8,6 +8,10 @@ import {
 } from "@better-ccflare/proxy";
 import {
 	createAccountAddHandler,
+	createKiloAccountAddHandler,
+	createMinimaxAccountAddHandler,
+	createNanoGPTAccountAddHandler,
+	createOpenRouterAccountAddHandler,
 	createZaiAccountAddHandler,
 } from "../accounts";
 
@@ -18,6 +22,10 @@ describe("account add handlers start usage polling for the new account", () => {
 	let dbOps: DatabaseOperations;
 	let handler: (req: Request) => Promise<Response>;
 	let zaiHandler: (req: Request) => Promise<Response>;
+	let minimaxHandler: (req: Request) => Promise<Response>;
+	let nanoGptHandler: (req: Request) => Promise<Response>;
+	let kiloHandler: (req: Request) => Promise<Response>;
+	let openRouterHandler: (req: Request) => Promise<Response>;
 	let seen: string[];
 
 	function cleanupDbFiles() {
@@ -37,6 +45,10 @@ describe("account add handlers start usage polling for the new account", () => {
 		dbOps = DatabaseFactory.getInstance();
 		handler = createAccountAddHandler(dbOps, null as never);
 		zaiHandler = createZaiAccountAddHandler(dbOps);
+		minimaxHandler = createMinimaxAccountAddHandler(dbOps);
+		nanoGptHandler = createNanoGPTAccountAddHandler(dbOps);
+		kiloHandler = createKiloAccountAddHandler(dbOps);
+		openRouterHandler = createOpenRouterAccountAddHandler(dbOps);
 		seen = [];
 		registerPollingRestarter(SERVER_ID, async (id: string) => {
 			seen.push(id);
@@ -106,5 +118,84 @@ describe("account add handlers start usage polling for the new account", () => {
 		const payload = (await res.json()) as { account: { id: string } };
 
 		expect(seen).toEqual([payload.account.id]);
+	});
+
+	it("asks for polling on every provider-specific add path that has a usage endpoint", async () => {
+		const cases: Array<{
+			label: string;
+			handler: (req: Request) => Promise<Response>;
+			provider: string;
+			name: string;
+			apiKey: string;
+		}> = [
+			{
+				label: "minimax",
+				handler: minimaxHandler,
+				provider: "minimax",
+				name: "minimax-one",
+				apiKey: "sk-minimax-test-key",
+			},
+			{
+				label: "nanogpt",
+				handler: nanoGptHandler,
+				provider: "nanogpt",
+				name: "nanogpt-one",
+				apiKey: "sk-nanogpt-test-key",
+			},
+			{
+				label: "kilo",
+				handler: kiloHandler,
+				provider: "kilo",
+				name: "kilo-one",
+				apiKey: "sk-kilo-test-key",
+			},
+			{
+				label: "openrouter",
+				handler: openRouterHandler,
+				provider: "openrouter",
+				name: "openrouter-one",
+				apiKey: "sk-openrouter-test-key",
+			},
+		];
+
+		for (const testCase of cases) {
+			const res = await testCase.handler(
+				makeRequest({ name: testCase.name, apiKey: testCase.apiKey }),
+			);
+			expect(res.status).toBe(200);
+			const payload = (await res.json()) as {
+				account: { id: string; name: string; provider: string };
+			};
+			expect(payload.account.name).toBe(testCase.name);
+			expect(payload.account.provider).toBe(testCase.provider);
+			// The polling request carries the freshly inserted account id, not
+			// a name or a stale id from a previous add.
+			expect(seen).toEqual([payload.account.id]);
+			seen = [];
+		}
+	});
+
+	it("still returns the created account when the polling restart throws", async () => {
+		// A failing restarter must not turn a successful add into an error: the
+		// polling call is best-effort and runs after the row is already committed.
+		unregisterPollingRestarter(SERVER_ID);
+		registerPollingRestarter(SERVER_ID, async () => {
+			throw new Error("polling restart exploded");
+		});
+
+		const res = await openRouterHandler(
+			makeRequest({
+				name: "openrouter-fail",
+				apiKey: "sk-openrouter-test-key",
+			}),
+		);
+		expect(res.status).toBe(200);
+		const payload = (await res.json()) as {
+			message: string;
+			account: { name: string; provider: string };
+		};
+		expect(payload.message).toContain("added successfully");
+		expect(payload.account.name).toBe("openrouter-fail");
+		expect(payload.account.provider).toBe("openrouter");
 	});
 });

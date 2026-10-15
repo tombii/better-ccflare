@@ -10,7 +10,9 @@ import {
 	bootstrapMinimaxUsagePolling,
 	createRefreshBackedTokenProvider,
 	createUsageSnapshotRecorder,
+	isApiKeyUsagePollingProvider,
 	registerMinimaxUsagePolling,
+	startApiKeyUsagePolling,
 	supportsRefreshBackedUsagePolling,
 	supportsUsagePollingForAccount,
 	type UsageCacheRegistrar,
@@ -1500,3 +1502,213 @@ describe("applyUsagePauseThresholds — switched-off windows", () => {
 
 // shouldRunVacuumCatchUp() moved to ./vacuum-scheduler.test.ts alongside the
 // module it now lives in (internal-5).
+
+describe("isApiKeyUsagePollingProvider", () => {
+	it("accepts every API-key usage-polling provider", () => {
+		expect(isApiKeyUsagePollingProvider("kilo")).toBe(true);
+		expect(isApiKeyUsagePollingProvider("openrouter")).toBe(true);
+		expect(isApiKeyUsagePollingProvider("nanogpt")).toBe(true);
+		expect(isApiKeyUsagePollingProvider("zai")).toBe(true);
+		expect(isApiKeyUsagePollingProvider("minimax")).toBe(true);
+	});
+
+	it("rejects refresh-backed providers and everything that is not a provider", () => {
+		// anthropic/codex/xai are refresh-backed: their accounts carry
+		// access/refresh tokens, not an api_key, and the restarter handles them
+		// on the other branch.
+		expect(isApiKeyUsagePollingProvider("anthropic")).toBe(false);
+		expect(isApiKeyUsagePollingProvider("codex")).toBe(false);
+		expect(isApiKeyUsagePollingProvider("xai")).toBe(false);
+		expect(isApiKeyUsagePollingProvider("qwen")).toBe(false);
+		expect(isApiKeyUsagePollingProvider("alibaba-coding-plan")).toBe(false);
+		expect(isApiKeyUsagePollingProvider(null)).toBe(false);
+		expect(isApiKeyUsagePollingProvider(undefined)).toBe(false);
+		expect(isApiKeyUsagePollingProvider("")).toBe(false);
+	});
+});
+
+// Shared wiring for API-key providers (Kilo, OpenRouter, NanoGPT, Zai). The
+// boot bootstrap loop in startServer() and the runtime polling restarter both
+// call this, so these tests pin the per-provider positional contract of
+// startPolling — the one thing that silently regresses if the helper is
+// rewritten without matching the original inline blocks.
+describe("startApiKeyUsagePolling", () => {
+	function makeAccount(
+		overrides: Partial<{
+			id: string;
+			name: string;
+			provider: string;
+			api_key: string | null;
+			custom_endpoint: string | null;
+		}> = {},
+	) {
+		return {
+			id: "acc-1",
+			name: "api-key-account-1",
+			provider: "openrouter",
+			api_key: "test-key",
+			custom_endpoint: null,
+			...overrides,
+		} as unknown as Parameters<typeof startApiKeyUsagePolling>[0];
+	}
+
+	function makeRegistrar() {
+		const startPolling = mock(
+			(
+				_accountId: string,
+				_tokenProvider: () => Promise<string>,
+				_provider: string,
+				_intervalMs: number,
+				..._rest: unknown[]
+			) => {},
+		);
+		return {
+			registrar: { startPolling } as unknown as UsageCacheRegistrar,
+			startPolling,
+		};
+	}
+
+	function makeDbOps(): DatabaseOperations {
+		return {
+			recordUsageSnapshot: async () => {},
+			getAccount: async () => null,
+			resetAccountSession: async () => {},
+		} as unknown as DatabaseOperations;
+	}
+
+	it("does not register polling for a refresh-backed provider", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ provider: "anthropic", api_key: null }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(false);
+		expect(startPolling).toHaveBeenCalledTimes(0);
+	});
+
+	it("does not register polling when the account has no API key", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ provider: "openrouter", api_key: null }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(false);
+		expect(startPolling).toHaveBeenCalledTimes(0);
+	});
+
+	it("registers OpenRouter polling without an onSnapshot callback", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ id: "or-1", name: "openrouter-1", provider: "openrouter" }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		expect(startPolling).toHaveBeenCalledTimes(1);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[0]).toBe("or-1");
+		expect(call?.[2]).toBe("openrouter");
+		expect(call?.[3]).toBe(30_000);
+		// OpenRouter is a credit-balance provider: the balance comes from its own
+		// key endpoint, so there is no window history to snapshot. Arg 9
+		// (onSnapshot) must stay undefined or the dashboard would fill with
+		// meaningless rows.
+		expect(call?.[8]).toBeUndefined();
+	});
+
+	it("registers Kilo polling without an onSnapshot callback", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ id: "kilo-1", name: "kilo-1", provider: "kilo" }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		expect(startPolling).toHaveBeenCalledTimes(1);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[0]).toBe("kilo-1");
+		expect(call?.[2]).toBe("kilo");
+		expect(call?.[3]).toBe(30_000);
+		expect(call?.[8]).toBeUndefined();
+	});
+
+	it("passes NanoGPT's custom endpoint (arg 5) and records snapshots (arg 9)", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({
+				id: "ng-1",
+				name: "nanogpt-1",
+				provider: "nanogpt",
+				custom_endpoint: "https://nano-gpt.example/api",
+			}),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[2]).toBe("nanogpt");
+		// NanoGPT's usage endpoint is relative to the account's custom endpoint.
+		expect(call?.[4]).toBe("https://nano-gpt.example/api");
+		expect(typeof call?.[8]).toBe("function");
+	});
+
+	it("passes Zai an onWindowReset (arg 6) and an onSnapshot (arg 9)", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ id: "zai-1", name: "zai-1", provider: "zai" }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[2]).toBe("zai");
+		// Zai resets its session when the quota window rolls over, and records
+		// snapshots so applyUsagePauseThresholds can act on them.
+		expect(typeof call?.[5]).toBe("function");
+		expect(typeof call?.[8]).toBe("function");
+	});
+
+	it("the registered token provider returns the account's API key", async () => {
+		const { registrar, startPolling } = makeRegistrar();
+		startApiKeyUsagePolling(
+			makeAccount({ provider: "openrouter", api_key: "secret-key" }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		const tokenProvider = startPolling.mock.calls[0]?.[1];
+		expect(await tokenProvider()).toBe("secret-key");
+	});
+
+	it("delegates Minimax to the Minimax wiring, registering exactly once", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({ id: "mm-1", name: "minimax-1", provider: "minimax" }),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		expect(startPolling).toHaveBeenCalledTimes(1);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[0]).toBe("mm-1");
+		expect(call?.[2]).toBe("minimax");
+		expect(typeof call?.[8]).toBe("function");
+	});
+});
