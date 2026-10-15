@@ -857,7 +857,13 @@ describe("RateLimitProgress — threshold tooltip wording", () => {
 				utilizationPercent: 25.5,
 				balanceScope: "key",
 				resetInterval: "monthly",
-				resetsAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+				// Deliberately not an exact multiple of a day: the component reads
+				// the clock again while rendering, so a reset landing precisely on
+				// the 3d boundary rounds down to "2d 23h" whenever even 1ms elapses
+				// between this Date.now() and the component's.
+				resetsAt: new Date(
+					Date.now() + 3 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000,
+				).toISOString(),
 			});
 			expect(html).toContain("OpenRouter limit");
 			expect(html).toContain("$74.50 remaining");
