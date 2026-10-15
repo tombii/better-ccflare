@@ -290,7 +290,7 @@ export function RateLimitProgress({
 			const isKeyScope = creditData.balanceScope !== "account";
 			const label = isOpenRouter
 				? isKeyScope
-					? "OpenRouter limit"
+					? "OpenRouter key limit"
 					: "OpenRouter credits"
 				: "Kilo Gateway credits";
 			// Only a key with its own budget depletes on a schedule, so only it

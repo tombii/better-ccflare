@@ -865,7 +865,7 @@ describe("RateLimitProgress — threshold tooltip wording", () => {
 					Date.now() + 3 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000,
 				).toISOString(),
 			});
-			expect(html).toContain("OpenRouter limit");
+			expect(html).toContain("OpenRouter key limit");
 			expect(html).toContain("$74.50 remaining");
 			expect(html).toContain("Resets in 3d");
 			// A key-scoped budget is not the account pool.
@@ -900,7 +900,7 @@ describe("RateLimitProgress — threshold tooltip wording", () => {
 			expect(html).toContain("OpenRouter credits");
 			expect(html).toContain("$34.40 remaining");
 			expect(html).not.toContain("Resets");
-			expect(html).not.toContain("OpenRouter limit");
+			expect(html).not.toContain("OpenRouter key limit");
 		});
 
 		it("renders Unlimited when neither budget nor credits could be read", () => {
