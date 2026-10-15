@@ -5,6 +5,7 @@ import {
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { getRequestTools, getTranslatedToolName } from "./custom-tools";
+import { asText } from "./sanitize";
 import type {
 	AnthropicContent,
 	AnthropicImageContent,
@@ -19,6 +20,37 @@ import type {
 } from "./types";
 
 const logger = new Logger("openai-responses-adapter");
+
+// A single malformed request can carry thousands of bad items, and dropping
+// each one silently would hide the client-integration bug that caused it. Cap
+// the warnings per request so one payload cannot flood the log, and report the
+// remainder as a single count once translation finishes.
+const MAX_TRANSLATION_WARNS = 5;
+
+interface TranslationWarnings {
+	warn(message: string): void;
+	flush(): void;
+}
+
+function createTranslationWarnings(): TranslationWarnings {
+	let emitted = 0;
+	let suppressed = 0;
+	return {
+		warn(message: string): void {
+			if (emitted < MAX_TRANSLATION_WARNS) {
+				emitted++;
+				logger.warn(message);
+			} else {
+				suppressed++;
+			}
+		},
+		flush(): void {
+			if (suppressed > 0) {
+				logger.warn(`${suppressed} further translation warning(s) suppressed`);
+			}
+		},
+	};
+}
 
 // Map OpenAI model names to Claude family aliases so per-account model_mappings
 // (opus/sonnet/haiku) resolve correctly when Codex CLI requests reach the proxy.
@@ -45,16 +77,27 @@ function parseArguments(args: string): unknown {
 	}
 }
 
-function translateTools(tools: ResponsesTool[]): AnthropicTool[] {
+function translateTools(
+	tools: ResponsesTool[],
+	warnings: TranslationWarnings,
+): AnthropicTool[] {
 	const result: AnthropicTool[] = [];
 	for (const tool of tools) {
+		// Branching stays on `tool.type` so the union still narrows; only the
+		// text-producing sites use asText(). A strict `===` never coerces, so a
+		// non-string `type` simply fails to match.
 		if (tool.type === "custom") {
-			const description = [
-				tool.description,
-				"Pass the tool's complete raw text in the input string.",
+			// `tool.description` and the grammar fields are joined into the
+			// description below, so a non-string must be dropped rather than
+			// coerced — an object with a null `toString` throws on `.join()`.
+			const grammar =
 				tool.format?.type === "grammar"
-					? `The input must follow this ${tool.format.syntax} grammar:\n${tool.format.definition}`
-					: undefined,
+					? `The input must follow this ${asText(tool.format.syntax) ?? ""} grammar:\n${asText(tool.format.definition) ?? ""}`
+					: undefined;
+			const description = [
+				asText(tool.description),
+				"Pass the tool's complete raw text in the input string.",
+				grammar,
 			]
 				.filter(Boolean)
 				.join("\n\n");
@@ -71,12 +114,19 @@ function translateTools(tools: ResponsesTool[]): AnthropicTool[] {
 			continue;
 		}
 		if (tool.type !== "function") {
-			logger.warn(`Skipping unsupported/built-in tool type: ${tool.type}`);
+			// Reached with a non-string `type` too, which must not be
+			// interpolated into the warning below.
+			const toolType = asText(tool.type);
+			warnings.warn(
+				toolType === undefined
+					? "Skipping tool declaration with a non-string type"
+					: `Skipping unsupported/built-in tool type: ${toolType}`,
+			);
 			continue;
 		}
 		result.push({
 			name: getTranslatedToolName(tool.name, tool.namespace),
-			description: tool.description,
+			description: asText(tool.description),
 			input_schema: tool.parameters ?? {},
 		});
 	}
@@ -86,12 +136,13 @@ function translateTools(tools: ResponsesTool[]): AnthropicTool[] {
 function translateToolChoice(
 	choice: ResponsesRequest["tool_choice"],
 ): AnthropicToolChoice | undefined {
-	if (choice === undefined) return undefined;
+	if (choice === undefined || choice === null) return undefined;
 	if (choice === "auto") return { type: "auto" };
 	if (choice === "required") return { type: "any" };
 	if (choice === "none") return { type: "none" };
 	if (
 		typeof choice === "object" &&
+		!Array.isArray(choice) &&
 		(choice.type === "function" || choice.type === "custom")
 	) {
 		return {
@@ -102,24 +153,43 @@ function translateToolChoice(
 	return undefined;
 }
 
-function translateContentItem(c: {
-	type: string;
-	text?: string;
-	refusal?: string;
-	image_url?: string;
-	file_id?: string;
-}): AnthropicTextContent | AnthropicImageContent {
-	if (c.type === "input_text" || c.type === "output_text") {
-		return { type: "text", text: c.text ?? "" };
+function translateContentItem(
+	c: {
+		type: string;
+		text?: string;
+		refusal?: string;
+		image_url?: string;
+		file_id?: string;
+	},
+	warnings: TranslationWarnings,
+): AnthropicTextContent | AnthropicImageContent {
+	// Parts come from untrusted client JSON and are not guaranteed to be plain
+	// objects; reading `.type` off a null, primitive or array part would throw
+	// out of the handler. Fall back to empty text, as the unknown-type path
+	// below does.
+	if (c === null || typeof c !== "object" || Array.isArray(c)) {
+		return { type: "text", text: "" };
 	}
 
-	if (c.type === "refusal") {
-		return { type: "text", text: c.refusal ?? "" };
+	// A present-but-non-string `type` matches no branch, so it must not be
+	// interpolated into the warning below — an object with a null `toString`
+	// throws when the template literal coerces it.
+	const contentType = asText(c.type);
+
+	if (contentType === "input_text" || contentType === "output_text") {
+		// `text` is forwarded as text, so a non-string must degrade to empty
+		// rather than being coerced (which could throw, or leak "[object
+		// Object]" into the prompt).
+		return { type: "text", text: asText(c.text) ?? "" };
 	}
 
-	if (c.type === "input_image") {
-		const imageUrl = c.image_url;
-		if (typeof imageUrl === "string") {
+	if (contentType === "refusal") {
+		return { type: "text", text: asText(c.refusal) ?? "" };
+	}
+
+	if (contentType === "input_image") {
+		const imageUrl = asText(c.image_url);
+		if (imageUrl !== undefined) {
 			const trimmed = imageUrl.trim();
 			const dataUrlMatch = /^data:([^;]+);base64,(.+)$/.exec(trimmed);
 			if (dataUrlMatch) {
@@ -137,14 +207,19 @@ function translateContentItem(c: {
 			}
 		}
 
-		if (typeof c.file_id === "string" && c.file_id.length > 0) {
-			return { type: "text", text: `[image file_id: ${c.file_id}]` };
+		const fileId = asText(c.file_id);
+		if (fileId !== undefined && fileId.length > 0) {
+			return { type: "text", text: `[image file_id: ${fileId}]` };
 		}
 
 		return { type: "text", text: "[image content omitted]" };
 	}
 
-	logger.warn(`Unknown content type "${c.type}" — content dropped`);
+	warnings.warn(
+		contentType === undefined
+			? "Dropping content part with a non-string type"
+			: `Unknown content type "${contentType}" — content dropped`,
+	);
 	return { type: "text", text: "" };
 }
 
@@ -168,13 +243,48 @@ export function translateRequestToAnthropic(
 ): AnthropicRequest {
 	const messages: AnthropicMessage[] = [];
 	const developerBlocks: string[] = [];
+	const warnings = createTranslationWarnings();
 
-	for (const item of req.input) {
+	for (const rawItem of req.input as unknown[]) {
+		// `input` is untrusted client JSON, so an item is only safe to read once
+		// it is known to be a plain object — reading `.type` off a null,
+		// primitive or array item would throw out of the handler as a 500.
+		if (
+			rawItem === null ||
+			typeof rawItem !== "object" ||
+			Array.isArray(rawItem)
+		) {
+			warnings.warn(
+				"Dropping malformed Responses input item — expected an object",
+			);
+			continue;
+		}
+		const item = rawItem as ResponseItem;
+		// A present-but-non-string `type` matches no branch below, so it would
+		// fall through silently; skip it here rather than coercing it to a
+		// string for the comparisons.
+		if (item.type !== undefined && typeof item.type !== "string") {
+			warnings.warn(
+				"Dropping malformed Responses input item — type must be a string",
+			);
+			continue;
+		}
+
 		if (item.type === "message" || item.type === undefined) {
+			const rawContent: unknown = item.content;
+			// A message whose content is neither the string shorthand nor a
+			// parts array has nothing to translate; skip it rather than
+			// emitting an empty-content message.
+			if (typeof rawContent !== "string" && !Array.isArray(rawContent)) {
+				warnings.warn(
+					"Dropping malformed Responses message — content must be a string or an array",
+				);
+				continue;
+			}
 			const content: AnthropicContent[] =
-				typeof item.content === "string"
-					? [{ type: "text", text: item.content }]
-					: item.content.map((c) => translateContentItem(c));
+				typeof rawContent === "string"
+					? [{ type: "text", text: rawContent }]
+					: rawContent.map((c) => translateContentItem(c, warnings));
 			// developer role is used by Codex CLI, and system role by Codex
 			// VS Code clients, for system-level instructions. Anthropic
 			// /v1/messages does not accept either role in the messages array
@@ -221,7 +331,9 @@ export function translateRequestToAnthropic(
 						content:
 							typeof item.output === "string"
 								? item.output
-								: item.output.map((c) => translateContentItem(c)),
+								: Array.isArray(item.output)
+									? item.output.map((c) => translateContentItem(c, warnings))
+									: "",
 					},
 				],
 			});
@@ -231,7 +343,7 @@ export function translateRequestToAnthropic(
 	const mergedMessages = mergeConsecutiveSameRole(messages);
 
 	const result: AnthropicRequest = {
-		model: mapGptModelToClaudeFamily(req.model),
+		model: mapGptModelToClaudeFamily(asText(req.model) ?? ""),
 		messages: mergedMessages,
 		max_tokens: req.max_output_tokens ?? 4096,
 	};
@@ -240,14 +352,17 @@ export function translateRequestToAnthropic(
 	const systemParts: string[] = [];
 	if (developerBlocks.length > 0)
 		systemParts.push(developerBlocks.join("\n\n"));
-	if (req.instructions !== undefined) systemParts.push(req.instructions);
+	// Only a string is pushed: `systemParts` is joined below, so a non-string
+	// would be coerced here and could throw.
+	const instructions = asText(req.instructions);
+	if (instructions !== undefined) systemParts.push(instructions);
 	if (systemParts.length > 0) result.system = systemParts.join("\n\n");
 
 	if (req.stream !== undefined) {
 		result.stream = req.stream;
 	}
 
-	const translatedTools = translateTools(getRequestTools(req));
+	const translatedTools = translateTools(getRequestTools(req), warnings);
 	if (translatedTools.length > 0) {
 		result.tools = translatedTools;
 		const toolChoice = translateToolChoice(req.tool_choice);
@@ -255,6 +370,10 @@ export function translateRequestToAnthropic(
 			result.tool_choice = toolChoice;
 		}
 	}
+
+	// Last, so tool warnings count too: report what the per-request cap
+	// suppressed, keeping a request that dropped a lot visible as one line.
+	warnings.flush();
 
 	return result;
 }
