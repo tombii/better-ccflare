@@ -245,6 +245,14 @@ export interface KiloUsageData {
 	utilizationPercent: number; // 0-100
 }
 
+// Usage data types for OpenRouter accounts (from /api/v1/key)
+export interface OpenRouterUsageData {
+	usageUsd: number; // Usage against the key, in USD
+	limitUsd: number | null; // Key credit limit, null when unlimited
+	remainingUsd: number | null; // Remaining credits, null when unlimited/unknown
+	utilizationPercent: number; // 0-100
+}
+
 // Usage data types for Alibaba Coding Plan accounts
 export interface AlibabaCodingPlanQuotaWindow {
 	used: number;
@@ -294,6 +302,7 @@ export type FullUsageData =
 	| NanoGPTUsageData
 	| ZaiUsageData
 	| KiloUsageData
+	| OpenRouterUsageData
 	| AlibabaCodingPlanUsageData
 	| XaiUsageData
 	| MinimaxUsageData;

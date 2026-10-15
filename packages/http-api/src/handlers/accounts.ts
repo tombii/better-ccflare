@@ -551,6 +551,27 @@ export function createAccountsListHandler(
 							);
 						}
 					}
+				} else if (account.provider === "openrouter" && usageData) {
+					// OpenRouter credit data - type guard to check it's OpenRouterUsageData
+					const isOpenRouterData =
+						"remainingUsd" in usageData && "usageUsd" in usageData;
+					if (isOpenRouterData) {
+						try {
+							const {
+								getRepresentativeOpenRouterUtilization,
+								getRepresentativeOpenRouterWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization =
+								getRepresentativeOpenRouterUtilization(usageData);
+							usageWindow = getRepresentativeOpenRouterWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process OpenRouter usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
 				} else if (account.provider === "alibaba-coding-plan" && usageData) {
 					// Alibaba Coding Plan usage data - type guard to check it's AlibabaCodingPlanUsageData
 					const isAlibabaData =

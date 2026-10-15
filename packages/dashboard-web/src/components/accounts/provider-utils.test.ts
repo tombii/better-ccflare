@@ -18,8 +18,28 @@
 import { describe, expect, it } from "bun:test";
 import {
 	isZaiPeakHour,
+	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
 } from "../../utils/provider-utils";
+
+describe("providerShowsCreditsBalance", () => {
+	it("returns true for kilo so its credit-balance block renders", () => {
+		expect(providerShowsCreditsBalance("kilo")).toBe(true);
+	});
+
+	it("returns true for openrouter so its credit-balance block renders", () => {
+		// Gate for the OpenRouter credits display. Without this entry
+		// RateLimitProgress falls through to the utilization-window path,
+		// which has no data for /api/v1/key payloads.
+		expect(providerShowsCreditsBalance("openrouter")).toBe(true);
+	});
+
+	it("returns false for providers that render utilization windows", () => {
+		expect(providerShowsCreditsBalance("anthropic")).toBe(false);
+		expect(providerShowsCreditsBalance("codex")).toBe(false);
+		expect(providerShowsCreditsBalance("zai")).toBe(false);
+	});
+});
 
 describe("providerShowsWeeklyUsage", () => {
 	it("returns true for minimax so AccountListItem passes showWeekly=true", () => {

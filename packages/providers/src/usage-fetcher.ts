@@ -32,6 +32,12 @@ import {
 	getRepresentativeNanoGPTWindow,
 	type NanoGPTUsageData,
 } from "./nanogpt-usage-fetcher";
+import {
+	fetchOpenRouterUsageData,
+	getRepresentativeOpenRouterUtilization,
+	getRepresentativeOpenRouterWindow,
+	type OpenRouterUsageData,
+} from "./openrouter-usage-fetcher";
 import { extractChatgptAccountId } from "./providers/codex/account-id";
 import { carryForwardCodexCredits } from "./providers/codex/usage";
 import { fetchCodexUsageData } from "./providers/codex/usage-endpoint";
@@ -129,6 +135,7 @@ export type AnyUsageData =
 	| NanoGPTUsageData
 	| ZaiUsageData
 	| KiloUsageData
+	| OpenRouterUsageData
 	| AlibabaCodingPlanUsageData
 	| XaiUsageData
 	| MinimaxUsageData;
@@ -538,6 +545,11 @@ function utilizationForProvider(
 		case "kilo": {
 			return getRepresentativeKiloUtilization(data as KiloUsageData);
 		}
+		case "openrouter": {
+			return getRepresentativeOpenRouterUtilization(
+				data as OpenRouterUsageData,
+			);
+		}
 		case "alibaba-coding-plan": {
 			return getRepresentativeAlibabaCodingPlanUtilization(
 				data as AlibabaCodingPlanUsageData,
@@ -708,6 +720,11 @@ export function getRepresentativeUsageResetMs(
 				return extractUsageResetMs(
 					data,
 					getRepresentativeKiloWindow(data as KiloUsageData),
+				);
+			case "openrouter":
+				return extractUsageResetMs(
+					data,
+					getRepresentativeOpenRouterWindow(data as OpenRouterUsageData),
 				);
 			case "alibaba-coding-plan":
 				return extractUsageResetMs(
@@ -1356,6 +1373,27 @@ class UsageCache {
 					const window = getRepresentativeKiloWindow(data as KiloUsageData);
 					log.debug(
 						`Successfully fetched Kilo usage data for account ${accountId}: $${(data as KiloUsageData).remainingUsd.toFixed(2)} remaining (${utilization?.toFixed(1)}% used, ${window})`,
+					);
+					return { success: true, retryAfterMs: null };
+				}
+			} else if (provider === "openrouter") {
+				// Fetch OpenRouter credit balance for the key (GET /api/v1/key)
+				data = await fetchOpenRouterUsageData(token);
+				if (data) {
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const utilization = getRepresentativeOpenRouterUtilization(
+						data as OpenRouterUsageData,
+					);
+					const window = getRepresentativeOpenRouterWindow(
+						data as OpenRouterUsageData,
+					);
+					const orData = data as OpenRouterUsageData;
+					log.debug(
+						`Successfully fetched OpenRouter usage data for account ${accountId}: ${
+							orData.remainingUsd === null
+								? "unlimited"
+								: `$${orData.remainingUsd.toFixed(2)} remaining`
+						} (${utilization?.toFixed(1)}% used, ${window})`,
 					);
 					return { success: true, retryAfterMs: null };
 				}

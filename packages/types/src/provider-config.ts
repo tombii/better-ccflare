@@ -118,9 +118,9 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 	},
 	[PROVIDER_NAMES.OPENROUTER]: {
 		requiresSessionTracking: false, // OpenRouter is pay-as-you-go
-		supportsUsageTracking: false, // Credits endpoint requires a separate management key
+		supportsUsageTracking: true, // Credits available via /api/v1/key
 		supportsOAuth: false, // OpenRouter uses API key authentication
-		defaultEndpoint: "https://openrouter.ai/api/v1",
+		defaultEndpoint: "https://openrouter.ai/api",
 	},
 	[PROVIDER_NAMES.ALIBABA_CODING_PLAN]: {
 		requiresSessionTracking: false, // Alibaba Coding Plan uses quota windows, not session stickiness

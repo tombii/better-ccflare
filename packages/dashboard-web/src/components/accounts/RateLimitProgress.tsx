@@ -1,5 +1,9 @@
 import { computeWindowStartMs, registerUIRefresh } from "@better-ccflare/core";
-import type { AnthropicUsageData, FullUsageData } from "@better-ccflare/types";
+import {
+	type AnthropicUsageData,
+	type FullUsageData,
+	PROVIDER_NAMES,
+} from "@better-ccflare/types";
 import { useEffect, useState } from "react";
 import { formatRelativeReset } from "../../lib/pool-usage";
 import { cn } from "../../lib/utils";
@@ -262,24 +266,40 @@ export function RateLimitProgress({
 		);
 	}
 
-	// Kilo Gateway: show credit balance in USD instead of a utilization window
+	// Credit-balance providers (Kilo, OpenRouter): show remaining USD instead
+	// of a utilization window. Kilo reports a microdollar-denominated acquired
+	// total (0 = never topped up). OpenRouter reports either the key's own
+	// budget ("key") or, for keys without one, the account credit pool
+	// ("account"); "unknown" means neither could be read and the key has no cap.
 	if (providerShowsCreditsBalance(provider) && usageData) {
-		const kiloData = usageData as {
-			remainingUsd?: number;
+		const creditData = usageData as {
+			remainingUsd?: number | null;
 			totalMicrodollarsAcquired?: number;
+			balanceScope?: "key" | "account" | "unknown";
 		};
-		if (typeof kiloData.remainingUsd === "number") {
-			const hasCredits = (kiloData.totalMicrodollarsAcquired ?? 0) > 0;
+		const isOpenRouter = provider === PROVIDER_NAMES.OPENROUTER;
+		const hasNumericBalance = typeof creditData.remainingUsd === "number";
+		if (hasNumericBalance || isOpenRouter) {
+			const hasCredits = isOpenRouter
+				? (creditData.remainingUsd ?? 0) > 0
+				: (creditData.totalMicrodollarsAcquired ?? 0) > 0;
+			// A key-scoped budget is an "available limit"; the account-level pool
+			// (used for keys with no budget of their own) is "remaining credits".
+			const label = isOpenRouter
+				? creditData.balanceScope === "account"
+					? "OpenRouter credits"
+					: "OpenRouter limit"
+				: "Kilo Gateway credits";
 			return (
 				<div className={cn("space-y-2", className)}>
 					<div className="flex items-center justify-between">
-						<span className="text-xs text-muted-foreground">
-							Kilo Gateway credits
-						</span>
+						<span className="text-xs text-muted-foreground">{label}</span>
 						<span className="text-xs font-medium text-muted-foreground">
-							{hasCredits
-								? `$${kiloData.remainingUsd.toFixed(2)} remaining`
-								: "No credits"}
+							{hasNumericBalance
+								? hasCredits
+									? `$${(creditData.remainingUsd ?? 0).toFixed(2)} remaining`
+									: "No credits"
+								: "Unlimited"}
 						</span>
 					</div>
 				</div>
