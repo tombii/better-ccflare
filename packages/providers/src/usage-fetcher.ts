@@ -32,6 +32,11 @@ import {
 	getRepresentativeNanoGPTWindow,
 	type NanoGPTUsageData,
 } from "./nanogpt-usage-fetcher";
+import {
+	fetchOpenRouterUsageData,
+	getRepresentativeOpenRouterUtilization,
+	type OpenRouterUsageData,
+} from "./openrouter-usage-fetcher";
 import { extractChatgptAccountId } from "./providers/codex/account-id";
 import { carryForwardCodexCredits } from "./providers/codex/usage";
 import { fetchCodexUsageData } from "./providers/codex/usage-endpoint";
@@ -129,6 +134,7 @@ export type AnyUsageData =
 	| NanoGPTUsageData
 	| ZaiUsageData
 	| KiloUsageData
+	| OpenRouterUsageData
 	| AlibabaCodingPlanUsageData
 	| XaiUsageData
 	| MinimaxUsageData;
@@ -538,6 +544,13 @@ function utilizationForProvider(
 		case "kilo": {
 			return getRepresentativeKiloUtilization(data as KiloUsageData);
 		}
+		case "openrouter": {
+			// Null for keys with no budget: an unlimited key's purchased credits
+			// have no depletion window, so it is never gated out of selection.
+			return getRepresentativeOpenRouterUtilization(
+				data as OpenRouterUsageData,
+			);
+		}
 		case "alibaba-coding-plan": {
 			return getRepresentativeAlibabaCodingPlanUtilization(
 				data as AlibabaCodingPlanUsageData,
@@ -709,6 +722,16 @@ export function getRepresentativeUsageResetMs(
 					data,
 					getRepresentativeKiloWindow(data as KiloUsageData),
 				);
+			case "openrouter": {
+				// OpenRouter reports a top-level ISO `resetsAt` (sourced from the
+				// key_limit budget), not a nested window's `resets_at`, so the
+				// generic extractUsageResetMs — which indexes by window name —
+				// cannot reach it. Only limited keys carry one.
+				const resetsAt = (data as OpenRouterUsageData).resetsAt;
+				if (typeof resetsAt !== "string") return null;
+				const ms = new Date(resetsAt).getTime();
+				return Number.isFinite(ms) ? ms : null;
+			}
 			case "alibaba-coding-plan":
 				return extractUsageResetMs(
 					data,
@@ -1356,6 +1379,29 @@ class UsageCache {
 					const window = getRepresentativeKiloWindow(data as KiloUsageData);
 					log.debug(
 						`Successfully fetched Kilo usage data for account ${accountId}: $${(data as KiloUsageData).remainingUsd.toFixed(2)} remaining (${utilization?.toFixed(1)}% used, ${window})`,
+					);
+					return { success: true, retryAfterMs: null };
+				}
+			} else if (provider === "openrouter") {
+				// Fetch the OpenRouter credit balance for the key
+				// (GET /api/v1/key, falling back to /api/v1/credits).
+				data = await fetchOpenRouterUsageData(token);
+				if (data) {
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const credits = data as OpenRouterUsageData;
+					const resetSuffix = credits.resetsAt
+						? `, resets ${credits.resetsAt}`
+						: "";
+					log.debug(
+						`Successfully fetched OpenRouter usage data for account ${accountId}: ${
+							credits.remainingUsd === null
+								? "balance unavailable"
+								: `$${credits.remainingUsd.toFixed(2)} remaining`
+						} (${credits.balanceScope} scope${
+							credits.utilizationPercent === null
+								? ""
+								: `, ${credits.utilizationPercent.toFixed(1)}% used`
+						}${resetSuffix})`,
 					);
 					return { success: true, retryAfterMs: null };
 				}

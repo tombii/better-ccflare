@@ -29,6 +29,7 @@ import {
 	type AnyUsageData,
 	clearDerivedProviderModelDefaultsForAccount,
 	fetchUsageData,
+	getRepresentativeOpenRouterUtilization,
 	getRepresentativeUsageSnapshotForProvider,
 	getRepresentativeUtilization,
 	getRepresentativeUtilizationForProvider,
@@ -54,6 +55,7 @@ import type {
 	AnthropicUsageData,
 	FullUsageData,
 	LoadBalancingStrategy,
+	OpenRouterUsageData,
 	RateLimitReason,
 	RequestTransformer,
 } from "@better-ccflare/types";
@@ -550,6 +552,18 @@ export function createAccountsListHandler(
 								error,
 							);
 						}
+					}
+				} else if (account.provider === "openrouter" && usageData) {
+					// OpenRouter credit balance - type guard on the discriminator
+					// only this provider sets. Utilization/reset are reported only
+					// for keys with their own limit; the fetcher yields null for
+					// unlimited keys, which keeps them out of the usage gate.
+					const isOpenRouterData = "balanceScope" in usageData;
+					if (isOpenRouterData) {
+						usageUtilization = getRepresentativeOpenRouterUtilization(
+							usageData as OpenRouterUsageData,
+						);
+						fullUsageData = usageData as FullUsageData;
 					}
 				} else if (account.provider === "alibaba-coding-plan" && usageData) {
 					// Alibaba Coding Plan usage data - type guard to check it's AlibabaCodingPlanUsageData

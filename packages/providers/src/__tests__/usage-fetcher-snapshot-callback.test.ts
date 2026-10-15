@@ -292,3 +292,96 @@ describe("UsageCache._doFetchAndCache onSnapshot wiring (real poll cycle)", () =
 		usageCache.stopPolling(accountId);
 	});
 });
+
+/**
+ * Reachability guard for the OpenRouter dispatch branch. The provider gate in
+ * provider-config.ts (`supportsUsageTracking: true`) only lets `startPolling`
+ * past its early return — it says nothing about whether `_doFetchAndCache`
+ * actually reaches `fetchOpenRouterUsageData`. This drives the real poll cycle
+ * with only `global.fetch` mocked, so a future refactor that drops the
+ * `provider === "openrouter"` branch (or reorders it behind an earlier
+ * matching branch) fails here instead of silently leaving OpenRouter credits
+ * blank on the dashboard.
+ */
+describe("UsageCache._doFetchAndCache OpenRouter dispatch (real poll cycle)", () => {
+	let originalFetch: typeof fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach((): void => {
+		globalThis.fetch = originalFetch;
+	});
+
+	async function flush(): Promise<void> {
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	}
+
+	it("caches key-scoped credits from a real poll", async () => {
+		const accountId = "dispatch-openrouter-key";
+		globalThis.fetch = mock(async () =>
+			jsonResponse({
+				data: { limit: 20, limit_remaining: 15, usage: 5 },
+			}),
+		) as unknown as typeof fetch;
+
+		usageCache.startPolling(
+			accountId,
+			async () => "sk-or-test",
+			"openrouter",
+			90000,
+		);
+		await flush();
+
+		expect(usageCache.get(accountId)).toEqual(
+			expect.objectContaining({
+				limitUsd: 20,
+				remainingUsd: 15,
+				usageUsd: 5,
+				balanceScope: "key",
+			}),
+		);
+
+		usageCache.stopPolling(accountId);
+	});
+
+	it("falls through to the account credits pool for an unlimited key", async () => {
+		const accountId = "dispatch-openrouter-unlimited";
+		const calledUrls: string[] = [];
+		globalThis.fetch = mock(async (input: RequestInfo) => {
+			const url = String(input);
+			calledUrls.push(url);
+			return url.includes("/credits")
+				? jsonResponse({ data: { total_credits: 35, total_usage: 0.6 } })
+				: jsonResponse({
+						data: { limit: null, limit_remaining: null, usage: 0 },
+					});
+		}) as unknown as typeof fetch;
+
+		usageCache.startPolling(
+			accountId,
+			async () => "sk-or-test",
+			"openrouter",
+			90000,
+		);
+		await flush();
+
+		// Both hops must run inside the dispatch branch, not just the first.
+		expect(calledUrls).toEqual([
+			"https://openrouter.ai/api/v1/key",
+			"https://openrouter.ai/api/v1/credits",
+		]);
+		expect(usageCache.get(accountId)).toEqual(
+			expect.objectContaining({
+				limitUsd: null,
+				remainingUsd: 34.4,
+				balanceScope: "account",
+			}),
+		);
+
+		usageCache.stopPolling(accountId);
+	});
+});

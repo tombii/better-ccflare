@@ -2004,7 +2004,7 @@ export function AccountAddForm({
 									placeholder="Enter your OpenRouter API key"
 								/>
 								<p className="text-xs text-muted-foreground">
-									Endpoint: https://openrouter.ai/api/v1
+									Endpoint: https://openrouter.ai/api
 								</p>
 							</div>
 							<div className="space-y-2">
@@ -2375,7 +2375,7 @@ export function AccountAddForm({
 											customEndpoint: (e.target as HTMLInputElement).value,
 										})
 									}
-									placeholder="https://api.openrouter.ai/api/v1"
+									placeholder="https://openrouter.ai/api"
 								/>
 								<p className="text-xs text-muted-foreground">
 									Enter the base URL for the OpenAI-compatible API

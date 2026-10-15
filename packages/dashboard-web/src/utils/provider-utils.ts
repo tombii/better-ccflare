@@ -102,7 +102,9 @@ export function providerShowsWeeklyUsage(provider: string): boolean {
  * Check if a provider shows a credit balance (USD remaining) instead of utilization windows
  */
 export function providerShowsCreditsBalance(provider: string): boolean {
-	return provider === PROVIDER_NAMES.KILO;
+	return (
+		provider === PROVIDER_NAMES.KILO || provider === PROVIDER_NAMES.OPENROUTER
+	);
 }
 
 /**

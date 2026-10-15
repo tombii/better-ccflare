@@ -1412,7 +1412,7 @@ export async function addAccount(
 		const endpoint =
 			customEndpoint ||
 			(await adapter.input(
-				"\nEnter API endpoint URL (e.g., https://api.openrouter.ai/api/v1): ",
+				"\nEnter API endpoint URL (e.g., https://openrouter.ai/api): ",
 			));
 
 		// Get priority
@@ -1539,7 +1539,7 @@ export async function addAccount(
 		);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: OpenRouter (API key)");
-		console.log("Endpoint: https://openrouter.ai/api/v1");
+		console.log("Endpoint: https://openrouter.ai/api");
 	} else if (mode === "alibaba-coding-plan") {
 		// Handle Alibaba Coding Plan accounts with API keys
 		const apiKey = await adapter.input(
