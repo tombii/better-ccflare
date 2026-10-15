@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { logBus } from "@better-ccflare/logger";
+import type { LogEvent } from "@better-ccflare/types";
 import { handleResponsesRequest } from "../handler";
 import type { HandleProxyFn } from "../types";
 
@@ -31,8 +33,13 @@ async function runRequest(body: Record<string, unknown>): Promise<{
 	status: number;
 	json: Record<string, unknown>;
 	forwarded: Forwarded[];
+	warnings: string[];
 }> {
 	const forwarded: Forwarded[] = [];
+	const warnings: string[] = [];
+	const capture = (event: LogEvent) => {
+		if (event.level === "WARN") warnings.push(event.msg);
+	};
 	const proxy: HandleProxyFn = async (request) => {
 		forwarded.push((await request.json()) as Forwarded);
 		return new Response(ANTHROPIC_MESSAGE_BODY, {
@@ -47,18 +54,24 @@ async function runRequest(body: Record<string, unknown>): Promise<{
 		body: JSON.stringify(body),
 	});
 
-	const response = await handleResponsesRequest(
-		req,
-		new URL(req.url),
-		proxy,
-		{},
-	);
+	logBus.on("log", capture);
+	try {
+		const response = await handleResponsesRequest(
+			req,
+			new URL(req.url),
+			proxy,
+			{},
+		);
 
-	return {
-		status: response.status,
-		json: (await response.json()) as Record<string, unknown>,
-		forwarded,
-	};
+		return {
+			status: response.status,
+			json: (await response.json()) as Record<string, unknown>,
+			forwarded,
+			warnings,
+		};
+	} finally {
+		logBus.off("log", capture);
+	}
 }
 
 const KEPT_MESSAGE = {
@@ -529,5 +542,84 @@ describe("coercion-hostile values never reach a text path", () => {
 				],
 			},
 		]);
+	});
+});
+
+// Dropping a malformed item silently would hide the client-integration bug that
+// caused it, so each drop warns — but a single payload must not be able to flood
+// the log, so the warnings are capped per request with a trailing count.
+describe("dropped-input warnings", () => {
+	test("warns with the reason when an item is dropped", async () => {
+		const { status, warnings } = await runRequest({
+			model: "",
+			input: [null, validMessage],
+		});
+
+		expect(status).toBe(200);
+		expect(warnings).toEqual([
+			"Dropping malformed Responses input item — expected an object",
+		]);
+	});
+
+	test("distinguishes the drop reasons", async () => {
+		const { warnings } = await runRequest({
+			model: "",
+			input: [
+				null,
+				{ type: coercionHostile },
+				{ type: "message", role: "user", content: 7 },
+				validMessage,
+			],
+		});
+
+		expect(warnings).toEqual([
+			"Dropping malformed Responses input item — expected an object",
+			"Dropping malformed Responses input item — type must be a string",
+			"Dropping malformed Responses message — content must be a string or an array",
+		]);
+	});
+
+	test("caps warnings per request and reports the remainder", async () => {
+		const { status, warnings } = await runRequest({
+			model: "",
+			input: [...Array.from({ length: 60 }, () => null), validMessage],
+		});
+
+		expect(status).toBe(200);
+		// 5 emitted + one trailing count, not 60 lines.
+		expect(warnings).toHaveLength(6);
+		expect(warnings.at(-1)).toBe(
+			"55 further translation warning(s) suppressed",
+		);
+	});
+
+	test("does not warn on a valid request", async () => {
+		const { status, warnings } = await runRequest({
+			model: "",
+			input: [typelessMessage, validMessage],
+			tools: [{ type: "function", name: "n", description: "d" }],
+		});
+
+		expect(status).toBe(200);
+		expect(warnings).toEqual([]);
+	});
+
+	test("counts tool warnings in the same per-request budget", async () => {
+		// 3 dropped items + 3 unsupported tools = 6 warnings for one request,
+		// which must still come out as 5 lines plus a trailing count. The tool
+		// warnings are emitted last, so this also pins the flush ordering.
+		const { status, warnings } = await runRequest({
+			model: "",
+			input: [null, null, null, validMessage],
+			tools: [
+				{ type: "web_search_preview" },
+				{ type: "file_search" },
+				{ type: "code_interpreter" },
+			],
+		});
+
+		expect(status).toBe(200);
+		expect(warnings).toHaveLength(6);
+		expect(warnings.at(-1)).toBe("1 further translation warning(s) suppressed");
 	});
 });

@@ -21,6 +21,37 @@ import type {
 
 const logger = new Logger("openai-responses-adapter");
 
+// A single malformed request can carry thousands of bad items, and dropping
+// each one silently would hide the client-integration bug that caused it. Cap
+// the warnings per request so one payload cannot flood the log, and report the
+// remainder as a single count once translation finishes.
+const MAX_TRANSLATION_WARNS = 5;
+
+interface TranslationWarnings {
+	warn(message: string): void;
+	flush(): void;
+}
+
+function createTranslationWarnings(): TranslationWarnings {
+	let emitted = 0;
+	let suppressed = 0;
+	return {
+		warn(message: string): void {
+			if (emitted < MAX_TRANSLATION_WARNS) {
+				emitted++;
+				logger.warn(message);
+			} else {
+				suppressed++;
+			}
+		},
+		flush(): void {
+			if (suppressed > 0) {
+				logger.warn(`${suppressed} further translation warning(s) suppressed`);
+			}
+		},
+	};
+}
+
 // Map OpenAI model names to Claude family aliases so per-account model_mappings
 // (opus/sonnet/haiku) resolve correctly when Codex CLI requests reach the proxy.
 // Rules based on OpenAI naming conventions:
@@ -46,7 +77,10 @@ function parseArguments(args: string): unknown {
 	}
 }
 
-function translateTools(tools: ResponsesTool[]): AnthropicTool[] {
+function translateTools(
+	tools: ResponsesTool[],
+	warnings: TranslationWarnings,
+): AnthropicTool[] {
 	const result: AnthropicTool[] = [];
 	for (const tool of tools) {
 		// Branching stays on `tool.type` so the union still narrows; only the
@@ -83,7 +117,7 @@ function translateTools(tools: ResponsesTool[]): AnthropicTool[] {
 			// Reached with a non-string `type` too, which must not be
 			// interpolated into the warning below.
 			const toolType = asText(tool.type);
-			logger.warn(
+			warnings.warn(
 				toolType === undefined
 					? "Skipping tool declaration with a non-string type"
 					: `Skipping unsupported/built-in tool type: ${toolType}`,
@@ -119,13 +153,16 @@ function translateToolChoice(
 	return undefined;
 }
 
-function translateContentItem(c: {
-	type: string;
-	text?: string;
-	refusal?: string;
-	image_url?: string;
-	file_id?: string;
-}): AnthropicTextContent | AnthropicImageContent {
+function translateContentItem(
+	c: {
+		type: string;
+		text?: string;
+		refusal?: string;
+		image_url?: string;
+		file_id?: string;
+	},
+	warnings: TranslationWarnings,
+): AnthropicTextContent | AnthropicImageContent {
 	// Parts come from untrusted client JSON and are not guaranteed to be plain
 	// objects; reading `.type` off a null, primitive or array part would throw
 	// out of the handler. Fall back to empty text, as the unknown-type path
@@ -178,7 +215,7 @@ function translateContentItem(c: {
 		return { type: "text", text: "[image content omitted]" };
 	}
 
-	logger.warn(
+	warnings.warn(
 		contentType === undefined
 			? "Dropping content part with a non-string type"
 			: `Unknown content type "${contentType}" — content dropped`,
@@ -206,6 +243,7 @@ export function translateRequestToAnthropic(
 ): AnthropicRequest {
 	const messages: AnthropicMessage[] = [];
 	const developerBlocks: string[] = [];
+	const warnings = createTranslationWarnings();
 
 	for (const rawItem of req.input as unknown[]) {
 		// `input` is untrusted client JSON, so an item is only safe to read once
@@ -216,6 +254,9 @@ export function translateRequestToAnthropic(
 			typeof rawItem !== "object" ||
 			Array.isArray(rawItem)
 		) {
+			warnings.warn(
+				"Dropping malformed Responses input item — expected an object",
+			);
 			continue;
 		}
 		const item = rawItem as ResponseItem;
@@ -223,6 +264,9 @@ export function translateRequestToAnthropic(
 		// fall through silently; skip it here rather than coercing it to a
 		// string for the comparisons.
 		if (item.type !== undefined && typeof item.type !== "string") {
+			warnings.warn(
+				"Dropping malformed Responses input item — type must be a string",
+			);
 			continue;
 		}
 
@@ -232,12 +276,15 @@ export function translateRequestToAnthropic(
 			// parts array has nothing to translate; skip it rather than
 			// emitting an empty-content message.
 			if (typeof rawContent !== "string" && !Array.isArray(rawContent)) {
+				warnings.warn(
+					"Dropping malformed Responses message — content must be a string or an array",
+				);
 				continue;
 			}
 			const content: AnthropicContent[] =
 				typeof rawContent === "string"
 					? [{ type: "text", text: rawContent }]
-					: rawContent.map((c) => translateContentItem(c));
+					: rawContent.map((c) => translateContentItem(c, warnings));
 			// developer role is used by Codex CLI, and system role by Codex
 			// VS Code clients, for system-level instructions. Anthropic
 			// /v1/messages does not accept either role in the messages array
@@ -285,7 +332,7 @@ export function translateRequestToAnthropic(
 							typeof item.output === "string"
 								? item.output
 								: Array.isArray(item.output)
-									? item.output.map((c) => translateContentItem(c))
+									? item.output.map((c) => translateContentItem(c, warnings))
 									: "",
 					},
 				],
@@ -315,7 +362,7 @@ export function translateRequestToAnthropic(
 		result.stream = req.stream;
 	}
 
-	const translatedTools = translateTools(getRequestTools(req));
+	const translatedTools = translateTools(getRequestTools(req), warnings);
 	if (translatedTools.length > 0) {
 		result.tools = translatedTools;
 		const toolChoice = translateToolChoice(req.tool_choice);
@@ -323,6 +370,10 @@ export function translateRequestToAnthropic(
 			result.tool_choice = toolChoice;
 		}
 	}
+
+	// Last, so tool warnings count too: report what the per-request cap
+	// suppressed, keeping a request that dropped a lot visible as one line.
+	warnings.flush();
 
 	return result;
 }
