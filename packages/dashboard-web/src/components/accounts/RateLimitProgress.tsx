@@ -276,6 +276,8 @@ export function RateLimitProgress({
 			remainingUsd?: number | null;
 			totalMicrodollarsAcquired?: number;
 			balanceScope?: "key" | "account" | "unknown";
+			resetInterval?: string | null;
+			resetsAt?: string | null;
 		};
 		const isOpenRouter = provider === PROVIDER_NAMES.OPENROUTER;
 		const hasNumericBalance = typeof creditData.remainingUsd === "number";
@@ -285,11 +287,30 @@ export function RateLimitProgress({
 				: (creditData.totalMicrodollarsAcquired ?? 0) > 0;
 			// A key-scoped budget is an "available limit"; the account-level pool
 			// (used for keys with no budget of their own) is "remaining credits".
+			const isKeyScope = creditData.balanceScope !== "account";
 			const label = isOpenRouter
-				? creditData.balanceScope === "account"
-					? "OpenRouter credits"
-					: "OpenRouter limit"
+				? isKeyScope
+					? "OpenRouter limit"
+					: "OpenRouter credits"
 				: "Kilo Gateway credits";
+			// Only a key with its own budget depletes on a schedule, so only it
+			// gets reset copy. The account pool never resets. Prefer the exact
+			// reset time; fall back to naming the interval when the payload
+			// carries one but no timestamp.
+			const resetsAtMs = creditData.resetsAt
+				? new Date(creditData.resetsAt).getTime()
+				: null;
+			const relativeReset =
+				isOpenRouter && isKeyScope
+					? formatRelativeReset(resetsAtMs, now)
+					: null;
+			const resetLabel = !(isOpenRouter && isKeyScope)
+				? null
+				: relativeReset
+					? `Resets ${relativeReset}`
+					: creditData.resetInterval
+						? `Resets ${creditData.resetInterval}`
+						: null;
 			return (
 				<div className={cn("space-y-2", className)}>
 					<div className="flex items-center justify-between">
@@ -302,6 +323,9 @@ export function RateLimitProgress({
 								: "Unlimited"}
 						</span>
 					</div>
+					{resetLabel && (
+						<span className="text-xs text-muted-foreground">{resetLabel}</span>
+					)}
 				</div>
 			);
 		}

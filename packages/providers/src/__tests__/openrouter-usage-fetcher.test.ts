@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import {
-	fetchOpenRouterUsageData,
-	getRepresentativeOpenRouterUtilization,
-	getRepresentativeOpenRouterWindow,
-	type OpenRouterUsageData,
-} from "../openrouter-usage-fetcher";
+import { fetchOpenRouterUsageData } from "../openrouter-usage-fetcher";
 
 const originalFetch = globalThis.fetch;
 
@@ -47,51 +42,6 @@ afterEach(() => {
 });
 
 describe("OpenRouter Usage Fetcher", () => {
-	describe("getRepresentativeOpenRouterUtilization", () => {
-		it("should return null when usage is null", () => {
-			expect(getRepresentativeOpenRouterUtilization(null)).toBeNull();
-		});
-
-		it("should return utilizationPercent from usage data", () => {
-			const usage: OpenRouterUsageData = {
-				usageUsd: 25.5,
-				limitUsd: 100,
-				remainingUsd: 74.5,
-				utilizationPercent: 25.5,
-				balanceScope: "key",
-			};
-			expect(getRepresentativeOpenRouterUtilization(usage)).toBe(25.5);
-		});
-
-		it("should return 0 when neither key limit nor account credits are known", () => {
-			const usage: OpenRouterUsageData = {
-				usageUsd: 12,
-				limitUsd: null,
-				remainingUsd: null,
-				utilizationPercent: 0,
-				balanceScope: "unknown",
-			};
-			expect(getRepresentativeOpenRouterUtilization(usage)).toBe(0);
-		});
-	});
-
-	describe("getRepresentativeOpenRouterWindow", () => {
-		it("should return null when usage is null", () => {
-			expect(getRepresentativeOpenRouterWindow(null)).toBeNull();
-		});
-
-		it("should return 'credits' window label", () => {
-			const usage: OpenRouterUsageData = {
-				usageUsd: 1,
-				limitUsd: 10,
-				remainingUsd: 9,
-				utilizationPercent: 10,
-				balanceScope: "key",
-			};
-			expect(getRepresentativeOpenRouterWindow(usage)).toBe("credits");
-		});
-	});
-
 	describe("fetchOpenRouterUsageData", () => {
 		it("reads limit_remaining/limit/usage from the key endpoint payload", async () => {
 			mockJsonResponse({
@@ -119,7 +69,75 @@ describe("OpenRouter Usage Fetcher", () => {
 			expect(data?.remainingUsd).toBe(74.5);
 			expect(data?.usageUsd).toBe(25.5);
 			expect(data?.balanceScope).toBe("key");
-			expect(data?.utilizationPercent).toBeCloseTo(25.5, 5);
+			expect(data?.resetInterval).toBe("monthly");
+		});
+
+		it("derives utilization from the current period, not lifetime usage", async () => {
+			// A monthly-reset key that has spent $260 over its life against a
+			// $100 monthly cap, with $40 left this period. Using lifetime usage
+			// would report 260% and bench a usable account.
+			mockJsonResponse({
+				data: {
+					limit: 100,
+					limit_remaining: 40,
+					limit_reset: "monthly",
+					usage: 260,
+					usage_monthly: 60,
+				},
+			});
+
+			const data = await fetchOpenRouterUsageData("sk-or-test");
+			expect(data?.remainingUsd).toBe(40);
+			// (100 - 40) / 100 = 60% — this period's spend, not 260%.
+			expect(data?.utilizationPercent).toBeCloseTo(60, 5);
+		});
+
+		it("prefers the period counter matching limit_reset when limit_remaining is absent", async () => {
+			mockJsonResponse({
+				data: {
+					limit: 100,
+					limit_reset: "weekly",
+					usage: 999,
+					usage_weekly: 25,
+					usage_monthly: 80,
+				},
+			});
+
+			const data = await fetchOpenRouterUsageData("sk-or-test");
+			expect(data?.utilizationPercent).toBeCloseTo(25, 5);
+		});
+
+		it("falls back to lifetime usage when the limit does not reset", async () => {
+			mockJsonResponse({ data: { limit: 50, usage: 10 } });
+
+			const data = await fetchOpenRouterUsageData("sk-or-test");
+			expect(data?.resetInterval).toBeNull();
+			expect(data?.utilizationPercent).toBeCloseTo(20, 5);
+		});
+
+		it("reads the reset time from the key_limit budget", async () => {
+			const resetsAt = "2026-11-01T00:00:00.000Z";
+			mockJsonResponse({
+				data: {
+					limit: 100,
+					limit_remaining: 74.5,
+					limit_reset: "monthly",
+					usage: 25.5,
+					budgets: [
+						{ scope: "member", reset_interval: "weekly", resets_at: null },
+						{
+							scope: "key_limit",
+							reset_interval: "monthly",
+							resets_at: resetsAt,
+						},
+					],
+					effective_budget: { scope: "member", resets_at: null },
+				},
+			});
+
+			const data = await fetchOpenRouterUsageData("sk-or-test");
+			// Must come from the key_limit entry, not the member guardrail.
+			expect(data?.resetsAt).toBe(resetsAt);
 		});
 
 		it("falls back to account credits when the key has no budget", async () => {
@@ -147,7 +165,11 @@ describe("OpenRouter Usage Fetcher", () => {
 			expect(data?.remainingUsd).toBeCloseTo(34.3967595, 6);
 			expect(data?.usageUsd).toBeCloseTo(0.6032405, 6);
 			expect(data?.balanceScope).toBe("account");
-			expect(data?.utilizationPercent).toBeCloseTo(1.7235, 3);
+			// An account pool has no depletion window, so it must contribute no
+			// utilization — otherwise it could gate the account out of selection.
+			expect(data?.utilizationPercent).toBeNull();
+			expect(data?.resetInterval).toBeNull();
+			expect(data?.resetsAt).toBeNull();
 		});
 
 		it("does not call the credits endpoint when the key has a limit", async () => {
@@ -169,7 +191,7 @@ describe("OpenRouter Usage Fetcher", () => {
 			expect(data?.limitUsd).toBeNull();
 			expect(data?.remainingUsd).toBeNull();
 			expect(data?.balanceScope).toBe("unknown");
-			expect(data?.utilizationPercent).toBe(0);
+			expect(data?.utilizationPercent).toBeNull();
 		});
 
 		it("clamps account credits at zero when usage exceeds the pool", async () => {
@@ -180,7 +202,6 @@ describe("OpenRouter Usage Fetcher", () => {
 
 			const data = await fetchOpenRouterUsageData("sk-or-test");
 			expect(data?.remainingUsd).toBe(0);
-			expect(data?.utilizationPercent).toBe(100);
 		});
 
 		it("derives remaining from limit - usage when limit_remaining is absent", async () => {
@@ -228,5 +249,25 @@ describe("OpenRouter Usage Fetcher", () => {
 			const data = await fetchOpenRouterUsageData("sk-or-test");
 			expect(data).toBeNull();
 		});
+
+		it("aborts a stalled request instead of hanging the poll slot", async () => {
+			// A fetch that never settles must be cut off by the abort deadline,
+			// otherwise UsageCache keeps reusing this in-flight promise and the
+			// account's balance freezes for good.
+			let sawAbort = false;
+			globalThis.fetch = mock(
+				async (_input: RequestInfo, init?: RequestInit) =>
+					new Promise<Response>((_resolve, reject) => {
+						init?.signal?.addEventListener("abort", () => {
+							sawAbort = true;
+							reject(new DOMException("aborted", "AbortError"));
+						});
+					}),
+			) as unknown as typeof fetch;
+
+			const data = await fetchOpenRouterUsageData("sk-or-test");
+			expect(sawAbort).toBe(true);
+			expect(data).toBeNull();
+		}, 15_000);
 	});
 });

@@ -35,7 +35,6 @@ import {
 import {
 	fetchOpenRouterUsageData,
 	getRepresentativeOpenRouterUtilization,
-	getRepresentativeOpenRouterWindow,
 	type OpenRouterUsageData,
 } from "./openrouter-usage-fetcher";
 import { extractChatgptAccountId } from "./providers/codex/account-id";
@@ -546,6 +545,8 @@ function utilizationForProvider(
 			return getRepresentativeKiloUtilization(data as KiloUsageData);
 		}
 		case "openrouter": {
+			// Null for keys with no budget: an unlimited key's purchased credits
+			// have no depletion window, so it is never gated out of selection.
 			return getRepresentativeOpenRouterUtilization(
 				data as OpenRouterUsageData,
 			);
@@ -721,11 +722,16 @@ export function getRepresentativeUsageResetMs(
 					data,
 					getRepresentativeKiloWindow(data as KiloUsageData),
 				);
-			case "openrouter":
-				return extractUsageResetMs(
-					data,
-					getRepresentativeOpenRouterWindow(data as OpenRouterUsageData),
-				);
+			case "openrouter": {
+				// OpenRouter reports a top-level ISO `resetsAt` (sourced from the
+				// key_limit budget), not a nested window's `resets_at`, so the
+				// generic extractUsageResetMs — which indexes by window name —
+				// cannot reach it. Only limited keys carry one.
+				const resetsAt = (data as OpenRouterUsageData).resetsAt;
+				if (typeof resetsAt !== "string") return null;
+				const ms = new Date(resetsAt).getTime();
+				return Number.isFinite(ms) ? ms : null;
+			}
 			case "alibaba-coding-plan":
 				return extractUsageResetMs(
 					data,
@@ -1377,23 +1383,25 @@ class UsageCache {
 					return { success: true, retryAfterMs: null };
 				}
 			} else if (provider === "openrouter") {
-				// Fetch OpenRouter credit balance for the key (GET /api/v1/key)
+				// Fetch the OpenRouter credit balance for the key
+				// (GET /api/v1/key, falling back to /api/v1/credits).
 				data = await fetchOpenRouterUsageData(token);
 				if (data) {
 					this.cache.set(accountId, { data, timestamp: Date.now() });
-					const utilization = getRepresentativeOpenRouterUtilization(
-						data as OpenRouterUsageData,
-					);
-					const window = getRepresentativeOpenRouterWindow(
-						data as OpenRouterUsageData,
-					);
-					const orData = data as OpenRouterUsageData;
+					const credits = data as OpenRouterUsageData;
+					const resetSuffix = credits.resetsAt
+						? `, resets ${credits.resetsAt}`
+						: "";
 					log.debug(
 						`Successfully fetched OpenRouter usage data for account ${accountId}: ${
-							orData.remainingUsd === null
-								? "unlimited"
-								: `$${orData.remainingUsd.toFixed(2)} remaining`
-						} (${utilization?.toFixed(1)}% used, ${window})`,
+							credits.remainingUsd === null
+								? "balance unavailable"
+								: `$${credits.remainingUsd.toFixed(2)} remaining`
+						} (${credits.balanceScope} scope${
+							credits.utilizationPercent === null
+								? ""
+								: `, ${credits.utilizationPercent.toFixed(1)}% used`
+						}${resetSuffix})`,
 					);
 					return { success: true, retryAfterMs: null };
 				}

@@ -29,6 +29,7 @@ import {
 	type AnyUsageData,
 	clearDerivedProviderModelDefaultsForAccount,
 	fetchUsageData,
+	getRepresentativeOpenRouterUtilization,
 	getRepresentativeUsageSnapshotForProvider,
 	getRepresentativeUtilization,
 	getRepresentativeUtilizationForProvider,
@@ -54,6 +55,7 @@ import type {
 	AnthropicUsageData,
 	FullUsageData,
 	LoadBalancingStrategy,
+	OpenRouterUsageData,
 	RateLimitReason,
 	RequestTransformer,
 } from "@better-ccflare/types";
@@ -552,25 +554,16 @@ export function createAccountsListHandler(
 						}
 					}
 				} else if (account.provider === "openrouter" && usageData) {
-					// OpenRouter credit data - type guard to check it's OpenRouterUsageData
-					const isOpenRouterData =
-						"remainingUsd" in usageData && "usageUsd" in usageData;
+					// OpenRouter credit balance - type guard on the discriminator
+					// only this provider sets. Utilization/reset are reported only
+					// for keys with their own limit; the fetcher yields null for
+					// unlimited keys, which keeps them out of the usage gate.
+					const isOpenRouterData = "balanceScope" in usageData;
 					if (isOpenRouterData) {
-						try {
-							const {
-								getRepresentativeOpenRouterUtilization,
-								getRepresentativeOpenRouterWindow,
-							} = require("@better-ccflare/providers");
-							usageUtilization =
-								getRepresentativeOpenRouterUtilization(usageData);
-							usageWindow = getRepresentativeOpenRouterWindow(usageData);
-							fullUsageData = usageData as FullUsageData;
-						} catch (error) {
-							log.warn(
-								`Failed to process OpenRouter usage data for account ${account.name}:`,
-								error,
-							);
-						}
+						usageUtilization = getRepresentativeOpenRouterUtilization(
+							usageData as OpenRouterUsageData,
+						);
+						fullUsageData = usageData as FullUsageData;
 					}
 				} else if (account.provider === "alibaba-coding-plan" && usageData) {
 					// Alibaba Coding Plan usage data - type guard to check it's AlibabaCodingPlanUsageData

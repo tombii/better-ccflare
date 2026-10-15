@@ -825,4 +825,105 @@ describe("RateLimitProgress — threshold tooltip wording", () => {
 			expect(render(undefined)).toBe("");
 		});
 	});
+
+	describe("OpenRouter credit balance", () => {
+		// Minimal shape the fetcher produces; the component reads these fields
+		// off `usageData` and branches on `balanceScope`.
+		type CreditData = {
+			usageUsd: number;
+			limitUsd: number | null;
+			remainingUsd: number | null;
+			utilizationPercent: number | null;
+			balanceScope: "key" | "account" | "unknown";
+			resetInterval: string | null;
+			resetsAt: string | null;
+		};
+
+		const render = (usageData: CreditData) =>
+			renderToStaticMarkup(
+				<RateLimitProgress
+					resetIso={null}
+					usageUtilization={usageData.utilizationPercent}
+					usageData={usageData as never}
+					provider="openrouter"
+				/>,
+			);
+
+		it("labels a key-scoped budget as a limit and shows the reset time", () => {
+			const html = render({
+				usageUsd: 25.5,
+				limitUsd: 100,
+				remainingUsd: 74.5,
+				utilizationPercent: 25.5,
+				balanceScope: "key",
+				resetInterval: "monthly",
+				resetsAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+			});
+			expect(html).toContain("OpenRouter limit");
+			expect(html).toContain("$74.50 remaining");
+			expect(html).toContain("Resets in 3d");
+			// A key-scoped budget is not the account pool.
+			expect(html).not.toContain("OpenRouter credits");
+		});
+
+		it("falls back to naming the interval when no reset time is given", () => {
+			const html = render({
+				usageUsd: 25.5,
+				limitUsd: 100,
+				remainingUsd: 74.5,
+				utilizationPercent: 25.5,
+				balanceScope: "key",
+				resetInterval: "weekly",
+				resetsAt: null,
+			});
+			expect(html).toContain("Resets weekly");
+		});
+
+		it("labels the account pool as credits and shows no reset copy", () => {
+			// Unlimited key: the account pool is purchased credit with no
+			// schedule, so there is nothing to reset.
+			const html = render({
+				usageUsd: 0.6,
+				limitUsd: null,
+				remainingUsd: 34.4,
+				utilizationPercent: null,
+				balanceScope: "account",
+				resetInterval: null,
+				resetsAt: null,
+			});
+			expect(html).toContain("OpenRouter credits");
+			expect(html).toContain("$34.40 remaining");
+			expect(html).not.toContain("Resets");
+			expect(html).not.toContain("OpenRouter limit");
+		});
+
+		it("renders Unlimited when neither budget nor credits could be read", () => {
+			const html = render({
+				usageUsd: 0,
+				limitUsd: null,
+				remainingUsd: null,
+				utilizationPercent: null,
+				balanceScope: "unknown",
+				resetInterval: null,
+				resetsAt: null,
+			});
+			expect(html).toContain("Unlimited");
+			expect(html).not.toContain("No credits");
+		});
+
+		it("shows no reset copy for an account pool even if an interval leaks in", () => {
+			// Guard: reset copy is gated on key scope, not merely on the fields
+			// being present.
+			const html = render({
+				usageUsd: 0.6,
+				limitUsd: null,
+				remainingUsd: 34.4,
+				utilizationPercent: null,
+				balanceScope: "account",
+				resetInterval: "monthly",
+				resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+			});
+			expect(html).not.toContain("Resets");
+		});
+	});
 });

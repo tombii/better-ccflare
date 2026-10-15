@@ -245,12 +245,38 @@ export interface KiloUsageData {
 	utilizationPercent: number; // 0-100
 }
 
-// Usage data types for OpenRouter accounts (from /api/v1/key)
+// Usage data types for OpenRouter accounts. Read from /api/v1/key, falling
+// back to /api/v1/credits for keys that carry no budget of their own.
+// This is the canonical shape — the fetcher imports it rather than declaring
+// its own copy, so the two cannot drift.
 export interface OpenRouterUsageData {
-	usageUsd: number; // Usage against the key, in USD
-	limitUsd: number | null; // Key credit limit, null when unlimited
-	remainingUsd: number | null; // Remaining credits, null when unlimited/unknown
-	utilizationPercent: number; // 0-100
+	/** Usage counted against whatever `remainingUsd` was derived from, in USD */
+	usageUsd: number;
+	/** The key's own credit limit in USD; null when the key carries no budget */
+	limitUsd: number | null;
+	/** Remaining balance in USD, null when it could not be determined */
+	remainingUsd: number | null;
+	/**
+	 * Utilization of the key's current allowance, 0-100, or null when there is
+	 * none to report (a key with no budget of its own has no depletion window).
+	 * Derived from the current period only, never from lifetime usage.
+	 */
+	utilizationPercent: number | null;
+	/**
+	 * Where the balance came from:
+	 * - `key`     — the key's own credit limit (`/api/v1/key`)
+	 * - `account` — account-level credits, used for unlimited keys (`/api/v1/credits`)
+	 * - `unknown` — neither could be read
+	 */
+	balanceScope: "key" | "account" | "unknown";
+	/**
+	 * Named reset interval for the key's limit, e.g. "daily" | "weekly" |
+	 * "monthly". Null when the cap does not reset (a lifetime budget, or
+	 * account-level purchased credits).
+	 */
+	resetInterval: string | null;
+	/** ISO timestamp of the next limit reset; null when unknown or non-resetting. */
+	resetsAt: string | null;
 }
 
 // Usage data types for Alibaba Coding Plan accounts
