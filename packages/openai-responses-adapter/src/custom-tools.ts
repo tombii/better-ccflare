@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { asText } from "./sanitize";
 import type { ResponseItem, ResponsesRequest, ResponsesTool } from "./types";
 
 /** Collect Responses Lite tool declarations without changing native input. */
@@ -45,19 +46,29 @@ function flattenTools(tools: ResponsesTool[]): ResponsesTool[] {
 				continue;
 			}
 			const tool = rawTool as ResponsesTool;
+			// Branching stays on `tool.type` so the union still narrows; only the
+			// text-producing sites use asText(). A strict `===` never coerces, so
+			// a non-string `type` simply falls through to the else branch.
 			if (tool.type === "namespace") {
+				// `tool.name` is interpolated into the child namespace and
+				// `tool.description` is joined below, so neither may be a
+				// non-string: an object with a null `toString` throws on
+				// coercion.
+				const toolName = asText(tool.name);
 				visit(
 					Array.isArray(tool.tools) ? tool.tools : [],
-					namespace ? `${namespace}.${tool.name}` : tool.name,
-					[description, tool.description].filter(Boolean).join("\n\n"),
+					namespace ? `${namespace}.${toolName ?? ""}` : toolName,
+					[asText(description), asText(tool.description)]
+						.filter(Boolean)
+						.join("\n\n"),
 				);
 			} else if (tool.type === "function" || tool.type === "custom") {
-				const effectiveNamespace = namespace ?? tool.namespace;
+				const effectiveNamespace = namespace ?? asText(tool.namespace);
 				const effectiveTool = effectiveNamespace
 					? {
 							...tool,
 							namespace: effectiveNamespace,
-							description: [description, tool.description]
+							description: [asText(description), asText(tool.description)]
 								.filter(Boolean)
 								.join("\n\n"),
 						}
@@ -84,7 +95,7 @@ export function getTranslatedToolName(
 	// string; the namespace branch below would otherwise throw on `.replace`.
 	// Only a string is used verbatim — anything else degrades to an empty name
 	// rather than being coerced, so a hostile toString cannot throw either.
-	const safeName = typeof name === "string" ? name : "";
+	const safeName = asText(name) ?? "";
 	if (!namespace) return safeName;
 	const digest = createHash("sha256")
 		.update(JSON.stringify([namespace, safeName]))

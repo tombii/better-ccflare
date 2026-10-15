@@ -5,6 +5,7 @@ import {
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { getRequestTools, getTranslatedToolName } from "./custom-tools";
+import { asText } from "./sanitize";
 import type {
 	AnthropicContent,
 	AnthropicImageContent,
@@ -48,13 +49,21 @@ function parseArguments(args: string): unknown {
 function translateTools(tools: ResponsesTool[]): AnthropicTool[] {
 	const result: AnthropicTool[] = [];
 	for (const tool of tools) {
+		// Branching stays on `tool.type` so the union still narrows; only the
+		// text-producing sites use asText(). A strict `===` never coerces, so a
+		// non-string `type` simply fails to match.
 		if (tool.type === "custom") {
-			const description = [
-				tool.description,
-				"Pass the tool's complete raw text in the input string.",
+			// `tool.description` and the grammar fields are joined into the
+			// description below, so a non-string must be dropped rather than
+			// coerced — an object with a null `toString` throws on `.join()`.
+			const grammar =
 				tool.format?.type === "grammar"
-					? `The input must follow this ${tool.format.syntax} grammar:\n${tool.format.definition}`
-					: undefined,
+					? `The input must follow this ${asText(tool.format.syntax) ?? ""} grammar:\n${asText(tool.format.definition) ?? ""}`
+					: undefined;
+			const description = [
+				asText(tool.description),
+				"Pass the tool's complete raw text in the input string.",
+				grammar,
 			]
 				.filter(Boolean)
 				.join("\n\n");
@@ -71,12 +80,19 @@ function translateTools(tools: ResponsesTool[]): AnthropicTool[] {
 			continue;
 		}
 		if (tool.type !== "function") {
-			logger.warn(`Skipping unsupported/built-in tool type: ${tool.type}`);
+			// Reached with a non-string `type` too, which must not be
+			// interpolated into the warning below.
+			const toolType = asText(tool.type);
+			logger.warn(
+				toolType === undefined
+					? "Skipping tool declaration with a non-string type"
+					: `Skipping unsupported/built-in tool type: ${toolType}`,
+			);
 			continue;
 		}
 		result.push({
 			name: getTranslatedToolName(tool.name, tool.namespace),
-			description: tool.description,
+			description: asText(tool.description),
 			input_schema: tool.parameters ?? {},
 		});
 	}
@@ -86,12 +102,13 @@ function translateTools(tools: ResponsesTool[]): AnthropicTool[] {
 function translateToolChoice(
 	choice: ResponsesRequest["tool_choice"],
 ): AnthropicToolChoice | undefined {
-	if (choice === undefined) return undefined;
+	if (choice === undefined || choice === null) return undefined;
 	if (choice === "auto") return { type: "auto" };
 	if (choice === "required") return { type: "any" };
 	if (choice === "none") return { type: "none" };
 	if (
 		typeof choice === "object" &&
+		!Array.isArray(choice) &&
 		(choice.type === "function" || choice.type === "custom")
 	) {
 		return {
@@ -117,17 +134,25 @@ function translateContentItem(c: {
 		return { type: "text", text: "" };
 	}
 
-	if (c.type === "input_text" || c.type === "output_text") {
-		return { type: "text", text: c.text ?? "" };
+	// A present-but-non-string `type` matches no branch, so it must not be
+	// interpolated into the warning below — an object with a null `toString`
+	// throws when the template literal coerces it.
+	const contentType = asText(c.type);
+
+	if (contentType === "input_text" || contentType === "output_text") {
+		// `text` is forwarded as text, so a non-string must degrade to empty
+		// rather than being coerced (which could throw, or leak "[object
+		// Object]" into the prompt).
+		return { type: "text", text: asText(c.text) ?? "" };
 	}
 
-	if (c.type === "refusal") {
-		return { type: "text", text: c.refusal ?? "" };
+	if (contentType === "refusal") {
+		return { type: "text", text: asText(c.refusal) ?? "" };
 	}
 
-	if (c.type === "input_image") {
-		const imageUrl = c.image_url;
-		if (typeof imageUrl === "string") {
+	if (contentType === "input_image") {
+		const imageUrl = asText(c.image_url);
+		if (imageUrl !== undefined) {
 			const trimmed = imageUrl.trim();
 			const dataUrlMatch = /^data:([^;]+);base64,(.+)$/.exec(trimmed);
 			if (dataUrlMatch) {
@@ -145,14 +170,19 @@ function translateContentItem(c: {
 			}
 		}
 
-		if (typeof c.file_id === "string" && c.file_id.length > 0) {
-			return { type: "text", text: `[image file_id: ${c.file_id}]` };
+		const fileId = asText(c.file_id);
+		if (fileId !== undefined && fileId.length > 0) {
+			return { type: "text", text: `[image file_id: ${fileId}]` };
 		}
 
 		return { type: "text", text: "[image content omitted]" };
 	}
 
-	logger.warn(`Unknown content type "${c.type}" — content dropped`);
+	logger.warn(
+		contentType === undefined
+			? "Dropping content part with a non-string type"
+			: `Unknown content type "${contentType}" — content dropped`,
+	);
 	return { type: "text", text: "" };
 }
 
@@ -266,7 +296,7 @@ export function translateRequestToAnthropic(
 	const mergedMessages = mergeConsecutiveSameRole(messages);
 
 	const result: AnthropicRequest = {
-		model: mapGptModelToClaudeFamily(req.model),
+		model: mapGptModelToClaudeFamily(asText(req.model) ?? ""),
 		messages: mergedMessages,
 		max_tokens: req.max_output_tokens ?? 4096,
 	};
@@ -275,7 +305,10 @@ export function translateRequestToAnthropic(
 	const systemParts: string[] = [];
 	if (developerBlocks.length > 0)
 		systemParts.push(developerBlocks.join("\n\n"));
-	if (req.instructions !== undefined) systemParts.push(req.instructions);
+	// Only a string is pushed: `systemParts` is joined below, so a non-string
+	// would be coerced here and could throw.
+	const instructions = asText(req.instructions);
+	if (instructions !== undefined) systemParts.push(instructions);
 	if (systemParts.length > 0) result.system = systemParts.join("\n\n");
 
 	if (req.stream !== undefined) {

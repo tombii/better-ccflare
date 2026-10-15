@@ -345,3 +345,189 @@ describe("malformed tool declarations", () => {
 		expect(messages[0].content[0].name).toMatch(/^ns_[0-9a-f]{24}_$/);
 	});
 });
+
+// A value can be structurally valid JSON and still throw the moment it is
+// coerced to text — `{"toString": null, "valueOf": null}` serializes fine but
+// blows up any template literal, `.join()` or `.replace()`. Guarding the shape
+// of a field is therefore not enough; the coercion sites need guarding too.
+describe("coercion-hostile values never reach a text path", () => {
+	const cases: Array<[string, Record<string, unknown>]> = [
+		[
+			"content part type",
+			{ input: [{ role: "user", content: [{ type: coercionHostile }] }] },
+		],
+		[
+			"content part text",
+			{
+				input: [
+					{
+						role: "user",
+						content: [{ type: "input_text", text: coercionHostile }],
+					},
+				],
+			},
+		],
+		[
+			"developer part text (joined into the system prompt)",
+			{
+				input: [
+					{
+						type: "message",
+						role: "developer",
+						content: [{ type: "input_text", text: coercionHostile }],
+					},
+				],
+			},
+		],
+		[
+			"content part refusal",
+			{
+				input: [
+					{
+						role: "user",
+						content: [{ type: "refusal", refusal: coercionHostile }],
+					},
+				],
+			},
+		],
+		["tool type", { input: "hi", tools: [{ type: coercionHostile }] }],
+		[
+			"custom tool description",
+			{
+				input: "hi",
+				tools: [{ type: "custom", name: "n", description: coercionHostile }],
+			},
+		],
+		[
+			"namespaced function description",
+			{
+				input: "hi",
+				tools: [
+					{
+						type: "function",
+						name: "n",
+						namespace: "ns",
+						description: coercionHostile,
+					},
+				],
+			},
+		],
+		[
+			"namespace description",
+			{
+				input: "hi",
+				tools: [
+					{
+						type: "namespace",
+						name: "ns",
+						description: coercionHostile,
+						tools: [],
+					},
+				],
+			},
+		],
+		[
+			"namespace name with nested tools",
+			{
+				input: "hi",
+				tools: [
+					{
+						type: "namespace",
+						name: coercionHostile,
+						tools: [{ type: "function", name: "inner" }],
+					},
+				],
+			},
+		],
+		[
+			"custom tool grammar syntax",
+			{
+				input: "hi",
+				tools: [
+					{
+						type: "custom",
+						name: "n",
+						format: {
+							type: "grammar",
+							syntax: coercionHostile,
+							definition: "x",
+						},
+					},
+				],
+			},
+		],
+		[
+			"custom tool grammar definition",
+			{
+				input: "hi",
+				tools: [
+					{
+						type: "custom",
+						name: "n",
+						format: {
+							type: "grammar",
+							syntax: "lark",
+							definition: coercionHostile,
+						},
+					},
+				],
+			},
+		],
+		[
+			"instructions (joined into the system prompt)",
+			{ input: "hi", instructions: coercionHostile },
+		],
+		[
+			"tool_choice name",
+			{ input: "hi", tool_choice: { type: "function", name: coercionHostile } },
+		],
+		[
+			"namespaced tool call name",
+			{
+				input: [
+					{
+						type: "function_call",
+						call_id: "c",
+						name: coercionHostile,
+						namespace: "ns",
+						arguments: "{}",
+					},
+				],
+			},
+		],
+	];
+
+	for (const [label, extra] of cases) {
+		test(`handles a coercion-hostile ${label}`, async () => {
+			const { status } = await runRequest({ model: "", ...extra });
+
+			// The request must reach the proxy (or be rejected as a client
+			// error) — never throw out of the handler as a 500.
+			expect(status).toBeLessThan(500);
+		});
+	}
+
+	test("keeps the surrounding conversation intact", async () => {
+		const { status, forwarded } = await runRequest({
+			model: "",
+			input: [
+				{ role: "user", content: [{ type: coercionHostile }] },
+				validMessage,
+			],
+			tools: [{ type: coercionHostile }],
+		});
+
+		expect(status).toBe(200);
+		// Both are user-role, so they merge into one message; the hostile part
+		// becomes empty text and the real message survives.
+		expect(forwarded[0].messages).toEqual([
+			{
+				role: "user",
+				content: [
+					{ type: "text", text: "" },
+					{ type: "text", text: "keep me" },
+				],
+			},
+		]);
+	});
+});
