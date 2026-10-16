@@ -51,6 +51,10 @@ export type {
 } from "./repositories/model-translation.repository";
 // Re-export repository classes
 export { ModelTranslationRepository } from "./repositories/model-translation.repository";
+// RequestRepository owns the payload storage codec. Exported so callers that
+// need to read `request_payloads` go through a decoder that reverses
+// compression and at-rest encryption, instead of JSON.parse on raw bytes.
+export { RequestRepository } from "./repositories/request.repository";
 // Re-export repository types
 export type { StatsRepository } from "./repositories/stats.repository";
 // Re-export retry utilities for external use (from your improvements)

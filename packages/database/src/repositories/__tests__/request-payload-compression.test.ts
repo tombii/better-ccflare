@@ -135,4 +135,37 @@ describe("RequestRepository payload compression", () => {
 		// deterministically by the codec unit tests instead.
 		expect(await repo.getPayload(id)).toEqual(data);
 	});
+
+	it("stores a large payload written via savePayloadRaw compressed", async () => {
+		// Production writes go through savePayloadRaw, not savePayload — the two
+		// are separate methods, so each needs its own coverage. If savePayloadRaw
+		// ever stopped routing through the codec, only this test would notice.
+		const id = "req-raw";
+		insertRequest(db, id, Date.now());
+		const plaintext = JSON.stringify(largePayload());
+
+		await repo.savePayloadRaw(id, plaintext);
+
+		const stored = rawStoredJson(db, id);
+		expect(stored).not.toBe(plaintext);
+		expect(stored.length).toBeLessThan(plaintext.length);
+		expect(await repo.getPayload(id)).toEqual(JSON.parse(plaintext));
+	});
+
+	it("decodes a large payload through listPayloadsWithAccountNames", async () => {
+		// The request-detail list uses this method, not listPayloads. Both call
+		// decryptForList, but only exercising this one proves the path the
+		// dashboard actually renders stays compressed-aware.
+		const id = "req-with-names";
+		insertRequest(db, id, Date.now());
+		const data = largePayload();
+
+		await repo.savePayload(id, data);
+
+		const listed = await repo.listPayloadsWithAccountNames(10);
+		const row = listed.find((r) => r.id === id);
+		expect(row).toBeDefined();
+		expect(row?.json).not.toBeNull();
+		expect(JSON.parse(row?.json as string)).toEqual(data);
+	});
 });
