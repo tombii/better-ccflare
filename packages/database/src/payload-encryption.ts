@@ -1,16 +1,22 @@
 import { Logger } from "@better-ccflare/logger";
+import { compressPayload, decompressPayload } from "./payload-compression";
 
 /**
- * Payload encryption at rest using AES-256-GCM (Web Crypto).
+ * Payload storage codec: compression (see `payload-compression.ts`) composed
+ * with optional AES-256-GCM encryption (Web Crypto).
  *
- * Stored format: `enc:` + base64(iv || ciphertext || authTag)
+ * Stored format: `enc:` + base64(iv || ciphertext || authTag) over an inner
+ * body that is either raw JSON or `zst:` + base64(zstd(json)).
  *
  * - The 12-byte IV is generated per-encryption with `crypto.getRandomValues`.
  * - GCM's authentication tag is appended by `crypto.subtle.encrypt`, so any
  *   tampering or wrong-key decryption fails loudly (the tag check throws).
  * - When `PAYLOAD_ENCRYPTION_KEY` is unset, encrypt is a pass-through and
  *   decrypt accepts plaintext as-is — this keeps existing databases readable
- *   and lets operators opt in without a migration.
+ *   and lets operators opt in without a migration. Compression still applies,
+ *   with or without a key.
+ * - Compression runs BEFORE encryption (ciphertext is incompressible), and
+ *   decryption runs before decompression on read.
  *
  * Bun Workers have isolated module scopes, so any worker that calls these
  * helpers MUST also call `initPayloadEncryption()` at module load time.
@@ -152,6 +158,35 @@ export async function decryptPayload(stored: string): Promise<string> {
 		ciphertext,
 	);
 	return new TextDecoder().decode(decrypted);
+}
+
+/**
+ * Encode a JSON payload for storage in `request_payloads.json`.
+ *
+ * This is the single entry point the repository should use: it compresses
+ * (always, when it helps) and then encrypts (only when a key is configured).
+ * Keeping the composition here means a future read path cannot accidentally
+ * decrypt without also decompressing, or vice versa.
+ */
+export async function encodePayloadForStorage(json: string): Promise<string> {
+	return encryptPayload(compressPayload(json));
+}
+
+/**
+ * Decode a stored payload back to its JSON string. Reverses
+ * `encodePayloadForStorage`: decrypt (pass-through when unencrypted), then
+ * decompress (pass-through for legacy uncompressed bodies).
+ *
+ * A legacy row — plaintext JSON, or ciphertext wrapping uncompressed JSON —
+ * round-trips unchanged, so no migration of existing payloads is required.
+ *
+ * Throws on the same conditions as `decryptPayload` (encrypted row with no key,
+ * or GCM auth failure), plus on corrupt `zst:`-marked data.
+ */
+export async function decodePayloadFromStorage(
+	stored: string,
+): Promise<string> {
+	return decompressPayload(await decryptPayload(stored));
 }
 
 /** Returns true when a key has been imported and encryption is active. */
