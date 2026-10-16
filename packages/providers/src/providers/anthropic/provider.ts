@@ -751,20 +751,29 @@ export class AnthropicProvider extends BaseProvider {
 
 						// Read with timeout
 						const readPromise = reader.read();
+						let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 						const timeoutPromise = new Promise<{
 							value?: Uint8Array;
 							done: boolean;
-						}>((_, reject) =>
-							setTimeout(
+						}>((_, reject) => {
+							timeoutHandle = setTimeout(
 								() => reject(new Error("Read operation timeout")),
 								5000,
-							),
-						);
+							);
+						});
 
-						const { value, done } = await Promise.race([
-							readPromise,
-							timeoutPromise,
-						]);
+						let value: Uint8Array | undefined, done: boolean;
+						try {
+							({ value, done } = await Promise.race([
+								readPromise,
+								timeoutPromise,
+							]));
+						} finally {
+							// A read that wins the race must not leave its timer
+							// armed: every completed read would otherwise hold a
+							// live timer (and the event loop) for 5s.
+							if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+						}
 
 						if (done) break;
 
@@ -775,20 +784,29 @@ export class AnthropicProvider extends BaseProvider {
 							foundMessageStart = true;
 							// Read a bit more to ensure we get the data line
 							const nextReadPromise = reader.read();
+							let nextTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
 							const nextTimeoutPromise = new Promise<{
 								value?: Uint8Array;
 								done: boolean;
-							}>((_, reject) =>
-								setTimeout(
+							}>((_, reject) => {
+								nextTimeoutHandle = setTimeout(
 									() => reject(new Error("Read operation timeout")),
 									5000,
-								),
-							);
+								);
+							});
 
-							const { value: nextValue, done: nextDone } = await Promise.race([
-								nextReadPromise,
-								nextTimeoutPromise,
-							]);
+							let nextValue: Uint8Array | undefined, nextDone: boolean;
+							try {
+								({ value: nextValue, done: nextDone } = await Promise.race([
+									nextReadPromise,
+									nextTimeoutPromise,
+								]));
+							} finally {
+								// Independent race — needs its own handle and its own
+								// cleanup, exactly like the read above.
+								if (nextTimeoutHandle !== undefined)
+									clearTimeout(nextTimeoutHandle);
+							}
 
 							if (!nextDone && nextValue) {
 								buffered += decoder.decode(nextValue, { stream: true });
