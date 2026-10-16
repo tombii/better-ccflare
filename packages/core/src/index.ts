@@ -9,6 +9,7 @@ export {
 	getOverloadRetryConfig,
 	getRateLimitResetStabilityMs,
 	getServerErrorRetryEnabled,
+	getStreamReadTimeoutMs,
 	HTTP_STATUS,
 	isOverloadReason,
 	isServerErrorReason,

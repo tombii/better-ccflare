@@ -1,6 +1,7 @@
 import {
 	BUFFER_SIZES,
 	estimateCostUSD,
+	getStreamReadTimeoutMs,
 	mapModelName,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
@@ -325,6 +326,12 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	/**
 	 * Extract usage information from streaming responses
 	 * Uses sophisticated SSE parsing for message_start and message_delta events
+	 *
+	 * Reads until `message_delta` (the tail of the stream, where the final
+	 * output_tokens live), bounded only by an IDLE timeout on the gap between
+	 * chunks — never by a budget for the stream as a whole, so a slow-but-alive
+	 * stream of any length still yields usage. Returns null if the stream goes
+	 * silent past that window or yields no usage at all.
 	 */
 	protected async extractStreamingUsage(
 		clone: Response,
@@ -346,8 +353,15 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		let buffered = "";
 		const maxBytes = BUFFER_SIZES.ANTHROPIC_STREAM_CAP_BYTES;
 		const decoder = new TextDecoder();
-		const READ_TIMEOUT_MS = TIME_CONSTANTS.STREAM_READ_TIMEOUT_MS;
-		const startTime = Date.now();
+		// IDLE window, not a budget for the whole stream. Each `reader.read()`
+		// resolves on the next chunk, so racing it against this timer measures
+		// exactly "no new bytes arrived for this long". A whole-stream budget
+		// is wrong on this path: the final `message_delta` — the frame that
+		// carries the authoritative output_tokens — only arrives at the END of
+		// the stream, and agentic streams routinely run for minutes. The
+		// fallback is TIME_CONSTANTS.STREAM_READ_TIMEOUT_MS, overridable via
+		// CCFLARE_STREAM_READ_TIMEOUT_MS.
+		const readTimeoutMs = getStreamReadTimeoutMs();
 
 		// Track usage from both message_start and message_delta
 		let messageStartUsage: {
@@ -366,22 +380,21 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 
 		try {
 			while (buffered.length < maxBytes) {
-				if (Date.now() - startTime > READ_TIMEOUT_MS) {
-					// The enclosing `finally` drains the reader on every exit
-					// path, including this throw — no separate call needed here.
-					throw new Error("Stream read timeout while extracting usage info");
-				}
-
 				const readPromise = reader.read();
+				// Fresh timer per read: it bounds the wait for THIS chunk (an
+				// idle gap), so a stream that keeps delivering bytes keeps
+				// going however long it runs in total. Note this is an idle
+				// timeout even though the message says "Read operation".
+				let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 				const timeoutPromise = new Promise<{
 					value?: Uint8Array;
 					done: boolean;
-				}>((_, reject) =>
-					setTimeout(
+				}>((_, reject) => {
+					timeoutHandle = setTimeout(
 						() => reject(new Error("Read operation timeout")),
-						TIME_CONSTANTS.STREAM_OPERATION_TIMEOUT_MS,
-					),
-				);
+						readTimeoutMs,
+					);
+				});
 
 				let value: Uint8Array | undefined, done: boolean;
 				try {
@@ -394,9 +407,16 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 						log.warn(
 							"Stream read operation timed out while extracting usage info - continuing without usage data",
 						);
+						// The enclosing `finally` drains the reader on every exit
+						// path, including this one — no separate call needed.
 						return null;
 					}
 					throw error; // Re-throw other errors
+				} finally {
+					// The winning read must not leave a live timer behind: at
+					// the 5-minute default every completed read would otherwise
+					// hold a timer (and the event loop) for minutes.
+					if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
 				}
 
 				if (done) break;

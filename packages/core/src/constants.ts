@@ -24,7 +24,26 @@ export const TIME_CONSTANTS = {
 
 	// Timeouts
 	STREAM_TIMEOUT_DEFAULT: 1000 * 60 * 1, // 1 minute
-	STREAM_READ_TIMEOUT_MS: 60000, // 60 seconds - overall timeout for stream reads
+	// IDLE window for a stream read — the maximum time to wait for the NEXT
+	// chunk, not a budget for the whole stream. An Anthropic-compatible
+	// upstream only sends the `message_delta` frame that carries the final
+	// output_tokens at the very END of the stream, and agentic traffic
+	// regularly runs 90-180s, so a whole-stream budget silently discarded
+	// usage for perfectly healthy streams (a 91s / 26,366-output-token
+	// response was logged as "Stream read timeout while extracting usage
+	// info"). 5 minutes is sized for the other silent stretch on this path:
+	// a large prompt can spend minutes in prefill before the first output
+	// token, with no bytes to read in the meantime. It bounds a DEAD stream,
+	// not a slow one.
+	// Override at runtime via CCFLARE_STREAM_READ_TIMEOUT_MS.
+	STREAM_READ_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes
+	/**
+	 * @deprecated No longer read anywhere. The per-read timeout it used to
+	 * bound (in `extractStreamingUsage`) is now the idle window above, so a
+	 * single knob — STREAM_READ_TIMEOUT_MS / CCFLARE_STREAM_READ_TIMEOUT_MS —
+	 * covers it. Kept only so external configs referencing the name do not
+	 * break.
+	 */
 	STREAM_OPERATION_TIMEOUT_MS: 30000, // 30 seconds - timeout per read operation
 
 	OAUTH_STATE_TTL: 10, // 10 minutes (stored separately as minutes)
@@ -172,6 +191,19 @@ export function getRateLimitResetStabilityMs(): number {
 	return readDurationOverrideMs(
 		process.env.CCFLARE_RATE_LIMIT_RESET_STABILITY_MS,
 		TIME_CONSTANTS.RATE_LIMIT_RESET_STABILITY_MS,
+	);
+}
+
+/**
+ * Read the IDLE window (ms) for reading a streaming body: the maximum time to
+ * wait for the next chunk before treating the stream as dead. It is not a
+ * budget for the whole stream — a healthy agentic stream can run for minutes.
+ * Reads CCFLARE_STREAM_READ_TIMEOUT_MS from env.
+ */
+export function getStreamReadTimeoutMs(): number {
+	return readDurationOverrideMs(
+		process.env.CCFLARE_STREAM_READ_TIMEOUT_MS,
+		TIME_CONSTANTS.STREAM_READ_TIMEOUT_MS,
 	);
 }
 
