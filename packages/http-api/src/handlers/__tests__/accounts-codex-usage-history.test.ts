@@ -4,6 +4,7 @@ import type { Config } from "@better-ccflare/config";
 import {
 	BunSqlAdapter,
 	ensureSchema,
+	RequestRepository,
 	runMigrations,
 } from "@better-ccflare/database";
 import { usageCache } from "@better-ccflare/providers";
@@ -26,12 +27,16 @@ const CONFIG = {
 describe("GET /api/accounts — Codex weekly usage recovery", () => {
 	let sqlite: Database;
 	let adapter: BunSqlAdapter;
+	// Exercises the real payload storage codec, so a compressed row in the DB is
+	// decoded exactly as production decodes it.
+	let repo: RequestRepository;
 
 	beforeEach(async () => {
 		sqlite = new Database(":memory:");
 		ensureSchema(sqlite);
 		runMigrations(sqlite);
 		adapter = new BunSqlAdapter(sqlite);
+		repo = new RequestRepository(adapter);
 		// The cache is module-level and shared across tests in the process.
 		usageCache.delete(ACCOUNT_ID);
 		await adapter.run(
@@ -66,6 +71,10 @@ describe("GET /api/accounts — Codex weekly usage recovery", () => {
 	) {
 		const dbOps = {
 			getAdapter: () => adapter,
+			// The recovery path must decode through the repository, not parse the
+			// raw column: delegated to the real codec so the regression below is
+			// meaningful.
+			getRequestPayload: (id: string) => repo.getPayload(id),
 			getStatsRepository: () => ({
 				getSessionStats: async () => new Map(),
 			}),
@@ -260,5 +269,58 @@ describe("GET /api/accounts — Codex weekly usage recovery", () => {
 			five_hour: { utilization: number | null };
 		} | null;
 		expect(usage?.five_hour.utilization).toBe(100);
+	});
+
+	it("recovers usage from a compressed stored payload (regression: raw JSON.parse rejected encoded rows)", async () => {
+		// Payloads at or above the compression threshold are stored with a `zst:`
+		// marker. Before the fix this reader JSON.parse-d the raw column, so every
+		// compressed row was rejected and the card silently fell back to the
+		// weekly snapshot. Writing through the repository stores exactly what
+		// production stores.
+		const timestamp = Date.now() - 30_000;
+		const requestId = `req-compressed-${timestamp}`;
+		await adapter.run(
+			`INSERT INTO requests (id, timestamp, method, path, account_used, status_code)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			[requestId, timestamp, "POST", "/v1/messages", ACCOUNT_ID, 200],
+		);
+		await repo.savePayload(requestId, {
+			response: {
+				status: 200,
+				headers: {
+					"x-codex-primary-window-minutes": "300",
+					"x-codex-primary-reset-at": String(futureResetSeconds()),
+					"x-codex-secondary-window-minutes": String(7 * 24 * 60),
+					"x-codex-secondary-used-percent": "37",
+					"x-codex-secondary-reset-at": String(
+						Math.floor((Date.now() + 3 * 24 * 60 * 60 * 1000) / 1000),
+					),
+				},
+				// Padding so the payload clears the 512-byte compression threshold;
+				// a small payload is stored verbatim and would not exercise the bug.
+				body: "x".repeat(2000),
+			},
+			meta: { timestamp },
+		});
+
+		// Guard the premise: the raw column must not be parseable as JSON, which
+		// is precisely what broke the pre-fix reader. This is state-agnostic —
+		// the row is `zst:` when compression is the only codec active, or `enc:`
+		// when the developer has PAYLOAD_ENCRYPTION_KEY set. Asserting `zst:`
+		// specifically would fail for anyone running with encryption enabled,
+		// even though the regression is equally covered in that case.
+		const stored = sqlite
+			.query<{ json: string }, [string]>(
+				`SELECT json FROM request_payloads WHERE id = ?`,
+			)
+			.get(requestId)?.json;
+		expect(typeof stored).toBe("string");
+		expect(() => JSON.parse(stored as string)).toThrow();
+
+		const account = await readAccount(makeHandler(null));
+		const usage = account?.usageData as {
+			seven_day: { utilization: number | null };
+		} | null;
+		expect(usage?.seven_day.utilization).toBe(37);
 	});
 });

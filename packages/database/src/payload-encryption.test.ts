@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { COMPRESSED_PREFIX } from "./payload-compression";
 
 // We deliberately re-import the module fresh per test so module-level state
 // (encryptionKey, initPromise) doesn't leak between cases. The dynamic import
@@ -148,5 +149,129 @@ describe("payload encryption", () => {
 		expect(b).toBe(true);
 		expect(c).toBe(true);
 		expect(mod.isEncryptionEnabled()).toBe(true);
+	});
+});
+
+describe("payload storage codec", () => {
+	// These hooks are scoped to this describe block — the ones inside
+	// "payload encryption" do not apply here, and a key set by an earlier case
+	// would otherwise leak in and silently flip the unencrypted assertions.
+	beforeEach(() => {
+		delete process.env.PAYLOAD_ENCRYPTION_KEY;
+	});
+
+	afterEach(() => {
+		delete process.env.PAYLOAD_ENCRYPTION_KEY;
+	});
+
+	/**
+	 * Long conversation history — the shape the proxy actually stores. Large
+	 * enough that compression must engage and measurably shrink the value.
+	 */
+	function largeJson(): string {
+		return JSON.stringify({
+			messages: Array.from({ length: 100 }, (_, i) => ({
+				role: i % 2 === 0 ? "user" : "assistant",
+				content: `Message ${i}: ${"lorem ipsum dolor sit amet ".repeat(20)}`,
+			})),
+		});
+	}
+
+	it("compresses even when no encryption key is configured", async () => {
+		// The headline requirement: compression must work standalone, not only
+		// as a passenger on the encryption path.
+		const mod = await loadFreshModule();
+		await mod.initPayloadEncryption();
+		expect(mod.isEncryptionEnabled()).toBe(false);
+
+		const original = largeJson();
+		const stored = await mod.encodePayloadForStorage(original);
+
+		expect(stored.startsWith(COMPRESSED_PREFIX)).toBe(true);
+		expect(stored.startsWith("enc:")).toBe(false);
+		expect(stored.length).toBeLessThan(original.length);
+		expect(await mod.decodePayloadFromStorage(stored)).toBe(original);
+	});
+
+	it("round-trips a payload with compression and encryption", async () => {
+		process.env.PAYLOAD_ENCRYPTION_KEY = VALID_HEX_KEY;
+		const mod = await loadFreshModule();
+		await mod.initPayloadEncryption();
+
+		const original = largeJson();
+		const stored = await mod.encodePayloadForStorage(original);
+
+		// Encrypted marker wraps the compressed body — the ciphertext is what
+		// lands in the DB.
+		expect(stored.startsWith("enc:")).toBe(true);
+		expect(stored.startsWith(COMPRESSED_PREFIX)).toBe(false);
+		expect(await mod.decodePayloadFromStorage(stored)).toBe(original);
+	});
+
+	it("compresses BEFORE encrypting (ciphertext is smaller than without)", async () => {
+		// Compress-then-encrypt is the correct order: ciphertext is
+		// incompressible, so encrypt-then-compress would save nothing. Comparing
+		// against encryptPayload() alone proves compression is applied first.
+		process.env.PAYLOAD_ENCRYPTION_KEY = VALID_HEX_KEY;
+		const mod = await loadFreshModule();
+		await mod.initPayloadEncryption();
+
+		const original = largeJson();
+		const compressedEncrypted = await mod.encodePayloadForStorage(original);
+		const plainEncrypted = await mod.encryptPayload(original);
+
+		expect(compressedEncrypted.length).toBeLessThan(plainEncrypted.length);
+		expect(await mod.decodePayloadFromStorage(compressedEncrypted)).toBe(
+			original,
+		);
+	});
+
+	it("reads legacy plaintext rows written before compression", async () => {
+		// No prefix, no migration: pre-compression rows must still decode.
+		const mod = await loadFreshModule();
+		await mod.initPayloadEncryption();
+
+		const legacy = '{"this":"was stored before compression existed"}';
+		expect(await mod.decodePayloadFromStorage(legacy)).toBe(legacy);
+	});
+
+	it("reads legacy encrypted rows that were never compressed", async () => {
+		// An operator who had encryption on before this change has rows whose
+		// decrypted body is raw JSON (no compression marker). decode must return
+		// it as-is rather than trying to decompress it.
+		process.env.PAYLOAD_ENCRYPTION_KEY = VALID_HEX_KEY;
+		const mod = await loadFreshModule();
+		await mod.initPayloadEncryption();
+
+		const legacy = '{"legacy":"encrypted but uncompressed"}';
+		const oldRow = await mod.encryptPayload(legacy);
+		expect(oldRow.startsWith("enc:")).toBe(true);
+
+		expect(await mod.decodePayloadFromStorage(oldRow)).toBe(legacy);
+	});
+
+	it("stores small payloads verbatim and reads them back", async () => {
+		const mod = await loadFreshModule();
+		await mod.initPayloadEncryption();
+
+		const small = '{"tiny":true}';
+		const stored = await mod.encodePayloadForStorage(small);
+
+		expect(stored).toBe(small);
+		expect(await mod.decodePayloadFromStorage(stored)).toBe(small);
+	});
+
+	it("still throws when an encrypted row is read with no key configured", async () => {
+		// Existing fail-loudly contract must survive the compression layer.
+		process.env.PAYLOAD_ENCRYPTION_KEY = VALID_HEX_KEY;
+		const enc = await loadFreshModule();
+		await enc.initPayloadEncryption();
+		const ciphertext = await enc.encodePayloadForStorage(largeJson());
+
+		delete process.env.PAYLOAD_ENCRYPTION_KEY;
+		const dec = await loadFreshModule();
+		await dec.initPayloadEncryption();
+
+		expect(dec.decodePayloadFromStorage(ciphertext)).rejects.toThrow();
 	});
 });

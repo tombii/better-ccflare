@@ -5,6 +5,7 @@ import { setUseExtraUsage } from "@better-ccflare/core";
 import {
 	BunSqlAdapter,
 	ensureSchema,
+	RequestRepository,
 	runMigrations,
 } from "@better-ccflare/database";
 import { usageCache } from "@better-ccflare/providers";
@@ -65,6 +66,10 @@ describe("GET /api/accounts — Codex account on extra usage", () => {
 	async function readAccount(config: Config): Promise<AccountResponse> {
 		const dbOps = {
 			getAdapter: () => adapter,
+			// The stored-payload recovery path decodes through the repository, so
+			// the mock delegates to the real codec rather than parsing raw bytes.
+			getRequestPayload: (id: string) =>
+				new RequestRepository(adapter).getPayload(id),
 			getStatsRepository: () => ({
 				getSessionStats: async () => new Map(),
 			}),

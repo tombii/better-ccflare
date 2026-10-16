@@ -204,8 +204,13 @@ async function getCachedOrPersistedCodexUsage(
 			return normalizedCache;
 		}
 	}
-	const rows = await db.query<{ json: string; timestamp: number | null }>(
-		`SELECT rp.json, COALESCE(rp.timestamp, r.timestamp) as timestamp
+	// Select the id and timestamp only: the stored body must be decoded through
+	// the repository, which reverses both compression (`zst:` marker) and at-rest
+	// encryption. Reading `rp.json` and JSON.parse-ing it here would reject
+	// every compressed row, silently degrading this recovery path to the weekly
+	// snapshot.
+	const rows = await db.query<{ id: string; timestamp: number | null }>(
+		`SELECT rp.id, COALESCE(rp.timestamp, r.timestamp) as timestamp
 		 FROM request_payloads rp
 		 JOIN requests r ON rp.id = r.id
 		 WHERE r.account_used = ?
@@ -215,13 +220,16 @@ async function getCachedOrPersistedCodexUsage(
 	);
 
 	for (const row of rows) {
-		if (!row.json || !row.timestamp) continue;
+		if (!row.timestamp) continue;
 
 		try {
-			const payload = JSON.parse(row.json) as {
+			// getRequestPayload decodes compression + encryption and returns the
+			// parsed payload, or null when the row is missing/unparseable.
+			const payload = (await dbOps.getRequestPayload(row.id)) as {
 				response?: { headers?: Record<string, string>; status?: number };
 				meta?: { timestamp?: number };
-			};
+			} | null;
+			if (!payload) continue;
 			const headerEntries = Object.entries(payload.response?.headers ?? {});
 			if (headerEntries.length === 0) continue;
 
