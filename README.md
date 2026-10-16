@@ -196,7 +196,7 @@ STORE_PAYLOADS=false                   # Disable storing request/response bodies
 - Never commit `.env` files containing sensitive values to version control
 - Use environment-specific configuration for production deployments
 
-📖 **See [docs/configuration.md](docs/configuration.md) for the complete list** — overload/rate-limit retry tuning, health endpoint detail, agent discovery, payload encryption at rest, model catalog refresh, PostgreSQL pooling, Codex prompt-cache keys, and more.
+📖 **See [docs/configuration.md](docs/configuration.md) for the complete list** — overload/rate-limit retry tuning, stream read timeout, health endpoint detail, agent discovery, payload encryption at rest, model catalog refresh, PostgreSQL pooling, Codex prompt-cache keys, and more.
 
 ### Using .env Files
 
