@@ -271,7 +271,7 @@ describe("GET /api/accounts — Codex weekly usage recovery", () => {
 		expect(usage?.five_hour.utilization).toBe(100);
 	});
 
-	it("recovers usage from a compressed stored payload (regression: raw JSON.parse rejected zst: rows)", async () => {
+	it("recovers usage from a compressed stored payload (regression: raw JSON.parse rejected encoded rows)", async () => {
 		// Payloads at or above the compression threshold are stored with a `zst:`
 		// marker. Before the fix this reader JSON.parse-d the raw column, so every
 		// compressed row was rejected and the card silently fell back to the
@@ -303,13 +303,19 @@ describe("GET /api/accounts — Codex weekly usage recovery", () => {
 			meta: { timestamp },
 		});
 
-		// Guard the premise: the row really is compressed.
+		// Guard the premise: the raw column must not be parseable as JSON, which
+		// is precisely what broke the pre-fix reader. This is state-agnostic —
+		// the row is `zst:` when compression is the only codec active, or `enc:`
+		// when the developer has PAYLOAD_ENCRYPTION_KEY set. Asserting `zst:`
+		// specifically would fail for anyone running with encryption enabled,
+		// even though the regression is equally covered in that case.
 		const stored = sqlite
 			.query<{ json: string }, [string]>(
 				`SELECT json FROM request_payloads WHERE id = ?`,
 			)
 			.get(requestId)?.json;
-		expect(stored?.startsWith("zst:")).toBe(true);
+		expect(typeof stored).toBe("string");
+		expect(() => JSON.parse(stored as string)).toThrow();
 
 		const account = await readAccount(makeHandler(null));
 		const usage = account?.usageData as {

@@ -70,8 +70,8 @@ which is the single dialect branch point).
 
 The only route to compressed payloads is application-level. Note that a read
 still materialises the **decompressed** JSON (it must be parsed), so compression
-reduces disk and the async writer's queued bytes, but not the peak of a single
-read.
+reduces stored bytes — not the peak of a single read, and not the memory held by
+payloads queued for writing (see §7).
 
 ## 6. `temp_store = MEMORY` — implemented, then reverted
 
@@ -112,7 +112,10 @@ requestBody = startMessage.requestBody          (same reference)
 JSON.stringify({ request: { body: requestBody },
                  response: { body: responseBody } })   ← NEW string, bodies inlined
         ↓
-payloadJson → compress → encrypt → queued in the async writer
+payloadJson ──► queued in the async writer (still UNCOMPRESSED)
+                    │  the job closure captures payload.json
+                    ▼
+             compress → encrypt → stored bytes   (runs when the writer drains it)
 ```
 
 Bodies are stored **base64** (~33% larger than raw; see the `Buffer.byteLength(
@@ -133,10 +136,18 @@ climbs, capture `docker stats better-ccflare` — if RSS tracks concurrent large
 requests, this is it; if it drifts while idle, the driver is elsewhere
 (e.g. JSC heap growth).
 
-Compression *helps* this path rather than hurting it, since zstd runs before the
-expensive steps: the retained queue value drops from ~7.1MB to ~2.8MB for a 4MB
-body, and the crypto input from 5.33MB to ~1.6MB. Peak is neutral (the one
-full-size `Buffer.from(json, "utf8")` exists in both paths).
+**Compression does NOT reduce this path's memory.** The async writer's job
+closure captures `payload.json` uncompressed, and compression only runs later —
+inside `saveRequestPayloadRaw` → `encodePayloadForStorage`, when the writer
+actually drains the job (see `enqueuePreparedPayload` in `usage-collector.ts`).
+So the queued payload stays a full-size uncompressed string, and
+`PAYLOAD_BYTES_CAP` / `payload.bytes` count uncompressed bytes. Compression
+shrinks the *stored* bytes and the transient allocations *inside* the write
+callback (the encryption step sees the smaller compressed body instead of the
+raw JSON), but it does not shrink queued or retained payload memory.
+
+That means the three 100MB budgets are untouched by this change, and the
+duplication above still bounds how much concurrent large requests can hold.
 
 ## 8. Write volume and flash wear
 
