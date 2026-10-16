@@ -77,13 +77,23 @@ interface Step {
  * `delayBeforeMs` before each one. `wasDrained()` flips once the source has
  * been pulled past its last step, which is how these tests observe that the
  * extractor's `finally` drain actually consumed the rest of the body.
+ *
+ * `stepsConsumed()` is the stronger of the two signals. `wasDrained()` alone
+ * cannot tell "the drain consumed the body" apart from "one trailing chunk
+ * resolved the read that was already pending when the idle timer won, after
+ * which the source advanced to its terminator unaided" — in the latter case
+ * it still flips with the drain removed entirely. Counting the steps actually
+ * pulled does distinguish them: a source with several trailing chunks only
+ * reaches its end if something keeps reading it.
  */
 function sseResponse(steps: Step[]): {
 	response: Response;
 	wasDrained: () => boolean;
+	stepsConsumed: () => number;
 } {
 	let index = 0;
 	let drained = false;
+	let consumed = 0;
 
 	const body = new ReadableStream<Uint8Array>({
 		async pull(controller) {
@@ -93,6 +103,7 @@ function sseResponse(steps: Step[]): {
 				controller.close();
 				return;
 			}
+			consumed++;
 			if (step.delayBeforeMs) await sleep(step.delayBeforeMs);
 			if (step.end) {
 				drained = true;
@@ -108,6 +119,7 @@ function sseResponse(steps: Step[]): {
 			headers: { "content-type": "text/event-stream" },
 		}),
 		wasDrained: () => drained,
+		stepsConsumed: () => consumed,
 	};
 }
 
@@ -142,17 +154,24 @@ describe("streaming usage extraction read timeout", () => {
 	// perfectly healthy (bytes still arriving). With the budget as an idle
 	// timeout, only the gap between chunks matters.
 	test("extracts usage from a stream that outlives the old absolute wall-clock budget", async () => {
-		// Idle window: 250ms. Every inter-chunk gap below is 40ms.
+		// Idle window: 250ms. Every inter-chunk gap below is 40ms — well inside
+		// the window — but the stream as a WHOLE runs well past it. That total
+		// is load-bearing: if it stayed under the window, a future change that
+		// used `getStreamReadTimeoutMs()` as a whole-stream deadline would
+		// still pass this test, so it would no longer pin the idle semantics
+		// this PR introduces.
 		process.env[ENV_KEY] = "250";
 		// The absolute deadline the old implementation applied to the whole loop.
 		mutableTimeConstants.STREAM_READ_TIMEOUT_MS = 100;
 
+		// 12 * 40ms = 480ms of content, comfortably past the 250ms idle window.
+		const CONTENT_CHUNKS = 12;
 		const { response } = sseResponse([
 			{ chunk: messageStartChunk(1000) },
-			{ delayBeforeMs: 40, chunk: CONTENT_CHUNK },
-			{ delayBeforeMs: 40, chunk: CONTENT_CHUNK },
-			{ delayBeforeMs: 40, chunk: CONTENT_CHUNK },
-			{ delayBeforeMs: 40, chunk: CONTENT_CHUNK },
+			...Array.from({ length: CONTENT_CHUNKS }, () => ({
+				delayBeforeMs: 40,
+				chunk: CONTENT_CHUNK,
+			})),
 			{ delayBeforeMs: 40, chunk: messageDeltaChunk(26_366) },
 			{ end: true },
 		]);
@@ -162,9 +181,11 @@ describe("streaming usage extraction read timeout", () => {
 		const usage = await provider.extractUsageInfo(response);
 		const elapsed = Date.now() - started;
 
-		// The stream genuinely ran past the old absolute budget...
-		expect(elapsed).toBeGreaterThan(100);
-		// ...and the tail of the stream (message_delta) was still read.
+		// The stream ran longer in TOTAL than the configured idle window while
+		// never going silent, so an idle timeout must let it finish. A
+		// whole-stream deadline — whether the old 100ms constant or the 250ms
+		// idle value itself — would have discarded the usage asserted below.
+		expect(elapsed).toBeGreaterThan(250);
 		expect(usage).not.toBeNull();
 		expect(usage?.inputTokens).toBe(1000);
 		expect(usage?.outputTokens).toBe(26_366);
@@ -176,12 +197,25 @@ describe("streaming usage extraction read timeout", () => {
 	test("returns null promptly when the stream goes silent past the idle window, and still drains the body", async () => {
 		process.env[ENV_KEY] = "50";
 
-		const { response, wasDrained } = sseResponse([
+		// Several trailing chunks, deliberately not one. With a single late
+		// chunk the read that was already pending when the idle timer won
+		// would resolve on it, and the source would then advance to its
+		// terminator unaided — flipping `wasDrained()` even with the drain
+		// removed. Enough trailing chunks that only a reader actually
+		// consuming the body reaches the end.
+		const LATE_CHUNKS = 5;
+		const steps: Step[] = [
 			{ chunk: messageStartChunk(1000) },
-			// Arrives long after the idle window has already expired.
-			{ delayBeforeMs: 600, chunk: messageDeltaChunk(123) },
+			// Arrives long after the idle window has already expired...
+			{ delayBeforeMs: 200, chunk: CONTENT_CHUNK },
+			// ...the rest are only ever read by the cleanup drain.
+			...Array.from({ length: LATE_CHUNKS - 1 }, () => ({
+				delayBeforeMs: 10,
+				chunk: CONTENT_CHUNK,
+			})),
 			{ end: true },
-		]);
+		];
+		const { response, wasDrained, stepsConsumed } = sseResponse(steps);
 
 		const provider = new AnthropicCompatibleProvider();
 		const started = Date.now();
@@ -189,11 +223,14 @@ describe("streaming usage extraction read timeout", () => {
 		const elapsed = Date.now() - started;
 
 		expect(usage).toBeNull();
-		// Resolved on the idle timer, not on the late chunk (t=600ms).
-		expect(elapsed).toBeLessThan(400);
+		// Resolved on the idle timer, not on the late chunk (t=200ms).
+		expect(elapsed).toBeLessThan(150);
 		// The `finally` drain is load-bearing for memory (Bun leaks the native
-		// body buffer otherwise), so it must consume the rest of the body.
+		// body buffer otherwise), so it must consume the WHOLE remaining body —
+		// every trailing chunk and the terminator, not merely the one chunk
+		// that happened to settle the already-pending read.
 		expect(await waitFor(() => wasDrained())).toBe(true);
+		expect(stepsConsumed()).toBe(steps.length);
 	});
 
 	test("extracts message_start input_tokens and message_delta output_tokens from a normal stream", async () => {
