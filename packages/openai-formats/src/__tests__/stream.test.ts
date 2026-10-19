@@ -204,6 +204,47 @@ describe("transformStreamingResponse — text responses", () => {
 		expect(texts).toContain(" world");
 	});
 
+	it("treats an empty tool_calls array as no tool call", async () => {
+		// CodeBuddy includes `"tool_calls": []` on every delta. An empty array is
+		// truthy, so the tool-call branch must not swallow the text content.
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-v4.1-flash",
+				choices: [
+					{
+						index: 0,
+						delta: {
+							role: "assistant",
+							content: "",
+							reasoning_content: "",
+							tool_calls: [],
+						},
+						finish_reason: "",
+					},
+				],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-v4.1-flash",
+				choices: [
+					{
+						index: 0,
+						delta: { content: "Hi", tool_calls: [] },
+						finish_reason: "",
+					},
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body);
+		const events = parseSSEEvents(raw);
+		const deltas = events.filter((e) => e.event === "content_block_delta");
+		const texts = deltas.map((e) => parseEventData(e).delta.text);
+		expect(texts).toContain("Hi");
+	});
+
 	it("emits message_delta with stop_reason end_turn on [DONE]", async () => {
 		const upstream = makeOpenAIStream([
 			JSON.stringify({
@@ -665,6 +706,40 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 // ── transformStreamingResponse — thinking/reasoning blocks ───────────────────
 
 describe("transformStreamingResponse — reasoning_content (thinking blocks)", () => {
+	it("emits thinking deltas for the `reasoning` alias when reasoning_content is empty", async () => {
+		const encoder = new TextEncoder();
+		const payload = JSON.stringify({
+			id: "c1",
+			model: "deepseek-v4.1-flash",
+			choices: [
+				{
+					index: 0,
+					delta: { reasoning_content: "", reasoning: "Thinking..." },
+					finish_reason: null,
+				},
+			],
+		});
+		const upstream = new Response(
+			new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+					controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+					controller.close();
+				},
+			}),
+			{ headers: { "content-type": "text/event-stream" } },
+		);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body);
+		const events = parseSSEEvents(raw);
+		const thinkingDeltas = events.filter(
+			(e) => parseEventData(e).delta?.type === "thinking_delta",
+		);
+		expect(thinkingDeltas.map((e) => parseEventData(e).delta.thinking)).toEqual(
+			["Thinking..."],
+		);
+	});
+
 	it("emits content_block_start with type thinking before first reasoning_content chunk", async () => {
 		const upstream = makeOpenAIStream([
 			JSON.stringify({

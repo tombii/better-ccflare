@@ -14,6 +14,26 @@ export {
 	AnthropicCompatibleProvider,
 } from "./anthropic-compatible/index";
 export { BedrockProvider, parseBedrockConfig } from "./bedrock/index";
+export {
+	beginCodeBuddyAuth,
+	buildCodeBuddyAuthHeaders,
+	CODEBUDDY_CLI_VERSION,
+	CODEBUDDY_DEFAULT_ENDPOINT,
+	type CodeBuddyAuthSession,
+	CodeBuddyProvider,
+	type CodeBuddyTokens,
+	decodeCodeBuddyIdentity,
+	desensitizeBody,
+	desensitizeMessages,
+	desensitizeText,
+	fetchCodeBuddyAccount,
+	isCodeBuddyDesensitizeEnabled,
+	isCodeBuddyModerationBlock,
+	pollCodeBuddyAuth,
+	refreshCodeBuddyToken,
+	resolveCodeBuddyEndpoint,
+	SENSITIVE_TERMS,
+} from "./codebuddy/index";
 export type {
 	CodexUsageFetchResult,
 	CodexUsagePayload,

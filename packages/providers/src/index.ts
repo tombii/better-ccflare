@@ -47,6 +47,7 @@ import { AlibabaCodingPlanProvider } from "./providers/alibaba-coding-plan/provi
 import { AnthropicProvider } from "./providers/anthropic/provider";
 import { AnthropicCompatibleProvider } from "./providers/anthropic-compatible/provider";
 import { BedrockProvider } from "./providers/bedrock/provider";
+import { CodeBuddyProvider } from "./providers/codebuddy/provider";
 import { CodexProvider } from "./providers/codex/provider";
 import { DeepseekProvider } from "./providers/deepseek/provider";
 import { KiloProvider } from "./providers/kilo/provider";
@@ -68,6 +69,7 @@ registry.registerProvider(new AlibabaCodingPlanProvider());
 registry.registerProvider(new AnthropicProvider());
 registry.registerProvider(new CodexProvider());
 registry.registerProvider(new BedrockProvider());
+registry.registerProvider(new CodeBuddyProvider());
 registry.registerProvider(new KiloProvider());
 registry.registerProvider(new OpenRouterProvider());
 registry.registerProvider(new QwenProvider());

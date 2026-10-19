@@ -24,6 +24,12 @@ import {
 	XAI_MODEL_MAPPINGS,
 } from "@better-ccflare/providers";
 import {
+	beginCodeBuddyAuth,
+	CODEBUDDY_DEFAULT_ENDPOINT,
+	pollCodeBuddyAuth,
+	resolveCodeBuddyEndpoint,
+} from "@better-ccflare/providers/codebuddy";
+import {
 	initiateDeviceFlow as initiateQwenDeviceFlow,
 	pollForToken as pollQwenForToken,
 } from "@better-ccflare/providers/qwen";
@@ -53,6 +59,7 @@ export interface AddAccountOptionsWithAdapter {
 		| "openrouter"
 		| "alibaba-coding-plan"
 		| "codex"
+		| "codebuddy"
 		| "qwen"
 		| "xai"
 		| "ollama"
@@ -88,6 +95,7 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "openrouter"
 		| "alibaba-coding-plan"
 		| "codex"
+		| "codebuddy"
 		| "qwen"
 		| "xai"
 		| "ollama"
@@ -1170,10 +1178,100 @@ async function createQwenOAuthAccount(
 }
 
 /**
+ * Create a CodeBuddy account via the CLI's external-link + token-poll flow.
+ *
+ * CodeBuddy does not use standard OAuth: the server issues a login URL and a
+ * state token, and the client polls until the browser login completes.
+ */
+async function createCodeBuddyOAuthAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	priority: number,
+	customEndpoint?: string,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
+): Promise<void> {
+	console.log("\nCodeBuddy uses browser-based authentication.");
+	console.log("A login URL will be opened in your browser.\n");
+
+	console.log("Initiating authentication...");
+	const session = await beginCodeBuddyAuth(customEndpoint);
+
+	console.log(`\n  Login URL: ${session.authUrl}`);
+	console.log(`\nOpen the URL above and sign in to CodeBuddy.`);
+
+	const browserOpened = await openBrowser(session.authUrl);
+	if (!browserOpened) {
+		console.log(
+			"\nFailed to open browser automatically. Please manually open the URL above.",
+		);
+	}
+
+	console.log("\nWaiting for authorization...");
+
+	const tokens = await pollCodeBuddyAuth(session, {
+		onTick: (attempt: number) => {
+			if (attempt % 6 === 0) process.stdout.write(".");
+		},
+	});
+	console.log("\n");
+
+	console.log("Authorization successful! Saving account...");
+
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	const validatedPriority = validatePriority(priority, "priority");
+
+	let validatedModelMappings: string | null = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validated = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validated);
+	}
+
+	let validatedModelFallbacks: string | null = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
+
+	// Only persist a non-default endpoint so the provider keeps following the
+	// built-in default (and CCFLARE_CODEBUDDY_ENDPOINT) when none was chosen.
+	const endpoint = resolveCodeBuddyEndpoint(customEndpoint);
+	const storedEndpoint =
+		endpoint === CODEBUDDY_DEFAULT_ENDPOINT ? null : endpoint;
+
+	await dbOps.getAdapter().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority,
+			custom_endpoint, model_mappings, model_fallbacks,
+			refresh_token_issued_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"codebuddy",
+			null,
+			tokens.refreshToken,
+			tokens.accessToken,
+			now + tokens.expiresIn * 1000,
+			now,
+			validatedPriority,
+			storedEndpoint,
+			validatedModelMappings,
+			validatedModelFallbacks,
+			now,
+		],
+	);
+
+	console.log(`\nAccount '${name}' added successfully!`);
+	console.log("Type: CodeBuddy (browser authentication)");
+}
+
+/**
  * Normalize Qwen resource_url to ensure it has https:// prefix and /v1 suffix.
  * Verified against qwen-code: packages/core/src/qwen/qwenContentGenerator.ts
- */
-function normalizeQwenBaseUrl(url: string): string {
+ */ function normalizeQwenBaseUrl(url: string): string {
 	let normalized = url.trim();
 	if (!normalized.startsWith("http")) {
 		normalized = `https://${normalized}`;
@@ -1212,6 +1310,7 @@ export async function addAccount(
 			{ label: "Claude API account", value: "console" },
 			{ label: "Codex (OpenAI OAuth)", value: "codex" },
 			{ label: "Qwen (Alibaba Cloud OAuth)", value: "qwen" },
+			{ label: "CodeBuddy (browser authentication)", value: "codebuddy" },
 			{ label: "xAI / Grok (Grok CLI OAuth)", value: "xai" },
 			{ label: "Vertex AI (Google Cloud)", value: "vertex-ai" },
 			{ label: "AWS Bedrock (AWS profile credentials)", value: "bedrock" },
@@ -1626,6 +1725,36 @@ export async function addAccount(
 				: parseInt(String(priority), 10) || 0,
 			finalModelMappings,
 		);
+	} else if (mode === "codebuddy") {
+		// Handle CodeBuddy accounts via its browser + token-poll flow.
+		const priority =
+			providedPriority ??
+			Number(
+				(await adapter.input(
+					"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+				)) || 0,
+			);
+
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+			{
+				fable: "primary-model",
+				opus: "primary-model",
+				sonnet: "balanced-model",
+				haiku: "fast-model",
+			},
+		);
+
+		await createCodeBuddyOAuthAccount(
+			dbOps,
+			name,
+			typeof priority === "number"
+				? priority
+				: parseInt(String(priority), 10) || 0,
+			customEndpoint,
+			finalModelMappings,
+		);
 	} else if (mode === "xai") {
 		// Handle xAI/Grok accounts by importing local Grok CLI OAuth credentials.
 		const priority =
@@ -1908,6 +2037,7 @@ export async function getAccountsList(
 					account.provider === "bedrock" ||
 					account.provider === "openrouter" ||
 					account.provider === "codex" ||
+					account.provider === "codebuddy" ||
 					account.provider === "xai" ||
 					account.provider === "meta"
 				) {
@@ -2484,6 +2614,124 @@ async function reauthenticateQwenAccount(
 }
 
 /**
+ * Re-authenticate a CodeBuddy account via its browser + token-poll flow.
+ */
+async function reauthenticateCodeBuddyAccount(
+	dbOps: DatabaseOperations,
+	config: Config,
+	account: {
+		id: string;
+		provider: string;
+		priority: number;
+		custom_endpoint: string | null;
+		api_key: string | null;
+	},
+	name: string,
+): Promise<{ success: boolean; message: string }> {
+	const db = dbOps.getAdapter();
+
+	console.log(`\nRe-authenticating CodeBuddy account '${name}'...`);
+	console.log(
+		"This will preserve all your account metadata (usage stats, priority, etc.)",
+	);
+	console.log("\nCodeBuddy uses browser-based authentication.\n");
+
+	const session = await beginCodeBuddyAuth(
+		account.custom_endpoint ?? undefined,
+	);
+
+	console.log(`\n  Login URL: ${session.authUrl}`);
+	console.log("\nOpen the URL above and sign in to CodeBuddy.");
+
+	const browserOpened = await openBrowser(session.authUrl);
+	if (!browserOpened) {
+		console.log(
+			"\nFailed to open browser automatically. Please manually open the URL above.",
+		);
+	}
+
+	console.log("\nWaiting for authorization...");
+
+	let tokens: Awaited<ReturnType<typeof pollCodeBuddyAuth>>;
+	try {
+		tokens = await pollCodeBuddyAuth(session, {
+			onTick: (attempt: number) => {
+				if (attempt % 6 === 0) process.stdout.write(".");
+			},
+		});
+	} catch (error) {
+		return {
+			success: false,
+			message: `CodeBuddy authorization failed: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+	console.log("\n");
+
+	try {
+		await db.run(
+			`UPDATE accounts SET
+				refresh_token = ?,
+				access_token = ?,
+				expires_at = ?,
+				refresh_token_issued_at = ?,
+				requires_reauth = 0,
+				pause_reason = NULL
+			WHERE id = ?`,
+			[
+				tokens.refreshToken,
+				tokens.accessToken,
+				Date.now() + tokens.expiresIn * 1000,
+				Date.now(),
+				account.id,
+			],
+		);
+	} catch (dbError) {
+		return {
+			success: false,
+			message: `Database error while updating tokens: ${dbError instanceof Error ? dbError.message : String(dbError)}`,
+		};
+	}
+
+	console.log(`\nAccount '${name}' re-authenticated successfully!`);
+	console.log(
+		"All account metadata (usage stats, priority, settings) has been preserved.",
+	);
+	console.log("Tokens have been updated.");
+
+	// Notify running servers to reload tokens (best-effort).
+	console.log("\nNotifying running servers to reload tokens...");
+	const localControlSecret = config.getLocalControlSecret();
+	for (const port of [8080, 8081]) {
+		try {
+			const response = await fetch(
+				`http://localhost:${port}/api/accounts/${account.id}/reload`,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						"x-better-ccflare-local-control-secret": localControlSecret,
+					},
+				},
+			);
+			if (response.ok) {
+				console.log(`✓ Token reload successful on port ${port}`);
+			} else {
+				console.log(
+					`✗ Server not responding on port ${port} (${response.status})`,
+				);
+			}
+		} catch {
+			console.log(`✗ No server running on port ${port}`);
+		}
+	}
+
+	return {
+		success: true,
+		message: `Account '${name}' re-authenticated successfully. All metadata preserved.`,
+	};
+}
+
+/**
  * Re-authenticate an xAI account by re-importing local Grok CLI OAuth credentials.
  */
 async function reauthenticateXaiAccount(
@@ -2567,11 +2815,12 @@ export async function reauthenticateAccount(
 	if (
 		account.provider !== "anthropic" &&
 		account.provider !== "qwen" &&
-		account.provider !== "xai"
+		account.provider !== "xai" &&
+		account.provider !== "codebuddy"
 	) {
 		return {
 			success: false,
-			message: `Account '${name}' (${account.provider}) does not support OAuth re-authentication. Only Anthropic, Qwen, and xAI accounts can be re-authenticated.`,
+			message: `Account '${name}' (${account.provider}) does not support OAuth re-authentication. Only Anthropic, Qwen, xAI, and CodeBuddy accounts can be re-authenticated.`,
 		};
 	}
 
@@ -2582,6 +2831,10 @@ export async function reauthenticateAccount(
 
 	if (account.provider === "xai") {
 		return reauthenticateXaiAccount(dbOps, account, name);
+	}
+
+	if (account.provider === "codebuddy") {
+		return reauthenticateCodeBuddyAccount(dbOps, config, account, name);
 	}
 
 	// Create OAuth flow instance

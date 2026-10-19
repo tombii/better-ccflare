@@ -16,6 +16,11 @@ import {
 import { Logger } from "@better-ccflare/logger";
 import { createOAuthFlow } from "@better-ccflare/oauth-flow";
 import {
+	beginCodeBuddyAuth,
+	type CodeBuddyAuthSession,
+	pollCodeBuddyAuth,
+} from "@better-ccflare/providers/codebuddy";
+import {
 	initiateCodexDeviceFlow,
 	pollCodexForToken,
 } from "@better-ccflare/providers/codex";
@@ -1053,5 +1058,279 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 					: new Error("Failed to process OAuth callback"),
 			);
 		}
+	};
+}
+
+// ── CodeBuddy external-link auth ─────────────────────────────────────────────
+
+type CodeBuddySession =
+	| { status: "pending"; accountName: string }
+	| { status: "complete"; accountName: string }
+	| { status: "error"; accountName: string; error: string };
+
+const codebuddySessions = new Map<string, CodeBuddySession>();
+
+const CODEBUDDY_SESSION_TTL_MS = 10 * 60 * 1000;
+
+function expireCodeBuddySession(sessionId: string): void {
+	setTimeout(
+		() => codebuddySessions.delete(sessionId),
+		CODEBUDDY_SESSION_TTL_MS,
+	);
+}
+
+/**
+ * Start a CodeBuddy login and return its URL immediately, then poll in the
+ * background. CodeBuddy has no callback and no device code: the server issues
+ * a login URL plus a state token, and the client polls the token endpoint.
+ */
+export function createCodeBuddyDeviceFlowInitHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
+			});
+			if (!name) {
+				return errorResponse(BadRequest("Valid account name is required"));
+			}
+
+			const priority = validatePriority(body.priority ?? 0, "priority");
+
+			let session: CodeBuddyAuthSession;
+			try {
+				session = await beginCodeBuddyAuth();
+			} catch (err) {
+				log.error("CodeBuddy auth initiation failed:", err);
+				return errorResponse(
+					InternalServerError(
+						`Failed to initiate CodeBuddy authentication: ${(err as Error).message}`,
+					),
+				);
+			}
+
+			const sessionId = crypto.randomUUID();
+			codebuddySessions.set(sessionId, {
+				status: "pending",
+				accountName: name,
+			});
+
+			// Poll in background — do not await.
+			(async () => {
+				try {
+					const tokens = await pollCodeBuddyAuth(session);
+					const accountId = crypto.randomUUID();
+					const now = Date.now();
+
+					try {
+						await dbOps.getAdapter().run(
+							`INSERT INTO accounts (
+								id, name, provider, api_key, refresh_token, access_token,
+								expires_at, created_at, request_count, total_requests, priority,
+								custom_endpoint, model_mappings, model_fallbacks,
+								refresh_token_issued_at
+							) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)`,
+							[
+								accountId,
+								name,
+								"codebuddy",
+								null,
+								tokens.refreshToken,
+								tokens.accessToken,
+								now + tokens.expiresIn * 1000,
+								now,
+								priority,
+								null,
+								null,
+								null,
+								now,
+							],
+						);
+					} catch (insertErr) {
+						if (isUniqueConstraintError(insertErr)) {
+							const msg = `Account name '${name}' is already taken`;
+							log.warn(`CodeBuddy account add rejected: ${msg}`);
+							codebuddySessions.set(sessionId, {
+								status: "error",
+								accountName: name,
+								error: msg,
+							});
+							expireCodeBuddySession(sessionId);
+							return;
+						}
+						throw insertErr;
+					}
+
+					codebuddySessions.set(sessionId, {
+						status: "complete",
+						accountName: name,
+					});
+					log.info(`CodeBuddy account '${name}' added via web auth flow`);
+					expireCodeBuddySession(sessionId);
+				} catch (err) {
+					log.error(`CodeBuddy auth polling failed for '${name}':`, err);
+					codebuddySessions.set(sessionId, {
+						status: "error",
+						accountName: name,
+						error: (err as Error).message,
+					});
+					expireCodeBuddySession(sessionId);
+				}
+			})();
+
+			return jsonResponse({
+				success: true,
+				sessionId,
+				authUrl: session.authUrl,
+			});
+		} catch (error) {
+			log.error("CodeBuddy auth init error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to initialize CodeBuddy authentication"),
+			);
+		}
+	};
+}
+
+/**
+ * Re-run the CodeBuddy login for an existing account and update its tokens.
+ */
+export function createCodeBuddyReauthHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const accountId = validateString(body.accountId, "accountId", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+			});
+			if (!accountId) {
+				return errorResponse(BadRequest("Valid accountId is required"));
+			}
+
+			const account = await dbOps.getAdapter().get<{
+				id: string;
+				name: string;
+				provider: string;
+				custom_endpoint: string | null;
+			}>(
+				"SELECT id, name, provider, custom_endpoint FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+			if (account.provider !== "codebuddy") {
+				return errorResponse(
+					BadRequest(
+						"Re-authentication via browser flow is only supported for CodeBuddy accounts",
+					),
+				);
+			}
+
+			let session: CodeBuddyAuthSession;
+			try {
+				session = await beginCodeBuddyAuth(
+					account.custom_endpoint ?? undefined,
+				);
+			} catch (err) {
+				log.error("CodeBuddy reauth initiation failed:", err);
+				return errorResponse(
+					InternalServerError(
+						`Failed to initiate CodeBuddy authentication: ${(err as Error).message}`,
+					),
+				);
+			}
+
+			const sessionId = crypto.randomUUID();
+			codebuddySessions.set(sessionId, {
+				status: "pending",
+				accountName: account.name,
+			});
+
+			(async () => {
+				try {
+					const tokens = await pollCodeBuddyAuth(session);
+
+					await dbOps.getAdapter().run(
+						`UPDATE accounts SET
+							refresh_token = ?,
+							access_token = ?,
+							expires_at = ?,
+							requires_reauth = 0,
+							pause_reason = NULL,
+							refresh_token_issued_at = ?
+						WHERE id = ?`,
+						[
+							tokens.refreshToken,
+							tokens.accessToken,
+							Date.now() + tokens.expiresIn * 1000,
+							Date.now(),
+							account.id,
+						],
+					);
+					clearAccountRefreshCache(account.id);
+
+					codebuddySessions.set(sessionId, {
+						status: "complete",
+						accountName: account.name,
+					});
+					log.info(
+						`CodeBuddy account '${account.name}' re-authenticated via web auth flow`,
+					);
+					expireCodeBuddySession(sessionId);
+				} catch (err) {
+					log.error(
+						`CodeBuddy reauth polling failed for '${account.name}':`,
+						err,
+					);
+					codebuddySessions.set(sessionId, {
+						status: "error",
+						accountName: account.name,
+						error: (err as Error).message,
+					});
+					expireCodeBuddySession(sessionId);
+				}
+			})();
+
+			return jsonResponse({
+				success: true,
+				sessionId,
+				authUrl: session.authUrl,
+			});
+		} catch (error) {
+			log.error("CodeBuddy reauth error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to initialize CodeBuddy re-authentication"),
+			);
+		}
+	};
+}
+
+/** Status of a CodeBuddy login session. */
+export function createCodeBuddyDeviceFlowStatusHandler() {
+	return (sessionId: string): Response => {
+		const session = codebuddySessions.get(sessionId);
+		if (!session) {
+			return errorResponse(NotFound("Session not found or expired"));
+		}
+		if (session.status === "error") {
+			return jsonResponse({ status: "error", error: session.error });
+		}
+		return jsonResponse({ status: session.status });
 	};
 }

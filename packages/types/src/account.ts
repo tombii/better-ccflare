@@ -547,6 +547,7 @@ export interface AccountListItem {
 		| "openrouter"
 		| "alibaba-coding-plan"
 		| "codex"
+		| "codebuddy"
 		| "qwen"
 		| "xai"
 		| "ollama"

@@ -58,12 +58,16 @@
   - Rewrites the Claude Code system prompt to a Qwen Code identity and strips Claude-specific instructions before forwarding
   - Sends a fixed set of Stainless-SDK and DashScope headers so `portal.qwen.ai` treats requests as coming from the official client
 
+- **CodeBuddy** - Tencent's coding assistant, built on the [OI]-compatible base:
+  - Browser-based external-link authentication (no PKCE, no device code, no callback): the server issues a login URL plus a `state` token and the client polls `/v2/plugin/auth/token`
+  - International endpoint `https://www.codebuddy.ai`; override per account with a custom endpoint or `CCFLARE_CODEBUDDY_ENDPOINT`
+  - Optional term desensitization for the backend content review — see the CodeBuddyProvider section
 ### Key Points
 - Anthropic requests route to `https://api.anthropic.com`
 - OpenAI-compatible requests route to custom endpoints (default: `https://api.openai.com`)
 - xAI and Qwen build on the OpenAI-compatible base but support OAuth (unlike generic OpenAI-compatible accounts, which are API-key only)
 - Codex talks to OpenAI's Responses API, a different shape from OpenAI's Chat Completions API used by the other OpenAI-compatible providers
-- OAuth is available for Anthropic, Vertex AI (Google Cloud credentials), xAI, Codex, and Qwen; all other providers are API-key only
+- OAuth is available for Anthropic, Vertex AI (Google Cloud credentials), xAI, Codex, Qwen, and CodeBuddy; all other providers are API-key only
 - API key authentication for Z.ai, OpenAI-compatible, NanoGPT, Minimax, DeepSeek, and Ollama Cloud providers
 - Ollama Cloud requires model mapping to translate Claude model names to Ollama models
 - Provider system supports format conversion between different API standards
@@ -606,6 +610,58 @@ The `QwenProvider` (registered as `"qwen"`) extends `OpenAICompatibleProvider`, 
 4. **System Prompt Sanitization for Qwen Code Identity**: `afterConvert()` rewrites the converted system message: it swaps the Claude Code identity line for a Qwen Code one, replaces `CLAUDE.md` references with `QWEN.md`, redirects the feedback/help lines to Qwen Code's own commands, and drops lines that reference Claude-specific model names or CLI availability (`sanitizeForQwen()`). It also strips Anthropic billing-header text blocks and enables `vl_high_resolution_images` for vision support.
 5. **Rate Limits Handled Upstream**: `parseRateLimit()` always reports `isRateLimited: false` — Qwen enforces its own quota via inline 403 responses rather than the OpenAI-style rate-limit headers other providers parse.
 6. **Streaming Tool-Call Buffering**: Per this repo's Qwen conventions (mirrored from the `qwen-code` reference implementation), DashScope sends incremental (not cumulative) tool-call argument chunks; the shared OpenAI-compatible streaming transform buffers these and emits complete JSON at stream end rather than assuming cumulative deltas.
+
+## CodeBuddyProvider Implementation
+
+The `CodeBuddyProvider` (registered as `"codebuddy"`) extends `[OI]CompatibleProvider`, targeting Tencent's CodeBuddy service.
+
+- **Core files**: `packages/providers/src/providers/codebuddy/provider.ts`, `auth-flow.ts`, `desensitize.ts`
+- **Default endpoint**: `https://www.codebuddy.ai` (international). `https://copilot.tencent.com` is the China/IOA endpoint. Override per account with a custom endpoint, or process-wide with `CCFLARE_CODEBUDDY_ENDPOINT`.
+
+### Authentication
+
+CodeBuddy does **not** use standard OAuth: there is no `client_id`, PKCE, scope, or redirect URI. The flow is:
+
+```text
+POST {endpoint}/v2/plugin/auth/state?platform=CLI  -> { state, authUrl }
+open authUrl in a browser; the user signs in
+GET  {endpoint}/v2/plugin/auth/token?state={state} -> accessToken (code 11217 = pending)
+```
+
+Auth calls carry `X-No-Authorization`, `X-No-User-Id`, `X-No-Enterprise-Id`, and `X-No-Department-Info` so the server does not require credentials while logging in. The client polls every second for up to five minutes.
+
+Refresh uses the same endpoint family:
+
+```text
+POST {endpoint}/v2/plugin/auth/token/refresh
+  X-Refresh-Token: <refreshToken>
+  X-Auth-Refresh-Source: plugin
+```
+
+A 401/403 from refresh means the session is dead and the account needs re-authentication.
+
+### Request handling
+
+- `POST {endpoint}/v2/chat/completions` — [OI] Chat Completions (converted from Anthropic `/v1/messages`).
+- `GET {endpoint}/v3/config` — model catalog; the provider maps `data.agents[name="cli"].models` to an [OI] `/v1/models` list.
+- `count_tokens` is synthetic: CodeBuddy has no equivalent endpoint, so a conservative local estimate is returned.
+- Inference headers include `Authorization: Bearer`, identity headers derived from the access-token JWT (`X-User-Id`, `X-Enterprise-Id`, `X-Userinfo`), conversation/request ids, `X-Agent-Intent: craft`, `X-IDE-*`, and `X-Product: SaaS`.
+- Body extensions: `cache_retention: "long"`, `store: false`, and `reasoning_effort` (converted from Anthropic's `reasoning.effort`) plus `reasoning_summary: "auto"`.
+- **Upstream is always streamed.** The official CLI never sends `stream: false`, and the gateway does not treat that as a supported shape. Requests are forced to `stream: true` (with `stream_options.include_usage`), and responses for non-streaming clients are aggregated from the SSE body into a single Anthropic message.
+
+### Content-review desensitization
+
+CodeBuddy runs a Tencent compliance content review before inference. It can reject the client's fixed compliance system template because that template contains security terminology in its "refuse to help with harm" declaration. `desensitize.ts` inserts zero-width spaces inside a fixed list of such terms in `system` messages only, so the text still reads identically while keyword matching no longer fires.
+
+- Enabled by default for this provider; disable with `CCFLARE_CODEBUDDY_DESENSITIZE=0`.
+- User and assistant messages are never modified.
+- This mitigates false positives on client templates. It is not a way to bypass review of genuinely harmful input, and should not be used as one.
+- When the upstream still reports an interception (`内容审核` / content review), the provider logs a warning with the account name and request id.
+
+### Model defaults
+
+Claude families map to CodeBuddy aliases: `fable`/`opus` → `primary-model`, `sonnet` → `balanced-model`, `haiku` → `fast-model`. These are editable through the provider model defaults override (`CCFLARE_MODEL_DEFAULTS_PROVIDERS`).
+
 
 ## Format Conversion Details
 

@@ -60,6 +60,7 @@ interface AccountListItemProps {
 	onReauth?: (account: Account) => void;
 	onAnthropicReauth?: (account: Account) => void;
 	onCodexReauth?: (account: Account) => void;
+	onCodeBuddyReauth?: (account: Account) => void;
 }
 
 export function AccountListItem({
@@ -83,6 +84,7 @@ export function AccountListItem({
 	onReauth,
 	onAnthropicReauth,
 	onCodexReauth,
+	onCodeBuddyReauth,
 }: AccountListItemProps) {
 	const [isRefreshingUsage, setIsRefreshingUsage] = useState(false);
 	const presenter = new AccountPresenter(account);
@@ -477,6 +479,16 @@ export function AccountListItem({
 							size="sm"
 							onClick={() => onCodexReauth(account)}
 							title="Re-authenticate this Codex account (preserves all metadata)"
+						>
+							<KeyRound className="h-4 w-4" />
+						</Button>
+					)}
+					{account.provider === "codebuddy" && onCodeBuddyReauth && (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => onCodeBuddyReauth(account)}
+							title="Re-authenticate this CodeBuddy account (preserves all metadata)"
 						>
 							<KeyRound className="h-4 w-4" />
 						</Button>
