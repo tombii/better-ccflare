@@ -122,7 +122,11 @@ describe("CodeBuddyProvider", () => {
 			);
 
 			expect(info.isRateLimited).toBe(true);
-			expect(info.statusHeader).toBe("rate_limited");
+			// No fabricated snapshot in either direction: an invented
+			// `rate_limited` would outlive the cooldown (nothing clears
+			// rate_limit_status when the bench expires), and an invented
+			// `allowed` contradicted an active bench.
+			expect(info.statusHeader).toBeUndefined();
 			expect(info.resetTime).toBeGreaterThanOrEqual(before + 120_000);
 		});
 

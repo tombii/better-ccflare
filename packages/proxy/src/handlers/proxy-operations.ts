@@ -190,11 +190,15 @@ export function extractCooldownUntil(
  * instant; otherwise the provider's header-based parse is used. Returns null
  * when neither reports one, leaving `extractCooldownUntil` on its normal
  * header / usage-cache / default precedence.
+ *
+ * `resetIsInferred` distinguishes a window the upstream actually reported from
+ * a provider-side default (Codex's one hour, Anthropic's 60s). Only the former
+ * is the account's own quota window — see RateLimitInfo.
  */
 export async function resolveProviderResetTime(
 	provider: Provider,
 	response: Response,
-): Promise<number | null> {
+): Promise<{ resetTime: number | null; resetIsInferred: boolean }> {
 	const bodyParser = (
 		provider as Provider & {
 			parseRateLimitFromBody?: (
@@ -210,7 +214,8 @@ export async function resolveProviderResetTime(
 				Number.isFinite(bodyReset) &&
 				bodyReset > Date.now()
 			) {
-				return bodyReset;
+				// A parsed body timestamp is always the upstream's own.
+				return { resetTime: bodyReset, resetIsInferred: false };
 			}
 		} catch {
 			// Fail open: fall through to the provider's header parse.
@@ -218,7 +223,10 @@ export async function resolveProviderResetTime(
 	}
 
 	const info = provider.parseRateLimit(response);
-	return info.isRateLimited ? (info.resetTime ?? null) : null;
+	return {
+		resetTime: info.isRateLimited ? (info.resetTime ?? null) : null,
+		resetIsInferred: info.resetIsInferred === true,
+	};
 }
 
 /**
@@ -1696,7 +1704,7 @@ export async function proxyWithAccount(
 				// the request. Providers that publish the window in the body
 				// (ZAI, CodeBuddy) get it parsed here; the body read is gated on
 				// a JSON error body inside the provider's parser.
-				const providerResetTime = await resolveProviderResetTime(
+				const providerReset = await resolveProviderResetTime(
 					provider,
 					rawResponse,
 				);
@@ -1704,12 +1712,16 @@ export async function proxyWithAccount(
 					rawResponse,
 					account.id,
 					usageCache.getRateLimitedUntil.bind(usageCache),
-					providerResetTime,
+					providerReset.resetTime,
 				);
 				const reason: RateLimitReason = "model_fallback_429";
 				applyRateLimitCooldown(
 					account,
-					{ resetTime: cooldownUntil, reason },
+					{
+						resetTime: cooldownUntil,
+						resetIsInferred: providerReset.resetIsInferred,
+						reason,
+					},
 					ctx,
 				);
 				const responseTime = Date.now() - requestMeta.timestamp;
@@ -2044,7 +2056,7 @@ export async function proxyWithAccount(
 						// Same precedence as the no-fallback 429 above: the window
 						// the provider parsed off this response beats the usage-API
 						// marker and the 60s default.
-						const providerResetTime = await resolveProviderResetTime(
+						const providerReset = await resolveProviderResetTime(
 							provider,
 							rawResponse,
 						);
@@ -2052,12 +2064,16 @@ export async function proxyWithAccount(
 							rawResponse,
 							account.id,
 							usageCache.getRateLimitedUntil.bind(usageCache),
-							providerResetTime,
+							providerReset.resetTime,
 						);
 						const reason: RateLimitReason = "all_models_exhausted_429";
 						applyRateLimitCooldown(
 							account,
-							{ resetTime: cooldownUntil, reason },
+							{
+								resetTime: cooldownUntil,
+								resetIsInferred: providerReset.resetIsInferred,
+								reason,
+							},
 							ctx,
 						);
 						const responseTime = Date.now() - requestMeta.timestamp;

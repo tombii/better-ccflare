@@ -5427,6 +5427,24 @@ describe("CodexProvider.parseRateLimit", () => {
 		expect(info.isRateLimited).toBe(true);
 		expect(info.resetTime).toBeGreaterThanOrEqual(before + 60 * 60 * 1000);
 		expect(info.resetTime).toBeLessThan(before + 60 * 60 * 1000 + 5000);
+		// That hour is ours, not the upstream's: it must not be treated as the
+		// account's quota window by the cooldown path.
+		expect(info.resetIsInferred).toBe(true);
+	});
+
+	it("marks a reported window as NOT inferred", () => {
+		const weeklyReset = Date.now() + 4 * 24 * 60 * 60 * 1000;
+		const provider = new CodexProvider();
+
+		const info = provider.parseRateLimit(
+			rateLimitResponse(429, {
+				"x-codex-secondary-window-minutes": "10080",
+				"x-codex-secondary-used-percent": "100",
+				"x-codex-secondary-reset-at": epochSeconds(weeklyReset),
+			}),
+		);
+
+		expect(info.resetIsInferred).toBe(false);
 	});
 
 	it("keeps the sooner reset on a non-429 response", () => {

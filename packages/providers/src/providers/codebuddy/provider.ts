@@ -354,10 +354,11 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 	 * The [OI]-compatible base class reports `statusHeader: "allowed"` on every
 	 * response and `isRateLimited: false` on every 429. That is right for
 	 * aggregators that surface upstream errors inline, but CodeBuddy's gateway
-	 * does rate-limit the account, and the fabricated "allowed" snapshot is
-	 * persisted to `accounts.rate_limit_status` — where it outranks an active
-	 * cooldown in the dashboard and hides the fact that the account is benched.
-	 * Only claim a status when the response actually reports one.
+	 * does rate-limit the account. Report the rate limit and, crucially, do not
+	 * fabricate a status snapshot in either direction: `rate_limit_status` is
+	 * persisted and outranks the cooldown in the dashboard, and nothing clears
+	 * it when the bench expires — an invented `allowed` contradicted an active
+	 * bench, and an invented `rate_limited` would outlive one.
 	 */
 	override parseRateLimit(response: Response): RateLimitInfo {
 		if (response.status !== 429) {
@@ -375,11 +376,7 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 				: Date.now() + seconds * 1000;
 		}
 
-		return {
-			isRateLimited: true,
-			resetTime,
-			statusHeader: "rate_limited",
-		};
+		return { isRateLimited: true, resetTime };
 	}
 
 	/**

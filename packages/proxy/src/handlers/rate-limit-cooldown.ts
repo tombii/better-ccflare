@@ -173,7 +173,9 @@ export function resetRateLimitProbeGatesForTests(): void {
  * - A 429 with a usable upstream reset benches until that reset (capped at
  *   eight days). The reset names the account's own window, so the exponential
  *   ramp is only used when no reset was reported — clamping a real window to
- *   the ramp re-probed a spent window every 30s-5min until it cleared.
+ *   the ramp re-probed a spent window every 30s-5min until it cleared. A
+ *   provider-side default (`resetIsInferred`, e.g. Codex's one hour) is not an
+ *   upstream window and stays on the ramp.
  * - A reset-less 529 (`upstream_529_overloaded_no_reset`) uses a short fixed
  *   cooldown instead (`computeOverloadCooldownMs`): Anthropic gave no
  *   retry-after for it, so there is no account-specific signal to honor, and
@@ -239,6 +241,12 @@ export function applyRateLimitCooldown(
 	account: Account,
 	rateLimitInfo: {
 		resetTime?: number;
+		/**
+		 * `resetTime` is a provider-side default, not a window the upstream
+		 * reported. Such a value keeps the adaptive backoff — see
+		 * RateLimitInfo.resetIsInferred.
+		 */
+		resetIsInferred?: boolean;
 		remaining?: number;
 		reason?: RateLimitReason;
 	},
@@ -248,7 +256,7 @@ export function applyRateLimitCooldown(
 	const now = Date.now();
 	const reason: RateLimitReason =
 		rateLimitInfo.reason ??
-		(rateLimitInfo.resetTime
+		(rateLimitInfo.resetTime && !rateLimitInfo.resetIsInferred
 			? "upstream_429_with_reset"
 			: "upstream_429_no_reset_probe_cooldown");
 	const isOverload = isOverloadReason(reason);
@@ -286,7 +294,11 @@ export function applyRateLimitCooldown(
 			rateLimitInfo.resetTime != null
 				? Math.min(rateLimitInfo.resetTime, capUntil)
 				: capUntil;
-	} else if (rateLimitInfo.resetTime != null && rateLimitInfo.resetTime > now) {
+	} else if (
+		!rateLimitInfo.resetIsInferred &&
+		rateLimitInfo.resetTime != null &&
+		rateLimitInfo.resetTime > now
+	) {
 		// An explicit upstream reset is the account's own quota window: bench
 		// until it. The exponential ramp exists to slow down re-probing when
 		// the upstream gave no signal; clamping a real window to it (the old

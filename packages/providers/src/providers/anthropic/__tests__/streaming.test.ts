@@ -215,6 +215,21 @@ describe("AnthropicProvider — streaming.test.ts", () => {
 			expect(result.resetTime ?? 0).toBeLessThanOrEqual(
 				Date.now() + 60_000 + 500,
 			);
+			// Our default, not an upstream window — the cooldown path keeps the
+			// adaptive backoff for it.
+			expect(result.resetIsInferred).toBe(true);
+		});
+
+		it("429 + x-ratelimit-reset header is NOT marked inferred", () => {
+			const futureUnixSeconds = Math.floor((Date.now() + 5 * 60 * 1000) / 1000);
+			const response = new Response(null, {
+				status: 429,
+				headers: { "x-ratelimit-reset": String(futureUnixSeconds) },
+			});
+
+			const result = provider.parseRateLimit(response);
+
+			expect(result.resetIsInferred).toBe(false);
 		});
 
 		// ─────────────────────────────────────────────

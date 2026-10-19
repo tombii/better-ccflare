@@ -426,6 +426,32 @@ describe("529 overload cooldown separation", () => {
 		expect(account.rate_limited_until).toBe(resetTime);
 	});
 
+	it("keeps a provider-invented reset on the exponential ramp", () => {
+		// Codex returns `now + 1h` and Anthropic `now + 60s` when a 429 names no
+		// window. Those are our defaults, not the account's quota — benching for
+		// them would turn a bare 429 into an hour-long removal.
+		Date.now = () => NOW;
+		const account = makeAccount({ consecutive_rate_limits: 8 });
+		const { ctx } = makeCtx({ rateLimited: true });
+
+		applyRateLimitCooldown(
+			account,
+			{
+				resetTime: NOW + 60 * 60_000,
+				resetIsInferred: true,
+				reason: "upstream_429_no_reset_probe_cooldown",
+			},
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(NOW + computeRateLimitBackoffMs(9));
+		// Without an explicit reason, an inferred reset must not be recorded as
+		// an upstream-supplied window.
+		expect(account.rate_limited_reason).toBe(
+			"upstream_429_no_reset_probe_cooldown",
+		);
+	});
+
 	it("caps an absurd 429 reset at eight days", () => {
 		Date.now = () => NOW;
 		const account = makeAccount();
