@@ -29,6 +29,7 @@ interface AccountAddFormProps {
 			| "openrouter"
 			| "alibaba-coding-plan"
 			| "codex"
+			| "codebuddy"
 			| "qwen"
 			| "ollama";
 		priority: number;
@@ -174,6 +175,7 @@ export function AccountAddForm({
 			| "openrouter"
 			| "alibaba-coding-plan"
 			| "codex"
+			| "codebuddy"
 			| "qwen"
 			| "ollama"
 			| "ollama-cloud"
@@ -217,6 +219,17 @@ export function AccountAddForm({
 		null,
 	);
 
+	// CodeBuddy browser auth state
+	const [codebuddyStep, setCodeBuddyStep] = useState<
+		"idle" | "pending" | "complete" | "error"
+	>("idle");
+	const [codebuddyAuthUrl, setCodeBuddyAuthUrl] = useState("");
+	const [codebuddyError, setCodeBuddyError] = useState("");
+	const codebuddySessionIdRef = useRef<string>("");
+	const codebuddyPollIntervalRef = useRef<ReturnType<
+		typeof setInterval
+	> | null>(null);
+
 	const [awsProfiles, setAwsProfiles] = useState<
 		Array<{ name: string; region: string | null }>
 	>([]);
@@ -254,6 +267,15 @@ export function AccountAddForm({
 		return () => {
 			if (codexPollIntervalRef.current !== null) {
 				clearInterval(codexPollIntervalRef.current);
+			}
+		};
+	}, []);
+
+	// Cleanup CodeBuddy polling on unmount
+	useEffect(() => {
+		return () => {
+			if (codebuddyPollIntervalRef.current !== null) {
+				clearInterval(codebuddyPollIntervalRef.current);
 			}
 		};
 	}, []);
@@ -368,6 +390,79 @@ export function AccountAddForm({
 		if (codexPollIntervalRef.current !== null) {
 			clearInterval(codexPollIntervalRef.current);
 			codexPollIntervalRef.current = null;
+		}
+	};
+
+	const stopCodeBuddyPolling = () => {
+		if (codebuddyPollIntervalRef.current !== null) {
+			clearInterval(codebuddyPollIntervalRef.current);
+			codebuddyPollIntervalRef.current = null;
+		}
+	};
+
+	const handleStartCodeBuddyAuth = async () => {
+		if (!newAccount.name) {
+			onError("Account name is required");
+			return;
+		}
+		setCodeBuddyStep("pending");
+		setCodeBuddyError("");
+		try {
+			const result = await api.initCodeBuddyAuth({
+				name: newAccount.name,
+				priority: newAccount.priority,
+			});
+			codebuddySessionIdRef.current = result.sessionId;
+			setCodeBuddyAuthUrl(result.authUrl);
+
+			if (typeof window !== "undefined") {
+				window.open(result.authUrl, "_blank");
+			}
+
+			codebuddyPollIntervalRef.current = setInterval(async () => {
+				try {
+					const status = await api.getCodeBuddyAuthStatus(
+						codebuddySessionIdRef.current,
+					);
+					if (status.status === "complete") {
+						stopCodeBuddyPolling();
+						setCodeBuddyStep("complete");
+						setTimeout(() => {
+							setCodeBuddyStep("idle");
+							setCodeBuddyAuthUrl("");
+							setNewAccount({
+								name: "",
+								mode: "claude-oauth",
+								priority: 0,
+								apiKey: "",
+								customEndpoint: "",
+								projectId: "",
+								region: "global",
+								profile: "",
+								awsRegion: "",
+								crossRegionMode: "geographic",
+								customBedrockModel: "",
+								opusModel: "",
+								sonnetModel: "",
+								haikuModel: "",
+								fableModel: "",
+							});
+							onSuccess();
+						}, 1500);
+					} else if (status.status === "error") {
+						stopCodeBuddyPolling();
+						setCodeBuddyStep("error");
+						setCodeBuddyError(status.error || "Authentication failed");
+					}
+				} catch {
+					// Network error — keep polling.
+				}
+			}, 3000);
+		} catch (err) {
+			setCodeBuddyStep("error");
+			setCodeBuddyError(
+				err instanceof Error ? err.message : "Failed to start authentication",
+			);
 		}
 	};
 
@@ -1258,6 +1353,7 @@ export function AccountAddForm({
 								</SelectItem>
 								<SelectItem value="console">Claude API</SelectItem>
 								<SelectItem value="codex">Codex (OpenAI OAuth)</SelectItem>
+								<SelectItem value="codebuddy">CodeBuddy (Tencent)</SelectItem>
 								<SelectItem value="qwen">Qwen (Alibaba Cloud OAuth)</SelectItem>
 								<SelectItem value="vertex-ai">
 									Vertex AI (Google Cloud)
@@ -1343,6 +1439,66 @@ export function AccountAddForm({
 										onClick={() => {
 											setCodexStep("idle");
 											setCodexError("");
+										}}
+									>
+										Try again
+									</Button>
+								</div>
+							)}
+						</div>
+					)}
+					{newAccount.mode === "codebuddy" && (
+						<div className="space-y-3">
+							{codebuddyStep === "idle" && (
+								<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
+									<p className="text-sm text-blue-900 dark:text-blue-100 font-medium mb-1">
+										Browser Authentication
+									</p>
+									<p className="text-xs text-blue-800 dark:text-blue-200">
+										Click the button below to start CodeBuddy authentication. A
+										browser tab will open for you to sign in.
+									</p>
+								</div>
+							)}
+							{codebuddyStep === "pending" && (
+								<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg space-y-2">
+									<p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
+										Waiting for authorization...
+									</p>
+									<p className="text-xs text-blue-800 dark:text-blue-200">
+										Complete the sign-in in the browser tab.
+									</p>
+									<a
+										href={codebuddyAuthUrl}
+										target="_blank"
+										rel="noreferrer"
+										className="text-xs text-blue-700 dark:text-blue-300 underline break-all"
+									>
+										{codebuddyAuthUrl}
+									</a>
+								</div>
+							)}
+							{codebuddyStep === "complete" && (
+								<div className="bg-green-50 dark:bg-green-950 p-3 rounded-lg">
+									<p className="text-sm text-green-900 dark:text-green-100 font-medium">
+										Authorization successful! Account added.
+									</p>
+								</div>
+							)}
+							{codebuddyStep === "error" && (
+								<div className="bg-red-50 dark:bg-red-950 p-3 rounded-lg space-y-2">
+									<p className="text-sm text-red-900 dark:text-red-100 font-medium">
+										Authentication failed
+									</p>
+									<p className="text-xs text-red-800 dark:text-red-200">
+										{codebuddyError}
+									</p>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={() => {
+											setCodeBuddyStep("idle");
+											setCodeBuddyError("");
 										}}
 									>
 										Try again
@@ -2771,6 +2927,17 @@ export function AccountAddForm({
 							{(codexStep === "idle" || codexStep === "error") && (
 								<Button onClick={handleStartCodexAuth}>
 									Start Codex Authentication
+								</Button>
+							)}
+							<Button variant="outline" onClick={handleCancel}>
+								Cancel
+							</Button>
+						</>
+					) : newAccount.mode === "codebuddy" ? (
+						<>
+							{(codebuddyStep === "idle" || codebuddyStep === "error") && (
+								<Button onClick={handleStartCodeBuddyAuth}>
+									Start CodeBuddy Authentication
 								</Button>
 							)}
 							<Button variant="outline" onClick={handleCancel}>

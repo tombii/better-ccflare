@@ -122,7 +122,7 @@ Add a new OAuth account to the load balancer pool.
 
 **Syntax:**
 ```bash
-bun run cli --add-account <name> --mode <claude-oauth|console|codex|qwen|xai|zai|minimax|deepseek|anthropic-compatible|openai-compatible> --priority <number>
+bun run cli --add-account <name> --mode <claude-oauth|console|codex|codebuddy|qwen|xai|zai|minimax|deepseek|anthropic-compatible|openai-compatible> --priority <number>
 ```
 
 **Note:** All flags must be provided explicitly as the CLI requires explicit parameters.
@@ -132,6 +132,7 @@ bun run cli --add-account <name> --mode <claude-oauth|console|codex|qwen|xai|zai
   - `claude-oauth`: Claude CLI OAuth account
   - `console`: Claude API account
   - `codex`: Codex/OpenAI account (OAuth)
+  - `codebuddy`: CodeBuddy account (browser authentication)
   - `qwen`: Qwen account (OAuth device code)
   - `xai`: xAI/Grok account (imports local Grok CLI OAuth credentials from `~/.grok/auth.json`; token values are never displayed). xAI refresh tokens may rotate, so if you keep using Grok CLI separately, re-authenticate or refresh Grok CLI after importing so each tool has a fresh token chain. Per-request token usage is recorded from responses, and Grok Build credits usage is polled via grok.com gRPC-web for dashboard bars.
   - `zai`: z.ai account (API key)

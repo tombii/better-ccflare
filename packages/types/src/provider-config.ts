@@ -16,6 +16,7 @@ export const PROVIDER_NAMES = {
 	OPENROUTER: "openrouter",
 	ALIBABA_CODING_PLAN: "alibaba-coding-plan",
 	CODEX: "codex",
+	CODEBUDDY: "codebuddy",
 	QWEN: "qwen",
 	XAI: "xai",
 	OLLAMA: "ollama",
@@ -137,6 +138,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: true,
 		supportsOAuth: true, // Codex uses OpenAI OAuth with PKCE
 		defaultEndpoint: "https://chatgpt.com/backend-api/codex/responses",
+	},
+	[PROVIDER_NAMES.CODEBUDDY]: {
+		requiresSessionTracking: false, // CodeBuddy has no 5-hour session windows
+		supportsUsageTracking: false, // No known quota polling API
+		supportsOAuth: true, // External-link + token-poll flow (not standard OAuth)
+		defaultEndpoint: "https://www.codebuddy.ai",
 	},
 	[PROVIDER_NAMES.QWEN]: {
 		requiresSessionTracking: false, // Qwen OAuth is quota-based, no session stickiness

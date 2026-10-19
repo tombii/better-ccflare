@@ -38,6 +38,7 @@ export const ACCOUNT_MODES = {
 	XAI: "xai", // xAI/Grok account (Grok CLI OAuth)
 	OLLAMA: "ollama", // Ollama local provider (v0.14.0+, no API key required)
 	META: "meta", // Meta Model API provider (API key)
+	CODEBUDDY: "codebuddy", // CodeBuddy provider (external-link auth)
 } as const;
 
 export type AccountMode = (typeof ACCOUNT_MODES)[keyof typeof ACCOUNT_MODES];
@@ -79,6 +80,8 @@ export function getProviderFromMode(mode: AccountMode): ProviderName {
 			return PROVIDER_NAMES.OLLAMA;
 		case ACCOUNT_MODES.META:
 			return PROVIDER_NAMES.META;
+		case ACCOUNT_MODES.CODEBUDDY:
+			return PROVIDER_NAMES.CODEBUDDY;
 		default:
 			return PROVIDER_NAMES.ANTHROPIC;
 	}
