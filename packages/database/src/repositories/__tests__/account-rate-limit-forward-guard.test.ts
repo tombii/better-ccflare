@@ -35,6 +35,7 @@ function makeDb(): { db: Database; repo: AccountRepository } {
 			session_request_count INTEGER DEFAULT 0,
 			paused INTEGER DEFAULT 0,
 			rate_limit_reset INTEGER,
+			rate_limit_reset_at INTEGER,
 			rate_limit_status TEXT,
 			rate_limit_remaining INTEGER,
 			priority INTEGER DEFAULT 0,
@@ -263,5 +264,108 @@ describe("AccountRepository.markAccountRateLimited — 529 forward guard (delta-
 		} finally {
 			warnSpy.mockRestore();
 		}
+	});
+});
+
+describe("AccountRepository.markAccountRateLimited — drops the stale header snapshot", () => {
+	let db: Database;
+	let repo: AccountRepository;
+
+	beforeEach(() => {
+		({ db, repo } = makeDb());
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	function seedSnapshot(id: string): void {
+		insertAccount(db, id);
+		db.run(
+			`UPDATE accounts
+			 SET rate_limit_status = 'allowed', rate_limit_reset = ?, rate_limit_reset_at = ?
+			 WHERE id = ?`,
+			[Date.now() + 60 * 60 * 1000, Date.now() - 1000, id],
+		);
+	}
+
+	function getSnapshot(id: string) {
+		return db
+			.query<
+				{
+					rate_limit_status: string | null;
+					rate_limit_reset: number | null;
+					rate_limit_reset_at: number | null;
+				},
+				[string]
+			>(
+				"SELECT rate_limit_status, rate_limit_reset, rate_limit_reset_at FROM accounts WHERE id = ?",
+			)
+			.get(id) as {
+			rate_limit_status: string | null;
+			rate_limit_reset: number | null;
+			rate_limit_reset_at: number | null;
+		};
+	}
+
+	it("clears a stale `allowed` snapshot when a 429 benches the account", async () => {
+		// Production case: an [OI]-compatible provider stamps `allowed` on every
+		// response, so the snapshot never ages out and contradicted the bench in
+		// the dashboard.
+		seedSnapshot("acc-s1");
+
+		await repo.markAccountRateLimited(
+			"acc-s1",
+			Date.now() + 14 * 60 * 60 * 1000,
+			"model_fallback_429",
+			true,
+		);
+
+		expect(getSnapshot("acc-s1")).toEqual({
+			rate_limit_status: null,
+			rate_limit_reset: null,
+			rate_limit_reset_at: null,
+		});
+	});
+
+	it("clears the snapshot on the guarded (529 / 5xx) path too", async () => {
+		seedSnapshot("acc-s2");
+
+		const result = await repo.markAccountRateLimited(
+			"acc-s2",
+			Date.now() + 60_000,
+			"upstream_529_overloaded_no_reset",
+			false,
+		);
+
+		expect(result.applied).toBe(true);
+		expect(getSnapshot("acc-s2").rate_limit_status).toBeNull();
+	});
+
+	it("leaves the snapshot alone when the forward guard rejects the write", async () => {
+		// A rejected 529 must not touch any column — the longer 429 bench (and
+		// the state around it) is still the truth.
+		insertAccount(db, "acc-s3");
+		const X = Date.now() + 5 * 60 * 1000;
+		await repo.markAccountRateLimited(
+			"acc-s3",
+			X,
+			"upstream_429_with_reset",
+			true,
+		);
+		db.run(
+			`UPDATE accounts SET rate_limit_status = 'rejected', rate_limit_reset = ? WHERE id = ?`,
+			[X, "acc-s3"],
+		);
+
+		const result = await repo.markAccountRateLimited(
+			"acc-s3",
+			X - 60_000,
+			"upstream_529_overloaded_no_reset",
+			false,
+		);
+
+		expect(result.applied).toBe(false);
+		expect(getSnapshot("acc-s3").rate_limit_status).toBe("rejected");
 	});
 });

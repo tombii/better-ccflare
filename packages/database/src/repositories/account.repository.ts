@@ -267,6 +267,19 @@ export class AccountRepository extends BaseRepository<Account> {
 		reason: RateLimitReason,
 		incrementStreak = true,
 	): Promise<MarkAccountRateLimitedResult> {
+		// Applying a bench also drops the last unified-header snapshot
+		// (`rate_limit_status` / `rate_limit_reset` / `rate_limit_reset_at`).
+		// That snapshot is a statement about the moment it was written, and it
+		// goes stale the instant the upstream refuses the request — worse, some
+		// providers (the [OI]-compatible family) fabricate `allowed` on every
+		// response, so it never ages out on its own and contradicted an active
+		// bench in the dashboard (`allowed` next to Force Reset). The cooldown
+		// columns written below are the authoritative, self-expiring bench
+		// state; leaving a stale `allowed` beside them is a lie either way.
+		//
+		// NULL rather than `'rate_limited'`: a hard status outranks the
+		// cooldown in the display, and nothing would clear it when the bench
+		// expires, so the account would read as rate-limited forever.
 		let applied = true;
 		if (incrementStreak) {
 			await this.run(
@@ -274,7 +287,10 @@ export class AccountRepository extends BaseRepository<Account> {
            SET consecutive_rate_limits = COALESCE(consecutive_rate_limits, 0) + 1,
                rate_limited_until      = ?,
                rate_limited_reason     = ?,
-               rate_limited_at         = ?
+               rate_limited_at         = ?,
+               rate_limit_status       = NULL,
+               rate_limit_reset        = NULL,
+               rate_limit_reset_at     = NULL
          WHERE id = ?`,
 				[until, reason, Date.now(), accountId],
 			);
@@ -300,7 +316,10 @@ export class AccountRepository extends BaseRepository<Account> {
 				`UPDATE accounts
            SET rate_limited_until      = ?,
                rate_limited_reason     = ?,
-               rate_limited_at         = ?
+               rate_limited_at         = ?,
+               rate_limit_status       = NULL,
+               rate_limit_reset        = NULL,
+               rate_limit_reset_at     = NULL
          WHERE id = ?
            AND (rate_limited_until IS NULL OR rate_limited_until <= ?)`,
 				[until, reason, Date.now(), accountId, until],
