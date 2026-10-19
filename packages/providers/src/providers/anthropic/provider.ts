@@ -544,6 +544,9 @@ export class AnthropicProvider extends BaseProvider {
 		return {
 			isRateLimited: true,
 			resetTime,
+			// No header named a window: this 60s value is our own default, not
+			// the account's reset, so it must not drive a full-window bench.
+			resetIsInferred: parsedReset === undefined,
 		};
 	}
 

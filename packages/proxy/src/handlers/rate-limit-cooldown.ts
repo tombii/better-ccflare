@@ -21,6 +21,11 @@ const log = new Logger("RateLimitCooldown");
 const MATURE_COOLDOWN_STREAK = 5;
 const PROBE_LEASE_MS = 2 * 60 * 1000;
 const MAX_PROBE_GATES = 10_000;
+// A weekly window plus slack: the longest reset any supported provider reports
+// today is seven days out, so anything beyond this is a malformed or hostile
+// header rather than a real window. Mirrors MAX_PROVIDER_RESET_COOLDOWN_MS in
+// proxy-operations.ts.
+const MAX_EXPLICIT_RESET_COOLDOWN_MS = 8 * 24 * 60 * 60 * 1000;
 const probeLeases = new Map<string, number>();
 
 /**
@@ -165,9 +170,12 @@ export function resetRateLimitProbeGatesForTests(): void {
  * error response.
  *
  * Cooldown DURATION:
- * - A 429 uses the exponential-backoff ramp capped by the upstream reset (if
- *   any) — `min(resetTime, now + backoff)`. Unchanged by this function's 529
- *   handling.
+ * - A 429 with a usable upstream reset benches until that reset (capped at
+ *   eight days). The reset names the account's own window, so the exponential
+ *   ramp is only used when no reset was reported — clamping a real window to
+ *   the ramp re-probed a spent window every 30s-5min until it cleared. A
+ *   provider-side default (`resetIsInferred`, e.g. Codex's one hour) is not an
+ *   upstream window and stays on the ramp.
  * - A reset-less 529 (`upstream_529_overloaded_no_reset`) uses a short fixed
  *   cooldown instead (`computeOverloadCooldownMs`): Anthropic gave no
  *   retry-after for it, so there is no account-specific signal to honor, and
@@ -218,8 +226,9 @@ export function resetRateLimitProbeGatesForTests(): void {
  * proxy-operations) — never reach into rate_limited_until manually.
  *
  * @param account - The account that just failed (mutated in place).
- * @param rateLimitInfo - `resetTime` caps the computed cooldown via min(resetTime, now + backoff)
- *   (429) or min(resetTime, now + cap) (529-with-reset, transient 5xx). `remaining` is forwarded to the emitted
+ * @param rateLimitInfo - `resetTime` is the upstream-declared window: the 429
+ *   cooldown lasts until it (capped at eight days), while 529-with-reset and
+ *   transient 5xx paths clamp it to their own caps. `remaining` is forwarded to the emitted
  *   RateLimitError (429 path only). `reason` overrides the auto-derived audit reason and
  *   determines which cooldown strategy applies.
  * @param ctx - The proxy context (provides asyncWriter + dbOps).
@@ -232,6 +241,12 @@ export function applyRateLimitCooldown(
 	account: Account,
 	rateLimitInfo: {
 		resetTime?: number;
+		/**
+		 * `resetTime` is a provider-side default, not a window the upstream
+		 * reported. Such a value keeps the adaptive backoff — see
+		 * RateLimitInfo.resetIsInferred.
+		 */
+		resetIsInferred?: boolean;
 		remaining?: number;
 		reason?: RateLimitReason;
 	},
@@ -241,7 +256,7 @@ export function applyRateLimitCooldown(
 	const now = Date.now();
 	const reason: RateLimitReason =
 		rateLimitInfo.reason ??
-		(rateLimitInfo.resetTime
+		(rateLimitInfo.resetTime && !rateLimitInfo.resetIsInferred
 			? "upstream_429_with_reset"
 			: "upstream_429_no_reset_probe_cooldown");
 	const isOverload = isOverloadReason(reason);
@@ -279,12 +294,25 @@ export function applyRateLimitCooldown(
 			rateLimitInfo.resetTime != null
 				? Math.min(rateLimitInfo.resetTime, capUntil)
 				: capUntil;
+	} else if (
+		!rateLimitInfo.resetIsInferred &&
+		rateLimitInfo.resetTime != null &&
+		rateLimitInfo.resetTime > now
+	) {
+		// An explicit upstream reset is the account's own quota window: bench
+		// until it. The exponential ramp exists to slow down re-probing when
+		// the upstream gave no signal; clamping a real window to it (the old
+		// `min(resetTime, now + backoff)` formula) re-probed a spent window
+		// every 30s-5min until it cleared — CodeBuddy's `6004 … UTC+8 重置`
+		// and Codex's multi-day weekly reset both hit this. The cap keeps a
+		// malformed or hostile header from parking the account indefinitely
+		// (same bound extractCooldownUntil applies to provider resets).
+		cooldownUntil = Math.min(
+			rateLimitInfo.resetTime,
+			now + MAX_EXPLICIT_RESET_COOLDOWN_MS,
+		);
 	} else {
-		const backoffMs = computeRateLimitBackoffMs(nextCount);
-		const candidateUntil = now + backoffMs;
-		cooldownUntil = rateLimitInfo.resetTime
-			? Math.min(rateLimitInfo.resetTime, candidateUntil)
-			: candidateUntil;
+		cooldownUntil = now + computeRateLimitBackoffMs(nextCount);
 	}
 
 	if (

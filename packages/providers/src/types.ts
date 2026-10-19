@@ -9,6 +9,14 @@ export interface TokenRefreshResult {
 export interface RateLimitInfo {
 	isRateLimited: boolean;
 	resetTime?: number;
+	/**
+	 * `resetTime` is a provider-side default rather than a window the upstream
+	 * reported (Codex's one-hour fallback, Anthropic's 60s one). Callers that
+	 * honour an explicit reset as the account's own quota window must treat an
+	 * inferred one as "no signal" and keep the adaptive backoff instead —
+	 * otherwise a bare 429 removes the account for an hour.
+	 */
+	resetIsInferred?: boolean;
 	statusHeader?: string;
 	remaining?: number;
 }

@@ -139,6 +139,33 @@ describe("computeRateLimitStatusDisplay — existing behavior (parity)", () => {
 		expect(status).toBe("Rate limited (1m)");
 	});
 
+	it("lets an active cooldown outrank a stale allowed snapshot", () => {
+		// [OI]-compatible providers fabricate `allowed` on every response, so
+		// the snapshot never ages out and used to hide a live 429 bench.
+		const status = computeRateLimitStatusDisplay(
+			{
+				...base,
+				rate_limit_status: "allowed",
+				rate_limited_until: NOW + 120 * 60_000,
+			},
+			NOW,
+		);
+		expect(status).toBe("Rate limited (120m)");
+	});
+
+	it("keeps a hard status ahead of the cooldown", () => {
+		const status = computeRateLimitStatusDisplay(
+			{
+				...base,
+				rate_limit_status: "rejected",
+				rate_limit_reset: NOW + 60 * 60_000,
+				rate_limited_until: NOW + 120 * 60_000,
+			},
+			NOW,
+		);
+		expect(status).toBe("rejected (60m)");
+	});
+
 	it("returns OK when nothing is known", () => {
 		expect(computeRateLimitStatusDisplay(base, NOW)).toBe("OK");
 	});

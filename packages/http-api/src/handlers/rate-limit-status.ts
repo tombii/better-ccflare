@@ -10,9 +10,12 @@
  *      2026-07-09 incident an account at 100% weekly utilization kept showing
  *      "OK" (no snapshot stored) while every upstream request 429'd.
  *   2. the last unified rate-limit header snapshot (`rate_limit_status`),
- *      with minutes until `rate_limit_reset` when that is in the future.
+ *      with minutes until `rate_limit_reset` when that is in the future —
+ *      hard statuses only. A soft `allowed*` snapshot does not outrank an
+ *      active cooldown (see below).
  *   3. the legacy cooldown lock (`rate_limited_until`).
- *   4. "OK".
+ *   4. a soft `allowed*` header snapshot.
+ *   5. "OK".
  */
 
 import { isUsageExhausted } from "@better-ccflare/core";
@@ -72,14 +75,33 @@ export function computeRateLimitStatusDisplay(
 	}
 
 	if (input.rate_limit_status) {
-		if (input.rate_limit_reset && input.rate_limit_reset > now) {
-			return `${input.rate_limit_status} (${minutesLeft(input.rate_limit_reset, now)}m)`;
+		// An `allowed*` snapshot means "usable at the time it was written". It
+		// must not outrank an active local cooldown: a 429 that benches the
+		// account is newer evidence than the last header snapshot, and some
+		// providers ([OI]-compatible) fabricate `allowed` on every response, so
+		// the snapshot can never age out on its own. Hard statuses
+		// (rejected/blocked/queueing_hard/payment_required) keep their existing
+		// precedence over the lock.
+		const isSoftStatus = input.rate_limit_status
+			.toLowerCase()
+			.startsWith("allowed");
+		if (!isSoftStatus) {
+			if (input.rate_limit_reset && input.rate_limit_reset > now) {
+				return `${input.rate_limit_status} (${minutesLeft(input.rate_limit_reset, now)}m)`;
+			}
+			return input.rate_limit_status;
 		}
-		return input.rate_limit_status;
 	}
 
 	if (input.rate_limited_until && input.rate_limited_until > now) {
 		return `Rate limited (${minutesLeft(input.rate_limited_until, now)}m)`;
+	}
+
+	if (input.rate_limit_status) {
+		if (input.rate_limit_reset && input.rate_limit_reset > now) {
+			return `${input.rate_limit_status} (${minutesLeft(input.rate_limit_reset, now)}m)`;
+		}
+		return input.rate_limit_status;
 	}
 
 	return "OK";

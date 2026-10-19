@@ -2004,12 +2004,14 @@ export class CodexProvider extends BaseProvider {
 			return { isRateLimited: false, resetTime };
 		}
 
+		// A real window (exhausted-window reset or a reset header) is the
+		// upstream's own deadline; the one-hour fallback below is ours and must
+		// stay on the adaptive-backoff path. See `resetIsInferred`.
+		const reportedReset = this.exhaustedWindowResetAt(response) ?? resetTime;
 		return {
 			isRateLimited: true,
-			resetTime:
-				this.exhaustedWindowResetAt(response) ??
-				resetTime ??
-				Date.now() + 60 * 60 * 1000,
+			resetTime: reportedReset ?? Date.now() + 60 * 60 * 1000,
+			resetIsInferred: reportedReset === undefined,
 		};
 	}
 
