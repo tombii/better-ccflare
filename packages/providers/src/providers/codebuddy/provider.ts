@@ -395,10 +395,36 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 		const contentType = response.headers.get("content-type") ?? "";
 		// Only JSON error bodies carry the message; cloning an SSE body would
 		// leave the clone's tee branch unread (#382).
-		if (!contentType.includes("json")) return undefined;
+		if (!contentType.includes("json")) {
+			log.debug("CodeBuddy 429 carried no JSON body", {
+				status: response.status,
+				content_type: contentType || null,
+			});
+			return undefined;
+		}
 		try {
-			const body = await response.clone().json();
-			return parseCodeBuddyResetAt(codeBuddyErrorMessage(body));
+			const text = await response.clone().text();
+			const body = JSON.parse(text) as unknown;
+			const resetAt = parseCodeBuddyResetAt(codeBuddyErrorMessage(body));
+			if (resetAt === undefined) {
+				// The intl gateway's 14003 ("model busy") is a transient
+				// saturation notice with no window — normal, keep it at debug.
+				// A quota code (6004/6008) that lost its timestamp is a wording
+				// change on their side and worth surfacing.
+				const code = (body as { code?: unknown } | null)?.code;
+				const isQuotaCode = code === 6004 || code === 6008;
+				const message = isQuotaCode
+					? "CodeBuddy quota 429 carried no reset instant"
+					: "CodeBuddy 429 carried no reset instant";
+				const context = {
+					status: response.status,
+					code: typeof code === "number" ? code : null,
+					body: text.slice(0, 400),
+				};
+				if (isQuotaCode) log.warn(message, context);
+				else log.debug(message, context);
+			}
+			return resetAt;
 		} catch {
 			// Fail open: an unparseable body keeps the ordinary backoff.
 			return undefined;
