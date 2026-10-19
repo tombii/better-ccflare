@@ -449,7 +449,7 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 		let usage: OpenAIUsage | undefined;
 		let content = "";
 		let reasoning = "";
-		let sawChunk = false;
+		let sawChoice = false;
 		let sawDone = false;
 		const toolCalls: Array<{
 			id: string;
@@ -474,8 +474,6 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 				continue;
 			}
 
-			sawChunk = true;
-
 			if (chunk.error) {
 				// The HTTP status is already 200 because the SSE headers went out
 				// before the error chunk. Report a real failure status so HTTP
@@ -494,6 +492,7 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 			if (chunk.usage) usage = chunk.usage;
 
 			const chunkChoice = chunk.choices?.[0];
+			if (chunkChoice) sawChoice = true;
 			if (chunkChoice?.finish_reason) finishReason = chunkChoice.finish_reason;
 
 			const delta = chunkChoice?.delta;
@@ -534,7 +533,7 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 		// A cleanly closed stream without a finish reason (or [DONE]) means the
 		// upstream truncated the answer. Returning the partial text as a
 		// completed message would hide that from the client.
-		if (!sawChunk) {
+		if (!sawChoice) {
 			return codeBuddyErrorResponse(
 				502,
 				"invalid_response",

@@ -700,6 +700,23 @@ describe("CodeBuddyProvider", () => {
 			expect(transformed.status).toBe(502);
 		});
 
+		it("returns 502 when the stream only carries usage and no choices", async () => {
+			const sse = `data: ${JSON.stringify({
+				id: "c1",
+				usage: { prompt_tokens: 1, completion_tokens: 0, total_tokens: 1 },
+			})}\n\ndata: [DONE]\n\n`;
+			const response = new Response(sse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-request-stream": "false",
+				},
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			expect(transformed.status).toBe(502);
+		});
+
 		it("preserves a failed models response instead of returning an empty list", async () => {
 			const response = jsonResponse({ error: "unauthorized" }, 401);
 			response.headers.set("x-better-ccflare-request-path", "/v1/models");
