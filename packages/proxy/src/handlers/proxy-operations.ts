@@ -116,12 +116,40 @@ function currentScopedPercentForFamily(
  * so that callers in production pass usageCache.getRateLimitedUntil.bind(usageCache)
  * and tests pass a plain stub — avoiding module-mock symlink issues with Bun.
  */
+/**
+ * Which precedence step produced a cooldown deadline. Callers need this to
+ * know whether the chosen deadline is the upstream's own window or one of our
+ * fallbacks — see `resetIsInferred` on `RateLimitInfo`.
+ */
+export type CooldownSource = "header" | "provider" | "usage_cache" | "default";
+
 export function extractCooldownUntil(
 	response: Response,
 	accountId: string,
 	getRateLimitedUntil: (accountId: string) => number | null,
 	providerResetTime?: number | null,
 ): number {
+	return extractCooldownUntilWithSource(
+		response,
+		accountId,
+		getRateLimitedUntil,
+		providerResetTime,
+	).until;
+}
+
+/**
+ * `extractCooldownUntil`, plus which precedence step won. The deadline and its
+ * provenance have to travel together: a provider can report a reset that is
+ * merely its own default (`resetIsInferred`) while this function picks a real
+ * `retry-after` deadline instead — pairing the selected deadline with the
+ * provider's flag would wrongly downgrade a reported wait to the backoff ramp.
+ */
+export function extractCooldownUntilWithSource(
+	response: Response,
+	accountId: string,
+	getRateLimitedUntil: (accountId: string) => number | null,
+	providerResetTime?: number | null,
+): { until: number; source: CooldownSource } {
 	const MIN_COOLDOWN_MS = 60 * 1000; // 60 seconds floor
 	// A weekly window plus slack: the longest reset any supported provider
 	// reports today is seven days out, so anything beyond this is a malformed
@@ -147,14 +175,20 @@ export function extractCooldownUntil(
 			const isUnixTimestamp = parsed > 1_000_000_000;
 			const epochMs = isUnixTimestamp ? parsed * 1000 : now + parsed * 1000;
 			if (epochMs > now) {
-				return Math.max(epochMs, now + MIN_COOLDOWN_MS);
+				return {
+					until: Math.max(epochMs, now + MIN_COOLDOWN_MS),
+					source: "header",
+				};
 			}
 			// epochMs <= now: stale/already-past timestamp — fall through to next priority
 		} else {
 			// Try HTTP-date format (RFC 7231), e.g. "Wed, 21 Oct 2026 07:28:00 GMT"
 			const dateMs = new Date(retryAfter).getTime();
 			if (!Number.isNaN(dateMs) && dateMs > now) {
-				return Math.max(dateMs, now + MIN_COOLDOWN_MS);
+				return {
+					until: Math.max(dateMs, now + MIN_COOLDOWN_MS),
+					source: "header",
+				};
 			}
 			// Invalid or past date — fall through to next priority
 		}
@@ -170,17 +204,23 @@ export function extractCooldownUntil(
 			providerResetTime,
 			now + MAX_PROVIDER_RESET_COOLDOWN_MS,
 		);
-		return Math.max(capped, now + MIN_COOLDOWN_MS);
+		return {
+			until: Math.max(capped, now + MIN_COOLDOWN_MS),
+			source: "provider",
+		};
 	}
 
 	// 3. Fall back to usage-window reset time if available
 	const rateLimitedUntil = getRateLimitedUntil(accountId);
 	if (rateLimitedUntil !== null && rateLimitedUntil > now) {
-		return Math.max(rateLimitedUntil, now + MIN_COOLDOWN_MS);
+		return {
+			until: Math.max(rateLimitedUntil, now + MIN_COOLDOWN_MS),
+			source: "usage_cache",
+		};
 	}
 
 	// 4. Last resort: the probe-cooldown default
-	return now + DEFAULT_COOLDOWN_MS;
+	return { until: now + DEFAULT_COOLDOWN_MS, source: "default" };
 }
 
 /**
@@ -1708,7 +1748,10 @@ export async function proxyWithAccount(
 					provider,
 					rawResponse,
 				);
-				const cooldownUntil = extractCooldownUntil(
+				// Provenance travels with the deadline: the provider's inferred
+				// flag only applies when its own value is what won. A real
+				// `retry-after` header outranks it, and must keep its full wait.
+				const cooldown = extractCooldownUntilWithSource(
 					rawResponse,
 					account.id,
 					usageCache.getRateLimitedUntil.bind(usageCache),
@@ -1718,8 +1761,9 @@ export async function proxyWithAccount(
 				applyRateLimitCooldown(
 					account,
 					{
-						resetTime: cooldownUntil,
-						resetIsInferred: providerReset.resetIsInferred,
+						resetTime: cooldown.until,
+						resetIsInferred:
+							cooldown.source === "provider" && providerReset.resetIsInferred,
 						reason,
 					},
 					ctx,
@@ -2060,7 +2104,8 @@ export async function proxyWithAccount(
 							provider,
 							rawResponse,
 						);
-						const cooldownUntil = extractCooldownUntil(
+						// Same provenance rule as the no-fallback path above.
+						const cooldown = extractCooldownUntilWithSource(
 							rawResponse,
 							account.id,
 							usageCache.getRateLimitedUntil.bind(usageCache),
@@ -2070,8 +2115,10 @@ export async function proxyWithAccount(
 						applyRateLimitCooldown(
 							account,
 							{
-								resetTime: cooldownUntil,
-								resetIsInferred: providerReset.resetIsInferred,
+								resetTime: cooldown.until,
+								resetIsInferred:
+									cooldown.source === "provider" &&
+									providerReset.resetIsInferred,
 								reason,
 							},
 							ctx,

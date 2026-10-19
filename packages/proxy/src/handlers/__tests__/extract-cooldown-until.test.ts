@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { TIME_CONSTANTS } from "@better-ccflare/core";
-import { extractCooldownUntil } from "../proxy-operations";
+import {
+	extractCooldownUntil,
+	extractCooldownUntilWithSource,
+} from "../proxy-operations";
 
 const ACCOUNT_ID = "acct-test";
 const MIN_COOLDOWN_MS = 60 * 1000;
@@ -204,6 +207,45 @@ describe("extractCooldownUntil", () => {
 				expect(result).toBeGreaterThanOrEqual(before + expected);
 				expect(result).toBeLessThan(before + expected + 5000);
 			}
+		});
+	});
+
+	describe("provenance", () => {
+		// The deadline and where it came from must travel together: callers use
+		// the source to decide whether a provider's `resetIsInferred` flag even
+		// applies (a header wins over an inferred provider default).
+		it("reports the header when retry-after outranks the provider reset", () => {
+			const result = extractCooldownUntilWithSource(
+				makeResponse({ "retry-after": "3600" }),
+				ACCOUNT_ID,
+				noCache,
+				Date.now() + 60_000,
+			);
+			expect(result.source).toBe("header");
+		});
+
+		it("reports the provider when its reset is selected", () => {
+			const result = extractCooldownUntilWithSource(
+				makeResponse(),
+				ACCOUNT_ID,
+				noCache,
+				Date.now() + 60 * 60 * 1000,
+			);
+			expect(result.source).toBe("provider");
+		});
+
+		it("reports the usage cache and the default", () => {
+			expect(
+				extractCooldownUntilWithSource(
+					makeResponse(),
+					ACCOUNT_ID,
+					() => Date.now() + 30 * 60 * 1000,
+				).source,
+			).toBe("usage_cache");
+			expect(
+				extractCooldownUntilWithSource(makeResponse(), ACCOUNT_ID, noCache)
+					.source,
+			).toBe("default");
 		});
 	});
 });

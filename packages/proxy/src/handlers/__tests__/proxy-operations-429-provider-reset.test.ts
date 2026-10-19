@@ -84,6 +84,7 @@ function makeProxyContext(
 	parseRateLimit: () => {
 		isRateLimited: boolean;
 		resetTime: number | undefined;
+		resetIsInferred?: boolean;
 	},
 	parseRateLimitFromBody?: (response: Response) => Promise<number | undefined>,
 ): ProxyContext {
@@ -287,6 +288,40 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 		expect(account.rate_limited_until ?? 0).toBeLessThanOrEqual(
 			resetTime + 5_000,
 		);
+	});
+
+	it("keeps a real retry-after wait when the provider's own reset is inferred", async () => {
+		// Anthropic sets resetIsInferred:true when it falls back to its 60s
+		// default, but a `retry-after` header on the same response is a real
+		// upstream instruction and outranks that default. Pairing the selected
+		// deadline with the provider's flag would downgrade the hour-long wait
+		// to the backoff ramp (widened to 30 days here, so a regression is
+		// unmistakable).
+		const before = Date.now();
+		globalThis.fetch = mock(
+			async () =>
+				new Response(rateLimitBody, {
+					status: 429,
+					headers: {
+						"content-type": "application/json",
+						"retry-after": "3600",
+					},
+				}),
+		);
+
+		const ctx = makeProxyContext(() => ({
+			isRateLimited: true,
+			resetTime: before + 60_000,
+			resetIsInferred: true,
+		}));
+		const account = makeAccount();
+
+		const result = await runProxy(account, ctx);
+
+		expect(result).toBeNull();
+		const benchMs = (account.rate_limited_until ?? 0) - Date.now();
+		expect(benchMs).toBeGreaterThan(3_500_000);
+		expect(benchMs).toBeLessThanOrEqual(3_600_000);
 	});
 
 	it("falls back to the header parse when the body parser throws", async () => {
