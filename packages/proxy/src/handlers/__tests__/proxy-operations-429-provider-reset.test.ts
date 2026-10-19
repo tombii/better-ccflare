@@ -85,6 +85,7 @@ function makeProxyContext(
 		isRateLimited: boolean;
 		resetTime: number | undefined;
 	},
+	parseRateLimitFromBody?: (response: Response) => Promise<number | undefined>,
 ): ProxyContext {
 	return {
 		strategy: { getNextAccount: () => null } as never,
@@ -112,6 +113,7 @@ function makeProxyContext(
 			transformRequestBody: null,
 			processResponse: async (r: Response) => r,
 			parseRateLimit,
+			...(parseRateLimitFromBody ? { parseRateLimitFromBody } : {}),
 			isStreamingResponse: () => false,
 		} as never,
 		refreshInFlight: new Map(),
@@ -174,10 +176,10 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 		originalBackoffEnv = Object.fromEntries(
 			BACKOFF_ENV_VARS.map((name) => [name, process.env[name]]),
 		);
-		// The exponential 429 ramp (`min(resetTime, now + backoff)` in
-		// applyRateLimitCooldown) would otherwise clamp every bench here to
-		// 30s-5min and hide the difference this test is about. Widening it past
-		// both candidate durations isolates extractCooldownUntil's contribution.
+		// The 429 cooldown now honours an explicit reset directly. These env
+		// vars stay wide so a regression back to the old
+		// `min(resetTime, now + ramp)` formula fails the upper bound instead of
+		// silently passing with a ramp that happens to match the reset.
 		process.env.CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS = String(
 			30 * 24 * 60 * 60 * 1000,
 		);
@@ -253,6 +255,66 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 		);
 		expect(account.rate_limited_until ?? 0).toBeLessThanOrEqual(
 			Date.now() + 60_000 + 5_000,
+		);
+	});
+
+	it("benches until the reset the provider parsed out of the 429 body", async () => {
+		// CodeBuddy publishes the window in the body (`6004 … UTC+8 重置`) and
+		// no header, so header-only parsing fell back to the 30-60s ramp and
+		// re-probed a quota window that was hours away.
+		const resetTime = Date.now() + FOUR_DAYS_MS;
+		globalThis.fetch = mock(
+			async () =>
+				new Response(rateLimitBody, {
+					status: 429,
+					headers: { "content-type": "application/json" },
+				}),
+		);
+
+		const ctx = makeProxyContext(
+			() => ({ isRateLimited: true, resetTime: undefined }),
+			async () => resetTime,
+		);
+		const account = makeAccount();
+
+		const result = await runProxy(account, ctx);
+
+		expect(result).toBeNull();
+		expect(account.rate_limited_reason).toBe("model_fallback_429");
+		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
+			resetTime - 5_000,
+		);
+		expect(account.rate_limited_until ?? 0).toBeLessThanOrEqual(
+			resetTime + 5_000,
+		);
+	});
+
+	it("falls back to the header parse when the body parser throws", async () => {
+		const resetTime = Date.now() + FOUR_DAYS_MS;
+		globalThis.fetch = mock(
+			async () =>
+				new Response(rateLimitBody, {
+					status: 429,
+					headers: { "content-type": "application/json" },
+				}),
+		);
+
+		const ctx = makeProxyContext(
+			() => ({ isRateLimited: true, resetTime }),
+			async () => {
+				throw new Error("body parser exploded");
+			},
+		);
+		const account = makeAccount();
+
+		const result = await runProxy(account, ctx);
+
+		expect(result).toBeNull();
+		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
+			resetTime - 5_000,
+		);
+		expect(account.rate_limited_until ?? 0).toBeLessThanOrEqual(
+			resetTime + 5_000,
 		);
 	});
 });

@@ -20,6 +20,7 @@ import {
 	isAnthropicExtraUsageExhausted,
 	isAnthropicOrgPermissionDenied,
 	isAnthropicOutOfCredits,
+	type Provider,
 	recoverCodexMessagesContinuation,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -180,6 +181,44 @@ export function extractCooldownUntil(
 
 	// 4. Last resort: the probe-cooldown default
 	return now + DEFAULT_COOLDOWN_MS;
+}
+
+/**
+ * Resolve the reset instant a provider declares for a 429. Some gateways name
+ * the window in the response BODY rather than in a header (ZAI's `1308`,
+ * CodeBuddy's `6004`), so the body parser wins when it yields a future
+ * instant; otherwise the provider's header-based parse is used. Returns null
+ * when neither reports one, leaving `extractCooldownUntil` on its normal
+ * header / usage-cache / default precedence.
+ */
+export async function resolveProviderResetTime(
+	provider: Provider,
+	response: Response,
+): Promise<number | null> {
+	const bodyParser = (
+		provider as Provider & {
+			parseRateLimitFromBody?: (
+				response: Response,
+			) => Promise<number | null | undefined>;
+		}
+	).parseRateLimitFromBody;
+	if (typeof bodyParser === "function") {
+		try {
+			const bodyReset = await bodyParser.call(provider, response);
+			if (
+				typeof bodyReset === "number" &&
+				Number.isFinite(bodyReset) &&
+				bodyReset > Date.now()
+			) {
+				return bodyReset;
+			}
+		} catch {
+			// Fail open: fall through to the provider's header parse.
+		}
+	}
+
+	const info = provider.parseRateLimit(response);
+	return info.isRateLimited ? (info.resetTime ?? null) : null;
 }
 
 /**
@@ -1654,12 +1693,13 @@ export async function proxyWithAccount(
 				);
 				// The provider's own read of this response outranks the usage-API
 				// marker and the default: it names the window that just refused
-				// the request. No clone — parseRateLimit is synchronous and reads
-				// only headers and status (providers/types.ts), see the 529 path.
-				const providerRateLimit = provider.parseRateLimit(rawResponse);
-				const providerResetTime = providerRateLimit.isRateLimited
-					? (providerRateLimit.resetTime ?? null)
-					: null;
+				// the request. Providers that publish the window in the body
+				// (ZAI, CodeBuddy) get it parsed here; the body read is gated on
+				// a JSON error body inside the provider's parser.
+				const providerResetTime = await resolveProviderResetTime(
+					provider,
+					rawResponse,
+				);
 				const cooldownUntil = extractCooldownUntil(
 					rawResponse,
 					account.id,
@@ -2004,10 +2044,10 @@ export async function proxyWithAccount(
 						// Same precedence as the no-fallback 429 above: the window
 						// the provider parsed off this response beats the usage-API
 						// marker and the 60s default.
-						const providerRateLimit = provider.parseRateLimit(rawResponse);
-						const providerResetTime = providerRateLimit.isRateLimited
-							? (providerRateLimit.resetTime ?? null)
-							: null;
+						const providerResetTime = await resolveProviderResetTime(
+							provider,
+							rawResponse,
+						);
 						const cooldownUntil = extractCooldownUntil(
 							rawResponse,
 							account.id,

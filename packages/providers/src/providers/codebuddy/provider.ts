@@ -7,7 +7,11 @@ import {
 } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { registerProviderModelDefaultFactory } from "../../provider-model-defaults";
-import type { ProviderResponseContext, TokenRefreshResult } from "../../types";
+import type {
+	ProviderResponseContext,
+	RateLimitInfo,
+	TokenRefreshResult,
+} from "../../types";
 import { readRequestJson } from "../../utils/request-json";
 import { OpenAICompatibleProvider } from "../openai/provider";
 import {
@@ -75,6 +79,69 @@ function statusForCodeBuddyError(type: string | undefined): number {
 		default:
 			return 502;
 	}
+}
+
+/**
+ * CodeBuddy reports its quota rate limit in the response BODY, not in headers:
+ *
+ *   {"code":6004,"msg":"您的使用量已超出频率限制，将在 2026-10-19 13:23:30 UTC+8 重置，…"}
+ *
+ * The intl gateway (www.codebuddy.ai) shares the CN error shape — published
+ * samples from both hosts carry the same `将在 <wall clock> UTC+8 重置` wording.
+ * The clock is a local wall time: an explicit `UTC±N` offset is honoured, and
+ * a missing one is read as UTC+8 (the service's home timezone).
+ */
+const CODEBUDDY_RESET_AT_PATTERN =
+	/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\s*UTC\s*([+-])(\d{1,2})(?::?(\d{2}))?|\s*(Z))?/i;
+
+/** Collect the human-readable message from any of the shapes the gateway uses. */
+function codeBuddyErrorMessage(body: unknown): string {
+	if (!body || typeof body !== "object") return "";
+	const record = body as Record<string, unknown>;
+	const nested =
+		record.error && typeof record.error === "object"
+			? (record.error as Record<string, unknown>).message
+			: undefined;
+	return [record.msg, record.message, nested]
+		.filter((value): value is string => typeof value === "string")
+		.join(" ");
+}
+
+/**
+ * Extract the reset instant (epoch ms) from a CodeBuddy rate-limit message.
+ * Returns undefined when the message carries no timestamp — the caller then
+ * keeps the ordinary exponential backoff rather than inventing a deadline.
+ */
+export function parseCodeBuddyResetAt(message: string): number | undefined {
+	const match = CODEBUDDY_RESET_AT_PATTERN.exec(message);
+	if (!match) return undefined;
+	const [
+		,
+		year,
+		month,
+		day,
+		hour,
+		minute,
+		second,
+		sign,
+		offsetHours,
+		offsetMinutes,
+		zulu,
+	] = match;
+	// An explicit `Z` is UTC; no suffix at all is the gateway's UTC+8 wall clock.
+	const hours = zulu ? 0 : Number(offsetHours ?? 8) * (sign === "-" ? -1 : 1);
+	const minutes = zulu ? 0 : Number(offsetMinutes ?? 0) * (hours < 0 ? -1 : 1);
+	const wallClockMs = Date.UTC(
+		Number(year),
+		Number(month) - 1,
+		Number(day),
+		Number(hour),
+		Number(minute),
+		Number(second),
+	);
+	const offsetMs = (hours * 60 + minutes) * 60_000;
+	const resetAt = wallClockMs - offsetMs;
+	return Number.isFinite(resetAt) ? resetAt : undefined;
 }
 
 /**
@@ -281,6 +348,61 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 
 	override supportsOAuth(): boolean {
 		return true;
+	}
+
+	/**
+	 * The [OI]-compatible base class reports `statusHeader: "allowed"` on every
+	 * response and `isRateLimited: false` on every 429. That is right for
+	 * aggregators that surface upstream errors inline, but CodeBuddy's gateway
+	 * does rate-limit the account, and the fabricated "allowed" snapshot is
+	 * persisted to `accounts.rate_limit_status` — where it outranks an active
+	 * cooldown in the dashboard and hides the fact that the account is benched.
+	 * Only claim a status when the response actually reports one.
+	 */
+	override parseRateLimit(response: Response): RateLimitInfo {
+		if (response.status !== 429) {
+			return { isRateLimited: false };
+		}
+
+		// A `retry-after` is honoured when present; the body parser below is the
+		// usual source for this gateway (see parseRateLimitFromBody).
+		const retryAfter = response.headers.get("retry-after");
+		let resetTime: number | undefined;
+		if (retryAfter) {
+			const seconds = Number(retryAfter);
+			resetTime = Number.isNaN(seconds)
+				? new Date(retryAfter).getTime()
+				: Date.now() + seconds * 1000;
+		}
+
+		return {
+			isRateLimited: true,
+			resetTime,
+			statusHeader: "rate_limited",
+		};
+	}
+
+	/**
+	 * CodeBuddy names the reset instant in the 429 body rather than in a header.
+	 * Header-only parsing therefore always fell through to the generic 30–60s
+	 * backoff, re-probing an account whose quota window was hours away. This is
+	 * the same hook ZAI uses (called from the proxy's 429 paths).
+	 */
+	async parseRateLimitFromBody(
+		response: Response,
+	): Promise<number | undefined> {
+		if (response.status !== 429) return undefined;
+		const contentType = response.headers.get("content-type") ?? "";
+		// Only JSON error bodies carry the message; cloning an SSE body would
+		// leave the clone's tee branch unread (#382).
+		if (!contentType.includes("json")) return undefined;
+		try {
+			const body = await response.clone().json();
+			return parseCodeBuddyResetAt(codeBuddyErrorMessage(body));
+		} catch {
+			// Fail open: an unparseable body keeps the ordinary backoff.
+			return undefined;
+		}
 	}
 
 	/**

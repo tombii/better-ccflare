@@ -111,6 +111,112 @@ describe("CodeBuddyProvider", () => {
 		});
 	});
 
+	describe("parseRateLimit", () => {
+		it("reports a 429 as rate-limited with its retry-after reset", () => {
+			const before = Date.now();
+			const info = provider.parseRateLimit(
+				new Response("{}", {
+					status: 429,
+					headers: { "content-type": "application/json", "retry-after": "120" },
+				}),
+			);
+
+			expect(info.isRateLimited).toBe(true);
+			expect(info.statusHeader).toBe("rate_limited");
+			expect(info.resetTime).toBeGreaterThanOrEqual(before + 120_000);
+		});
+
+		it("does not fabricate an allowed snapshot on a successful response", () => {
+			// The [OI]-compatible base class returns statusHeader "allowed" here,
+			// which was persisted and masked the active cooldown in the dashboard.
+			const info = provider.parseRateLimit(jsonResponse({ ok: true }));
+			expect(info.isRateLimited).toBe(false);
+			expect(info.statusHeader).toBeUndefined();
+		});
+	});
+
+	describe("parseRateLimitFromBody", () => {
+		it("parses the reset instant out of a 6004 quota message (UTC+8)", async () => {
+			const info = await provider.parseRateLimitFromBody(
+				jsonResponse(
+					{
+						code: 6004,
+						msg: "您的使用量已超出频率限制，将在 2026-10-19 21:23:30 UTC+8 重置，您也可以切换其他模型继续使用。",
+					},
+					429,
+				),
+			);
+
+			expect(info).toBe(Date.UTC(2026, 9, 19, 13, 23, 30));
+		});
+
+		it("defaults a timestamp without an offset to UTC+8", async () => {
+			const info = await provider.parseRateLimitFromBody(
+				jsonResponse({ code: 6004, msg: "将在 2026-10-19 21:23:30 重置" }, 429),
+			);
+
+			expect(info).toBe(Date.UTC(2026, 9, 19, 13, 23, 30));
+		});
+
+		it("honours an explicit non-UTC+8 offset", async () => {
+			const info = await provider.parseRateLimitFromBody(
+				jsonResponse(
+					{
+						code: 14003,
+						message: "Rate limit, resets at 2026-10-19 13:23:30 UTC-05:00",
+					},
+					429,
+				),
+			);
+
+			expect(info).toBe(Date.UTC(2026, 9, 19, 18, 23, 30));
+		});
+
+		it("reads a trailing Z as UTC", async () => {
+			const info = await provider.parseRateLimitFromBody(
+				jsonResponse(
+					{ code: 14003, message: "resets at 2026-10-19T13:23:30Z" },
+					429,
+				),
+			);
+
+			expect(info).toBe(Date.UTC(2026, 9, 19, 13, 23, 30));
+		});
+
+		it("returns undefined when the message has no timestamp", async () => {
+			const info = await provider.parseRateLimitFromBody(
+				jsonResponse({ code: 14003, msg: "too many requests" }, 429),
+			);
+
+			expect(info).toBeUndefined();
+		});
+
+		it("ignores non-429 and non-JSON responses", async () => {
+			expect(
+				await provider.parseRateLimitFromBody(jsonResponse({ code: 6004 })),
+			).toBeUndefined();
+			expect(
+				await provider.parseRateLimitFromBody(
+					new Response("not json", {
+						status: 429,
+						headers: { "content-type": "text/plain" },
+					}),
+				),
+			).toBeUndefined();
+		});
+
+		it("fails open on a malformed JSON body", async () => {
+			expect(
+				await provider.parseRateLimitFromBody(
+					new Response("{", {
+						status: 429,
+						headers: { "content-type": "application/json" },
+					}),
+				),
+			).toBeUndefined();
+		});
+	});
+
 	describe("buildUrl", () => {
 		it("maps /v1/messages to the chat completions endpoint", () => {
 			expect(

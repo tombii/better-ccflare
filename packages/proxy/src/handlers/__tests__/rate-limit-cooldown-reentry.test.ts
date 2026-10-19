@@ -390,25 +390,71 @@ describe("529 overload cooldown separation", () => {
 		expect(calls.markRateLimited[0]?.incrementStreak).toBe(false);
 	});
 
-	it("keeps the exponential 429 ramp and reset-time cap unchanged (regression)", () => {
+	it("benches a 429 until its upstream reset instead of clamping it to the ramp", () => {
 		Date.now = () => NOW;
 		const account = makeAccount({ consecutive_rate_limits: 8 });
 		const { ctx, calls } = makeCtx({ rateLimited: true });
-		// Shorter than the 8th-streak backoff ceiling, so it drives the cap.
-		const resetTime = NOW + 10_000;
+		// The reset is the account's own window. The old formula capped it at
+		// the 8th-streak backoff, so a spent multi-hour window was re-probed
+		// every few minutes until it cleared.
+		const resetTime = NOW + 3 * 60 * 60_000;
 
 		applyRateLimitCooldown(
 			account,
-			{ resetTime, reason: "upstream_429_no_reset_probe_cooldown" },
+			{ resetTime, reason: "upstream_429_with_reset" },
 			ctx,
 		);
 
 		expect(account.consecutive_rate_limits).toBe(9);
-		expect(account.rate_limited_until).toBe(
-			Math.min(resetTime, NOW + computeRateLimitBackoffMs(9)),
-		);
+		expect(account.rate_limited_until).toBe(resetTime);
 		expect(calls.markRateLimited).toHaveLength(1);
 		expect(calls.markRateLimited[0]?.incrementStreak).toBe(true);
+	});
+
+	it("honours a short 429 reset literally", () => {
+		Date.now = () => NOW;
+		const account = makeAccount();
+		const { ctx } = makeCtx({ rateLimited: true });
+		const resetTime = NOW + 10_000;
+
+		applyRateLimitCooldown(
+			account,
+			{ resetTime, reason: "upstream_429_with_reset" },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(resetTime);
+	});
+
+	it("caps an absurd 429 reset at eight days", () => {
+		Date.now = () => NOW;
+		const account = makeAccount();
+		const { ctx } = makeCtx({ rateLimited: true });
+
+		applyRateLimitCooldown(
+			account,
+			{
+				resetTime: NOW + 30 * 24 * 60 * 60_000,
+				reason: "upstream_429_with_reset",
+			},
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(NOW + 8 * 24 * 60 * 60_000);
+	});
+
+	it("falls back to the exponential ramp when the reset is already past", () => {
+		Date.now = () => NOW;
+		const account = makeAccount({ consecutive_rate_limits: 8 });
+		const { ctx } = makeCtx({ rateLimited: true });
+
+		applyRateLimitCooldown(
+			account,
+			{ resetTime: NOW - 1, reason: "upstream_429_with_reset" },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(NOW + computeRateLimitBackoffMs(9));
 	});
 
 	it("honors a full retry-after on a 529-with-reset even with a cold streak (regression: duration must not derive from the frozen 429 streak)", () => {
