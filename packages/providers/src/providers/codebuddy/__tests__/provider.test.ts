@@ -276,6 +276,77 @@ describe("CodeBuddyProvider", () => {
 			expect(body.store).toBe(false);
 		});
 
+		it("prepends a fallback system message when the client sends none", async () => {
+			const transformed = await provider.transformRequestBody(
+				anthropicRequest(),
+				makeAccount(),
+			);
+			const body = (await transformed.json()) as {
+				messages: Array<{ role: string; content: unknown }>;
+			};
+
+			expect(body.messages[0]).toEqual({
+				role: "system",
+				content: "You are a helpful assistant.",
+			});
+			expect(body.messages[1]).toMatchObject({ role: "user" });
+		});
+
+		it("keeps the client's system message first", async () => {
+			const transformed = await provider.transformRequestBody(
+				anthropicRequest({ system: "Be terse." }),
+				makeAccount(),
+			);
+			const body = (await transformed.json()) as {
+				messages: Array<{ role: string; content: unknown }>;
+			};
+
+			expect(body.messages[0]).toMatchObject({
+				role: "system",
+				content: "Be terse.",
+			});
+			expect(
+				body.messages.filter((message) => message.role === "system"),
+			).toHaveLength(1);
+		});
+
+		it("normalizes object tool_choice to the string form", async () => {
+			const tools = [
+				{
+					name: "get_weather",
+					description: "Get the weather",
+					input_schema: { type: "object", properties: {} },
+				},
+			];
+
+			const named = await provider.transformRequestBody(
+				anthropicRequest({
+					tools,
+					tool_choice: { type: "tool", name: "get_weather" },
+				}),
+				makeAccount(),
+			);
+			expect(
+				((await named.json()) as Record<string, unknown>).tool_choice,
+			).toBe("get_weather");
+
+			const auto = await provider.transformRequestBody(
+				anthropicRequest({ tools, tool_choice: { type: "auto" } }),
+				makeAccount(),
+			);
+			expect(((await auto.json()) as Record<string, unknown>).tool_choice).toBe(
+				"auto",
+			);
+
+			const none = await provider.transformRequestBody(
+				anthropicRequest({ tools, tool_choice: { type: "none" } }),
+				makeAccount(),
+			);
+			const noneBody = (await none.json()) as Record<string, unknown>;
+			expect(noneBody.tool_choice).toBeUndefined();
+			expect(noneBody.tools).toBeUndefined();
+		});
+
 		it("always streams upstream and records the client's stream intent", async () => {
 			const nonStreaming = await provider.transformRequestBody(
 				anthropicRequest({ stream: false }),
@@ -414,6 +485,32 @@ describe("CodeBuddyProvider", () => {
 			});
 			expect(typeof body.data[0].created).toBe("number");
 			expect(body.models).toEqual(body.data);
+		});
+
+		it("accepts the bare-string models returned by the live v3 config", async () => {
+			const response = jsonResponse({
+				code: 0,
+				data: {
+					agents: [
+						{
+							name: "cli",
+							models: ["default-model", "deepseek-v4.1-flash", "glm-5.3"],
+						},
+					],
+				},
+			});
+			response.headers.set("x-better-ccflare-request-path", "/v1/models");
+
+			const transformed = await provider.processResponse(response, null);
+			const body = (await transformed.json()) as {
+				data: Array<Record<string, unknown>>;
+			};
+
+			expect(body.data.map((model) => model.id)).toEqual([
+				"default-model",
+				"deepseek-v4.1-flash",
+				"glm-5.3",
+			]);
 		});
 
 		it("returns an empty list when the cli agent is absent", async () => {

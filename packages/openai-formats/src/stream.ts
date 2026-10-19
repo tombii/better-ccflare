@@ -400,8 +400,11 @@ export function transformStreamingResponse(
 
 							const delta = data.choices?.[0]?.delta;
 
-							// Handle tool call deltas — always buffer, never emit
-							if (delta?.tool_calls) {
+							// Handle tool call deltas — always buffer, never emit.
+							// An empty array means "no tool calls in this delta" (CodeBuddy
+							// sends `"tool_calls": []` on every chunk); it must fall through
+							// to the text/reasoning branch or content is silently dropped.
+							if (delta?.tool_calls?.length) {
 								for (const toolCall of delta.tool_calls) {
 									context.encounteredToolCall = true;
 									const idx = toolCall.index;

@@ -36,6 +36,104 @@ const CODEBUDDY_MODEL_DEFAULTS = {
 
 registerProviderModelDefaultFactory("codebuddy", CODEBUDDY_MODEL_DEFAULTS);
 
+const CODEBUDDY_FALLBACK_SYSTEM_MESSAGE = "You are a helpful assistant.";
+
+/**
+ * CodeBuddy's gateway whitelists the message roles and rejects the whole
+ * request with HTTP 400 code 11128 ("request illegal") when the first message
+ * is not a system prompt. The official CLI always sends one; Anthropic clients
+ * may omit `system` entirely, in which case the converter emits no system
+ * message at all. Normalize `developer` (the newer OpenAI alias) to `system`,
+ * then prepend a neutral placeholder if the first message still is not one.
+ */
+function ensureSystemMessageFirst(record: Record<string, unknown>): void {
+	const messages = record.messages;
+	if (!Array.isArray(messages) || messages.length === 0) return;
+
+	for (const message of messages) {
+		if (!message || typeof message !== "object") continue;
+		const entry = message as Record<string, unknown>;
+		if (
+			typeof entry.role === "string" &&
+			entry.role.trim().toLowerCase() === "developer"
+		) {
+			entry.role = "system";
+		}
+	}
+
+	const first = messages[0];
+	const firstRole =
+		first && typeof first === "object"
+			? (first as Record<string, unknown>).role
+			: undefined;
+	if (
+		typeof firstRole === "string" &&
+		firstRole.trim().toLowerCase() === "system"
+	) {
+		return;
+	}
+
+	messages.unshift({
+		role: "system",
+		content: CODEBUDDY_FALLBACK_SYSTEM_MESSAGE,
+	});
+}
+
+/**
+ * CodeBuddy only accepts string forms of `tool_choice` and rejects object
+ * forms with HTTP 400 code 11101. Anthropic's `{type: "tool"}` maps to an
+ * object in the shared converter, so normalize the way the official clients
+ * do: `none` drops tool definitions, `auto`/`required` become strings, and a
+ * named function becomes its bare name.
+ */
+function normalizeToolChoice(record: Record<string, unknown>): void {
+	const choice = record.tool_choice;
+	if (choice === undefined || choice === null) return;
+
+	const dropTools = () => {
+		delete record.tool_choice;
+		delete record.tools;
+		delete record.functions;
+	};
+
+	if (typeof choice === "string") {
+		if (choice.trim().toLowerCase() === "none") dropTools();
+		return;
+	}
+
+	if (typeof choice !== "object") {
+		delete record.tool_choice;
+		return;
+	}
+
+	const value = choice as Record<string, unknown>;
+	const type =
+		typeof value.type === "string" ? value.type.trim().toLowerCase() : "";
+
+	if (type === "none") {
+		dropTools();
+		return;
+	}
+
+	if (type === "auto" || type === "required") {
+		record.tool_choice = type;
+		return;
+	}
+
+	if (type === "function") {
+		const fn = value.function;
+		let name =
+			fn && typeof fn === "object"
+				? String((fn as Record<string, unknown>).name ?? "")
+				: "";
+		if (!name) name = String(value.name ?? "");
+		record.tool_choice = name.trim() || "auto";
+		return;
+	}
+
+	delete record.tool_choice;
+}
+
 export class CodeBuddyProvider extends OpenAICompatibleProvider {
 	name = "codebuddy";
 
@@ -176,6 +274,12 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 		// clients that asked for JSON.
 		record.stream = true;
 		record.stream_options = { include_usage: true };
+
+		// The gateway whitelists the request shape: the first message must be a
+		// system prompt (code 11128) and `tool_choice` must be a string (code
+		// 11101). Both are request-shape failures, not account problems.
+		ensureSystemMessageFirst(record);
+		normalizeToolChoice(record);
 
 		// CodeBuddy's backend reviews content before inference and frequently
 		// rejects the client's fixed compliance system template. Inserting
@@ -419,7 +523,20 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 				return;
 			}
 			const text = await response.clone().text();
-			if (!isCodeBuddyModerationBlock(text)) return;
+			if (!isCodeBuddyModerationBlock(text)) {
+				// Gateway rejections (for example code 11128 "request illegal") are
+				// request-shape problems. Without the upstream body the client only
+				// sees a generic invalid_response, so keep a truncated copy in the
+				// log to make the cause diagnosable.
+				log.warn("CodeBuddy upstream rejected the request", {
+					account: account?.name ?? null,
+					request_id:
+						response.headers.get("x-better-ccflare-request-id") ?? null,
+					status: response.status,
+					body: text.slice(0, 500),
+				});
+				return;
+			}
 			log.warn("CodeBuddy content review blocked the request", {
 				account: account?.name ?? null,
 				request_id: response.headers.get("x-better-ccflare-request-id") ?? null,
@@ -456,14 +573,20 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 				created: number;
 			}> = [];
 			for (const entry of listed) {
-				if (!entry || typeof entry !== "object") continue;
-				const model = entry as Record<string, unknown>;
-				const id =
-					typeof model.id === "string" && model.id.length > 0
-						? model.id
-						: typeof model.name === "string" && model.name.length > 0
-							? model.name
-							: undefined;
+				// `/v3/config` lists models as bare strings; older payloads used
+				// objects with `id`/`name`. Accept both.
+				let id: string | undefined;
+				if (typeof entry === "string") {
+					id = entry;
+				} else if (entry && typeof entry === "object") {
+					const model = entry as Record<string, unknown>;
+					id =
+						typeof model.id === "string" && model.id.length > 0
+							? model.id
+							: typeof model.name === "string" && model.name.length > 0
+								? model.name
+								: undefined;
+				}
 				if (!id) continue;
 				data.push({
 					id,
