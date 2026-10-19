@@ -276,6 +276,57 @@ describe("CodeBuddyProvider", () => {
 			expect(body.store).toBe(false);
 		});
 
+		it("always streams upstream and records the client's stream intent", async () => {
+			const nonStreaming = await provider.transformRequestBody(
+				anthropicRequest({ stream: false }),
+				makeAccount(),
+			);
+			const nonStreamingBody = (await nonStreaming.json()) as Record<
+				string,
+				unknown
+			>;
+			expect(nonStreamingBody.stream).toBe(true);
+			expect(nonStreamingBody.stream_options).toStrictEqual({
+				include_usage: true,
+			});
+			expect(nonStreaming.headers.get("x-better-ccflare-request-stream")).toBe(
+				"false",
+			);
+
+			const streaming = await provider.transformRequestBody(
+				anthropicRequest({ stream: true }),
+				makeAccount(),
+			);
+			expect(streaming.headers.get("x-better-ccflare-request-stream")).toBe(
+				"true",
+			);
+		});
+
+		it("does not add stream intent to the synthetic count_tokens request", async () => {
+			const url = provider.buildUrl(
+				"/v1/messages/count_tokens",
+				"",
+				makeAccount(),
+			);
+			const request = new Request(url, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "primary-model",
+					messages: [{ role: "user", content: "hello" }],
+				}),
+			});
+
+			const transformed = await provider.transformRequestBody(
+				request,
+				makeAccount(),
+			);
+
+			expect(
+				transformed.headers.get("x-better-ccflare-request-stream"),
+			).toBeNull();
+		});
+
 		it("does not set reasoning_summary when there is no effort", async () => {
 			const transformed = await provider.transformRequestBody(
 				anthropicRequest(),
@@ -376,6 +427,131 @@ describe("CodeBuddyProvider", () => {
 			};
 
 			expect(body).toEqual({ object: "list", data: [], models: [] });
+		});
+
+		it("aggregates an SSE stream into one Anthropic message when the client asked for JSON", async () => {
+			const chunk = (payload: Record<string, unknown>) =>
+				`data: ${JSON.stringify({ id: "chatcmpl-1", model: "primary-model", ...payload })}`;
+			const sse = [
+				chunk({
+					choices: [
+						{ index: 0, delta: { role: "assistant", reasoning: "think " } },
+					],
+				}),
+				chunk({ choices: [{ index: 0, delta: { reasoning: "more" } }] }),
+				chunk({ choices: [{ index: 0, delta: { content: "Hello" } }] }),
+				chunk({ choices: [{ index: 0, delta: { content: " world" } }] }),
+				chunk({
+					choices: [
+						{
+							index: 0,
+							delta: {
+								tool_calls: [
+									{
+										index: 0,
+										id: "call_1",
+										function: { name: "Read", arguments: '{"file":' },
+									},
+								],
+							},
+						},
+					],
+				}),
+				chunk({
+					choices: [
+						{
+							index: 0,
+							delta: {
+								tool_calls: [{ index: 0, function: { arguments: '"a.txt"}' } }],
+							},
+						},
+					],
+				}),
+				chunk({
+					choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+					usage: {
+						prompt_tokens: 10,
+						completion_tokens: 5,
+						total_tokens: 15,
+					},
+				}),
+				"data: [DONE]",
+			].join("\n\n");
+
+			const response = new Response(sse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-request-stream": "false",
+				},
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			const body = (await transformed.json()) as {
+				type: string;
+				content: Array<Record<string, unknown>>;
+				stop_reason?: string;
+				usage?: { input_tokens: number; output_tokens: number };
+			};
+
+			expect(transformed.headers.get("content-type")).toContain(
+				"application/json",
+			);
+			expect(body.type).toBe("message");
+			expect(body.content[0]).toMatchObject({
+				type: "thinking",
+				thinking: "think more",
+			});
+			expect(body.content[1]).toMatchObject({
+				type: "text",
+				text: "Hello world",
+			});
+			expect(body.content[2]).toMatchObject({
+				type: "tool_use",
+				id: "call_1",
+				name: "Read",
+				input: { file: "a.txt" },
+			});
+			expect(body.stop_reason).toBe("tool_use");
+			expect(body.usage).toMatchObject({ input_tokens: 10, output_tokens: 5 });
+		});
+
+		it("leaves an SSE response untouched when the client asked to stream", async () => {
+			const sse =
+				'data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n';
+			const response = new Response(sse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-request-stream": "true",
+				},
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			expect(transformed.headers.get("content-type")).toContain(
+				"text/event-stream",
+			);
+		});
+
+		it("returns an Anthropic error when the aggregated stream carries one", async () => {
+			const sse =
+				'data: {"error":{"type":"rate_limit_error","message":"slow down"}}\n\n';
+			const response = new Response(sse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-request-stream": "false",
+				},
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			const body = (await transformed.json()) as {
+				type: string;
+				error?: { message?: string };
+			};
+
+			expect(body.type).toBe("error");
+			expect(body.error?.message).toBe("slow down");
 		});
 
 		it("returns a 502 when the models payload is malformed", async () => {

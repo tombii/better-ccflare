@@ -1,8 +1,14 @@
 import { Logger } from "@better-ccflare/logger";
-import type { OpenAIRequest } from "@better-ccflare/openai-formats";
+import {
+	convertOpenAIResponseToAnthropic,
+	type OpenAIRequest,
+	type OpenAIResponse,
+	type OpenAIUsage,
+} from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { registerProviderModelDefaultFactory } from "../../provider-model-defaults";
 import type { ProviderResponseContext, TokenRefreshResult } from "../../types";
+import { readRequestJson } from "../../utils/request-json";
 import { OpenAICompatibleProvider } from "../openai/provider";
 import {
 	CODEBUDDY_CLI_VERSION,
@@ -164,6 +170,13 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 		}
 		record.store = false;
 
+		// CodeBuddy's gateway is stream-only in practice: the official CLI always
+		// sends stream: true, and a non-streaming request is not a supported
+		// shape. Always stream upstream and aggregate in processResponse for
+		// clients that asked for JSON.
+		record.stream = true;
+		record.stream_options = { include_usage: true };
+
 		// CodeBuddy's backend reviews content before inference and frequently
 		// rejects the client's fixed compliance system template. Inserting
 		// zero-width spaces into those template terms keeps the text readable
@@ -209,7 +222,34 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 			}
 		}
 
-		return super.transformRequestBody(request, account);
+		const contentType = request.headers.get("content-type");
+		if (!contentType?.includes("application/json")) {
+			return super.transformRequestBody(request, account);
+		}
+
+		// The client's stream intent must be captured before the body is
+		// converted (afterConvert forces stream: true upstream). The proxy
+		// copies this internal header onto the upstream response so
+		// processResponse can decide whether to aggregate.
+		let clientWantsStream = false;
+		try {
+			const original = await readRequestJson<{ stream?: unknown }>(request);
+			clientWantsStream = original?.stream === true;
+		} catch {
+			// A malformed body is handled by the shared converter.
+		}
+
+		const transformed = await super.transformRequestBody(request, account);
+		if (transformed.headers.get("x-better-ccflare-synthetic-response")) {
+			return transformed;
+		}
+
+		const headers = new Headers(transformed.headers);
+		headers.set(
+			"x-better-ccflare-request-stream",
+			clientWantsStream ? "true" : "false",
+		);
+		return new Request(transformed, { headers });
 	}
 
 	async processResponse(
@@ -231,6 +271,16 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 			void this.logModerationBlockIfPresent(response, account);
 		}
 
+		// Upstream is always streamed. A client that asked for JSON gets the
+		// whole SSE body aggregated into one Anthropic message.
+		const contentType = response.headers.get("content-type")?.toLowerCase();
+		if (
+			response.headers.get("x-better-ccflare-request-stream") === "false" &&
+			contentType?.includes("text/event-stream")
+		) {
+			return this.aggregateSseToJson(response, context?.requestModel);
+		}
+
 		return super.processResponse(
 			response,
 			account,
@@ -238,6 +288,118 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 			drainAbort,
 			context,
 		);
+	}
+
+	/**
+	 * Aggregate an OpenAI chat-completions SSE stream into a single Anthropic
+	 * message. Used only when the client did not request streaming, since
+	 * CodeBuddy is always asked to stream upstream.
+	 */
+	private async aggregateSseToJson(
+		response: Response,
+		fallbackModel?: string | null,
+	): Promise<Response> {
+		const body = await response.text();
+		let responseId: string | undefined;
+		let model: string | undefined;
+		let finishReason: string | undefined;
+		let usage: OpenAIUsage | undefined;
+		let content = "";
+		let reasoning = "";
+		const toolCalls: Array<{
+			id: string;
+			type: "function";
+			function: { name: string; arguments: string };
+		}> = [];
+		const toolCallSlots = new Map<number, number>();
+
+		for (const line of body.split(/\r?\n/)) {
+			if (!line.startsWith("data:")) continue;
+			const payload = line.slice("data:".length).trim();
+			if (!payload || payload === "[DONE]") continue;
+
+			let chunk: OpenAIResponse;
+			try {
+				chunk = JSON.parse(payload) as OpenAIResponse;
+			} catch {
+				continue;
+			}
+
+			if (chunk.error) {
+				return new Response(
+					JSON.stringify({ type: "error", error: chunk.error }),
+					{
+						status: response.status,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+
+			responseId ??= chunk.id;
+			model ??= chunk.model;
+			if (chunk.usage) usage = chunk.usage;
+
+			const chunkChoice = chunk.choices?.[0];
+			if (chunkChoice?.finish_reason) finishReason = chunkChoice.finish_reason;
+
+			const delta = chunkChoice?.delta;
+			if (!delta) continue;
+
+			// CodeBuddy emits thinking as `reasoning` for some models and
+			// `reasoning_content` for others; the official CLI accepts both.
+			const thinkingDelta =
+				delta.reasoning_content ?? (delta as { reasoning?: unknown }).reasoning;
+			if (typeof thinkingDelta === "string") reasoning += thinkingDelta;
+			if (typeof delta.content === "string") content += delta.content;
+
+			for (const call of delta.tool_calls ?? []) {
+				const index = typeof call.index === "number" ? call.index : 0;
+				let slot = toolCallSlots.get(index);
+				if (slot === undefined) {
+					slot = toolCalls.length;
+					toolCallSlots.set(index, slot);
+					toolCalls.push({
+						id: "",
+						type: "function",
+						function: { name: "", arguments: "" },
+					});
+				}
+				const target = toolCalls[slot];
+				if (call.id && !target.id) target.id = call.id;
+				if (call.function?.name && !target.function.name) {
+					target.function.name = call.function.name;
+				}
+				if (call.function?.arguments) {
+					target.function.arguments += call.function.arguments;
+				}
+			}
+		}
+
+		const anthropic = convertOpenAIResponseToAnthropic(
+			{
+				id: responseId,
+				model,
+				usage,
+				choices: [
+					{
+						finish_reason: finishReason,
+						message: {
+							role: "assistant",
+							content,
+							...(reasoning ? { reasoning_content: reasoning } : {}),
+							...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+						},
+					},
+				],
+			},
+			fallbackModel ?? undefined,
+		);
+
+		return new Response(JSON.stringify(anthropic), {
+			status: response.status,
+			statusText: response.statusText,
+			headers: { "Content-Type": "application/json" },
+		});
 	}
 
 	/**

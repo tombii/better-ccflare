@@ -647,6 +647,7 @@ A 401/403 from refresh means the session is dead and the account needs re-authen
 - `count_tokens` is synthetic: CodeBuddy has no equivalent endpoint, so a conservative local estimate is returned.
 - Inference headers include `Authorization: Bearer`, identity headers derived from the access-token JWT (`X-User-Id`, `X-Enterprise-Id`, `X-Userinfo`), conversation/request ids, `X-Agent-Intent: craft`, `X-IDE-*`, and `X-Product: SaaS`.
 - Body extensions: `cache_retention: "long"`, `store: false`, and `reasoning_effort` (converted from Anthropic's `reasoning.effort`) plus `reasoning_summary: "auto"`.
+- **Upstream is always streamed.** The official CLI never sends `stream: false`, and the gateway does not treat that as a supported shape. Requests are forced to `stream: true` (with `stream_options.include_usage`), and responses for non-streaming clients are aggregated from the SSE body into a single Anthropic message.
 
 ### Content-review desensitization
 
