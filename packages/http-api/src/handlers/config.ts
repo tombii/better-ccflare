@@ -51,11 +51,16 @@ export function createConfigHandlers(
 				// Use actual running port from runtime, fall back to config
 				port:
 					runtime?.port || (settings.port as number) || NETWORK.DEFAULT_PORT,
-				// Use Anthropic fallback as default since it's the only provider that uses session duration tracking
-				// Non-Anthropic providers don't use fixed-duration sessions but still need a default value
+				// getAllSettings() spreads the raw config file, whose keys are
+				// snake_case — read the same key the server builds the strategy
+				// from (server.ts: config.get("session_duration_ms", ...)), so
+				// the reported value matches what is actually running.
+				// The 5-hour default mirrors TIME_CONSTANTS.SESSION_DURATION_DEFAULT
+				// used there; non-Anthropic providers don't use fixed-duration
+				// sessions but still need a value.
 				sessionDurationMs:
-					(settings.sessionDurationMs as number) ||
-					TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_FALLBACK,
+					(settings.session_duration_ms as number) ||
+					TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_DEFAULT,
 				default_agent_model:
 					(settings.default_agent_model as string) || DEFAULT_AGENT_MODEL,
 				// Include actual TLS status

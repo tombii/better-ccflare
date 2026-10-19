@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Config } from "@better-ccflare/config";
+import { TIME_CONSTANTS } from "@better-ccflare/core";
 import type { APIContext } from "@better-ccflare/types";
 import { createConfigHandlers } from "../config";
 
@@ -25,7 +26,7 @@ function makeConfig() {
 		getAllSettings: () => ({
 			lb_strategy: "session",
 			port: 8080,
-			sessionDurationMs: 18_000_000,
+			session_duration_ms: 18_000_000,
 			default_agent_model: "sonnet",
 			system_prompt_cache_ttl_1h: false,
 			usage_throttling_five_hour_enabled: true,
@@ -460,5 +461,80 @@ describe("strategy source (real config)", () => {
 			strategySource: string;
 		};
 		expect(getBody).toEqual({ strategy: "least-used", strategySource: "env" });
+	});
+});
+
+describe("session duration reporting (real config)", () => {
+	const originalEnv = process.env.SESSION_DURATION_MS;
+	const tmpDirs: string[] = [];
+
+	function realConfig(): Config {
+		const dir = mkdtempSync(join(tmpdir(), "better-ccflare-handler-"));
+		tmpDirs.push(dir);
+		return new Config(join(dir, "config.json"));
+	}
+
+	function handlersWithRealConfig() {
+		return createConfigHandlers(realConfig(), {
+			port: 8080,
+			tlsEnabled: false,
+		});
+	}
+
+	afterEach(() => {
+		if (originalEnv === undefined) {
+			delete process.env.SESSION_DURATION_MS;
+		} else {
+			process.env.SESSION_DURATION_MS = originalEnv;
+		}
+		while (tmpDirs.length > 0) {
+			rmSync(tmpDirs.pop() as string, { recursive: true, force: true });
+		}
+	});
+
+	it("reports a configured session_duration_ms, matching the strategy", async () => {
+		// Regression test for #494: getAllSettings() returns the raw config-file
+		// keys (snake_case), so reading `sessionDurationMs` always missed and
+		// fell back to the 1-hour constant.
+		const config = realConfig();
+		config.set("session_duration_ms", 18_000_000);
+		const handlers = createConfigHandlers(config, {
+			port: 8080,
+			tlsEnabled: false,
+		});
+
+		const body = (await handlers.getConfig().json()) as {
+			sessionDurationMs: number;
+		};
+		expect(body.sessionDurationMs).toBe(18_000_000);
+	});
+
+	it("reports the 5-hour default when session_duration_ms is unset", async () => {
+		// The strategy is built from
+		// config.get("session_duration_ms", SESSION_DURATION_DEFAULT), so the
+		// unset case must report 5 hours — not the 1-hour fallback constant.
+		const handlers = handlersWithRealConfig();
+
+		const body = (await handlers.getConfig().json()) as {
+			sessionDurationMs: number;
+		};
+		expect(body.sessionDurationMs).toBe(
+			TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_DEFAULT,
+		);
+	});
+
+	it("does not report SESSION_DURATION_MS from the environment", async () => {
+		// The running strategy reads the config file only (server.ts uses
+		// config.get("session_duration_ms", ...)), so reporting the env value
+		// here would reintroduce the very mismatch #494 describes.
+		process.env.SESSION_DURATION_MS = "7200000";
+		const handlers = handlersWithRealConfig();
+
+		const body = (await handlers.getConfig().json()) as {
+			sessionDurationMs: number;
+		};
+		expect(body.sessionDurationMs).toBe(
+			TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_DEFAULT,
+		);
 	});
 });
