@@ -538,3 +538,35 @@ describe("session duration reporting (real config)", () => {
 		);
 	});
 });
+
+describe("session duration zero value (real config)", () => {
+	const tmpDirs: string[] = [];
+
+	function realConfig(): Config {
+		const dir = mkdtempSync(join(tmpdir(), "better-ccflare-handler-"));
+		tmpDirs.push(dir);
+		return new Config(join(dir, "config.json"));
+	}
+
+	afterEach(() => {
+		while (tmpDirs.length > 0) {
+			rmSync(tmpDirs.pop() as string, { recursive: true, force: true });
+		}
+	});
+
+	it("reports a configured zero instead of the default", async () => {
+		// Config.get() returns 0 when the key is present, so the strategy runs
+		// with a zero duration — `||` would misreport the 5-hour default.
+		const config = realConfig();
+		config.set("session_duration_ms", 0);
+		const handlers = createConfigHandlers(config, {
+			port: 8080,
+			tlsEnabled: false,
+		});
+
+		const body = (await handlers.getConfig().json()) as {
+			sessionDurationMs: number;
+		};
+		expect(body.sessionDurationMs).toBe(0);
+	});
+});

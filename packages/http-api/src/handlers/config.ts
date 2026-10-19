@@ -58,8 +58,11 @@ export function createConfigHandlers(
 				// The 5-hour default mirrors TIME_CONSTANTS.SESSION_DURATION_DEFAULT
 				// used there; non-Anthropic providers don't use fixed-duration
 				// sessions but still need a value.
+				// `??` rather than `||`: a configured 0 is a real value the
+				// strategy uses (Config.get returns it when the key is
+				// present), so it must be reported as-is.
 				sessionDurationMs:
-					(settings.session_duration_ms as number) ||
+					(settings.session_duration_ms as number) ??
 					TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_DEFAULT,
 				default_agent_model:
 					(settings.default_agent_model as string) || DEFAULT_AGENT_MODEL,
