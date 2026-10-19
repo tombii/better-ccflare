@@ -706,6 +706,40 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 // ── transformStreamingResponse — thinking/reasoning blocks ───────────────────
 
 describe("transformStreamingResponse — reasoning_content (thinking blocks)", () => {
+	it("emits thinking deltas for the `reasoning` alias when reasoning_content is empty", async () => {
+		const encoder = new TextEncoder();
+		const payload = JSON.stringify({
+			id: "c1",
+			model: "deepseek-v4.1-flash",
+			choices: [
+				{
+					index: 0,
+					delta: { reasoning_content: "", reasoning: "Thinking..." },
+					finish_reason: null,
+				},
+			],
+		});
+		const upstream = new Response(
+			new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+					controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+					controller.close();
+				},
+			}),
+			{ headers: { "content-type": "text/event-stream" } },
+		);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body);
+		const events = parseSSEEvents(raw);
+		const thinkingDeltas = events.filter(
+			(e) => parseEventData(e).delta?.type === "thinking_delta",
+		);
+		expect(thinkingDeltas.map((e) => parseEventData(e).delta.thinking)).toEqual(
+			["Thinking..."],
+		);
+	});
+
 	it("emits content_block_start with type thinking before first reasoning_content chunk", async () => {
 		const upstream = makeOpenAIStream([
 			JSON.stringify({

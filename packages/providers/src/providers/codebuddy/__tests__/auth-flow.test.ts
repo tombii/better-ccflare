@@ -258,6 +258,21 @@ describe("pollCodeBuddyAuth", () => {
 		).rejects.toThrow(/Timed out waiting for CodeBuddy authorization/);
 	});
 
+	it("aborts a stalled token request at the deadline", async () => {
+		globalThis.fetch = mock(
+			(_url: string, init?: RequestInit) =>
+				new Promise((_resolve, reject) => {
+					init?.signal?.addEventListener("abort", () =>
+						reject(new Error("aborted")),
+					);
+				}),
+		) as unknown as typeof fetch;
+
+		await expect(
+			pollCodeBuddyAuth(session, { timeoutMs: 20, intervalMs: 1 }),
+		).rejects.toThrow(/Timed out waiting for CodeBuddy authorization/);
+	});
+
 	it("throws on a terminal envelope code", async () => {
 		globalThis.fetch = mock(async () =>
 			jsonResponse({ code: 400, msg: "authorization denied" }),

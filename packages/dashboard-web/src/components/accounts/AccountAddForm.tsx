@@ -229,6 +229,9 @@ export function AccountAddForm({
 	const codebuddyPollIntervalRef = useRef<ReturnType<
 		typeof setInterval
 	> | null>(null);
+	// Bumped on unmount so a late init result cannot open a tab or start
+	// polling after the form is gone.
+	const codebuddyAuthAttemptRef = useRef(0);
 
 	const [awsProfiles, setAwsProfiles] = useState<
 		Array<{ name: string; region: string | null }>
@@ -274,6 +277,7 @@ export function AccountAddForm({
 	// Cleanup CodeBuddy polling on unmount
 	useEffect(() => {
 		return () => {
+			codebuddyAuthAttemptRef.current += 1;
 			if (codebuddyPollIntervalRef.current !== null) {
 				clearInterval(codebuddyPollIntervalRef.current);
 			}
@@ -407,11 +411,13 @@ export function AccountAddForm({
 		}
 		setCodeBuddyStep("pending");
 		setCodeBuddyError("");
+		const attempt = ++codebuddyAuthAttemptRef.current;
 		try {
 			const result = await api.initCodeBuddyAuth({
 				name: newAccount.name,
 				priority: newAccount.priority,
 			});
+			if (codebuddyAuthAttemptRef.current !== attempt) return;
 			codebuddySessionIdRef.current = result.sessionId;
 			setCodeBuddyAuthUrl(result.authUrl);
 
@@ -424,10 +430,12 @@ export function AccountAddForm({
 					const status = await api.getCodeBuddyAuthStatus(
 						codebuddySessionIdRef.current,
 					);
+					if (codebuddyAuthAttemptRef.current !== attempt) return;
 					if (status.status === "complete") {
 						stopCodeBuddyPolling();
 						setCodeBuddyStep("complete");
 						setTimeout(() => {
+							if (codebuddyAuthAttemptRef.current !== attempt) return;
 							setCodeBuddyStep("idle");
 							setCodeBuddyAuthUrl("");
 							setNewAccount({
@@ -459,6 +467,7 @@ export function AccountAddForm({
 				}
 			}, 3000);
 		} catch (err) {
+			if (codebuddyAuthAttemptRef.current !== attempt) return;
 			setCodeBuddyStep("error");
 			setCodeBuddyError(
 				err instanceof Error ? err.message : "Failed to start authentication",

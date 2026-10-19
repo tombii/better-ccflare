@@ -651,6 +651,76 @@ describe("CodeBuddyProvider", () => {
 			expect(body.error?.message).toBe("slow down");
 		});
 
+		it("maps an aggregated stream error to a failure status", async () => {
+			const sse =
+				'data: {"error":{"type":"rate_limit_error","message":"slow down"}}\n\n';
+			const response = new Response(sse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-request-stream": "false",
+				},
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			expect(transformed.status).toBe(429);
+		});
+
+		it("returns 502 when the stream ends without a completion signal", async () => {
+			const sse =
+				'data: {"id":"c1","choices":[{"index":0,"delta":{"content":"partial"}}]}\n\n';
+			const response = new Response(sse, {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-request-stream": "false",
+				},
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			const body = (await transformed.json()) as {
+				type: string;
+				error?: { type?: string };
+			};
+
+			expect(transformed.status).toBe(502);
+			expect(body.type).toBe("error");
+		});
+
+		it("returns 502 when the stream contains no valid chunks", async () => {
+			const response = new Response("not sse at all", {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"x-better-ccflare-request-stream": "false",
+				},
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			expect(transformed.status).toBe(502);
+		});
+
+		it("preserves a failed models response instead of returning an empty list", async () => {
+			const response = jsonResponse({ error: "unauthorized" }, 401);
+			response.headers.set("x-better-ccflare-request-path", "/v1/models");
+
+			const transformed = await provider.processResponse(response, null);
+			expect(transformed.status).toBe(401);
+		});
+
+		it("maps a non-zero config envelope code to 502", async () => {
+			const response = jsonResponse({ code: 12153, msg: "session expired" });
+			response.headers.set("x-better-ccflare-request-path", "/v1/models");
+
+			const transformed = await provider.processResponse(response, null);
+			const body = (await transformed.json()) as {
+				error?: { message?: string };
+			};
+
+			expect(transformed.status).toBe(502);
+			expect(body.error?.message).toBe("session expired");
+		});
+
 		it("returns a 502 when the models payload is malformed", async () => {
 			const response = new Response("not json", {
 				status: 200,

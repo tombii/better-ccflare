@@ -504,8 +504,13 @@ export function transformStreamingResponse(
 										(context.toolCallAccumulators[idx] || "") + newArgs;
 								}
 							} else {
-								// reasoning_content and content can coexist in one delta — handle both
-								if (delta?.reasoning_content) {
+								// reasoning_content and content can coexist in one delta — handle both.
+								// CodeBuddy emits the same text as `reasoning` for some models;
+								// prefer whichever is non-empty since the other may be "".
+								const reasoningText =
+									delta?.reasoning_content ||
+									(delta as { reasoning?: unknown } | undefined)?.reasoning;
+								if (typeof reasoningText === "string" && reasoningText) {
 									// DeepSeek/reasoning providers emit reasoning_content before text.
 									// Map to Anthropic thinking block using monotonic nextBlockIndex.
 									if (!context.hasSentThinkingBlockStart) {
@@ -551,7 +556,7 @@ export function transformStreamingResponse(
 										index: context.thinkingBlockIndex,
 										delta: {
 											type: "thinking_delta",
-											thinking: delta.reasoning_content,
+											thinking: reasoningText,
 										},
 									};
 									controller.enqueue(

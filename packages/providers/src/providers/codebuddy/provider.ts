@@ -38,6 +38,45 @@ registerProviderModelDefaultFactory("codebuddy", CODEBUDDY_MODEL_DEFAULTS);
 
 const CODEBUDDY_FALLBACK_SYSTEM_MESSAGE = "You are a helpful assistant.";
 
+/** Anthropic-shaped error body with an HTTP status clients can act on. */
+function codeBuddyErrorResponse(
+	status: number,
+	type: string,
+	message: string,
+): Response {
+	return new Response(
+		JSON.stringify({ type: "error", error: { type, message } }),
+		{
+			status,
+			headers: { "Content-Type": "application/json" },
+		},
+	);
+}
+
+/**
+ * Map an in-band upstream error type to an HTTP status. The stream has already
+ * returned 200 by the time the error chunk arrives, so the status must be
+ * derived from the error itself.
+ */
+function statusForCodeBuddyError(type: string | undefined): number {
+	switch (type) {
+		case "rate_limit_error":
+		case "rate_limit_exceeded":
+			return 429;
+		case "authentication_error":
+		case "invalid_api_key":
+			return 401;
+		case "permission_error":
+			return 403;
+		case "invalid_request_error":
+			return 400;
+		case "overloaded_error":
+			return 529;
+		default:
+			return 502;
+	}
+}
+
 /**
  * CodeBuddy's gateway whitelists the message roles and rejects the whole
  * request with HTTP 400 code 11128 ("request illegal") when the first message
@@ -410,6 +449,8 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 		let usage: OpenAIUsage | undefined;
 		let content = "";
 		let reasoning = "";
+		let sawChunk = false;
+		let sawDone = false;
 		const toolCalls: Array<{
 			id: string;
 			type: "function";
@@ -420,7 +461,11 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 		for (const line of body.split(/\r?\n/)) {
 			if (!line.startsWith("data:")) continue;
 			const payload = line.slice("data:".length).trim();
-			if (!payload || payload === "[DONE]") continue;
+			if (!payload) continue;
+			if (payload === "[DONE]") {
+				sawDone = true;
+				continue;
+			}
 
 			let chunk: OpenAIResponse;
 			try {
@@ -429,11 +474,16 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 				continue;
 			}
 
+			sawChunk = true;
+
 			if (chunk.error) {
+				// The HTTP status is already 200 because the SSE headers went out
+				// before the error chunk. Report a real failure status so HTTP
+				// clients and the proxy's status-based recovery see it.
 				return new Response(
 					JSON.stringify({ type: "error", error: chunk.error }),
 					{
-						status: response.status,
+						status: statusForCodeBuddyError(chunk.error.type),
 						headers: { "Content-Type": "application/json" },
 					},
 				);
@@ -451,8 +501,10 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 
 			// CodeBuddy emits thinking as `reasoning` for some models and
 			// `reasoning_content` for others; the official CLI accepts both.
-			const thinkingDelta =
-				delta.reasoning_content ?? (delta as { reasoning?: unknown }).reasoning;
+			// Prefer whichever is non-empty, since the other is often present
+			// as an empty string.
+			const thinkingDelta = (delta.reasoning_content ||
+				(delta as { reasoning?: unknown }).reasoning) as unknown | undefined;
 			if (typeof thinkingDelta === "string") reasoning += thinkingDelta;
 			if (typeof delta.content === "string") content += delta.content;
 
@@ -477,6 +529,24 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 					target.function.arguments += call.function.arguments;
 				}
 			}
+		}
+
+		// A cleanly closed stream without a finish reason (or [DONE]) means the
+		// upstream truncated the answer. Returning the partial text as a
+		// completed message would hide that from the client.
+		if (!sawChunk) {
+			return codeBuddyErrorResponse(
+				502,
+				"invalid_response",
+				"CodeBuddy returned an empty stream",
+			);
+		}
+		if (!finishReason && !sawDone) {
+			return codeBuddyErrorResponse(
+				502,
+				"invalid_response",
+				"CodeBuddy stream ended before the answer was complete",
+			);
 		}
 
 		const anthropic = convertOpenAIResponseToAnthropic(
@@ -552,10 +622,24 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 	private async transformModelsListResponse(
 		response: Response,
 	): Promise<Response> {
+		// A failed config request (401, 5xx, ...) must not be converted into a
+		// successful empty catalog: callers and the proxy's recovery logic need
+		// the failure status.
+		if (!response.ok) return response;
+
 		try {
 			const raw = (await response.json()) as {
+				code?: number;
+				msg?: string;
 				data?: { agents?: Array<Record<string, unknown>> };
 			};
+			if (typeof raw.code === "number" && raw.code !== 0) {
+				return codeBuddyErrorResponse(
+					502,
+					"api_error",
+					raw.msg || `CodeBuddy config request failed (code ${raw.code})`,
+				);
+			}
 			const agents = Array.isArray(raw.data?.agents) ? raw.data.agents : [];
 			const cliAgent = agents.find(
 				(agent) =>

@@ -31,6 +31,9 @@ export function CodeBuddyReauthDialog({
 	const [error, setError] = useState("");
 	const sessionIdRef = useRef<string>("");
 	const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	// Bumped on close/unmount so a late `initCodeBuddyReauth` result cannot
+	// open a tab or start polling after the dialog is gone.
+	const attemptRef = useRef(0);
 
 	const stopPolling = useCallback(() => {
 		if (pollIntervalRef.current !== null) {
@@ -42,18 +45,24 @@ export function CodeBuddyReauthDialog({
 	// Clean up on unmount or close
 	useEffect(() => {
 		if (!isOpen) {
+			attemptRef.current += 1;
 			stopPolling();
 		}
-		return () => stopPolling();
+		return () => {
+			attemptRef.current += 1;
+			stopPolling();
+		};
 	}, [isOpen, stopPolling]);
 
 	const handleStart = async () => {
 		if (!account) return;
+		const attempt = ++attemptRef.current;
 		setStep("pending");
 		setError("");
 
 		try {
 			const result = await api.initCodeBuddyReauth({ accountId: account.id });
+			if (attemptRef.current !== attempt) return;
 			sessionIdRef.current = result.sessionId;
 			setAuthUrl(result.authUrl);
 
@@ -62,10 +71,12 @@ export function CodeBuddyReauthDialog({
 			pollIntervalRef.current = setInterval(async () => {
 				try {
 					const status = await api.getCodeBuddyAuthStatus(sessionIdRef.current);
+					if (attemptRef.current !== attempt) return;
 					if (status.status === "complete") {
 						stopPolling();
 						setStep("complete");
 						setTimeout(() => {
+							if (attemptRef.current !== attempt) return;
 							onSuccess();
 							handleClose();
 						}, 1500);
@@ -79,6 +90,7 @@ export function CodeBuddyReauthDialog({
 				}
 			}, 3000);
 		} catch (err) {
+			if (attemptRef.current !== attempt) return;
 			setStep("error");
 			setError(
 				err instanceof Error ? err.message : "Failed to start authentication",
@@ -87,6 +99,7 @@ export function CodeBuddyReauthDialog({
 	};
 
 	const handleClose = () => {
+		attemptRef.current += 1;
 		stopPolling();
 		setStep("idle");
 		setAuthUrl("");

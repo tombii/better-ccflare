@@ -62,7 +62,11 @@ export function resolveCodeBuddyEndpoint(endpoint?: string | null): string {
 		endpoint?.trim() ||
 		process.env[CODEBUDDY_ENDPOINT_ENV]?.trim() ||
 		CODEBUDDY_DEFAULT_ENDPOINT;
-	return candidate.replace(/\/+$/, "");
+	// Trim trailing slashes without a regex: `/\/+$/` is polynomial on input
+	// with many slashes (CodeQL js/polynomial-redos).
+	let end = candidate.length;
+	while (end > 0 && candidate.charCodeAt(end - 1) === 47) end -= 1;
+	return candidate.slice(0, end);
 }
 
 function endpointHost(endpoint: string): string {
@@ -179,19 +183,40 @@ export async function pollCodeBuddyAuth(
 		attempt += 1;
 		opts?.onTick?.(attempt);
 
-		const response = await fetch(
-			`${session.endpoint}/v2/plugin/auth/token?state=${encodeURIComponent(session.state)}`,
-			{
-				method: "GET",
-				headers: buildCodeBuddyAuthHeaders(session.endpoint),
-			},
-		);
-		const payload = await readEnvelope<CodeBuddyTokenData>(response);
+		// Bound the request *and* its body read by the remaining time. A stalled
+		// token endpoint must not keep the poll (and the server-side session)
+		// alive past the caller's deadline.
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) break;
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), remaining);
+
+		let payload: CodeBuddyEnvelope<CodeBuddyTokenData>;
+		let responseStatus = 0;
+		let responseStatusText = "";
+		try {
+			const response = await fetch(
+				`${session.endpoint}/v2/plugin/auth/token?state=${encodeURIComponent(session.state)}`,
+				{
+					method: "GET",
+					headers: buildCodeBuddyAuthHeaders(session.endpoint),
+					signal: controller.signal,
+				},
+			);
+			responseStatus = response.status;
+			responseStatusText = response.statusText;
+			payload = await readEnvelope<CodeBuddyTokenData>(response);
+		} catch (error) {
+			if (controller.signal.aborted) break;
+			throw error;
+		} finally {
+			clearTimeout(timer);
+		}
 
 		if (payload.code === PENDING_CODE) {
-			const remaining = deadline - Date.now();
-			if (remaining <= 0) break;
-			await sleep(Math.min(intervalMs, remaining));
+			const next = deadline - Date.now();
+			if (next <= 0) break;
+			await sleep(Math.min(intervalMs, next));
 			continue;
 		}
 
@@ -221,8 +246,7 @@ export async function pollCodeBuddyAuth(
 
 		const message =
 			payload.msg ??
-			(response.statusText ||
-				`unexpected code ${payload.code ?? response.status}`);
+			(responseStatusText || `unexpected code ${payload.code ?? responseStatus}`);
 		throw new Error(`CodeBuddy authorization failed: ${message}`);
 	}
 
