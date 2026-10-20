@@ -195,6 +195,19 @@ The `request_payloads` table stores full request and response bodies for detaile
 
 **Binary payload envelope**: the `payload` column holds a flags byte followed by the payload body — bit 0 means the body is a zstd frame of the UTF-8 JSON, bit 1 means the body is AES-256-GCM ciphertext (`iv ‖ ciphertext ‖ authTag`) whose plaintext is the JSON (zstd-framed when bit 0 is also set). The body is stored as raw bytes: unlike the previous text encoding, nothing is base64-expanded, so a stored payload is ~25% smaller than it used to be. See `docs/security.md` → Payload Encryption at Rest for the encryption details.
 
+**Why the compression is done in the application, on both backends.** PostgreSQL has native compression (TOAST, `pglz` or `lz4`) and SQLite has none, so it is reasonable to ask whether PostgreSQL should just be left to compress its own `TEXT` columns. Measured on real production payloads against PostgreSQL 18.6, it should not be:
+
+| stored form | size (200 real payloads) |
+|---|---|
+| `zst:` + base64 `TEXT` (the old format) | 148.7 MB |
+| raw zstd frame in `BYTEA` (the current format) | **111.5 MB** |
+| raw JSON `TEXT`, compressed by TOAST (`lz4`) | 212.2 MB |
+| raw JSON `TEXT`, compressed by TOAST (`pglz`) | 218.6 MB |
+
+TOAST lands at roughly **1.9×** on the raw JSON where application-level zstd reaches **3.6×**, so leaning on the database would cost about twice the space. Two reasons: TOAST compresses in ~2 KB chunks, so repetition that spans a chunk boundary — exactly the conversation history a payload carries — is lost, while zstd sees the whole payload; and `lz4`/`pglz` are weaker than zstd on text. On top of that, TOAST is worthless once `PAYLOAD_ENCRYPTION_KEY` is set: ciphertext is incompressible, so compressing before encrypting is the only way to shrink an encrypted payload. Keeping the codec in the application also means one implementation covers both backends and rows stay portable between them.
+
+
+
 **Legacy rows**: rows written before this format are still stored in the `json` column as `zst:`/`enc:` + base64 text and remain readable — the reader falls back to them automatically. They age out through the normal payload retention sweep, so no data migration is required.
 
 **Optional encryption at rest**: when `PAYLOAD_ENCRYPTION_KEY` is set, the `payload` column stores AES-256-GCM ciphertext (see `docs/security.md` → Payload Encryption at Rest). Plaintext rows from before encryption was enabled remain readable.
