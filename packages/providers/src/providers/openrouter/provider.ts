@@ -8,7 +8,13 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 		super({
 			name: "openrouter",
 			baseUrl: OPENROUTER_DEFAULT_ENDPOINT,
-			authHeader: "Authorization",
+			// Lowercase on purpose: BaseAnthropicCompatibleProvider.prepareHeaders
+			// picks the bearer branch on a case-sensitive comparison against
+			// "authorization". A capitalised spelling silently sent the bare key,
+			// which OpenRouter rejects with 401 "Missing Authentication header"
+			// before it ever looks the key up. The other bearer providers
+			// (meta, vertex-ai) already spell it lowercase.
+			authHeader: "authorization",
 			authType: "bearer",
 			supportsStreaming: true,
 		});
