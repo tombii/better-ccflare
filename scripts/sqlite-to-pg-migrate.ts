@@ -199,6 +199,9 @@ const sql = new SQL({ url: databaseUrl, max: 4, prepare: false });
  */
 const MIGRATION_STATE_TABLE = "ccflare_migration_state";
 
+/** Whether the state table exists yet; cached, because it cannot appear mid-run. */
+let stateTablePresent: boolean | null = null;
+
 async function ensureStateTable(): Promise<void> {
 	await sql.unsafe(
 		`CREATE TABLE IF NOT EXISTS ${JSON.stringify(MIGRATION_STATE_TABLE)} (
@@ -206,9 +209,24 @@ async function ensureStateTable(): Promise<void> {
 			imported_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 	);
+	stateTablePresent = true;
+}
+
+async function stateTableExists(): Promise<boolean> {
+	if (stateTablePresent === null) {
+		const rows = (await sql.unsafe(
+			`SELECT to_regclass($1) IS NOT NULL AS present`,
+			[MIGRATION_STATE_TABLE],
+		)) as unknown as { present: boolean }[];
+		stateTablePresent = rows[0]?.present ?? false;
+	}
+	return stateTablePresent;
 }
 
 async function wasImported(table: string): Promise<boolean> {
+	// A dry run creates nothing, so the state table may not exist — and then
+	// nothing has been imported either.
+	if (!(await stateTableExists())) return false;
 	const rows = (await sql.unsafe(
 		`SELECT 1 AS ok FROM ${JSON.stringify(MIGRATION_STATE_TABLE)} WHERE table_name = $1`,
 		[table],
@@ -510,7 +528,8 @@ console.log(
 );
 console.log("Copying tables:");
 // The bookkeeping table has to exist before the first copy can consult it.
-await ensureStateTable();
+// A dry run writes nothing at all, so it must not create it either.
+if (!dryRun) await ensureStateTable();
 const failedTables: string[] = [];
 for (const table of tables) {
 	try {
