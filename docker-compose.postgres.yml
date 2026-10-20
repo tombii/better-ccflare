@@ -3,8 +3,17 @@
 # Switching the database is a single env change:
 #   DATABASE_URL set    -> PostgreSQL (this file)
 #   DATABASE_URL unset  -> SQLite file in the better-ccflare-data volume
-# The SQLite file stays in the volume either way, so rollback is: unset
-# DATABASE_URL, `docker compose up -d`.
+#
+# The SQLite file stays in the volume either way, so it is the rollback path.
+# But this file always builds DATABASE_URL for the app service from
+# PG_USER/PG_PASSWORD/PG_DB, so clearing those (or unsetting DATABASE_URL in
+# the host environment) does NOT roll anything back. To roll back to SQLite:
+#   1. remove the DATABASE_URL line from the `better-ccflare` service's
+#      `environment:` block below
+#   2. docker compose -f docker-compose.postgres.yml up -d better-ccflare
+#
+# ⚠️ The retained SQLite file is a snapshot from before the switch: writes made
+# to PostgreSQL since then are NOT in it, and rolling back discards them.
 #
 # Requires a .env file next to this compose file:
 #   PG_USER=ccflare
@@ -113,10 +122,21 @@ services:
           cpus: '0.5'
           memory: 256M
 
-  # One-off migration of the old SQLite file into PostgreSQL. Run it with:
-  #   docker compose run --rm migrate
-  #   docker compose run --rm migrate --with-history     # also copy requests
-  #   docker compose run --rm migrate --with-history --with-payloads
+  # One-off migration of the old SQLite file into PostgreSQL.
+  #
+  # Always pass -f docker-compose.postgres.yml: without it Compose picks the
+  # repo's docker-compose.yml, which has no `migrate` service.
+  #
+  # Extra flags go through MIGRATE_FLAGS, not after the service name —
+  # arguments after `migrate` REPLACE this command rather than appending to
+  # it, so `--with-history` would never reach the script.
+  #
+  #   docker compose -f docker-compose.postgres.yml run --rm migrate
+  #   MIGRATE_FLAGS="--with-history" \
+  #     docker compose -f docker-compose.postgres.yml run --rm migrate
+  #   MIGRATE_FLAGS="--with-history --with-payloads" \
+  #     docker compose -f docker-compose.postgres.yml run --rm migrate
+  #
   # Requires ./scripts/sqlite-to-pg-migrate.ts next to this compose file.
   migrate:
     image: oven/bun:1.3-alpine
@@ -130,7 +150,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://${PG_USER:-ccflare}:${PG_PASSWORD}@postgres:5432/${PG_DB:-ccflare}
       # Extra flags for the migration script, e.g.
-      #   MIGRATE_FLAGS="--with-history --with-payloads" docker compose run --rm migrate
+      #   MIGRATE_FLAGS="--with-history --with-payloads" \
+      #     docker compose -f docker-compose.postgres.yml run --rm migrate
       - MIGRATE_FLAGS=${MIGRATE_FLAGS:-}
     command:
       - /bin/sh

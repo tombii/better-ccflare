@@ -18,12 +18,16 @@
  * Flags:
  *   --with-history    also copy the `requests` table (request history/stats)
  *   --with-payloads   also copy `request_payloads` (large: ~90% of the DB)
+ *                     (independent of --with-history — either can be used alone)
  *   --dry-run         print what would be copied, write nothing
  *   --sqlite <path>   source SQLite file (default /data/better-ccflare.db)
  *
  * The copy is idempotent: every INSERT uses ON CONFLICT DO NOTHING, so a
  * re-run fills in whatever is missing without duplicating rows. Stop the
  * better-ccflare container before running this so the source is quiescent.
+ *
+ * Exits non-zero if any table fails to copy, so a deployment step cannot
+ * mistake a partially copied database for a successful migration.
  */
 import { Database } from "bun:sqlite";
 import { SQL } from "bun";
@@ -64,10 +68,6 @@ const CORE_TABLES = [
 	"alerts",
 ];
 
-/** History tables: large, only copied when explicitly requested. */
-const HISTORY_TABLES = ["requests"];
-if (withPayloads) HISTORY_TABLES.push("request_payloads");
-
 /**
  * Natural keys for tables that have no primary key, used to dedupe rows
  * against what the running app has already written.
@@ -80,8 +80,37 @@ const NATURAL_KEYS: Record<string, string[]> = {
 	usage_snapshots: ["account_id", "timestamp", "window_key"],
 };
 
+/**
+ * Tables whose PostgreSQL rows are seeded by the schema itself and must be
+ * REPLACED by the source rather than skipped.
+ *
+ * Starting the app against an empty PostgreSQL database creates the schema,
+ * and that schema seeds `combo_family_assignments` with one placeholder row
+ * per canonical family — no combo assigned, family disabled. The source has
+ * the real assignment for those families, but `ON CONFLICT DO NOTHING` sees
+ * the placeholder as "already migrated" and skips the source's row. The
+ * result is a live deployment where every combo family is silently
+ * unassigned and disabled.
+ *
+ * `where` identifies a pristine placeholder: a row still in the state the
+ * schema seeded it with. Clearing only those lets the source's rows land,
+ * while a family the user has since assigned in PostgreSQL is left alone.
+ */
+const SEEDED_PLACEHOLDER_TABLES: Record<
+	string,
+	{ key: string; where: string }
+> = {
+	combo_family_assignments: {
+		key: "family",
+		where: "combo_id IS NULL AND enabled = 0",
+	},
+};
+
+// Each flag opts into exactly the table it names: `--with-payloads` on its
+// own copies the payloads, without dragging in the `requests` history table.
 const tables = [...CORE_TABLES];
-if (withHistory) tables.push(...HISTORY_TABLES);
+if (withHistory) tables.push("requests");
+if (withPayloads) tables.push("request_payloads");
 
 /** Coerce a SQLite value to what the PostgreSQL column expects. */
 function coerce(value: unknown, dataType: string): unknown {
@@ -193,10 +222,9 @@ async function hasPrimaryKey(table: string): Promise<boolean> {
 async function copyTable(table: string): Promise<void> {
 	const target = await pgColumns(table);
 	if (target.length === 0) {
-		console.error(
-			`  ! table "${table}" does not exist in PostgreSQL — start the app once with DATABASE_URL so it creates the schema`,
+		throw new Error(
+			`table "${table}" does not exist in PostgreSQL — start the app once with DATABASE_URL so it creates the schema`,
 		);
-		return;
 	}
 	const sourceCols = new Set(sqliteColumns(table));
 	const cols = target.filter((c) => sourceCols.has(c.column_name));
@@ -222,6 +250,35 @@ async function copyTable(table: string): Promise<void> {
 			}`,
 		);
 		return;
+	}
+
+	// Clear rows that PostgreSQL's schema seeded as placeholders, so the
+	// source's real rows are not skipped by ON CONFLICT DO NOTHING. See
+	// SEEDED_PLACEHOLDER_TABLES for why this is needed.
+	const seeded = SEEDED_PLACEHOLDER_TABLES[table];
+	if (seeded) {
+		const sourceKeys = (
+			sqlite
+				.query(
+					`SELECT DISTINCT ${JSON.stringify(seeded.key)} AS k FROM ${JSON.stringify(table)}`,
+				)
+				.all() as { k: string }[]
+		).map((r) => r.k);
+		if (sourceKeys.length > 0) {
+			const placeholders = sourceKeys.map((_, i) => `$${i + 1}`);
+			const deleted = (await sql.unsafe(
+				`DELETE FROM ${JSON.stringify(table)}
+				 WHERE ${seeded.where}
+				   AND ${JSON.stringify(seeded.key)} IN (${placeholders.join(", ")})`,
+				sourceKeys,
+			)) as unknown as { count?: number };
+			const count = deleted?.count ?? 0;
+			if (count > 0) {
+				console.log(
+					`    (cleared ${count} seeded placeholder row(s) so the source's rows are copied)`,
+				);
+			}
+		}
 	}
 
 	// Tables without a primary key (usage_snapshots) can't rely on
@@ -264,6 +321,7 @@ async function copyTable(table: string): Promise<void> {
 	}
 
 	let copied = 0;
+	let read = 0;
 	let offset = 0;
 	let lastLogged = Date.now();
 	// The PostgreSQL wire protocol caps a statement at 65535 parameters, and
@@ -279,17 +337,19 @@ async function copyTable(table: string): Promise<void> {
 		const tuples: string[] = [];
 		const params: unknown[] = [];
 		let chunkBytes = 0;
-		const flush = async () => {
-			if (tuples.length === 0) return;
-			await sql.unsafe(
+		/** Insert the pending tuples; returns how many rows landed. */
+		const flush = async (): Promise<number> => {
+			if (tuples.length === 0) return 0;
+			const result = (await sql.unsafe(
 				antiJoin
 					? `INSERT INTO ${JSON.stringify(stageTable)} (${columnsSql}) VALUES ${tuples.join(", ")} ON CONFLICT DO NOTHING`
 					: `INSERT INTO ${JSON.stringify(table)} (${columnsSql}) VALUES ${tuples.join(", ")} ON CONFLICT DO NOTHING`,
 				params,
-			);
+			)) as unknown as { count?: number };
 			tuples.length = 0;
 			params.length = 0;
 			chunkBytes = 0;
+			return result?.count ?? 0;
 		};
 		for (const row of rows) {
 			const placeholders: string[] = [];
@@ -305,9 +365,9 @@ async function copyTable(table: string): Promise<void> {
 			tuples.push(`(${placeholders.join(", ")})`);
 			// Keep each statement well under Bun's 1 GB default max_allowed
 			// message size (and PostgreSQL's own limits).
-			if (chunkBytes >= MAX_STATEMENT_BYTES) await flush();
+			if (chunkBytes >= MAX_STATEMENT_BYTES) copied += await flush();
 		}
-		await flush();
+		copied += await flush();
 	};
 	while (offset < total) {
 		const rows = sqlite.query(selectSql).all(batchSize, offset) as Record<
@@ -316,10 +376,10 @@ async function copyTable(table: string): Promise<void> {
 		>[];
 		if (rows.length === 0) break;
 		await insertRows(rows);
-		copied += rows.length;
+		read += rows.length;
 		offset += rows.length;
 		if (!dryRun && Date.now() - lastLogged > 5000) {
-			console.log(`    ... ${table}: ${copied}/${total}`);
+			console.log(`    ... ${table}: ${read}/${total}`);
 			lastLogged = Date.now();
 		}
 	}
@@ -352,8 +412,12 @@ async function copyTable(table: string): Promise<void> {
 		await sql.unsafe(`DROP TABLE IF EXISTS ${JSON.stringify(stageTable)}`);
 		copied = inserted?.count ?? copied;
 	}
+	// `copied` counts rows PostgreSQL actually accepted; `read` counts rows
+	// read from the source. They differ when ON CONFLICT DO NOTHING skipped
+	// rows that were already there — a re-run inserts nothing but has nothing
+	// wrong with it either, so report both rather than claiming a copy.
 	console.log(
-		`  + ${table}: ${copied} rows copied${dropped.length ? ` (${dropped.length} PG-only columns defaulted)` : ""}`,
+		`  + ${table}: ${copied} rows inserted (${read} read from source)${dropped.length ? ` (${dropped.length} PG-only columns defaulted)` : ""}`,
 	);
 }
 
@@ -368,21 +432,44 @@ console.log(
 	`SQLite : ${sqlitePath}\nPostgres: ${databaseUrl.replace(/:[^:@/]*@/, ":***@")}\n`,
 );
 console.log("Copying tables:");
+const failedTables: string[] = [];
 for (const table of tables) {
 	try {
 		await copyTable(table);
 	} catch (err) {
+		failedTables.push(table);
 		console.error(`  ! ${table}: ${(err as Error).message}`);
 	}
 }
 
-console.log("\nDone. Row counts in PostgreSQL:");
+console.log("\nRow counts in PostgreSQL:");
 for (const table of tables) {
-	const rows = (await sql.unsafe(
-		`SELECT COUNT(*)::bigint AS n FROM ${JSON.stringify(table)}`,
-	)) as unknown as { n: string }[];
-	console.log(`  ${table}: ${rows[0]?.n ?? "?"}`);
+	// A table that failed to copy may not exist at all — report that rather
+	// than letting the count query throw and mask the failure summary.
+	try {
+		const rows = (await sql.unsafe(
+			`SELECT COUNT(*)::bigint AS n FROM ${JSON.stringify(table)}`,
+		)) as unknown as { n: string }[];
+		console.log(`  ${table}: ${rows[0]?.n ?? "?"}`);
+	} catch (err) {
+		console.log(`  ${table}: (unavailable — ${(err as Error).message})`);
+	}
 }
 
 await sql.close();
 sqlite.close();
+
+if (failedTables.length > 0) {
+	// A partially copied database looks like a successful one to any
+	// deployment step that only checks the exit status, so fail loudly:
+	// point the app at PostgreSQL only once every table has been copied.
+	console.error(
+		`\nFAILED: ${failedTables.length} table(s) did not copy: ${failedTables.join(", ")}`,
+	);
+	console.error(
+		"Re-run to retry (the copy is idempotent), and do not switch the app to PostgreSQL until this succeeds.",
+	);
+	process.exit(1);
+}
+
+console.log("\nDone.");
