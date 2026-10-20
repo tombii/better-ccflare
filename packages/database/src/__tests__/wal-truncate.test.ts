@@ -8,7 +8,7 @@
  *  - `resolveWalTruncateIntervalMinutes()` for the periodic job
  */
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -21,6 +21,7 @@ import {
 	resolveWalSizeLimitBytes,
 	resolveWalTruncateIntervalMinutes,
 } from "../database-operations";
+import { EMBEDDED_WAL_TRUNCATE_WORKER_CODE } from "../inline-wal-truncate-worker";
 import { runWalTruncateInWorker } from "../wal-truncate-runner";
 
 function journalSizeLimit(dbOps: DatabaseOperations): number {
@@ -285,6 +286,31 @@ describe("WAL growth controls", () => {
 			if (!response.ok) {
 				expect(response.busy).toBe(false);
 				expect(response.error.length).toBeGreaterThan(0);
+			}
+		});
+
+		it("releases the worker blob URL after the checkpoint", async () => {
+			// The blob URL keeps the worker code alive in the parent thread
+			// until it is revoked — terminating the worker does not release
+			// it. This job runs every few minutes, so an unreleased URL is a
+			// slow leak of one worker copy per tick.
+			if (!EMBEDDED_WAL_TRUNCATE_WORKER_CODE) {
+				// Source mode: the worker is loaded from a file URL, there is
+				// no blob URL to revoke.
+				return;
+			}
+			const revoke = spyOn(URL, "revokeObjectURL");
+			try {
+				const dbPath = path.join(tmpDir, "revoke.db");
+				const dbOps = new DatabaseOperations(dbPath);
+				try {
+					await dbOps.truncateWal();
+				} finally {
+					await dbOps.close();
+				}
+				expect(revoke).toHaveBeenCalled();
+			} finally {
+				revoke.mockRestore();
 			}
 		});
 	});

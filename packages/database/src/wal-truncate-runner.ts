@@ -36,13 +36,19 @@ export async function runWalTruncateInWorker(
 	},
 ): Promise<WalTruncateResponse> {
 	let worker: Worker;
+	// The blob URL is registered with the parent thread's URL registry and
+	// keeps the worker code alive until it is revoked. Terminating the worker
+	// does not release it, so every checkpoint would retain another copy —
+	// this job runs every few minutes, so the URL has to be revoked.
+	let blobUrl: string | undefined;
 	if (EMBEDDED_WAL_TRUNCATE_WORKER_CODE) {
 		const workerCode = Buffer.from(
 			EMBEDDED_WAL_TRUNCATE_WORKER_CODE,
 			"base64",
 		).toString("utf8");
 		const blob = new Blob([workerCode], { type: "text/javascript" });
-		worker = new Worker(URL.createObjectURL(blob), { smol: true });
+		blobUrl = URL.createObjectURL(blob);
+		worker = new Worker(blobUrl, { smol: true });
 	} else {
 		worker = new Worker(
 			new URL("./wal-truncate-worker.ts", import.meta.url).href,
@@ -77,6 +83,9 @@ export async function runWalTruncateInWorker(
 	} finally {
 		if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
 		worker.terminate();
+		// Release the blob URL (and with it the worker code) after the worker
+		// is gone.
+		if (blobUrl !== undefined) URL.revokeObjectURL(blobUrl);
 	}
 }
 
