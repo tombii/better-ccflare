@@ -1,0 +1,153 @@
+# better-ccflare with PostgreSQL instead of SQLite.
+#
+# Switching the database is a single env change:
+#   DATABASE_URL set    -> PostgreSQL (this file)
+#   DATABASE_URL unset  -> SQLite file in the better-ccflare-data volume
+# The SQLite file stays in the volume either way, so rollback is: unset
+# DATABASE_URL, `docker compose up -d`.
+#
+# Requires a .env file next to this compose file:
+#   PG_USER=ccflare
+#   PG_PASSWORD=<letters+digits only, no special chars — it goes into a URL>
+#   PG_DB=ccflare
+#
+# Generate a password with:  openssl rand -hex 24
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: better-ccflare-postgres
+    restart: unless-stopped
+    # Docker's default /dev/shm is 64 MB, which makes PostgreSQL slow.
+    shm_size: 512mb
+    environment:
+      POSTGRES_USER: ${PG_USER:-ccflare}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD must be set in .env}
+      POSTGRES_DB: ${PG_DB:-ccflare}
+      PGDATA: /var/lib/postgresql/data/pgdata
+      TZ: UTC
+      # Checksums catch silent corruption of the accounts table (OAuth tokens).
+      POSTGRES_INITDB_ARGS: --data-checksums
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - max_connections=50
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - min_wal_size=128MB
+      - -c
+      - checkpoint_completion_target=0.9
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-ccflare} -d ${PG_DB:-ccflare}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1536M
+    # No `ports:` — PostgreSQL is reachable only on the compose network.
+
+  better-ccflare:
+    image: ghcr.io/tombii/better-ccflare:latest
+    container_name: better-ccflare
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "192.168.0.41:8082:8080"
+    volumes:
+      # Keeps better-ccflare.json (the image sets XDG_CONFIG_HOME=/data) and
+      # the old SQLite file, which stays as a rollback path.
+      - better-ccflare-data:/data
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${PG_USER:-ccflare}:${PG_PASSWORD}@postgres:5432/${PG_DB:-ccflare}
+      # Ignored while DATABASE_URL is set; kept so rollback finds the old DB.
+      - BETTER_CCFLARE_DB_PATH=/data/better-ccflare.db
+      # PostgreSQL tuning — see docs/database.md
+      - BETTER_CCFLARE_DB_POOL_MAX=10
+      - BETTER_CCFLARE_DB_IDLE_TIMEOUT=60
+      - BETTER_CCFLARE_DB_STATEMENT_TIMEOUT=7000
+      - BETTER_CCFLARE_DB_CLIENT_TIMEOUT=8000
+      - BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE=200
+      # Optional: configure logging
+      # - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Resource limits (adjust as needed)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # One-off migration of the old SQLite file into PostgreSQL. Run it with:
+  #   docker compose run --rm migrate
+  #   docker compose run --rm migrate --with-history     # also copy requests
+  #   docker compose run --rm migrate --with-history --with-payloads
+  # Requires ./scripts/sqlite-to-pg-migrate.ts next to this compose file.
+  migrate:
+    image: oven/bun:1.3-alpine
+    profiles: ["migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - better-ccflare-data:/data
+      - ./scripts:/work:ro
+    environment:
+      - DATABASE_URL=postgresql://${PG_USER:-ccflare}:${PG_PASSWORD}@postgres:5432/${PG_DB:-ccflare}
+      # Extra flags for the migration script, e.g.
+      #   MIGRATE_FLAGS="--with-history --with-payloads" docker compose run --rm migrate
+      - MIGRATE_FLAGS=${MIGRATE_FLAGS:-}
+    command:
+      - /bin/sh
+      - -c
+      - exec bun /work/sqlite-to-pg-migrate.ts --sqlite /data/better-ccflare.db $$MIGRATE_FLAGS
+
+volumes:
+  better-ccflare-data:
+    driver: local
+  pgdata:
+    driver: local
+
+# The existing deployment already runs on the `better-ccflare_default` network
+# (the running container was created with `docker run` against it). Declaring
+# it external keeps compose from recreating it — recreating the network would
+# disconnect the live proxy container and drop its published port.
+networks:
+  default:
+    external: true
+    name: better-ccflare_default
