@@ -13,12 +13,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	clampTimerIntervalMinutes,
 	DatabaseOperations,
 	DEFAULT_WAL_SIZE_LIMIT_BYTES,
 	DEFAULT_WAL_TRUNCATE_INTERVAL_MINUTES,
+	MAX_TIMER_INTERVAL_MINUTES,
 	resolveWalSizeLimitBytes,
 	resolveWalTruncateIntervalMinutes,
 } from "../database-operations";
+import { runWalTruncateInWorker } from "../wal-truncate-runner";
 
 function journalSizeLimit(dbOps: DatabaseOperations): number {
 	return (
@@ -103,6 +106,28 @@ describe("WAL growth controls", () => {
 			expect(resolveWalTruncateIntervalMinutes("soon")).toBe(10);
 			expect(resolveWalTruncateIntervalMinutes("-1")).toBe(10);
 		});
+
+		it("clamps intervals that would overflow the timer's 32-bit delay", () => {
+			// `minutes * 60 * 1000` above 2^31-1 overflows, and the runtime
+			// turns the delay into 1 ms — the job would then run continuously.
+			expect(MAX_TIMER_INTERVAL_MINUTES).toBe(35791);
+			expect(MAX_TIMER_INTERVAL_MINUTES * 60 * 1000).toBeLessThan(2 ** 31);
+			expect(resolveWalTruncateIntervalMinutes("43200")).toBe(
+				MAX_TIMER_INTERVAL_MINUTES,
+			);
+			expect(resolveWalTruncateIntervalMinutes("100000000")).toBe(
+				MAX_TIMER_INTERVAL_MINUTES,
+			);
+			// A value that still fits is passed through unchanged.
+			expect(resolveWalTruncateIntervalMinutes("1440")).toBe(1440);
+		});
+	});
+
+	describe("clampTimerIntervalMinutes", () => {
+		it("clamps to the maximum timer delay", () => {
+			expect(clampTimerIntervalMinutes(43200)).toBe(MAX_TIMER_INTERVAL_MINUTES);
+			expect(clampTimerIntervalMinutes(30)).toBe(30);
+		});
 	});
 
 	describe("journal_size_limit on the main connection", () => {
@@ -145,6 +170,21 @@ describe("WAL growth controls", () => {
 				await dbOps.close();
 			}
 		});
+
+		it("treats a DatabaseConfig value of 0 as 'no limit', like the env var", async () => {
+			// `0` must mean the same thing through both spellings. SQLite's own
+			// `journal_size_limit = 0` means "truncate the WAL to zero bytes on
+			// every reset", which is not what the env var's 0 means — so the
+			// PRAGMA is skipped instead of being issued.
+			const dbOps = new DatabaseOperations(path.join(tmpDir, "e.db"), {
+				journalSizeLimitBytes: 0,
+			});
+			try {
+				expect(journalSizeLimit(dbOps)).toBe(-1);
+			} finally {
+				await dbOps.close();
+			}
+		});
 	});
 
 	describe("truncateWal", () => {
@@ -161,7 +201,7 @@ describe("WAL growth controls", () => {
 				}
 				expect(fs.statSync(`${dbPath}-wal`).size).toBeGreaterThan(100_000);
 
-				const result = dbOps.truncateWal();
+				const result = await dbOps.truncateWal();
 				expect(result).not.toBeNull();
 				expect(result?.busy).toBe(false);
 				expect(result?.error).toBeUndefined();
@@ -176,10 +216,37 @@ describe("WAL growth controls", () => {
 			}
 		});
 
-		it("returns busy immediately while a reader holds a snapshot, and restores busy_timeout", async () => {
+		it("does not block the event loop while the checkpoint runs", async () => {
+			// The checkpoint runs in a worker thread: a synchronous call on the
+			// main connection would freeze the event loop while SQLite copies
+			// the WAL backlog into the database file.
+			const dbPath = path.join(tmpDir, "async.db");
+			const dbOps = new DatabaseOperations(dbPath);
+			try {
+				const db = dbOps.getDatabase();
+				db.run("PRAGMA wal_autocheckpoint = 0");
+				db.run("CREATE TABLE filler (v TEXT)");
+				for (let i = 0; i < 200; i++) {
+					db.run("INSERT INTO filler VALUES (?)", ["x".repeat(2000)]);
+				}
+
+				let ticked = false;
+				const timer = setTimeout(() => {
+					ticked = true;
+				}, 0);
+				const result = await dbOps.truncateWal();
+				clearTimeout(timer);
+				expect(result?.busy).toBe(false);
+				// The event loop got a chance to run while the checkpoint was
+				// in flight (the timer fired before the await resolved).
+				expect(ticked).toBe(true);
+			} finally {
+				await dbOps.close();
+			}
+		});
+
+		it("reports busy while a reader holds a snapshot, and leaves the main connection's busy_timeout alone", async () => {
 			const dbPath = path.join(tmpDir, "busy.db");
-			// busy_timeout of 10 s on the main connection: if truncateWal()
-			// didn't drop it for the call, this test would take ~10 s.
 			const dbOps = new DatabaseOperations(dbPath, { busyTimeoutMs: 10_000 });
 			const reader = new Database(dbPath, { readonly: true });
 			try {
@@ -190,14 +257,16 @@ describe("WAL growth controls", () => {
 				reader.query("SELECT count(*) FROM w").get();
 				db.run("INSERT INTO w VALUES ('b')");
 
-				const started = Date.now();
-				const result = dbOps.truncateWal();
-				expect(Date.now() - started).toBeLessThan(1000);
+				const result = await dbOps.truncateWal();
+				expect(result).not.toBeNull();
 				expect(result?.busy).toBe(true);
+				// The checkpoint runs on the worker's own connection, so the
+				// main connection's busy_timeout is never touched.
 				expect(busyTimeout(db)).toBe(10_000);
 
 				reader.exec("COMMIT");
-				expect(dbOps.truncateWal()?.busy).toBe(false);
+				const after = await dbOps.truncateWal();
+				expect(after?.busy).toBe(false);
 				expect(busyTimeout(db)).toBe(10_000);
 			} finally {
 				reader.close();
@@ -205,25 +274,17 @@ describe("WAL growth controls", () => {
 			}
 		});
 
-		it("reports a locked checkpoint instead of throwing", async () => {
-			const dbPath = path.join(tmpDir, "locked.db");
-			const dbOps = new DatabaseOperations(dbPath);
-			try {
-				const db = dbOps.getDatabase();
-				db.run("CREATE TABLE w (v TEXT)");
-				// A checkpoint can't run inside an open transaction on the same
-				// connection: SQLite raises SQLITE_LOCKED.
-				db.run("BEGIN");
-				db.run("INSERT INTO w VALUES ('a')");
-				let result: ReturnType<DatabaseOperations["truncateWal"]> = null;
-				expect(() => {
-					result = dbOps.truncateWal();
-				}).not.toThrow();
-				expect(result).not.toBeNull();
-				expect(result?.busy).toBe(true);
-				db.run("COMMIT");
-			} finally {
-				await dbOps.close();
+		it("reports a failure as an error instead of throwing", async () => {
+			// A checkpoint against a path that isn't a database fails inside
+			// the worker. The failure must come back as `error` (not as a
+			// "busy" result), so the caller can log it above debug level.
+			const response = await runWalTruncateInWorker(
+				path.join(tmpDir, "does-not-exist", "x.db"),
+			);
+			expect(response.ok).toBe(false);
+			if (!response.ok) {
+				expect(response.busy).toBe(false);
+				expect(response.error.length).toBeGreaterThan(0);
 			}
 		});
 	});

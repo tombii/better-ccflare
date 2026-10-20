@@ -11,8 +11,10 @@ export type {
 	WalTruncateResult,
 } from "./database-operations";
 export {
+	clampTimerIntervalMinutes,
 	DEFAULT_WAL_SIZE_LIMIT_BYTES,
 	DEFAULT_WAL_TRUNCATE_INTERVAL_MINUTES,
+	MAX_TIMER_INTERVAL_MINUTES,
 	resolveWalSizeLimitBytes,
 	resolveWalTruncateIntervalMinutes,
 } from "./database-operations";
