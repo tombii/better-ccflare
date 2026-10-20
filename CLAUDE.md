@@ -115,6 +115,8 @@ The GitNexus index refreshes automatically via a local git post-commit hook (`.g
 ## Publishing to npm
 - Use `cd apps/cli && bun publish` (avoids workspace errors)
 - When pushing to git (triggers auto-publish), show complete output including npmjs.com auth URL: `https://www.npmjs.com/auth/cli/[uuid]`
+- **NEVER pipe a push or publish through `tail`, `head`, or any output filter** — and never background it. The trusted-publishing flow prints one-time auth URLs the operator must visit; truncating or backgrounding hides them and forces a re-push. Show the complete output, and read a background task's output file directly rather than filtering it.
+- **The publish step is interactive.** The pre-push hook runs `npm login` when `npm whoami` fails, and `npm login` needs a TTY. Shell commands here run with `< /dev/null`, so an interactive prompt can never be answered — if the push needs authentication, say so and let the operator run `git push origin refs/heads/main:refs/heads/main` in their own terminal. Do not reach for `--no-verify` to work around it: that skips the publish *and* the `v<version>` tag, leaving main with a version bump that has no matching npm release.
 - **NEVER bump the version** — version bumps are handled automatically by the release system
 
 ## Version Updates
