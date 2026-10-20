@@ -93,8 +93,9 @@ const NATURAL_KEYS: Record<string, string[]> = {
  * unassigned and disabled.
  *
  * `where` identifies a pristine placeholder: a row still in the state the
- * schema seeded it with. Clearing only those lets the source's rows land,
- * while a family the user has since assigned in PostgreSQL is left alone.
+ * schema seeded it with. Placeholders are only cleared while the table is
+ * entirely pristine — see the table-level check in `copyTable` for why a
+ * row-level test is not enough.
  */
 const SEEDED_PLACEHOLDER_TABLES: Record<
 	string,
@@ -257,27 +258,53 @@ async function copyTable(table: string): Promise<void> {
 	// SEEDED_PLACEHOLDER_TABLES for why this is needed.
 	const seeded = SEEDED_PLACEHOLDER_TABLES[table];
 	if (seeded) {
-		const sourceKeys = (
-			sqlite
-				.query(
-					`SELECT DISTINCT ${JSON.stringify(seeded.key)} AS k FROM ${JSON.stringify(table)}`,
-				)
-				.all() as { k: string }[]
-		).map((r) => r.k);
-		if (sourceKeys.length > 0) {
-			const placeholders = sourceKeys.map((_, i) => `$${i + 1}`);
-			const deleted = (await sql.unsafe(
-				`DELETE FROM ${JSON.stringify(table)}
-				 WHERE ${seeded.where}
-				   AND ${JSON.stringify(seeded.key)} IN (${placeholders.join(", ")})`,
-				sourceKeys,
-			)) as unknown as { count?: number };
-			const count = deleted?.count ?? 0;
-			if (count > 0) {
-				console.log(
-					`    (cleared ${count} seeded placeholder row(s) so the source's rows are copied)`,
-				);
+		// Only while the target table is still ENTIRELY in its seeded state —
+		// every row unassigned and disabled. A seeded placeholder and a
+		// family the user deliberately unassigned and disabled are the same
+		// shape, so a row-level test cannot tell them apart; the table-level
+		// test can. Once any row carries a real assignment the table has
+		// been migrated (or the user has touched it), and a later run must
+		// not undo their changes.
+		const counts = (await sql.unsafe(
+			`SELECT count(*)::int AS total,
+			        count(*) FILTER (WHERE NOT (${seeded.where}))::int AS assigned
+			 FROM ${JSON.stringify(table)}`,
+		)) as unknown as { total: number; assigned: number }[];
+		const rowCount = counts[0]?.total ?? 0;
+		const assignedRows = counts[0]?.assigned ?? 0;
+
+		if (rowCount > 0 && assignedRows === 0) {
+			// Still pristine — the initial import. Drop the placeholders for
+			// the families the source also has, so its rows land.
+			const sourceKeys = (
+				sqlite
+					.query(
+						`SELECT DISTINCT ${JSON.stringify(seeded.key)} AS k FROM ${JSON.stringify(table)}`,
+					)
+					.all() as { k: string }[]
+			).map((r) => r.k);
+			if (sourceKeys.length > 0) {
+				const placeholders = sourceKeys.map((_, i) => `$${i + 1}`);
+				const deleted = (await sql.unsafe(
+					`DELETE FROM ${JSON.stringify(table)}
+					 WHERE ${seeded.where}
+					   AND ${JSON.stringify(seeded.key)} IN (${placeholders.join(", ")})`,
+					sourceKeys,
+				)) as unknown as { count?: number };
+				const count = deleted?.count ?? 0;
+				if (count > 0) {
+					console.log(
+						`    (cleared ${count} seeded placeholder row(s) so the source's rows are copied)`,
+					);
+				}
 			}
+		} else {
+			// Not in its seeded state. Copy normally instead: ON CONFLICT DO
+			// NOTHING keeps whatever PostgreSQL already holds (including a
+			// family the user disabled) and only adds families it lacks.
+			console.log(
+				`    (${table} has been migrated or edited — keeping PostgreSQL's rows as they are)`,
+			);
 		}
 	}
 
