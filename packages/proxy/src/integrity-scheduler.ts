@@ -232,8 +232,15 @@ async function runCheckLocked(
 	} finally {
 		// The worker held a read snapshot for the whole check, which keeps the
 		// WAL from being reset; trim it now rather than at the next periodic
-		// tick. Non-blocking and never throws (see wal-truncate.ts).
-		truncateWalAfterIntegrityCheck(dbOps);
+		// tick. Not awaited: the checkpoint runs in its own worker thread and
+		// is a background reclaim — the caller (a scheduled tick, or an
+		// on-demand HTTP request that is waiting on a response) must not sit
+		// through it.
+		void truncateWalAfterIntegrityCheck(dbOps).catch((error) => {
+			new Logger("IntegrityScheduler").error(
+				`Post-check WAL truncate failed: ${error}`,
+			);
+		});
 	}
 }
 

@@ -25,7 +25,11 @@ function makeDbOps(
 ) {
 	const truncateWal = mock(
 		opts.truncateWal ??
-			((): WalTruncateResult => ({ busy: false, log: 0, checkpointed: 0 })),
+			(async (): Promise<WalTruncateResult> => ({
+				busy: false,
+				log: 0,
+				checkpointed: 0,
+			})),
 	);
 	return {
 		dbOps: {
@@ -36,8 +40,14 @@ function makeDbOps(
 	};
 }
 
+const savedIntervalEnv = process.env.CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES;
+
 afterEach(() => {
-	delete process.env.CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES;
+	if (savedIntervalEnv === undefined) {
+		delete process.env.CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES;
+	} else {
+		process.env.CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES = savedIntervalEnv;
+	}
 });
 
 describe("startWalTruncateJob", () => {
@@ -97,55 +107,99 @@ describe("startWalTruncateJob", () => {
 		expect(registered()).toBe(false);
 		stop();
 	});
+
+	it("clamps an interval that would overflow the timer's 32-bit delay", () => {
+		// `minutes * 60 * 1000` above 2^31-1 overflows and the runtime turns
+		// the delay into 1 ms — the job would then run continuously.
+		const registerSpy = spyOn(intervalManager, "register");
+		const { dbOps } = makeDbOps();
+		const stop = startWalTruncateJob(dbOps, { intervalMinutes: 43200 });
+		try {
+			const intervalMs = registerSpy.mock.calls.at(-1)?.[0]?.intervalMs;
+			expect(intervalMs).toBe(35791 * 60 * 1000);
+			expect(intervalMs).toBeLessThan(2 ** 31);
+		} finally {
+			stop();
+			registerSpy.mockRestore();
+		}
+	});
+
+	it("clamps an oversized env value the same way", () => {
+		process.env.CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES = "43200";
+		const registerSpy = spyOn(intervalManager, "register");
+		const { dbOps } = makeDbOps();
+		const stop = startWalTruncateJob(dbOps);
+		try {
+			const intervalMs = registerSpy.mock.calls.at(-1)?.[0]?.intervalMs;
+			expect(intervalMs).toBe(35791 * 60 * 1000);
+			expect(intervalMs).toBeLessThan(2 ** 31);
+		} finally {
+			stop();
+			registerSpy.mockRestore();
+		}
+	});
+
+	it("rounds a fractional override down to whole minutes", () => {
+		// A fractional interval would become a sub-minute checkpoint loop.
+		const registerSpy = spyOn(intervalManager, "register");
+		const { dbOps } = makeDbOps();
+		const stop = startWalTruncateJob(dbOps, { intervalMinutes: 0.5 });
+		try {
+			expect(registerSpy.mock.calls.at(-1)?.[0]?.intervalMs).toBe(60 * 1000);
+		} finally {
+			stop();
+			registerSpy.mockRestore();
+		}
+	});
 });
 
 describe("truncateWalQuietly", () => {
-	it("calls truncateWal once", () => {
+	it("calls truncateWal once", async () => {
 		const { dbOps, truncateWal } = makeDbOps();
-		truncateWalQuietly(dbOps, "test");
+		await truncateWalQuietly(dbOps, "test");
 		expect(truncateWal).toHaveBeenCalledTimes(1);
 	});
 
-	it("does not throw on a busy result", () => {
+	it("does not throw on a busy result", async () => {
 		const { dbOps } = makeDbOps({
-			truncateWal: () => ({ busy: true, log: 10, checkpointed: 4 }),
+			truncateWal: async () => ({ busy: true, log: 10, checkpointed: 4 }),
 		});
-		expect(() => truncateWalQuietly(dbOps, "test")).not.toThrow();
+		expect(truncateWalQuietly(dbOps, "test")).resolves.toBeUndefined();
 	});
 
-	it("does not throw on a locked result", () => {
+	it("does not throw on a locked result", async () => {
 		const { dbOps } = makeDbOps({
-			truncateWal: () => ({
+			truncateWal: async () => ({
 				busy: true,
 				log: -1,
 				checkpointed: -1,
 				error: "database table is locked",
 			}),
 		});
-		expect(() => truncateWalQuietly(dbOps, "test")).not.toThrow();
+		expect(truncateWalQuietly(dbOps, "test")).resolves.toBeUndefined();
 	});
 
-	it("does not throw if truncateWal itself throws", () => {
+	it("does not throw if truncateWal itself throws", async () => {
 		const { dbOps } = makeDbOps({
 			truncateWal: () => {
 				throw new Error("SQLITE_BUSY");
 			},
 		});
-		expect(() => truncateWalQuietly(dbOps, "test")).not.toThrow();
+		expect(truncateWalQuietly(dbOps, "test")).resolves.toBeUndefined();
 	});
 });
 
 describe("truncateWalAfterIntegrityCheck", () => {
-	it("truncates by default", () => {
+	it("truncates by default", async () => {
 		const { dbOps, truncateWal } = makeDbOps();
-		truncateWalAfterIntegrityCheck(dbOps);
+		await truncateWalAfterIntegrityCheck(dbOps);
 		expect(truncateWal).toHaveBeenCalledTimes(1);
 	});
 
-	it("is skipped when the periodic job is disabled", () => {
+	it("is skipped when the periodic job is disabled", async () => {
 		process.env.CCFLARE_WAL_TRUNCATE_INTERVAL_MINUTES = "0";
 		const { dbOps, truncateWal } = makeDbOps();
-		truncateWalAfterIntegrityCheck(dbOps);
+		await truncateWalAfterIntegrityCheck(dbOps);
 		expect(truncateWal).not.toHaveBeenCalled();
 	});
 });
