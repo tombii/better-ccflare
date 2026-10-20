@@ -23,7 +23,9 @@ describe("DatabaseOperations.getTableRowCounts cache", () => {
 		const adapter = internals.adapter;
 		const origGet = adapter.get.bind(adapter);
 		adapter.get = (sql: string, ...rest: unknown[]) => {
-			if (sql.includes("SUM(LENGTH(json))")) sumQueries++;
+			// The payload size scan is the only query aliasing `dataBytes`;
+			// the per-table row count aliases `rowCount`.
+			if (sql.includes("AS dataBytes")) sumQueries++;
 			return origGet(sql, ...rest);
 		};
 	});

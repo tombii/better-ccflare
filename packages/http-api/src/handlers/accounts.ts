@@ -205,9 +205,10 @@ async function getCachedOrPersistedCodexUsage(
 		}
 	}
 	// Select the id and timestamp only: the stored body must be decoded through
-	// the repository, which reverses both compression (`zst:` marker) and at-rest
-	// encryption. Reading `rp.json` and JSON.parse-ing it here would reject
-	// every compressed row, silently degrading this recovery path to the weekly
+	// the repository, which reverses the binary payload envelope (compression
+	// and at-rest encryption) and falls back to the legacy text format.
+	// Reading `rp.payload` and JSON.parse-ing it here would reject every
+	// compressed row, silently degrading this recovery path to the weekly
 	// snapshot.
 	const rows = await db.query<{ id: string; timestamp: number | null }>(
 		`SELECT rp.id, COALESCE(rp.timestamp, r.timestamp) as timestamp

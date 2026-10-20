@@ -198,10 +198,18 @@ export function ensureSchema(db: Database): void {
 	);
 
 	// Create request_payloads table for storing full request/response data
+	//
+	// `payload` holds the binary envelope (flags byte + zstd frame and/or
+	// AES-GCM ciphertext) and is where every new row goes. `json` holds the
+	// legacy text envelope (`zst:`/`enc:` + base64) written before the binary
+	// format existed; it is NOT NULL because older databases were created
+	// that way, and new rows leave it empty. Legacy rows age out through the
+	// payload retention sweep, so no data migration is needed.
 	db.run(`
 		CREATE TABLE IF NOT EXISTS request_payloads (
 			id TEXT PRIMARY KEY,
 			json TEXT NOT NULL,
+			payload BLOB,
 			timestamp INTEGER,
 			FOREIGN KEY (id) REFERENCES requests(id) ON DELETE CASCADE
 		)
@@ -1504,9 +1512,15 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			db.prepare(
 				"ALTER TABLE requests ADD COLUMN gateway_hint_context_compacted TEXT",
 			).run();
-			log.info(
-				"Added gateway_hint_context_compacted column to requests table",
-			);
+			log.info("Added gateway_hint_context_compacted column to requests table");
+		}
+
+		// Add the binary payload column to request_payloads if it doesn't exist.
+		// Existing rows keep their legacy text envelope in `json` until the
+		// payload retention sweep prunes them; no data migration is needed.
+		if (!requestPayloadsColumnNames.includes("payload")) {
+			db.prepare("ALTER TABLE request_payloads ADD COLUMN payload BLOB").run();
+			log.info("Added payload column to request_payloads table");
 		}
 
 		// Add timestamp column to request_payloads if it doesn't exist

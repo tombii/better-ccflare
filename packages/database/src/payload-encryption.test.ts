@@ -13,6 +13,9 @@ async function loadFreshModule() {
 
 const VALID_HEX_KEY =
 	"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+/** A second valid key, used to check that a key change is actually picked up. */
+const OTHER_VALID_HEX_KEY =
+	"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
 describe("payload encryption", () => {
 	beforeEach(() => {
@@ -74,6 +77,45 @@ describe("payload encryption", () => {
 
 		const legacyRow = '{"this":"was stored before encryption was enabled"}';
 		expect(await mod.decryptPayload(legacyRow)).toBe(legacyRow);
+	});
+
+	it("re-imports the key when PAYLOAD_ENCRYPTION_KEY changes", async () => {
+		// Same module instance throughout — the point is that the cached key
+		// is replaced when the configured key changes, so a restart with a
+		// rotated key does not keep writing rows under the old one.
+		const mod = await loadFreshModule();
+
+		process.env.PAYLOAD_ENCRYPTION_KEY = VALID_HEX_KEY;
+		expect(await mod.initPayloadEncryption()).toBe(true);
+		const withKeyA = await mod.encryptPayload("secret");
+
+		process.env.PAYLOAD_ENCRYPTION_KEY = OTHER_VALID_HEX_KEY;
+		expect(await mod.initPayloadEncryption()).toBe(true);
+		expect(mod.isEncryptionEnabled()).toBe(true);
+		const withKeyB = await mod.encryptPayload("secret");
+
+		expect(withKeyB).not.toBe(withKeyA);
+		expect(await mod.decryptPayload(withKeyB)).toBe("secret");
+		// The new key cannot read what the old key wrote — that is what
+		// proves the key actually switched rather than being reused.
+		await expect(mod.decryptPayload(withKeyA)).rejects.toThrow();
+	});
+
+	it("drops the cached key when PAYLOAD_ENCRYPTION_KEY is removed", async () => {
+		const mod = await loadFreshModule();
+
+		process.env.PAYLOAD_ENCRYPTION_KEY = VALID_HEX_KEY;
+		await mod.initPayloadEncryption();
+		const encrypted = await mod.encryptPayload("secret");
+		expect(encrypted.startsWith("enc:")).toBe(true);
+
+		delete process.env.PAYLOAD_ENCRYPTION_KEY;
+		expect(await mod.initPayloadEncryption()).toBe(false);
+		expect(mod.isEncryptionEnabled()).toBe(false);
+		// Encryption is off again...
+		expect(await mod.encryptPayload("secret")).toBe("secret");
+		// ...and the stale key is not kept around to read the old row.
+		await expect(mod.decryptPayload(encrypted)).rejects.toThrow();
 	});
 
 	it("rejects a key with the wrong length", async () => {

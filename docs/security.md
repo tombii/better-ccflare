@@ -385,16 +385,16 @@ if (isStream && response.body) {
 
 ### Payload Encryption at Rest
 
-When `PAYLOAD_ENCRYPTION_KEY` is set to a 64-character hex string (32 bytes / AES-256), every payload row is encrypted with AES-256-GCM before being written to `request_payloads.json`.
+When `PAYLOAD_ENCRYPTION_KEY` is set to a 64-character hex string (32 bytes / AES-256), every payload row is encrypted with AES-256-GCM before being written to `request_payloads.payload`.
 
-**Format**: `enc:` + base64(iv ‖ ciphertext ‖ authTag), where the 12-byte IV is generated per-encryption with `crypto.getRandomValues`.
+**Format**: a flags byte followed by `iv ‖ ciphertext ‖ authTag`, where the 12-byte IV is generated per-encryption with `crypto.getRandomValues`. The body is stored as raw bytes — there is no base64 layer — so an encrypted payload is no larger than the compressed JSON it wraps, plus 29 bytes of IV and auth tag.
 
 **Properties**:
 - **Authenticated**: GCM's auth tag detects tampering — wrong-key or modified-ciphertext reads throw rather than returning garbage
-- **Backward compatible**: Pre-encryption plaintext rows (no `enc:` prefix) pass through readers untouched
+- **Backward compatible**: Rows written before the binary format used `enc:` + base64(iv ‖ ciphertext ‖ authTag) in the `json` column; they remain readable and age out through the normal payload retention sweep
 - **Per-row IV**: Identical plaintexts produce different ciphertexts
 - **Loud failures**: Decrypting an encrypted row without a key configured throws (operator must notice misconfiguration)
-- **Bun worker safe**: `encryptPayload`/`decryptPayload` self-initialize, so workers (which have isolated module scopes) cannot accidentally write plaintext
+- **Bun worker safe**: the payload codec self-initializes, so workers (which have isolated module scopes) cannot accidentally write plaintext
 
 **Key management**:
 - Generate with `openssl rand -hex 32`

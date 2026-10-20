@@ -246,13 +246,17 @@ function extractContributorBlocks(messages: unknown): ContributorBlock[] {
 }
 
 /**
- * Parse one stored request_payloads.json row and measure the provider request
- * body it wraps.
+ * Parse one stored request payload and measure the provider request body it
+ * wraps.
  *
- * Returns null when the row is unanalyzable: the wrapper JSON does not parse
- * (including payloads encrypted at rest), request.body is missing, or the
- * base64-decoded body is not valid JSON (bodies are size-capped at 4MB at
- * write time, so they can be truncated mid-JSON).
+ * Takes the already-decoded JSON — the repository is what unwraps the binary
+ * payload envelope (compression and at-rest encryption), so this helper never
+ * sees a stored row directly.
+ *
+ * Returns null when the payload is unanalyzable: the wrapper JSON does not
+ * parse, request.body is missing, or the base64-decoded body is not valid
+ * JSON (bodies are size-capped at 4MB at write time, so they can be truncated
+ * mid-JSON).
  *
  * Char counts are JSON.stringify lengths of whatever top-level
  * system/tools/messages keys exist (Anthropic or OpenAI format); a missing

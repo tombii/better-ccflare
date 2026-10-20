@@ -300,6 +300,17 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 		expect(pgSource).toContain("idx_requests_analytics_covering");
 	});
 
+	it("spot check: payloads are stored in a binary column on both backends", () => {
+		// The payload table moved from a base64 TEXT envelope to a binary
+		// envelope. The column name must match on both backends; the type
+		// differs by design (SQLite BLOB, PostgreSQL BYTEA), and the parity
+		// check above compares names only.
+		expect(sqliteInventory.tables.get("request_payloads")).toContain("payload");
+		expect(pgSource).toContain("payload BYTEA");
+		// Existing PostgreSQL databases need the upgrade path too.
+		expect(pgSource).toContain("ADD COLUMN payload BYTEA");
+	});
+
 	describe("redundant requests indexes", () => {
 		const dropped = [
 			"idx_requests_timestamp",
