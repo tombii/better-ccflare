@@ -57,6 +57,39 @@ export function compressPayload(text: string): string {
 }
 
 /**
+ * Compress raw bytes for the binary (BLOB) storage path.
+ *
+ * Unlike `compressPayload`, the "did it help?" check compares the compressed
+ * byte count against the raw byte count. The text path has to compare against
+ * the *base64* length because that is what it stores; the binary path stores
+ * the compressed frame as-is, so a smaller frame is a smaller row.
+ *
+ * Returns the bytes to store plus whether compression was actually applied —
+ * the caller needs that flag to build the envelope's flags byte.
+ */
+export function compressPayloadBytes(bytes: Uint8Array): {
+	bytes: Uint8Array;
+	compressed: boolean;
+} {
+	if (bytes.length < MIN_COMPRESS_BYTES) return { bytes, compressed: false };
+
+	const compressed = Bun.zstdCompressSync(bytes);
+	return compressed.length < bytes.length
+		? { bytes: compressed, compressed: true }
+		: { bytes, compressed: false };
+}
+
+/**
+ * Decompress a zstd frame produced by `compressPayloadBytes`.
+ *
+ * Throws if the frame is corrupt — silently returning junk would break
+ * downstream JSON.parse.
+ */
+export function decompressPayloadBytes(bytes: Uint8Array): Uint8Array {
+	return Bun.zstdDecompressSync(bytes);
+}
+
+/**
  * Reverse `compressPayload`. Values without the `zst:` prefix pass through
  * unchanged, which covers every legacy row and any payload small enough that
  * compression was skipped.

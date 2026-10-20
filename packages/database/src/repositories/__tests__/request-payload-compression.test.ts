@@ -16,6 +16,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { BunSqlAdapter } from "../../adapters/bun-sql-adapter";
 import { ensureSchema, runMigrations } from "../../migrations";
+import { PAYLOAD_FLAG_COMPRESSED } from "../../payload-blob";
 import { RequestRepository } from "../request.repository";
 
 function makeDb(): Database {
@@ -46,7 +47,19 @@ function largePayload(): unknown {
 	};
 }
 
-/** Read the raw stored column, bypassing the repository's decode step. */
+/** Read the raw stored binary envelope, bypassing the repository's decode step. */
+function rawStoredPayload(db: Database, id: string): Uint8Array {
+	const row = db
+		.query<{ payload: Uint8Array | null }, [string]>(
+			`SELECT payload FROM request_payloads WHERE id = ?`,
+		)
+		.get(id);
+	if (!row) throw new Error(`no payload row for ${id}`);
+	if (!row.payload) throw new Error(`no binary payload for ${id}`);
+	return row.payload;
+}
+
+/** Read the legacy text column, which only holds pre-blob rows. */
 function rawStoredJson(db: Database, id: string): string {
 	const row = db
 		.query<{ json: string }, [string]>(
@@ -78,11 +91,16 @@ describe("RequestRepository payload compression", () => {
 
 		await repo.savePayload(id, data);
 
-		const stored = rawStoredJson(db, id);
-		// Encoded (compressed and/or encrypted) — never the raw JSON.
-		expect(stored).not.toBe(plaintext);
-		// The whole point: the on-disk value is materially smaller.
+		const stored = rawStoredPayload(db, id);
+		// The envelope is raw bytes, not a base64 text encoding.
+		expect(stored).toBeInstanceOf(Uint8Array);
+		// Compressed (flag bit 0) — never the raw JSON.
+		expect(stored[0] & PAYLOAD_FLAG_COMPRESSED).toBe(PAYLOAD_FLAG_COMPRESSED);
+		// The whole point: the on-disk value is materially smaller than the
+		// JSON it encodes, with no base64 inflation on top.
 		expect(stored.length).toBeLessThan(plaintext.length);
+		// The legacy text column stays empty for new rows.
+		expect(rawStoredJson(db, id)).toBe("");
 	});
 
 	it("round-trips a large payload through savePayload/getPayload", async () => {
@@ -146,8 +164,7 @@ describe("RequestRepository payload compression", () => {
 
 		await repo.savePayloadRaw(id, plaintext);
 
-		const stored = rawStoredJson(db, id);
-		expect(stored).not.toBe(plaintext);
+		const stored = rawStoredPayload(db, id);
 		expect(stored.length).toBeLessThan(plaintext.length);
 		expect(await repo.getPayload(id)).toEqual(JSON.parse(plaintext));
 	});

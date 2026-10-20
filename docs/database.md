@@ -82,7 +82,8 @@ erDiagram
     
     request_payloads {
         TEXT id PK "Request ID (foreign key)"
-        TEXT json "Full request/response JSON payload"
+        TEXT json "Legacy request/response payload (pre-blob rows only)"
+        BLOB payload "Full request/response payload (binary envelope)"
     }
     
     oauth_sessions {
@@ -185,13 +186,18 @@ The `request_payloads` table stores full request and response bodies for detaile
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | `id` | TEXT | PRIMARY KEY, FOREIGN KEY | References requests.id |
-| `json` | TEXT | NOT NULL | Complete request/response payload, optionally encrypted (see below) |
+| `json` | TEXT | NOT NULL | Legacy request/response payload. Only holds rows written before the binary format existed; new rows leave it empty |
+| `payload` | BLOB (`BYTEA` on PostgreSQL) | NULL* | Complete request/response payload as a binary envelope (see below) |
 | `timestamp` | INTEGER | NULL* | Unix timestamp for retention queries (added via migration) |
 
 **Foreign Key Constraints:**
 - `id` references `requests(id)` with `ON DELETE CASCADE`
 
-**Optional encryption at rest**: when `PAYLOAD_ENCRYPTION_KEY` is set, the `json` column stores AES-256-GCM ciphertext prefixed with `enc:` (see `docs/security.md` → Payload Encryption at Rest). Plaintext rows from before encryption was enabled remain readable.
+**Binary payload envelope**: the `payload` column holds a flags byte followed by the payload body — bit 0 means the body is a zstd frame of the UTF-8 JSON, bit 1 means the body is AES-256-GCM ciphertext (`iv ‖ ciphertext ‖ authTag`) whose plaintext is the JSON (zstd-framed when bit 0 is also set). The body is stored as raw bytes: unlike the previous text encoding, nothing is base64-expanded, so a stored payload is ~25% smaller than it used to be. See `docs/security.md` → Payload Encryption at Rest for the encryption details.
+
+**Legacy rows**: rows written before this format are still stored in the `json` column as `zst:`/`enc:` + base64 text and remain readable — the reader falls back to them automatically. They age out through the normal payload retention sweep, so no data migration is required.
+
+**Optional encryption at rest**: when `PAYLOAD_ENCRYPTION_KEY` is set, the `payload` column stores AES-256-GCM ciphertext (see `docs/security.md` → Payload Encryption at Rest). Plaintext rows from before encryption was enabled remain readable.
 
 ### oauth_sessions Table
 

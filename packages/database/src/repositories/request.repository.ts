@@ -4,10 +4,7 @@ import type {
 	ProjectAttributionSource,
 } from "@better-ccflare/types";
 import { getCleanupBatchSize } from "../adapters/bun-sql-adapter";
-import {
-	decodePayloadFromStorage,
-	encodePayloadForStorage,
-} from "../payload-encryption";
+import { decodeStoredPayload, encodePayloadBlob } from "../payload-blob";
 import { BaseRepository } from "./base.repository";
 
 const log = new Logger("RequestRepository");
@@ -70,6 +67,16 @@ function agentRank(col: string): string {
 }
 
 /**
+ * A payload row as it comes back from the database: the binary envelope in
+ * `payload` (NULL for rows written before the binary format existed) and the
+ * legacy text envelope in `json` (empty for rows written after it).
+ */
+interface StoredPayloadRow {
+	json: string | null;
+	payload: unknown;
+}
+
+/**
  * Decode a stored payload for a list endpoint, swallowing per-row errors
  * so a single corrupted/tampered row cannot take down the whole list.
  *
@@ -79,9 +86,12 @@ function agentRank(col: string): string {
  * Single-row reads (`getPayload`) MUST stay strict and let the error
  * propagate — there's no fallback that makes sense for a single row.
  */
-async function decryptForList(id: string, json: string): Promise<string> {
+async function decryptForList(
+	id: string,
+	row: StoredPayloadRow,
+): Promise<string> {
 	try {
-		return await decodePayloadFromStorage(json);
+		return await decodeStoredPayload(row.payload, row.json);
 	} catch (err) {
 		log.error(`Failed to decode payload ${id}:`, err);
 		return JSON.stringify({
@@ -337,30 +347,36 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	// Payload management
+	//
+	// Payloads are stored in the `payload` column as a binary envelope (flags
+	// byte + zstd frame and/or AES-GCM ciphertext) — see `payload-blob.ts`.
+	// The `json` column holds the legacy text envelope and is left empty for
+	// new rows; it stays NOT NULL because older databases were created that
+	// way.
 	async savePayload(id: string, data: unknown): Promise<void> {
 		const json = JSON.stringify(data);
-		const stored = await encodePayloadForStorage(json);
+		const stored = await encodePayloadBlob(json);
 		const ts = Date.now();
 		await this.run(
-			`INSERT INTO request_payloads (id, json, timestamp) VALUES (?, ?, ?)
-			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, timestamp = EXCLUDED.timestamp`,
+			`INSERT INTO request_payloads (id, json, payload, timestamp) VALUES (?, '', ?, ?)
+			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, payload = EXCLUDED.payload, timestamp = EXCLUDED.timestamp`,
 			[id, stored, ts],
 		);
 	}
 
 	async savePayloadRaw(id: string, json: string): Promise<void> {
-		const stored = await encodePayloadForStorage(json);
+		const stored = await encodePayloadBlob(json);
 		const ts = Date.now();
 		await this.run(
-			`INSERT INTO request_payloads (id, json, timestamp) VALUES (?, ?, ?)
-			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, timestamp = EXCLUDED.timestamp`,
+			`INSERT INTO request_payloads (id, json, payload, timestamp) VALUES (?, '', ?, ?)
+			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, payload = EXCLUDED.payload, timestamp = EXCLUDED.timestamp`,
 			[id, stored, ts],
 		);
 	}
 
 	async getPayload(id: string): Promise<unknown | null> {
-		const row = await this.get<{ json: string }>(
-			`SELECT json FROM request_payloads WHERE id = ?`,
+		const row = await this.get<StoredPayloadRow>(
+			`SELECT json, payload FROM request_payloads WHERE id = ?`,
 			[id],
 		);
 
@@ -371,7 +387,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		// Silently returning null would hide real misconfiguration. Only JSON
 		// parse errors are tolerated, since historical rows may contain
 		// malformed payloads.
-		const decoded = await decodePayloadFromStorage(row.json);
+		const decoded = await decodeStoredPayload(row.payload, row.json);
 		try {
 			return JSON.parse(decoded);
 		} catch {
@@ -380,9 +396,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async listPayloads(limit = 50): Promise<Array<{ id: string; json: string }>> {
-		const rows = await this.query<{ id: string; json: string }>(
+		const rows = await this.query<{ id: string } & StoredPayloadRow>(
 			`
-			SELECT rp.id, rp.json
+			SELECT rp.id, rp.json, rp.payload
 			FROM request_payloads rp
 			JOIN requests r ON rp.id = r.id
 			ORDER BY r.timestamp DESC
@@ -393,7 +409,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		return Promise.all(
 			rows.map(async (row) => ({
 				id: row.id,
-				json: await decryptForList(row.id, row.json),
+				json: await decryptForList(row.id, row),
 			})),
 		);
 	}
@@ -406,14 +422,15 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			account_name: string | null;
 		}>
 	> {
-		const rows = await this.query<{
-			id: string;
-			json: string | null;
-			timestamp: number;
-			account_name: string | null;
-		}>(
+		const rows = await this.query<
+			{
+				id: string;
+				timestamp: number;
+				account_name: string | null;
+			} & StoredPayloadRow
+		>(
 			`
-			SELECT r.id, r.timestamp, rp.json, a.name as account_name
+			SELECT r.id, r.timestamp, rp.json, rp.payload, a.name as account_name
 			FROM requests r
 			LEFT JOIN request_payloads rp ON rp.id = r.id
 			LEFT JOIN accounts a ON r.account_used = a.id
@@ -426,7 +443,11 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			rows.map(async (row) => ({
 				id: row.id,
 				timestamp: row.timestamp,
-				json: row.json ? await decryptForList(row.id, row.json) : null,
+				// A request with no payload row at all has neither a binary
+				// envelope nor a legacy envelope — stay null rather than
+				// reporting a decode failure.
+				json:
+					row.payload || row.json ? await decryptForList(row.id, row) : null,
 				account_name: row.account_name,
 			})),
 		);

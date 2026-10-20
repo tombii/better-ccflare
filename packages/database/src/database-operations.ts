@@ -1678,8 +1678,13 @@ OAuth tokens will need to be re-authenticated.
 					const rowCount = countRow?.rowCount ?? 0;
 					// Measure actual data bytes for tables with known large text/blob columns
 					if (name === "request_payloads") {
+						// Payloads live in the binary `payload` column; the legacy
+						// `json` text column only still holds rows written before
+						// the binary format existed.
 						const sizeRow = await this.adapter.get<{ dataBytes: number }>(
-							`SELECT SUM(LENGTH(json)) AS dataBytes FROM "${name}"`,
+							`SELECT COALESCE(SUM(LENGTH(payload)), 0)
+							      + COALESCE(SUM(CASE WHEN payload IS NULL THEN LENGTH(json) ELSE 0 END), 0) AS dataBytes
+							 FROM "${name}"`,
 						);
 						return { name, rowCount, dataBytes: sizeRow?.dataBytes ?? 0 };
 					}

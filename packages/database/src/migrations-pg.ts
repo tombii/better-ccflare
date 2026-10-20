@@ -182,10 +182,18 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 	);
 
 	// Create request_payloads table
+	//
+	// `payload` holds the binary envelope (flags byte + zstd frame and/or
+	// AES-GCM ciphertext) and is where every new row goes. `json` holds the
+	// legacy text envelope (`zst:`/`enc:` + base64) written before the binary
+	// format existed; it is NOT NULL because older databases were created
+	// that way, and new rows leave it empty. Legacy rows age out through the
+	// payload retention sweep, so no data migration is needed.
 	await adapter.unsafe(`
 		CREATE TABLE IF NOT EXISTS request_payloads (
 			id TEXT PRIMARY KEY,
 			json TEXT NOT NULL,
+			payload BYTEA,
 			timestamp BIGINT,
 			FOREIGN KEY (id) REFERENCES requests(id) ON DELETE CASCADE
 		)
@@ -1084,6 +1092,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			table: "request_payloads",
 			column: "timestamp",
 			definition: "ALTER TABLE request_payloads ADD COLUMN timestamp BIGINT",
+		},
+		{
+			table: "request_payloads",
+			column: "payload",
+			definition: "ALTER TABLE request_payloads ADD COLUMN payload BYTEA",
 		},
 		{
 			table: "oauth_sessions",
