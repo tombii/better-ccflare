@@ -56,6 +56,9 @@ export function getInstance(_fastMode?: boolean): DatabaseOperations {
 					...(runtimeConfig.database.pageSize !== undefined && {
 						pageSize: runtimeConfig.database.pageSize,
 					}),
+					...(runtimeConfig.database.journalSizeLimitBytes !== undefined && {
+						journalSizeLimitBytes: runtimeConfig.database.journalSizeLimitBytes,
+					}),
 				}
 			: undefined;
 

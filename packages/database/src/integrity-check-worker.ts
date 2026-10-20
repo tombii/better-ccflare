@@ -39,6 +39,20 @@ self.onmessage = (event: MessageEvent<IntegrityCheckRequest>) => {
 	let db: Database | undefined;
 	try {
 		db = new Database(dbPath, { readonly: true });
+		// Apply the same memory-bounded PRAGMAs as `vacuum-worker.ts` before
+		// running any check. This connection is opened here, so the main
+		// process's `configureSqlite` settings don't apply; without these it
+		// inherits bun:sqlite's built-in defaults, which memory-map most of
+		// the DB file. `quick_check` / `integrity_check` read every page, so on
+		// a multi-GB database in a memory-limited container the mapped pages
+		// count against the cgroup and the check can OOM-kill the process.
+		//   - mmap_size = 0       : disable memory-mapped I/O entirely
+		//   - cache_size = -2000  : cap the page cache at ~2 MiB (the checks
+		//     stream pages; a large cache doesn't help them)
+		//   - temp_store = FILE   : keep any temp b-trees on disk, not in RAM
+		db.exec("PRAGMA mmap_size = 0");
+		db.exec("PRAGMA cache_size = -2000");
+		db.exec("PRAGMA temp_store = FILE");
 		db.exec(
 			`PRAGMA busy_timeout = ${Math.max(0, Math.trunc(Number(busyTimeoutMs) || 10000))}`,
 		);
