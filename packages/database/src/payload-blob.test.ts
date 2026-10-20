@@ -95,11 +95,13 @@ describe("payload blob envelope", () => {
 });
 
 describe("payload blob envelope with encryption enabled", () => {
-	const VALID_HEX_KEY =
+	const KEY_A =
 		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+	const KEY_B =
+		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
 	beforeEach(() => {
-		process.env.PAYLOAD_ENCRYPTION_KEY = VALID_HEX_KEY;
+		process.env.PAYLOAD_ENCRYPTION_KEY = KEY_A;
 	});
 
 	afterEach(() => {
@@ -119,6 +121,38 @@ describe("payload blob envelope with encryption enabled", () => {
 		const asText = new TextDecoder().decode(encoded);
 		// The plaintext must not be sitting in the row in the clear.
 		expect(asText).not.toContain(json.slice(0, 200));
+	});
+
+	it("uses the new key after PAYLOAD_ENCRYPTION_KEY changes", async () => {
+		// A restart with a rotated key must not leave new rows unreadable:
+		// the codec has to pick up the new key rather than keep using the
+		// one it imported first.
+		const json = JSON.stringify({ secret: true });
+		const withKeyA = await encodePayloadBlob(json);
+
+		process.env.PAYLOAD_ENCRYPTION_KEY = KEY_B;
+		const withKeyB = await encodePayloadBlob(json);
+
+		expect(withKeyB).not.toEqual(withKeyA);
+		expect(await decodePayloadBlob(withKeyB)).toBe(json);
+		// The row written under the old key must NOT decrypt under the new
+		// one — that is what proves the key actually switched.
+		await expect(decodePayloadBlob(withKeyA)).rejects.toThrow();
+	});
+
+	it("stops encrypting once the key is removed", async () => {
+		const json = JSON.stringify({ secret: true });
+		const encrypted = await encodePayloadBlob(json);
+		expect(encrypted[0] & PAYLOAD_FLAG_ENCRYPTED).toBe(PAYLOAD_FLAG_ENCRYPTED);
+
+		delete process.env.PAYLOAD_ENCRYPTION_KEY;
+
+		const plaintext = await encodePayloadBlob(json);
+		expect(plaintext[0] & PAYLOAD_FLAG_ENCRYPTED).toBe(0);
+		expect(await decodePayloadBlob(plaintext)).toBe(json);
+		// The stale key must be dropped, not kept around: the row written
+		// under it is now unreadable rather than silently decryptable.
+		await expect(decodePayloadBlob(encrypted)).rejects.toThrow();
 	});
 });
 
