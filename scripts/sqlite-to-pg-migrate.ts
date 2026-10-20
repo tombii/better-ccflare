@@ -93,9 +93,9 @@ const NATURAL_KEYS: Record<string, string[]> = {
  * unassigned and disabled.
  *
  * `where` identifies a pristine placeholder: a row still in the state the
- * schema seeded it with. Placeholders are only cleared while the table is
- * entirely pristine — see the table-level check in `copyTable` for why a
- * row-level test is not enough.
+ * schema seeded it with. Placeholders are only replaced during the initial
+ * import — see the check in `copyTable` and the migration state table for
+ * why a row-level test is not enough.
  */
 const SEEDED_PLACEHOLDER_TABLES: Record<
 	string,
@@ -186,6 +186,44 @@ const sqlite = new Database(sqlitePath);
 // statement names when the same connection runs many different query texts.
 const sql = new SQL({ url: databaseUrl, max: 4, prepare: false });
 
+/**
+ * Bookkeeping table: records which tables this script has already imported.
+ *
+ * It exists so that "replace the rows PostgreSQL's schema seeded as
+ * placeholders" can be limited to the initial import. A seeded placeholder
+ * (no combo assigned, family disabled) and a family the user deliberately
+ * turned off through the API are byte-for-byte the same row, so the data
+ * alone cannot tell them apart — only the knowledge that the table was
+ * already imported can. Once a table has been imported, any difference from
+ * the source is a user change and must be preserved.
+ */
+const MIGRATION_STATE_TABLE = "ccflare_migration_state";
+
+async function ensureStateTable(): Promise<void> {
+	await sql.unsafe(
+		`CREATE TABLE IF NOT EXISTS ${JSON.stringify(MIGRATION_STATE_TABLE)} (
+			table_name TEXT PRIMARY KEY,
+			imported_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+	);
+}
+
+async function wasImported(table: string): Promise<boolean> {
+	const rows = (await sql.unsafe(
+		`SELECT 1 AS ok FROM ${JSON.stringify(MIGRATION_STATE_TABLE)} WHERE table_name = $1`,
+		[table],
+	)) as unknown as { ok: number }[];
+	return rows.length > 0;
+}
+
+async function markImported(table: string): Promise<void> {
+	await sql.unsafe(
+		`INSERT INTO ${JSON.stringify(MIGRATION_STATE_TABLE)} (table_name)
+		 VALUES ($1) ON CONFLICT (table_name) DO NOTHING`,
+		[table],
+	);
+}
+
 async function pgColumns(table: string): Promise<
 	{ column_name: string; data_type: string; is_nullable: string }[]
 > {
@@ -258,13 +296,19 @@ async function copyTable(table: string): Promise<void> {
 	// SEEDED_PLACEHOLDER_TABLES for why this is needed.
 	const seeded = SEEDED_PLACEHOLDER_TABLES[table];
 	if (seeded) {
-		// Only while the target table is still ENTIRELY in its seeded state —
-		// every row unassigned and disabled. A seeded placeholder and a
-		// family the user deliberately unassigned and disabled are the same
-		// shape, so a row-level test cannot tell them apart; the table-level
-		// test can. Once any row carries a real assignment the table has
-		// been migrated (or the user has touched it), and a later run must
-		// not undo their changes.
+		// Replace the seeded placeholders only during the INITIAL import.
+		//
+		// A seeded placeholder (no combo assigned, family disabled) and a
+		// family the user deliberately turned off through the API are the
+		// same row, so the data cannot tell them apart. Two things can:
+		//
+		//   - the migration state table, which records that this table was
+		//     already imported — after that, any difference from the source is
+		//     a user change and must be preserved;
+		//   - and, as a fallback for a database whose state table was lost,
+		//     the table still being entirely in its seeded state, which can
+		//     only be true before the first import.
+		const alreadyImported = await wasImported(table);
 		const counts = (await sql.unsafe(
 			`SELECT count(*)::int AS total,
 			        count(*) FILTER (WHERE NOT (${seeded.where}))::int AS assigned
@@ -272,8 +316,9 @@ async function copyTable(table: string): Promise<void> {
 		)) as unknown as { total: number; assigned: number }[];
 		const rowCount = counts[0]?.total ?? 0;
 		const assignedRows = counts[0]?.assigned ?? 0;
+		const isInitialImport = !alreadyImported && rowCount > 0 && assignedRows === 0;
 
-		if (rowCount > 0 && assignedRows === 0) {
+		if (isInitialImport) {
 			// Still pristine — the initial import. Drop the placeholders for
 			// the families the source also has, so its rows land.
 			const sourceKeys = (
@@ -299,11 +344,11 @@ async function copyTable(table: string): Promise<void> {
 				}
 			}
 		} else {
-			// Not in its seeded state. Copy normally instead: ON CONFLICT DO
+			// Not the initial import. Copy normally instead: ON CONFLICT DO
 			// NOTHING keeps whatever PostgreSQL already holds (including a
 			// family the user disabled) and only adds families it lacks.
 			console.log(
-				`    (${table} has been migrated or edited — keeping PostgreSQL's rows as they are)`,
+				`    (${table} was already imported or has been edited — keeping PostgreSQL's rows as they are)`,
 			);
 		}
 	}
@@ -446,6 +491,11 @@ async function copyTable(table: string): Promise<void> {
 	console.log(
 		`  + ${table}: ${copied} rows inserted (${read} read from source)${dropped.length ? ` (${dropped.length} PG-only columns defaulted)` : ""}`,
 	);
+
+	// Record that this table has been imported, so a later run knows any
+	// difference from the source is a user change rather than a row it
+	// failed to copy.
+	await markImported(table);
 }
 
 function sqliteCount(table: string): number {
@@ -459,6 +509,8 @@ console.log(
 	`SQLite : ${sqlitePath}\nPostgres: ${databaseUrl.replace(/:[^:@/]*@/, ":***@")}\n`,
 );
 console.log("Copying tables:");
+// The bookkeeping table has to exist before the first copy can consult it.
+await ensureStateTable();
 const failedTables: string[] = [];
 for (const table of tables) {
 	try {
