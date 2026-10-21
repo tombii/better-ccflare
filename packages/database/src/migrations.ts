@@ -841,6 +841,57 @@ function ensureUniqueAccountsIndex(db: Database): void {
 	);
 }
 
+/**
+ * The exact key `idx_accounts_priority` must have. Both leading columns are
+ * DESC so the dashboard list (`ORDER BY priority DESC, request_count DESC`)
+ * is served by a plain index scan rather than an index scan plus a sort.
+ * Mirrors performance-indexes.ts and migrations-pg.ts — all three change
+ * together.
+ */
+const ACCOUNTS_PRIORITY_INDEX_SHAPE = [
+	{ name: "priority", desc: 1 },
+	{ name: "request_count", desc: 1 },
+	{ name: "last_used", desc: 0 },
+] as const;
+
+/**
+ * True when `idx_accounts_priority` exists AND has the key in
+ * `ACCOUNTS_PRIORITY_INDEX_SHAPE`. Reads the actual key columns rather than
+ * the stored `CREATE INDEX` text, so it is insensitive to formatting, and it
+ * reports false when the index is missing (nothing to drop) or carries an
+ * older definition (the legacy single-column `(priority)`, or the
+ * mixed-direction composite).
+ */
+function accountsPriorityIndexHasExpectedShape(db: Database): boolean {
+	const exists = db
+		.prepare(
+			`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_accounts_priority'`,
+		)
+		.get();
+	if (!exists) return false;
+
+	const keyColumns = (
+		db.prepare("PRAGMA index_xinfo(idx_accounts_priority)").all() as Array<{
+			seqno: number;
+			name: string | null;
+			key: number;
+			desc: number;
+		}>
+	)
+		.filter((c) => c.key === 1 && c.name !== null)
+		.sort((a, b) => a.seqno - b.seqno)
+		.map((c) => ({ name: c.name, desc: c.desc }));
+
+	return (
+		keyColumns.length === ACCOUNTS_PRIORITY_INDEX_SHAPE.length &&
+		keyColumns.every(
+			(c, i) =>
+				c.name === ACCOUNTS_PRIORITY_INDEX_SHAPE[i]?.name &&
+				c.desc === ACCOUNTS_PRIORITY_INDEX_SHAPE[i]?.desc,
+		)
+	);
+}
+
 export function runMigrations(db: Database, dbPath?: string): void {
 	// Ensure base schema exists first (outside transaction as it creates tables)
 	ensureSchema(db);
@@ -1962,13 +2013,15 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		// Both calls are idempotent, and inside this transaction they cost
 		// nothing when nothing was dropped.
 		//
-		// `idx_accounts_priority` is dropped immediately before it is
-		// re-created: `IF NOT EXISTS` alone leaves every database that already
-		// has the index on an older definition — the legacy single-column
-		// `(priority)`, or the mixed-direction composite — stuck with it
-		// forever, because a database only re-creates its accounts table once.
-		// Scoped to this one name and re-created on the next line.
-		db.run("DROP INDEX IF EXISTS idx_accounts_priority");
+		// `idx_accounts_priority` may still carry an older definition:
+		// `IF NOT EXISTS` alone never replaces it, and a database only
+		// re-creates its accounts table once. So its shape is checked and it
+		// is dropped only when it differs — on an already-correct database
+		// this pass issues no writes at all. Scoped to this one name; if it is
+		// dropped, addPerformanceIndexes() re-creates it on the next line.
+		if (!accountsPriorityIndexHasExpectedShape(db)) {
+			db.run("DROP INDEX IF EXISTS idx_accounts_priority");
+		}
 		addPerformanceIndexes(db);
 		ensureUniqueAccountsIndex(db);
 		dropRedundantRequestIndexes(db);

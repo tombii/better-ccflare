@@ -11,6 +11,8 @@
  */
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import { ensureSchema, runMigrations } from "./migrations";
 import { addPerformanceIndexes } from "./performance-indexes";
 
@@ -298,6 +300,25 @@ describe("accounts index set (SQLite)", () => {
 		expect(indexColumns(db, "idx_accounts_priority")).toHaveLength(3);
 	});
 
+	it("leaves a correctly shaped priority index untouched on later startups", () => {
+		// The end-of-migration pass must not rebuild the index on every boot:
+		// it verifies the key shape first and only drops when it differs.
+		//
+		// Asserted statically: a DROP + CREATE does not always change the
+		// index's root page (SQLite can reuse a freed one), so a behavioural
+		// probe passes either way. This checks the guard is actually wired in.
+		const source = fs.readFileSync(
+			path.join(import.meta.dir, "migrations.ts"),
+			"utf8",
+		);
+		const guardedDrop =
+			/if \(!accountsPriorityIndexHasExpectedShape\(db\)\) \{\s*db\.run\(\s*"DROP INDEX IF EXISTS idx_accounts_priority",?\s*\);?\s*\}/;
+		expect(source).toMatch(guardedDrop);
+		expect(
+			source.match(/DROP INDEX IF EXISTS idx_accounts_priority/g) ?? [],
+		).toHaveLength(1);
+	});
+
 	it("replaces a stale priority index on a database that needs no rebuild", () => {
 		// The upgrade path the rebuild tests miss: no `account_tier`, so no
 		// table rebuild runs and `IF NOT EXISTS` alone would leave the old
@@ -305,6 +326,9 @@ describe("accounts index set (SQLite)", () => {
 		for (const legacySql of [
 			"CREATE INDEX idx_accounts_priority ON accounts(priority)",
 			"CREATE INDEX idx_accounts_priority ON accounts(priority ASC, request_count DESC, last_used)",
+			// Same leading directions, wrong second column: the shape check
+			// must notice, not just compare the direction flags.
+			"CREATE INDEX idx_accounts_priority ON accounts(priority DESC, name DESC, last_used)",
 		]) {
 			const db = open();
 			ensureSchema(db);
