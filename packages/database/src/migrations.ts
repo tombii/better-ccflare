@@ -727,6 +727,51 @@ function collapseAccountDuplicatesPreservingState(db: Database): void {
 	}
 }
 
+/**
+ * Create the UNIQUE index on `(name, provider, COALESCE(custom_endpoint,''))`
+ * that enforces atomic account uniqueness, collapsing existing duplicates
+ * first.
+ *
+ * Why the DB constraint: the previous SELECT-then-INSERT pre-check in
+ * `assertAccountNameAvailable` is non-atomic and lets concurrent adds (or any
+ * path that bypasses the pre-check — e.g. cli-commands, oauth-flow,
+ * dashboard-web direct inserts) persist duplicate rows. The constraint closes
+ * the race; the pre-check remains as a friendly fast-path that returns a clean
+ * 400 without a wasted INSERT round-trip.
+ *
+ * The index cannot be created while duplicates exist — `CREATE UNIQUE INDEX`
+ * fails with "UNIQUE constraint failed" on the first colliding row — so
+ * duplicates are collapsed per tuple BEFORE creating it, **without destroying
+ * account state**: keep the row most likely to still hold working
+ * credentials, merge the others' state into it, and repoint every dependent
+ * row (combo_slots, requests, usage_snapshots) at the surviving id. An earlier
+ * implementation kept the arbitrary minimum-rowid row and DELETED the rest;
+ * that silently dropped live OAuth refresh tokens, cascade-removed combo
+ * slots, and orphaned request history rows whose `account_used` pointed at the
+ * deleted id.
+ *
+ * Idempotent: if the index already exists, skip both the dedup and the
+ * CREATE. Callers rely on that — it runs once on the normal path and again
+ * after the accounts rebuilds, which `DROP TABLE` the index.
+ */
+function ensureUniqueAccountsIndex(db: Database): void {
+	const alreadyExists = db
+		.prepare(
+			`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_accounts_unique_name_provider_endpoint'`,
+		)
+		.get();
+	if (alreadyExists) return;
+
+	collapseAccountDuplicatesPreservingState(db);
+	db.prepare(
+		`CREATE UNIQUE INDEX idx_accounts_unique_name_provider_endpoint
+		 ON accounts(name, provider, COALESCE(custom_endpoint, ''))`,
+	).run();
+	log.info(
+		"Created UNIQUE index idx_accounts_unique_name_provider_endpoint on accounts",
+	);
+}
+
 export function runMigrations(db: Database, dbPath?: string): void {
 	// Ensure base schema exists first (outside transaction as it creates tables)
 	ensureSchema(db);
@@ -1246,42 +1291,11 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			).run();
 		}
 
-		// Add UNIQUE index on (name, provider, COALESCE(custom_endpoint,'')) to
-		// enforce atomic uniqueness for the account-add path. The previous
-		// SELECT-then-INSERT pre-check in `assertAccountNameAvailable` is
-		// non-atomic and lets concurrent adds (or any path that bypasses the
-		// pre-check — e.g. cli-commands, oauth-flow, dashboard-web direct
-		// inserts) persist duplicate rows. The DB-level constraint closes
-		// the race; the pre-check remains as a friendly fast-path that returns
-		// a clean 400 without a wasted INSERT round-trip.
-		//
-		// The index cannot be created while duplicates exist — `CREATE UNIQUE
-		// INDEX` fails with "UNIQUE constraint failed" on the first colliding
-		// row. Collapse existing duplicates per tuple BEFORE creating the
-		// index, but **without destroying account state**: keep the row most
-		// likely to still hold working credentials, merge the others' state
-		// into it, and repoint every dependent row (combo_slots, requests,
-		// usage_snapshots) at the surviving id. An earlier implementation
-		// kept the arbitrary minimum-rowid row and DELETED the rest; that
-		// silently dropped live OAuth refresh tokens, cascade-removed combo
-		// slots, and orphaned request history rows whose `account_used`
-		// pointed at the deleted id. This block is idempotent: if the index
-		// already exists, skip both the dedup and the CREATE.
-		const uniqueAccountsIndexExists = db
-			.prepare(
-				`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_accounts_unique_name_provider_endpoint'`,
-			)
-			.get();
-		if (!uniqueAccountsIndexExists) {
-			collapseAccountDuplicatesPreservingState(db);
-			db.prepare(
-				`CREATE UNIQUE INDEX idx_accounts_unique_name_provider_endpoint
-				 ON accounts(name, provider, COALESCE(custom_endpoint, ''))`,
-			).run();
-			log.info(
-				"Created UNIQUE index idx_accounts_unique_name_provider_endpoint on accounts",
-			);
-		}
+		// Add UNIQUE index on (name, provider, COALESCE(custom_endpoint,'')).
+		// See `ensureUniqueAccountsIndex` for the reasoning. It is a named,
+		// re-runnable step because the accounts rebuilds later in this
+		// migration drop the index.
+		ensureUniqueAccountsIndex(db);
 
 		// Run API key storage migration to move API keys from refresh_token to api_key field
 		// This is a data migration that should happen after all schema changes
@@ -1839,15 +1853,23 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			);
 		}
 
-		// Re-apply the performance indexes LAST. The accounts table rebuilds
+		// Re-apply the accounts indexes LAST. The accounts table rebuilds
 		// above (DROP TABLE + CREATE TABLE AS SELECT + RENAME) drop every
 		// accounts index — including the UNIQUE name/provider/endpoint index and
-		// the ones created by the addPerformanceIndexes() call earlier in this
-		// function — so without this pass an upgraded database would run for a
-		// whole startup cycle without them. Both calls are idempotent
-		// (`IF NOT EXISTS`), and inside this transaction they cost nothing when
-		// nothing was dropped.
+		// the ones created earlier in this function — so without this pass an
+		// upgraded database would run for a whole startup cycle without them.
+		// Both calls are idempotent, and inside this transaction they cost
+		// nothing when nothing was dropped.
+		//
+		// `idx_accounts_priority` is dropped immediately before it is
+		// re-created: `IF NOT EXISTS` alone leaves every database that already
+		// has the index on an older definition — the legacy single-column
+		// `(priority)`, or the mixed-direction composite — stuck with it
+		// forever, because a database only re-creates its accounts table once.
+		// Scoped to this one name and re-created on the next line.
+		db.run("DROP INDEX IF EXISTS idx_accounts_priority");
 		addPerformanceIndexes(db);
+		ensureUniqueAccountsIndex(db);
 		dropRedundantRequestIndexes(db);
 	});
 

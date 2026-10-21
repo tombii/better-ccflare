@@ -290,6 +290,62 @@ describe("accounts index set (SQLite)", () => {
 		expect(indexColumns(db, "idx_accounts_priority")).toHaveLength(3);
 	});
 
+	it("replaces a stale priority index on a database that needs no rebuild", () => {
+		// The upgrade path the rebuild tests miss: no `account_tier`, so no
+		// table rebuild runs and `IF NOT EXISTS` alone would leave the old
+		// definition in place forever.
+		for (const legacySql of [
+			"CREATE INDEX idx_accounts_priority ON accounts(priority)",
+			"CREATE INDEX idx_accounts_priority ON accounts(priority ASC, request_count DESC, last_used)",
+		]) {
+			const db = open();
+			ensureSchema(db);
+			db.run(legacySql);
+
+			runMigrations(db);
+
+			expect(indexColumns(db, "idx_accounts_priority")).toEqual(
+				EXPECTED_PRIORITY_COLUMNS,
+			);
+			db.close();
+		}
+	});
+
+	it("keeps the UNIQUE account index when the account_tier rebuild drops it", () => {
+		// The uniqueness block runs before the rebuild, so the rebuild's DROP
+		// TABLE removes the index it just created. Without the end-of-migration
+		// re-run, duplicate accounts are accepted for a whole startup cycle.
+		const db = open();
+		ensureSchema(db);
+		db.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+		db.prepare(
+			"INSERT INTO accounts (id, name, provider, refresh_token, created_at, account_tier) VALUES (?, ?, ?, ?, ?, ?)",
+		).run("legacy-1", "dave", "anthropic", "rt", Date.now(), "pro");
+
+		runMigrations(db);
+
+		expect(
+			db
+				.prepare(
+					`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_accounts_unique_name_provider_endpoint'`,
+				)
+				.get(),
+		).toBeDefined();
+		// Constraint is live, not just present in sqlite_master. Use the
+		// provider the surviving row actually carries: migrations rewrite a
+		// legacy 'anthropic' provider to the console equivalent.
+		const survivor = db
+			.prepare("SELECT provider FROM accounts WHERE id = 'legacy-1'")
+			.get() as { provider: string };
+		expect(() =>
+			db
+				.prepare(
+					"INSERT INTO accounts (id, name, provider, refresh_token, created_at) VALUES (?, ?, ?, ?, ?)",
+				)
+				.run("legacy-2", "dave", survivor.provider, "rt2", Date.now()),
+		).toThrow();
+	});
+
 	it("dashboard list ORDER BY priority DESC, request_count DESC scans the composite without a temp b-tree", () => {
 		const db = open();
 		ensureSchema(db);
