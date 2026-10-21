@@ -403,6 +403,12 @@ export class StatsRepository {
 
 	/**
 	 * Get API key statistics with success rates
+	 *
+	 * @deprecated No production callers. Retained for the `DatabaseOperations`
+	 * passthrough and the live-PG test suite. Has no time bound or LIMIT; do
+	 * not wire this to a request path without adding one. (The CLI's
+	 * `getApiKeyStats` in `cli-commands/src/commands/api-key.ts` is a
+	 * different function — it counts `api_keys` rows directly.)
 	 */
 	async getApiKeyStats(): Promise<
 		Array<{
