@@ -1217,68 +1217,66 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			(col) => col.name === "refresh_token",
 		);
 		if (refreshTokenCol && refreshTokenCol.notnull === 1) {
-			// Table rebuild required — SQLite doesn't support ALTER COLUMN
-			db.prepare(`
-				CREATE TABLE accounts_new (
-					id TEXT PRIMARY KEY,
-					name TEXT NOT NULL,
-					provider TEXT DEFAULT 'anthropic',
-					api_key TEXT,
-					refresh_token TEXT,
-					access_token TEXT,
-					expires_at INTEGER,
-					created_at INTEGER NOT NULL,
-					last_used INTEGER,
-					request_count INTEGER DEFAULT 0,
-					total_requests INTEGER DEFAULT 0,
-					priority INTEGER DEFAULT 0,
-					rate_limited_until INTEGER,
-					session_start INTEGER,
-					session_request_count INTEGER DEFAULT 0,
-					paused INTEGER DEFAULT 0,
-					rate_limit_reset INTEGER,
-					rate_limit_status TEXT,
-					rate_limit_remaining INTEGER,
-					auto_fallback_enabled INTEGER DEFAULT 0,
-					custom_endpoint TEXT,
-					auto_refresh_enabled INTEGER DEFAULT 0,
-					model_mappings TEXT,
-					request_transformer TEXT,
-					cross_region_mode TEXT DEFAULT 'geographic',
-					model_fallbacks TEXT,
-					auto_pause_on_overage_enabled INTEGER DEFAULT 0,
-					pause_reason TEXT,
-					requires_reauth INTEGER DEFAULT 0
-				)
-			`).run();
+			// Table rebuild required — SQLite doesn't support ALTER COLUMN.
+			//
+			// Built dynamically on purpose. A fixed column list silently drops
+			// the VALUES of every column added to `accounts` since that list was
+			// written (billing_type, refresh_token_issued_at, the usage-pause
+			// settings, …) — the migration still succeeds, and the data is gone.
+			// The rebuild takes the table's current columns, with refresh_token
+			// made nullable, and copies every one of them.
+			const rebuildColumns = (
+				db.prepare("PRAGMA table_info(accounts)").all() as Array<{
+					name: string;
+					type: string;
+					notnull: number;
+					dflt_value: string | null;
+					pk: number;
+				}>
+			).map((col) => {
+				// Every other constraint is preserved verbatim; refresh_token is
+				// the single one being relaxed.
+				const notNull = col.notnull === 1 && col.name !== "refresh_token";
+				const parts = [`"${col.name}"`, col.type || "TEXT"];
+				if (col.pk > 0) parts.push("PRIMARY KEY");
+				if (notNull) parts.push("NOT NULL");
+				if (col.dflt_value !== null) parts.push(`DEFAULT ${col.dflt_value}`);
+				return parts.join(" ");
+			});
+			db.prepare(
+				`CREATE TABLE accounts_new (${rebuildColumns.join(", ")})`,
+			).run();
 
-			// Copy data — convert empty-string sentinels back to NULL for API-key providers
-			db.prepare(`
-				INSERT INTO accounts_new SELECT
-					id, name, provider, api_key,
-					CASE WHEN refresh_token = '' THEN NULL ELSE refresh_token END,
-					NULLIF(access_token, ''),
-					expires_at, created_at, last_used,
-					request_count, total_requests, priority,
-					rate_limited_until, session_start, session_request_count,
-					paused, rate_limit_reset, rate_limit_status, rate_limit_remaining,
-					auto_fallback_enabled, custom_endpoint, auto_refresh_enabled,
-					model_mappings, request_transformer, cross_region_mode, model_fallbacks,
-					auto_pause_on_overage_enabled, pause_reason, requires_reauth
-				FROM accounts
-			`).run();
+			// Copy data — convert empty-string sentinels back to NULL for API-key
+			// providers. Every column is copied by name from the closed-over list;
+			// a future column is carried automatically.
+			const copyExpr = (name: string): string => {
+				if (name === "refresh_token") {
+					return `CASE WHEN refresh_token = '' THEN NULL ELSE refresh_token END`;
+				}
+				if (name === "access_token") return `NULLIF(access_token, '')`;
+				return `"${name}"`;
+			};
+			const copyList = (
+				db.prepare("PRAGMA table_info(accounts)").all() as Array<{
+					name: string;
+				}>
+			)
+				.map((col) => copyExpr(col.name))
+				.join(", ");
+			db.prepare(
+				`INSERT INTO accounts_new SELECT ${copyList} FROM accounts`,
+			).run();
 
 			db.prepare(`DROP TABLE accounts`).run();
 			db.prepare(`ALTER TABLE accounts_new RENAME TO accounts`).run();
 
-			// Recreate indexes. `CREATE TABLE ... AS SELECT` keeps only column
-			// names/affinities — PRIMARY KEY, NOT NULL and DEFAULT are all dropped —
-			// so `accounts_new.id` is no longer a primary key. Without
-			// `idx_accounts_id`, duplicate account ids become possible on upgraded
-			// databases (fresh ones keep the PK from ensureSchema()). Do not remove
-			// this index unless the rebuild is changed to an explicit CREATE TABLE.
-			// `idx_accounts_name` and the composite `idx_accounts_priority` are
-			// owned by addPerformanceIndexes(), which runs after the rebuilds.
+			// Recreate indexes. This rebuild is now an explicit CREATE TABLE, so
+			// the PRIMARY KEY survives and `idx_accounts_id` is strictly
+			// redundant here; it is kept because the account_tier rebuild (a
+			// CREATE TABLE AS SELECT) still drops the PK, and a database can run
+			// both. `idx_accounts_name` and the composite `idx_accounts_priority`
+			// are owned by addPerformanceIndexes(), which runs after the rebuilds.
 			db.prepare(
 				`CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_id ON accounts(id)`,
 			).run();

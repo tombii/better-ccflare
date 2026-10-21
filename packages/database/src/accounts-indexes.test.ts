@@ -377,6 +377,50 @@ describe("accounts index set (SQLite)", () => {
 		).toEqual({ id: "legacy-1", name: "legacy" });
 	});
 
+	it("both rebuilds preserve values in columns added after their fixed lists", () => {
+		// The failure mode this guards: a rebuild with a fixed column list drops
+		// the VALUES of every column it does not name, while still succeeding.
+		// billing_type / refresh_token_issued_at / peak_hours_pause_enabled all
+		// postdate the refresh_token rebuild's original list.
+		const db = open();
+		simulateLegacyAccounts(db, {
+			accountTier: true,
+			refreshTokenNotNull: true,
+		});
+		db.prepare(
+			`INSERT INTO accounts
+			   (id, name, provider, refresh_token, created_at, billing_type,
+			    refresh_token_issued_at, peak_hours_pause_enabled, account_tier)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		).run(
+			"keep-1",
+			"keeper",
+			"anthropic",
+			"rt",
+			Date.now(),
+			"plan",
+			12345,
+			1,
+			"pro",
+		);
+
+		runMigrations(db);
+
+		const row = db
+			.prepare(
+				`SELECT billing_type, refresh_token_issued_at, peak_hours_pause_enabled
+				   FROM accounts WHERE id = ?`,
+			)
+			.get("keep-1") as {
+			billing_type: string | null;
+			refresh_token_issued_at: number | null;
+			peak_hours_pause_enabled: number;
+		};
+		expect(row.billing_type).toBe("plan");
+		expect(row.refresh_token_issued_at).toBe(12345);
+		expect(row.peak_hours_pause_enabled).toBe(1);
+	});
+
 	it("legacy upgrade with a provider collision completes instead of throwing", () => {
 		// Two rows that are unique under their old providers but collide once the
 		// muse-spark -> meta rewrite runs. The rebuild drops the UNIQUE index
