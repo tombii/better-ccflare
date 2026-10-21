@@ -601,6 +601,289 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Post-migration statistics maintenance (ANALYZE / VACUUM ANALYZE)
+// ---------------------------------------------------------------------------
+
+describe("post-migration ANALYZE after backfills (static)", () => {
+	const pgSource = fs.readFileSync(PG_SOURCE_PATH, "utf8");
+
+	/**
+	 * Source body of the top-level function/method that starts at `header`
+	 * (matched by indexOf), ending at the first line that closes at column 0.
+	 */
+	function blockAt(header: string): string {
+		const start = pgSource.indexOf(header);
+		expect(start).toBeGreaterThan(-1);
+		const end = pgSource.indexOf("\n}\n", start);
+		expect(end).toBeGreaterThan(start);
+		return pgSource.slice(start, end);
+	}
+
+	function fnBody(name: string): string {
+		return blockAt(name);
+	}
+
+	it("runMigrationsPg calls the analyze step after the backfills and the dedup collapse", () => {
+		const body = fnBody("export async function runMigrationsPg");
+		const backfill = body.indexOf("await runPgUsageBackfills(adapter");
+		const collapse = body.indexOf(
+			"await collapseAccountDuplicatesPreservingStatePg(",
+		);
+		const analyze = body.indexOf("await analyzeRewrittenTablesPg(adapter");
+		expect(backfill).toBeGreaterThan(-1);
+		expect(collapse).toBeGreaterThan(backfill);
+		expect(analyze).toBeGreaterThan(collapse);
+	});
+
+	it("analyzeRewrittenTablesPg only touches the recommended table set", () => {
+		const body = fnBody("export async function analyzeRewrittenTablesPg");
+		expect(body).toContain("PG_ANALYZE_TABLES.has(table)");
+		const set = pgSource.slice(
+			pgSource.indexOf("const PG_ANALYZE_TABLES"),
+			pgSource.indexOf("]);", pgSource.indexOf("const PG_ANALYZE_TABLES")),
+		);
+		expect(set).toContain('"accounts"');
+		expect(set).toContain('"request_payloads"');
+		expect(set).toContain('"requests"');
+	});
+
+	it("accounts and request_payloads are ANALYZEd; VACUUM is limited to accounts and gated on deleted rows", () => {
+		const body = fnBody("export async function analyzeRewrittenTablesPg");
+		const vacuumGate = body.indexOf(
+			"if (deleted > 0 && PG_VACUUM_ELIGIBLE_TABLES.has(table))",
+		);
+		const vacuum = body.indexOf("VACUUM (ANALYZE) ${table}");
+		const analyze = body.indexOf("ANALYZE ${table}");
+		expect(vacuumGate).toBeGreaterThan(-1);
+		expect(vacuum).toBeGreaterThan(vacuumGate);
+		// The plain ANALYZE path is what accounts / request_payloads take.
+		expect(analyze).toBeGreaterThan(-1);
+		const eligible = pgSource.slice(
+			pgSource.indexOf("const PG_VACUUM_ELIGIBLE_TABLES"),
+			pgSource.indexOf(
+				");",
+				pgSource.indexOf("const PG_VACUUM_ELIGIBLE_TABLES"),
+			),
+		);
+		expect(eligible).toContain('"accounts"');
+		expect(eligible).not.toContain('"requests"');
+		expect(eligible).not.toContain('"request_payloads"');
+	});
+
+	it("the analyze step is guarded on recorded work, so a no-op run emits nothing", () => {
+		const body = fnBody("export async function analyzeRewrittenTablesPg");
+		const guard = body.indexOf("if (tables.length === 0) {");
+		const reserve = body.indexOf("adapter.getSQL().reserve()");
+		expect(guard).toBeGreaterThan(-1);
+		expect(reserve).toBeGreaterThan(guard);
+		// The guard compares the rows the backfill actually changed, not
+		// whether the table is in scope.
+		expect(body).toContain(
+			"work.changed(table) >= PG_ANALYZE_MIN_CHANGED_ROWS",
+		);
+	});
+
+	it("the backfills record only the rows they really rewrote", () => {
+		const body = fnBody("export async function runPgUsageBackfills");
+		// Every backfill statement reports its affected-row count…
+		expect(body.split("adapter.runWithChanges(").length - 1).toBe(4);
+		// …and records it against the table it touched.
+		expect(body).toContain('work.recordChanged("accounts", changed)');
+		expect(body).toContain('work.recordChanged("accounts", pauseReasonRows)');
+		expect(body).toContain(
+			'work.recordChanged("request_payloads", payloadRows)',
+		);
+		// Nothing claims work it did not measure.
+		expect(body).not.toContain("adapter.unsafe(");
+	});
+
+	it("ANALYZE / VACUUM run outside a transaction and are bounded by lock_timeout", () => {
+		const body = fnBody("export async function analyzeRewrittenTablesPg");
+		// VACUUM cannot run inside a transaction block.
+		expect(body).not.toContain("BEGIN");
+		expect(body).not.toContain("adapter.transaction");
+		const lock = body.indexOf("SET lock_timeout");
+		expect(lock).toBeGreaterThan(-1);
+		expect(lock).toBeLessThan(body.indexOf("VACUUM (ANALYZE) ${table}"));
+		expect(lock).toBeLessThan(body.indexOf("ANALYZE ${table}"));
+		expect(body).toContain("RESET lock_timeout");
+	});
+});
+
+describe("post-migration ANALYZE after backfills (behaviour)", () => {
+	const pgModule = () => import("./migrations-pg");
+
+	function fakeAdapter() {
+		const statements: string[] = [];
+		let released = false;
+		const conn = {
+			unsafe: async (q: string) => {
+				const normalised = q.replace(/\s+/g, " ").trim();
+				statements.push(normalised);
+				if (normalised.startsWith("SHOW statement_timeout"))
+					return [{ statement_timeout: "7s" }];
+				return [];
+			},
+			release: () => {
+				released = true;
+			},
+		};
+		let reserved = 0;
+		const adapter = {
+			getSQL: () => ({
+				reserve: async () => {
+					reserved++;
+					return conn;
+				},
+			}),
+		} as any;
+		return {
+			adapter,
+			statements,
+			isReleased: () => released,
+			reservations: () => reserved,
+		};
+	}
+
+	const maintenance = (st: string[]) =>
+		st.filter((q) => q.startsWith("ANALYZE ") || q.startsWith("VACUUM"));
+
+	it("emits nothing and reserves no connection when the backfill changed nothing", async () => {
+		const { PgTableWorkTracker, analyzeRewrittenTablesPg } = await pgModule();
+		const f = fakeAdapter();
+		await analyzeRewrittenTablesPg(f.adapter, new PgTableWorkTracker());
+		expect(f.statements).toEqual([]);
+		expect(f.reservations()).toBe(0);
+	});
+
+	it("a no-op run of every backfill records no work", async () => {
+		const {
+			PgTableWorkTracker,
+			runPgUsageBackfills,
+			analyzeRewrittenTablesPg,
+		} = await pgModule();
+		const work = new PgTableWorkTracker();
+		const bodies: string[] = [];
+		const adapter = {
+			runWithChanges: async (q: string) => {
+				bodies.push(q);
+				return 0;
+			},
+		} as any;
+		await runPgUsageBackfills(adapter, work, {
+			fiveHourFlagIsNew: false,
+			weeklyFlagIsNew: false,
+		});
+		expect(bodies.length).toBe(2);
+		expect(work.changedTables()).toEqual([]);
+
+		const f = fakeAdapter();
+		await analyzeRewrittenTablesPg(f.adapter, work);
+		expect(maintenance(f.statements)).toEqual([]);
+	});
+
+	it("ANALYZEs each table the backfill actually rewrote", async () => {
+		const { PgTableWorkTracker, analyzeRewrittenTablesPg } = await pgModule();
+		const work = new PgTableWorkTracker();
+		work.recordChanged("accounts", 3);
+		work.recordChanged("request_payloads", 120);
+		const f = fakeAdapter();
+		await analyzeRewrittenTablesPg(f.adapter, work);
+		expect(maintenance(f.statements)).toEqual([
+			"ANALYZE accounts",
+			"ANALYZE request_payloads",
+		]);
+		expect(f.isReleased()).toBe(true);
+	});
+
+	it("forces the flag backfill to be measured by runPgUsageBackfills", async () => {
+		const { PgTableWorkTracker, runPgUsageBackfills } = await pgModule();
+		const work = new PgTableWorkTracker();
+		const adapter = {
+			runWithChanges: async (q: string) =>
+				q.includes("usage_pause") ? 2 : q.includes("pause_reason") ? 1 : 0,
+		} as any;
+		await runPgUsageBackfills(adapter, work, {
+			fiveHourFlagIsNew: true,
+			weeklyFlagIsNew: true,
+		});
+		expect(work.changed("accounts")).toBe(5);
+		expect(work.changed("request_payloads")).toBe(0);
+	});
+
+	it("VACUUMs accounts only when rows were actually deleted there", async () => {
+		const { PgTableWorkTracker, analyzeRewrittenTablesPg } = await pgModule();
+		const work = new PgTableWorkTracker();
+		work.recordDeleted("accounts", 2);
+		work.recordChanged("requests", 40);
+		const f = fakeAdapter();
+		await analyzeRewrittenTablesPg(f.adapter, work);
+		expect(maintenance(f.statements)).toEqual([
+			"VACUUM (ANALYZE) accounts",
+			"ANALYZE requests",
+		]);
+	});
+
+	it("never VACUUMs a high-volume table, even when rows were deleted from it", async () => {
+		const { PgTableWorkTracker, analyzeRewrittenTablesPg } = await pgModule();
+		const work = new PgTableWorkTracker();
+		work.recordDeleted("request_payloads", 5000);
+		const f = fakeAdapter();
+		await analyzeRewrittenTablesPg(f.adapter, work);
+		expect(maintenance(f.statements)).toEqual(["ANALYZE request_payloads"]);
+	});
+
+	it("lock_timeout is set before any maintenance and reset afterwards; statement_timeout restored to the pool value", async () => {
+		const { PgTableWorkTracker, analyzeRewrittenTablesPg } = await pgModule();
+		const work = new PgTableWorkTracker();
+		work.recordChanged("accounts", 1);
+		const f = fakeAdapter();
+		await analyzeRewrittenTablesPg(f.adapter, work);
+		const st = f.statements;
+		const lock = st.findIndex((q) => q.startsWith("SET lock_timeout"));
+		const timeout = st.findIndex((q) => q.startsWith("SET statement_timeout"));
+		const analyze = st.indexOf("ANALYZE accounts");
+		expect(lock).toBeGreaterThan(-1);
+		expect(timeout).toBeGreaterThan(lock);
+		expect(analyze).toBeGreaterThan(timeout);
+		expect(st).toContain("RESET lock_timeout");
+		// RESET would restore the server default (no timeout) on a pooled
+		// connection; the pool's own value must come back.
+		expect(st).toContain("SET statement_timeout = '7s'");
+		expect(st.at(-2)).toBe("RESET lock_timeout");
+	});
+
+	it("a failure on one table is a warning; the rest still run and the connection is released", async () => {
+		const { PgTableWorkTracker, analyzeRewrittenTablesPg } = await pgModule();
+		const work = new PgTableWorkTracker();
+		work.recordChanged("accounts", 1);
+		work.recordChanged("request_payloads", 1);
+		let released = false;
+		const statements: string[] = [];
+		const conn = {
+			unsafe: async (q: string) => {
+				statements.push(q);
+				if (q === "ANALYZE accounts")
+					throw new Error("canceling statement due to lock timeout");
+				if (q.startsWith("SHOW")) return [{ statement_timeout: "7s" }];
+				return [];
+			},
+			release: () => {
+				released = true;
+			},
+		};
+		const adapter = {
+			getSQL: () => ({ reserve: async () => conn }),
+		} as any;
+		await expect(
+			analyzeRewrittenTablesPg(adapter, work),
+		).resolves.toBeUndefined();
+		expect(statements).toContain("ANALYZE request_payloads");
+		expect(released).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Live PostgreSQL smoke test — only runs when a real PG server is reachable.
 // ---------------------------------------------------------------------------
 

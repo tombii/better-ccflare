@@ -465,9 +465,20 @@ function pgFreshest(col: string): string {
 		    LIMIT 1)`;
 }
 
+export interface PgCollapseResult {
+	/** Duplicate `accounts` rows that were removed. */
+	deletedAccounts: number;
+	/** `requests` rows repointed to the surviving account id. */
+	repointedRequests: number;
+	/** `combo_slots` rows repointed to the surviving account id. */
+	repointedComboSlots: number;
+	/** `usage_snapshots` rows repointed to the surviving account id. */
+	repointedUsageSnapshots: number;
+}
+
 async function collapseAccountDuplicatesPreservingStatePg(
 	adapter: BunSqlAdapter,
-): Promise<void> {
+): Promise<PgCollapseResult> {
 	// Find every tuple with > 1 row. COALESCE(custom_endpoint,'') is the
 	// canonical form of the future UNIQUE index, matching the SQLite path.
 	// adapter.get returns one row; we need all groups — use unsafe.
@@ -478,7 +489,12 @@ async function collapseAccountDuplicatesPreservingStatePg(
 		 HAVING COUNT(*) > 1`,
 	)) as Array<{ name: string; provider: string; ep: string }>;
 	if (groups.length === 0) {
-		return;
+		return {
+			deletedAccounts: 0,
+			repointedRequests: 0,
+			repointedComboSlots: 0,
+			repointedUsageSnapshots: 0,
+		};
 	}
 
 	let totalDeleted = 0;
@@ -692,6 +708,285 @@ async function collapseAccountDuplicatesPreservingStatePg(
 				`request-history row(s), and ${totalRepointedSnapshots} usage-snapshot row(s) ` +
 				`to the surviving account ids.`,
 		);
+	}
+
+	return {
+		deletedAccounts: totalDeleted,
+		repointedRequests: totalRepointedRequests,
+		repointedComboSlots: totalRepointedSlots,
+		repointedUsageSnapshots: totalRepointedSnapshots,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Post-migration statistics maintenance (ANALYZE / VACUUM ANALYZE)
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimum number of rows a table must have had changed by a migration run
+ * before its planner statistics are refreshed.
+ *
+ * The floor is deliberately low (one row): the point of the guard is to skip
+ * maintenance for a migration that did NO work — a fresh install, or a restart
+ * where every backfill matched zero rows. A run that changed even one row did
+ * real work that the planner's statistics no longer describe (row counts feed
+ * the planner directly, and a single increment is enough to shift a table
+ * across a plan boundary).
+ */
+export const PG_ANALYZE_MIN_CHANGED_ROWS = 1;
+
+/**
+ * Tables whose planner statistics are refreshed after a migration rewrote
+ * them.
+ *
+ * `requests` is in the set but is NEVER analyzed unconditionally: it is the
+ * highest-volume table and its statistics are autovacuum's job. It only
+ * appears here when the dedup collapse actually rewrote request rows.
+ */
+const PG_ANALYZE_TABLES: ReadonlySet<string> = new Set([
+	"accounts",
+	"request_payloads",
+	"requests",
+]);
+
+/**
+ * Tables that may be VACUUMed when rows were deleted from them.
+ *
+ * VACUUM takes an ACCESS EXCLUSIVE lock, so it is restricted to the small
+ * `accounts` table. The high-volume `requests` table only ever gets a plain
+ * ANALYZE (ShareUpdateExclusiveLock — reads and writes keep working).
+ */
+const PG_VACUUM_ELIGIBLE_TABLES: ReadonlySet<string> = new Set(["accounts"]);
+
+/**
+ * How long the post-migration maintenance statements may wait for a lock.
+ * Bounds how long a startup can be blocked by a busy server.
+ */
+const PG_MAINTENANCE_LOCK_TIMEOUT = "10s";
+
+/**
+ * How long a single post-migration maintenance statement may run. Lifted
+ * above the pool's request-path statement_timeout (~7s) so a statistics
+ * refresh on a large table is not cancelled halfway, but still bounded.
+ */
+const PG_MAINTENANCE_STATEMENT_TIMEOUT = "120s";
+
+/**
+ * Per-table record of the rows a migration run actually rewrote.
+ *
+ * The distinction this type exists for is "this migration touched this
+ * table" versus "this migration *might* touch this table": only the former
+ * justifies the cost of refreshing planner statistics afterwards. Every
+ * count is the number of rows the statement REALLY changed (PostgreSQL
+ * reports it), not the number of rows the statement could have matched.
+ */
+export class PgTableWorkTracker {
+	private readonly changedRows = new Map<string, number>();
+	private readonly deletedRows = new Map<string, number>();
+
+	/** Record `rows` rows written (inserted or updated) in `table`. */
+	recordChanged(table: string, rows: number): void {
+		if (!Number.isFinite(rows) || rows <= 0) return;
+		this.changedRows.set(table, (this.changedRows.get(table) ?? 0) + rows);
+	}
+
+	/** Record `rows` rows removed from `table`. */
+	recordDeleted(table: string, rows: number): void {
+		if (!Number.isFinite(rows) || rows <= 0) return;
+		this.deletedRows.set(table, (this.deletedRows.get(table) ?? 0) + rows);
+		this.recordChanged(table, rows);
+	}
+
+	/** Rows written in `table` during this run. */
+	changed(table: string): number {
+		return this.changedRows.get(table) ?? 0;
+	}
+
+	/** Rows removed from `table` during this run. */
+	deleted(table: string): number {
+		return this.deletedRows.get(table) ?? 0;
+	}
+
+	/** Tables with at least one changed row, in a stable (sorted) order. */
+	changedTables(): string[] {
+		return [...this.changedRows.keys()].sort();
+	}
+}
+
+/**
+ * The bulk backfills of `runMigrationsPg`, extracted so the work they do can
+ * be measured and the planner statistics refreshed afterwards.
+ *
+ * Each statement reports the number of rows it REALLY changed, and that
+ * count is what decides whether the table gets an ANALYZE later. On a
+ * database where every backfill matches zero rows (the common case: a
+ * restart of an already-migrated install) nothing is recorded and no
+ * statistics maintenance runs at all.
+ */
+export async function runPgUsageBackfills(
+	adapter: BunSqlAdapter,
+	work: PgTableWorkTracker,
+	options: { fiveHourFlagIsNew: boolean; weeklyFlagIsNew: boolean },
+): Promise<void> {
+	// A usage-pause threshold written before the enabled flags existed was in
+	// force by virtue of being set at all; keep it that way (mirrors SQLite).
+	// Guarded on the flags being new: from then on, `enabled = 0` with a
+	// percentage still stored is a deliberate "off", not a row to repair.
+	if (options.fiveHourFlagIsNew) {
+		const changed = await adapter.runWithChanges(
+			`UPDATE accounts
+			 SET usage_pause_five_hour_enabled = 1
+			 WHERE usage_pause_five_hour_threshold IS NOT NULL`,
+		);
+		work.recordChanged("accounts", changed);
+	}
+	if (options.weeklyFlagIsNew) {
+		const changed = await adapter.runWithChanges(
+			`UPDATE accounts
+			 SET usage_pause_weekly_enabled = 1
+			 WHERE usage_pause_weekly_threshold IS NOT NULL`,
+		);
+		work.recordChanged("accounts", changed);
+	}
+
+	// Backfill pause_reason for existing paused accounts (mirrors SQLite migration)
+	const pauseReasonRows = await adapter.runWithChanges(
+		`UPDATE accounts
+		 SET pause_reason = 'manual'
+		 WHERE COALESCE(paused, 0) = 1 AND pause_reason IS NULL`,
+	);
+	work.recordChanged("accounts", pauseReasonRows);
+
+	// Backfill request_payloads.timestamp from requests table
+	const payloadRows = await adapter.runWithChanges(
+		`UPDATE request_payloads rp
+		 SET timestamp = r.timestamp
+		 FROM requests r
+		 WHERE r.id = rp.id AND rp.timestamp IS NULL`,
+	);
+	work.recordChanged("request_payloads", payloadRows);
+}
+
+/**
+ * Refresh the planner statistics of the tables a migration run actually
+ * rewrote.
+ *
+ * `ANALYZE` takes a ShareUpdateExclusiveLock — brief, and it does not block
+ * reads or writes. `VACUUM (ANALYZE)` is heavier (it rewrites the table and
+ * takes an ACCESS EXCLUSIVE lock), so it is only used for the small
+ * `accounts` table and only when rows were actually DELETED from it.
+ *
+ * Both run on one connection reserved from the pool so that the
+ * `lock_timeout` set here applies to the statement that follows it (the pool
+ * is multi-connection, so a `SET` issued on its own would be a no-op for the
+ * next statement). The timeout bounds how long startup can be blocked
+ * waiting for a lock; a timeout is a warning, never a crash.
+ */
+export async function analyzeRewrittenTablesPg(
+	adapter: BunSqlAdapter,
+	work: PgTableWorkTracker,
+): Promise<void> {
+	const tables = work
+		.changedTables()
+		.filter(
+			(table) =>
+				PG_ANALYZE_TABLES.has(table) &&
+				work.changed(table) >= PG_ANALYZE_MIN_CHANGED_ROWS,
+		);
+	if (tables.length === 0) {
+		return;
+	}
+
+	let conn: { unsafe(q: string): Promise<unknown>; release(): unknown };
+	try {
+		conn = await adapter.getSQL().reserve();
+	} catch (error) {
+		log.warn(
+			`Skipping post-migration ANALYZE (no dedicated connection): ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return;
+	}
+
+	const analyzed: string[] = [];
+	const vacuumed: string[] = [];
+	let previousTimeout: string | null = null;
+	try {
+		// Bound the lock WAIT so a busy server cannot stall startup. ANALYZE
+		// needs a ShareUpdateExclusiveLock, which autovacuum can hold for a
+		// while on a big table; VACUUM needs an ACCESS EXCLUSIVE lock.
+		await conn.unsafe(`SET lock_timeout = '${PG_MAINTENANCE_LOCK_TIMEOUT}'`);
+		// The pool's server-side statement_timeout (~7s) is tuned for the
+		// request path and would cancel a statistics refresh on a large table.
+		// Lift it to a bounded value for these statements only — bounded, not
+		// unlimited, so a pathological table cannot stall startup forever.
+		//
+		// The previous value is captured and restored explicitly rather than
+		// with RESET: the pool sets statement_timeout per connection at
+		// connect time, so RESET would restore the SERVER default (no timeout)
+		// and leave this pooled connection unprotected for whoever uses it next.
+		const shown = await conn
+			.unsafe("SHOW statement_timeout")
+			.then((rows) => {
+				const row = (rows as Array<Record<string, unknown>> | undefined)?.[0];
+				const value = row?.statement_timeout;
+				return typeof value === "string" ? value : null;
+			})
+			.catch(() => null);
+		previousTimeout = shown;
+		await conn.unsafe(
+			`SET statement_timeout = '${PG_MAINTENANCE_STATEMENT_TIMEOUT}'`,
+		);
+		for (const table of tables) {
+			const deleted = work.deleted(table);
+			if (deleted > 0 && PG_VACUUM_ELIGIBLE_TABLES.has(table)) {
+				// VACUUM cannot run inside a transaction block. runMigrationsPg is
+				// not wrapped in one, and this statement is issued on its own
+				// (autocommit) connection.
+				try {
+					await conn.unsafe(`VACUUM (ANALYZE) ${table}`);
+					vacuumed.push(table);
+				} catch (error) {
+					log.warn(
+						`VACUUM (ANALYZE) ${table} failed: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+				continue;
+			}
+			try {
+				await conn.unsafe(`ANALYZE ${table}`);
+				analyzed.push(table);
+			} catch (error) {
+				log.warn(
+					`ANALYZE ${table} failed: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+		}
+	} finally {
+		try {
+			await conn.unsafe("RESET lock_timeout");
+			// Put the connection's own statement_timeout back (the value the
+			// pool configured for it), not the server default.
+			await conn.unsafe(
+				previousTimeout
+					? `SET statement_timeout = '${previousTimeout}'`
+					: "RESET statement_timeout",
+			);
+		} catch {
+			// Best effort: the connection is released regardless.
+		}
+		try {
+			await conn.release();
+		} catch {
+			// Nothing useful to do if the pool refuses the release.
+		}
+	}
+
+	if (analyzed.length > 0 || vacuumed.length > 0) {
+		const parts: string[] = [];
+		if (analyzed.length > 0) parts.push(`ANALYZE ${analyzed.join(", ")}`);
+		if (vacuumed.length > 0)
+			parts.push(`VACUUM (ANALYZE) ${vacuumed.join(", ")}`);
+		log.info(`Post-migration statistics refresh: ${parts.join("; ")}`);
 	}
 }
 
@@ -1264,39 +1559,16 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	// requests indexes (see ensureRequestsIndexesPg for the safety rules).
 	await ensureRequestsIndexesPg(adapter);
 
-	// A usage-pause threshold written before the enabled flags existed was in
-	// force by virtue of being set at all; keep it that way (mirrors SQLite).
-	// Guarded on the flags being new: from then on, `enabled = 0` with a
-	// percentage still stored is a deliberate "off", not a row to repair.
-	if (fiveHourFlagIsNew) {
-		await adapter.unsafe(`
-			UPDATE accounts
-			SET usage_pause_five_hour_enabled = 1
-			WHERE usage_pause_five_hour_threshold IS NOT NULL
-		`);
-	}
-	if (weeklyFlagIsNew) {
-		await adapter.unsafe(`
-			UPDATE accounts
-			SET usage_pause_weekly_enabled = 1
-			WHERE usage_pause_weekly_threshold IS NOT NULL
-		`);
-	}
-
-	// Backfill pause_reason for existing paused accounts (mirrors SQLite migration)
-	await adapter.unsafe(`
-		UPDATE accounts
-		SET pause_reason = 'manual'
-		WHERE COALESCE(paused, 0) = 1 AND pause_reason IS NULL
-	`);
-
-	// Backfill request_payloads.timestamp from requests table
-	await adapter.unsafe(`
-		UPDATE request_payloads rp
-		SET timestamp = r.timestamp
-		FROM requests r
-		WHERE r.id = rp.id AND rp.timestamp IS NULL
-	`);
+	// Bulk backfills (usage-pause flags, pause_reason, request_payloads
+	// timestamps). Each statement reports how many rows it really changed, so
+	// the tables that were actually rewritten can have their planner
+	// statistics refreshed once the migration is done. A run that rewrote
+	// nothing pays nothing.
+	const backfillWork = new PgTableWorkTracker();
+	await runPgUsageBackfills(adapter, backfillWork, {
+		fiveHourFlagIsNew,
+		weeklyFlagIsNew,
+	});
 
 	// Ensure index on request_payloads.timestamp exists
 	try {
@@ -1530,7 +1802,14 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		const MAX_ATTEMPTS = 3;
 		let created = false;
 		for (let attempt = 1; attempt <= MAX_ATTEMPTS && !created; attempt++) {
-			await collapseAccountDuplicatesPreservingStatePg(adapter);
+			const collapse =
+				await collapseAccountDuplicatesPreservingStatePg(adapter);
+			// The collapse deleted account rows and repointed request-history
+			// rows; both leave the planner's statistics stale, and the deleted
+			// rows leave dead tuples behind. Record the real work so the
+			// statistics refresh below knows what to touch.
+			backfillWork.recordDeleted("accounts", collapse.deletedAccounts);
+			backfillWork.recordChanged("requests", collapse.repointedRequests);
 			try {
 				await adapter.unsafe(
 					`CREATE UNIQUE INDEX idx_accounts_unique_name_provider_endpoint
@@ -1624,6 +1903,7 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			}
 		}
 
+		backfillWork.recordChanged("accounts", sanitizedCount);
 		if (sanitizedCount > 0) {
 			log.info(
 				`Sanitized ${sanitizedCount} account name(s) to prevent command injection`,
@@ -1700,6 +1980,10 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		);
 
 		const totalCount = updatedCount + cleanupCount + consoleCount;
+		// These rewrites flip accounts rows between the API-key and OAuth
+		// credential shapes; the planner's per-column statistics are stale
+		// afterwards.
+		backfillWork.recordChanged("accounts", totalCount);
 		if (totalCount > 0) {
 			log.info(
 				`Migrated ${totalCount} accounts to API key storage v2 (moved from refresh_token to api_key)`,
@@ -1795,6 +2079,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	} catch (_error) {
 		// Ignore if fails
 	}
+
+	// Refresh the planner statistics of the tables this run actually rewrote.
+	// Skipped entirely when nothing was rewritten (a fresh install, or a
+	// restart where every backfill matched zero rows).
+	await analyzeRewrittenTablesPg(adapter, backfillWork);
 
 	log.info("PostgreSQL migrations completed");
 }
