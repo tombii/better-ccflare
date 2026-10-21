@@ -1593,16 +1593,37 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		// Use the column names we already defined above
 		// Drop account_tier column from accounts table if it exists
 		if (finalAccountsColumnNames.includes("account_tier")) {
-			// SQLite doesn't support DROP COLUMN directly, so we need to recreate the table
+			// SQLite doesn't support DROP COLUMN directly, so we need to recreate
+			// the table.
+			//
+			// The column list carries everything the table needs. It is the
+			// current columns, plus `finalAccountsColumnNames` — the column set
+			// this same migration establishes via ADD COLUMN. That snapshot is
+			// taken before those ALTERs run, so a bare PRAGMA list here would
+			// drop them all. A fixed list is equally wrong in the other
+			// direction: it silently drops any column later read by this
+			// migration (the dedup merge orders by refresh_token_issued_at, so
+			// truncating it made the migration throw "no such column").
+			//
+			// Union of the two: neither source alone is complete here — the
+			// PRAGMA misses the just-added columns, and the snapshot misses the
+			// ones that predate the migrations that add them.
+			const actualColumns = new Set(
+				(
+					db.prepare("PRAGMA table_info(accounts)").all() as Array<{
+						name: string;
+					}>
+				).map((c) => c.name),
+			);
+			const carriedColumns = [
+				...new Set([...actualColumns, ...finalAccountsColumnNames]),
+			]
+				.filter((name) => name !== "account_tier")
+				.map((name) => `"${name}"`)
+				.join(", ");
 			db.prepare(`
 			CREATE TABLE accounts_new AS
-			SELECT id, name, provider, api_key, refresh_token, access_token, expires_at,
-			       created_at, last_used, request_count, total_requests, priority,
-			       rate_limited_until, session_start, session_request_count, paused,
-			       rate_limit_reset, rate_limit_status, rate_limit_remaining,
-			       auto_fallback_enabled, custom_endpoint, auto_refresh_enabled, model_mappings,
-			       request_transformer, cross_region_mode, model_fallbacks, billing_type, auto_pause_on_overage_enabled,
-			       pause_reason, requires_reauth
+			SELECT ${carriedColumns}
 			FROM accounts
 		`).run();
 

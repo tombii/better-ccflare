@@ -83,6 +83,14 @@ function indexColumns(
 		.map((c) => ({ name: c.name as string, desc: c.desc }));
 }
 
+function columnNames(db: Database): string[] {
+	return (
+		db.prepare("PRAGMA table_info(accounts)").all() as Array<{ name: string }>
+	)
+		.map((c) => c.name)
+		.sort();
+}
+
 function queryPlan(db: Database, sql: string): string {
 	return (
 		db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as Array<{ detail: string }>
@@ -309,6 +317,52 @@ describe("accounts index set (SQLite)", () => {
 			);
 			db.close();
 		}
+	});
+
+	it("account_tier rebuild keeps every column, not a hardcoded subset", () => {
+		// A fixed column list in the `CREATE TABLE AS SELECT` silently truncates
+		// the table. Later stages of the same migration read those columns — the
+		// dedup merge orders by refresh_token_issued_at — so a truncated table
+		// turns a data-cleanup step into a startup failure.
+		//
+		// Reference: the same migration run without a rebuild. That is the
+		// authoritative post-migration column set, and it never goes through the
+		// buggy copy.
+		const reference = open();
+		ensureSchema(reference);
+		runMigrations(reference);
+		const expected = columnNames(reference);
+
+		const db = open();
+		ensureSchema(db);
+		db.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+		runMigrations(db);
+
+		expect(columnNames(db)).toEqual(expected);
+	});
+
+	it("legacy upgrade with a provider collision completes instead of throwing", () => {
+		// Two rows that are unique under their old providers but collide once the
+		// muse-spark -> meta rewrite runs. The rebuild drops the UNIQUE index
+		// first, so the collision only surfaces at the end-of-migration
+		// re-creation, which has to merge the duplicates rather than abort.
+		const db = open();
+		ensureSchema(db);
+		db.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+		const now = Date.now();
+		const insert = db.prepare(
+			"INSERT INTO accounts (id, name, provider, refresh_token, created_at, account_tier) VALUES (?, ?, ?, ?, ?, ?)",
+		);
+		insert.run("collide-1", "shared", "muse-spark", "rt1", now - 1000, "pro");
+		insert.run("collide-2", "shared", "meta", "rt2", now, "pro");
+
+		expect(() => runMigrations(db)).not.toThrow();
+
+		const survivors = db
+			.prepare("SELECT id, provider FROM accounts WHERE name = 'shared'")
+			.all() as Array<{ id: string; provider: string }>;
+		expect(survivors).toHaveLength(1);
+		expect(survivors[0]?.provider).toBe("meta");
 	});
 
 	it("keeps the UNIQUE account index when the account_tier rebuild drops it", () => {
