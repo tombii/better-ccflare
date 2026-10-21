@@ -1494,10 +1494,15 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			 ON accounts(request_count DESC, last_used)`,
 		);
 
-		// Index for account priority in load balancer
+		// Index for the dashboard account list
+		// (packages/http-api/src/handlers/accounts.ts), the only query that
+		// orders accounts by priority:
+		//   ORDER BY priority DESC, request_count DESC
+		// Both leading keys are DESC so the index supplies the full sort order;
+		// mirrored by addPerformanceIndexes() in performance-indexes.ts.
 		await adapter.unsafe(
 			`CREATE INDEX IF NOT EXISTS idx_accounts_priority
-			 ON accounts(priority ASC, request_count DESC, last_used)`,
+			 ON accounts(priority DESC, request_count DESC, last_used)`,
 		);
 
 		// Index for OAuth session cleanup by account_name

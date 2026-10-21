@@ -1157,18 +1157,19 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			db.prepare(`DROP TABLE accounts`).run();
 			db.prepare(`ALTER TABLE accounts_new RENAME TO accounts`).run();
 
-			// Recreate indexes
+			// Recreate indexes. `CREATE TABLE ... AS SELECT` keeps only column
+			// names/affinities — PRIMARY KEY, NOT NULL and DEFAULT are all dropped —
+			// so `accounts_new.id` is no longer a primary key. Without
+			// `idx_accounts_id`, duplicate account ids become possible on upgraded
+			// databases (fresh ones keep the PK from ensureSchema()). Do not remove
+			// this index unless the rebuild is changed to an explicit CREATE TABLE.
+			// `idx_accounts_name` and the composite `idx_accounts_priority` are
+			// owned by addPerformanceIndexes(), which runs after the rebuilds.
 			db.prepare(
 				`CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_id ON accounts(id)`,
 			).run();
 			db.prepare(
-				`CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name)`,
-			).run();
-			db.prepare(
 				`CREATE INDEX IF NOT EXISTS idx_accounts_provider ON accounts(provider)`,
-			).run();
-			db.prepare(
-				`CREATE INDEX IF NOT EXISTS idx_accounts_priority ON accounts(priority)`,
 			).run();
 			db.prepare(
 				`CREATE INDEX IF NOT EXISTS idx_accounts_last_used ON accounts(last_used)`,
@@ -1594,18 +1595,17 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			db.prepare(`DROP TABLE accounts`).run();
 			db.prepare(`ALTER TABLE accounts_new RENAME TO accounts`).run();
 
-			// Recreate indexes
+			// Recreate indexes. DROP TABLE took every index on accounts with it
+			// (including the UNIQUE index below and the ones addPerformanceIndexes
+			// created earlier in this migration), and the `AS SELECT` rebuild
+			// drops the PRIMARY KEY, so `idx_accounts_id` is load-bearing here.
+			// The performance indexes are re-created by the final
+			// addPerformanceIndexes() call at the end of this migration.
 			db.prepare(
 				`CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_id ON accounts(id)`,
 			).run();
 			db.prepare(
-				`CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name)`,
-			).run();
-			db.prepare(
 				`CREATE INDEX IF NOT EXISTS idx_accounts_provider ON accounts(provider)`,
-			).run();
-			db.prepare(
-				`CREATE INDEX IF NOT EXISTS idx_accounts_priority ON accounts(priority)`,
 			).run();
 			db.prepare(
 				`CREATE INDEX IF NOT EXISTS idx_accounts_last_used ON accounts(last_used)`,
@@ -1838,6 +1838,17 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				`Error updating muse-spark provider values: ${(error as Error).message}`,
 			);
 		}
+
+		// Re-apply the performance indexes LAST. The accounts table rebuilds
+		// above (DROP TABLE + CREATE TABLE AS SELECT + RENAME) drop every
+		// accounts index — including the UNIQUE name/provider/endpoint index and
+		// the ones created by the addPerformanceIndexes() call earlier in this
+		// function — so without this pass an upgraded database would run for a
+		// whole startup cycle without them. Both calls are idempotent
+		// (`IF NOT EXISTS`), and inside this transaction they cost nothing when
+		// nothing was dropped.
+		addPerformanceIndexes(db);
+		dropRedundantRequestIndexes(db);
 	});
 
 	// Execute the migration transaction

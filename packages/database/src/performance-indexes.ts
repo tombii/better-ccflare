@@ -114,10 +114,16 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_accounts_request_count");
 
-	// Index for account priority in load balancer
+	// Index for the dashboard account list
+	// (packages/http-api/src/handlers/accounts.ts), the only query that orders
+	// accounts by priority:
+	//   SELECT ... FROM accounts ORDER BY priority DESC, request_count DESC
+	// Both leading keys must be DESC: scanning the old (priority ASC,
+	// request_count DESC, …) key backwards gives request_count ASC, so SQLite
+	// still built a temp b-tree for the second term. Mirrored in migrations-pg.ts.
 	db.run(`
 		CREATE INDEX IF NOT EXISTS idx_accounts_priority
-		ON accounts(priority ASC, request_count DESC, last_used)
+		ON accounts(priority DESC, request_count DESC, last_used)
 	`);
 	log.info("Added index: idx_accounts_priority");
 
