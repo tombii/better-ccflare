@@ -539,3 +539,145 @@ describe("DatabaseOperations.incrementalVacuum — worker timeout (internal-3)",
 		expect(terminated).toBe(true);
 	});
 });
+
+// WP08: the embedded worker is served from a `Blob` URL. That URL is
+// registered with the parent thread's URL registry and keeps the worker
+// source alive until it is revoked — `terminate()` alone does NOT release
+// it, so every spawn used to retain another copy of the worker code (and
+// the adaptive tick used to spawn one worker per chunk: up to 16 per hour).
+//
+// These tests fake the global Worker constructor and spy on
+// URL.createObjectURL / URL.revokeObjectURL so no thread is spawned and the
+// blob-URL bookkeeping is observable.
+describe("DatabaseOperations — worker blob-URL lifecycle (WP08)", () => {
+	let dbOps: DatabaseOperations;
+	let OriginalWorker: typeof Worker;
+	let originalCreateObjectURL: typeof URL.createObjectURL;
+	let originalRevokeObjectURL: typeof URL.revokeObjectURL;
+	let events: string[];
+	let createdUrls: string[];
+	let revokedUrls: string[];
+	let workerCount: number;
+	let messageCount: number;
+
+	/**
+	 * Minimal Worker stand-in: records its construction, answers every
+	 * postMessage with a successful result, and records termination.
+	 */
+	class FakeWorker {
+		onmessage: ((event: MessageEvent) => void) | null = null;
+		onerror: ((event: ErrorEvent) => void) | null = null;
+		constructor(
+			public url: string | URL,
+			public opts?: unknown,
+		) {
+			workerCount += 1;
+			events.push("construct");
+		}
+		postMessage(_msg: unknown): void {
+			messageCount += 1;
+			queueMicrotask(() => {
+				this.onmessage?.({ data: { ok: true, mode: 2 } } as MessageEvent);
+			});
+		}
+		terminate(): void {
+			events.push("terminate");
+		}
+	}
+
+	beforeEach(() => {
+		dbOps = new DatabaseOperations(tempDbPath());
+		OriginalWorker = globalThis.Worker;
+		originalCreateObjectURL = URL.createObjectURL;
+		originalRevokeObjectURL = URL.revokeObjectURL;
+		events = [];
+		createdUrls = [];
+		revokedUrls = [];
+		workerCount = 0;
+		messageCount = 0;
+
+		// @ts-expect-error test double — only implements what the vacuum code uses
+		globalThis.Worker = FakeWorker;
+		URL.createObjectURL = (() => {
+			const url = `blob:fake/${createdUrls.length + 1}`;
+			createdUrls.push(url);
+			events.push(`create:${url}`);
+			return url;
+		}) as typeof URL.createObjectURL;
+		URL.revokeObjectURL = ((url: string) => {
+			revokedUrls.push(url);
+			events.push(`revoke:${url}`);
+		}) as typeof URL.revokeObjectURL;
+	});
+
+	afterEach(async () => {
+		globalThis.Worker = OriginalWorker;
+		URL.createObjectURL = originalCreateObjectURL;
+		URL.revokeObjectURL = originalRevokeObjectURL;
+		await dbOps.dispose?.();
+	});
+
+	/**
+	 * The blob-URL assertions only apply when the compiled worker is embedded
+	 * (the inline mirror is a build artifact). In source mode the worker is
+	 * loaded from a file URL and there is no blob to revoke.
+	 */
+	const hasEmbeddedWorker = (): boolean => createdUrls.length > 0;
+
+	it("spawns ONE worker for a whole adaptive tick and revokes its blob URL once, after terminating the worker", async () => {
+		const internals = dbOps as unknown as {
+			getFreelistCount: () => number;
+		};
+		// Simulate a freelist that shrinks with every chunk the worker handles
+		// so the loop runs several chunks (4 with a 10-page chunk over a
+		// 40-page budget).
+		internals.getFreelistCount = () => Math.max(0, 40 - messageCount * 10);
+
+		const r = await dbOps.incrementalVacuumAdaptive({
+			chunkPages: 10,
+			maxPagesPerTick: 40,
+		});
+
+		expect(r.chunks).toBe(4);
+		// One worker for the whole tick — not one per chunk.
+		expect(workerCount).toBe(1);
+
+		if (hasEmbeddedWorker()) {
+			// Exactly one blob URL created and exactly one revoked — the same
+			// URL, so nothing is retained by the URL registry.
+			expect(createdUrls.length).toBe(1);
+			expect(revokedUrls).toEqual(createdUrls);
+			// The worker must be gone BEFORE its source URL is released.
+			const terminateAt = events.indexOf("terminate");
+			const revokeAt = events.findIndex((e) => e.startsWith("revoke:"));
+			expect(terminateAt).toBeGreaterThanOrEqual(0);
+			expect(revokeAt).toBeGreaterThan(terminateAt);
+		}
+	});
+
+	it("terminates the worker and revokes the blob URL after a standalone single-chunk incrementalVacuum()", async () => {
+		await dbOps.incrementalVacuum(64, { workerTimeoutMs: 5000 });
+
+		expect(workerCount).toBe(1);
+		expect(events).toContain("terminate");
+		if (hasEmbeddedWorker()) {
+			expect(revokedUrls).toEqual(createdUrls);
+		}
+	});
+
+	it("compact() terminates the worker and revokes the blob URL", async () => {
+		const result = await dbOps.compact();
+
+		// The fake worker answers with a successful result.
+		expect(result.vacuumed).toBe(true);
+		expect(workerCount).toBe(1);
+		expect(events).toContain("terminate");
+		if (hasEmbeddedWorker()) {
+			expect(createdUrls.length).toBe(1);
+			expect(revokedUrls).toEqual(createdUrls);
+			const terminateAt = events.indexOf("terminate");
+			const revokeAt = events.findIndex((e) => e.startsWith("revoke:"));
+			expect(revokeAt).toBeGreaterThan(terminateAt);
+		}
+	});
+});

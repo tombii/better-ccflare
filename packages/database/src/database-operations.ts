@@ -374,6 +374,30 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private originalAutoVacuumMode?: number;
 	/** Prevents concurrent compact() calls from spawning multiple vacuum workers */
 	private compacting = false;
+	/**
+	 * The incremental-vacuum worker, kept alive for the duration of an
+	 * adaptive tick so one tick spawns ONE worker instead of one per chunk
+	 * (WP08). `incrementalVacuumAdaptive()` reclaims in up to 16 chunks
+	 * (MAX/CHUNK), and every chunk used to spawn a fresh thread — 16 spawn /
+	 * teardown cycles per hourly tick, each of which also leaked a blob URL
+	 * (the URL registry holds the worker source until it is revoked;
+	 * `terminate()` alone does not release it). The worker script handles
+	 * messages one at a time and stays alive, so the same thread serves every
+	 * chunk of a tick.
+	 */
+	private incVacuumWorker: {
+		worker: Worker;
+		/** Set only for the embedded (blob URL) worker; the file-URL worker needs no revoke. */
+		blobUrl?: string;
+	} | null = null;
+	/**
+	 * True while `incrementalVacuumAdaptive()` is running its chunk loop. While
+	 * set, a single-chunk `incrementalVacuum()` call keeps the shared worker
+	 * alive instead of tearing it down after the call — the tick closes it when
+	 * the loop ends. Outside a tick the worker is single-use and is closed by
+	 * the call that created it.
+	 */
+	private incVacuumTickActive = false;
 	/** Short-TTL cache of getTableRowCounts (the payload SUM is a full scan). */
 	private tableCountsCache: {
 		at: number;
@@ -1745,6 +1769,10 @@ OAuth tokens will need to be re-authenticated.
 	}
 
 	async close(): Promise<void> {
+		// Terminate a shared incremental-vacuum worker that is still alive
+		// (e.g. a tick that ended abnormally) so its thread — and the blob URL
+		// serving its source — are released.
+		this.closeIncVacuumWorker();
 		// Stop the multi-instance heartbeat loop and remove this instance's
 		// row before closing the adapter. Best-effort — errors here are
 		// logged inside the stopper, not rethrown.
@@ -1959,13 +1987,20 @@ OAuth tokens will need to be re-authenticated.
 		// requests during what can be a minutes-long exclusive DB operation.
 		const dbPath = this.resolvedDbPath;
 		let worker: Worker;
+		// The blob URL is registered with the parent thread's URL registry and
+		// keeps the worker source alive until it is revoked. Terminating the
+		// worker does NOT release it, so the URL has to be revoked explicitly
+		// once the worker is gone (see wal-truncate-runner.ts for the same
+		// pattern and the reasoning behind the ordering).
+		let blobUrl: string | undefined;
 		if (EMBEDDED_VACUUM_WORKER_CODE) {
 			const workerCode = Buffer.from(
 				EMBEDDED_VACUUM_WORKER_CODE,
 				"base64",
 			).toString("utf8");
 			const blob = new Blob([workerCode], { type: "text/javascript" });
-			worker = new Worker(URL.createObjectURL(blob), { smol: true });
+			blobUrl = URL.createObjectURL(blob);
+			worker = new Worker(blobUrl, { smol: true });
 		} else {
 			worker = new Worker(new URL("./vacuum-worker.ts", import.meta.url).href);
 		}
@@ -2012,6 +2047,9 @@ OAuth tokens will need to be re-authenticated.
 		} finally {
 			this.compacting = false;
 			worker.terminate();
+			// Release the blob URL (and with it the worker code) after the
+			// worker is gone.
+			if (blobUrl !== undefined) URL.revokeObjectURL(blobUrl);
 		}
 	}
 
@@ -2082,24 +2120,21 @@ OAuth tokens will need to be re-authenticated.
 		}
 
 		const dbPath = this.resolvedDbPath;
-		let worker: Worker;
-		if (EMBEDDED_INCREMENTAL_VACUUM_WORKER_CODE) {
-			const workerCode = Buffer.from(
-				EMBEDDED_INCREMENTAL_VACUUM_WORKER_CODE,
-				"base64",
-			).toString("utf8");
-			const blob = new Blob([workerCode], { type: "text/javascript" });
-			worker = new Worker(URL.createObjectURL(blob), { smol: true });
-		} else {
-			worker = new Worker(
-				new URL("./incremental-vacuum-worker.ts", import.meta.url).href,
-			);
-		}
+
+		// Reuse the tick's worker when one is already running (WP08): an
+		// adaptive tick reclaims in up to 16 chunks and used to spawn a fresh
+		// thread for each of them. Outside a tick the worker is single-use and
+		// is torn down again below.
+		const existing = this.incVacuumWorker;
+		const session = existing ?? this.createIncVacuumWorker();
+		if (!existing) this.incVacuumWorker = session;
+		const worker = session.worker;
 
 		const workerTimeoutMs =
 			opts?.workerTimeoutMs ?? INC_VACUUM_WORKER_TIMEOUT_MS;
+		let result: { ok: true; mode: number } | { ok: false; error: string };
 		try {
-			const result = await new Promise<
+			result = await new Promise<
 				{ ok: true; mode: number } | { ok: false; error: string }
 			>((resolve, reject) => {
 				const timeoutId = setTimeout(() => {
@@ -2116,34 +2151,103 @@ OAuth tokens will need to be re-authenticated.
 				};
 				worker.onerror = (event: ErrorEvent) => {
 					clearTimeout(timeoutId);
+					// The worker thread is gone: it must not be reused for the
+					// next chunk. Close it here (identity-checked, so a late
+					// error from an already-replaced worker cannot kill the
+					// current one) and reject the pending request.
+					this.closeIncVacuumWorker(worker);
 					reject(new Error(event.message ?? "incremental-vacuum worker error"));
 				};
 				worker.postMessage({ dbPath, pages });
 			});
-			if (result.ok) {
-				this.incVacuumConsecutiveSkips = 0;
-			} else {
-				this.incVacuumConsecutiveSkips += 1;
-				// Single-tick failures are common and noise — sustained skips
-				// across several hourly ticks mean the DB isn't getting any
-				// reclamation, which can let free pages accumulate without
-				// bound. Escalate after 3 consecutive skips (= 3 hours of
-				// missed reclamation). (Greptile #230)
-				if (this.incVacuumConsecutiveSkips >= INC_VAC_SKIP_ESCALATE_AT) {
-					console.warn(
-						`[incrementalVacuum] worker error (${this.incVacuumConsecutiveSkips} consecutive ` +
-							`skips, ≈${this.incVacuumConsecutiveSkips}h of missed reclamation): ` +
-							`${result.error}. ` +
-							`Sustained SQLITE_BUSY suggests writer-slot contention — investigate ` +
-							`whether long-running writers (large DELETEs, manual maintenance) are ` +
-							`overlapping the hourly tick.`,
-					);
-				} else {
-					console.warn(`[incrementalVacuum] worker error: ${result.error}`);
-				}
-			}
+		} catch (err) {
+			// A worker that timed out or crashed is not reusable — a wedged
+			// thread would never answer the next chunk. Tear it down (and
+			// release its blob URL) so the next chunk starts from a clean one.
+			this.closeIncVacuumWorker(worker);
+			throw err;
 		} finally {
-			worker.terminate();
+			// Outside an adaptive tick this worker was created for this one
+			// call alone — close it now. Inside a tick the tick's `finally`
+			// closes it once the chunk loop is done.
+			if (!this.incVacuumTickActive) this.closeIncVacuumWorker(worker);
+		}
+		if (result.ok) {
+			this.incVacuumConsecutiveSkips = 0;
+		} else {
+			this.incVacuumConsecutiveSkips += 1;
+			// Single-tick failures are common and noise — sustained skips
+			// across several hourly ticks mean the DB isn't getting any
+			// reclamation, which can let free pages accumulate without
+			// bound. Escalate after 3 consecutive skips (= 3 hours of
+			// missed reclamation). (Greptile #230)
+			if (this.incVacuumConsecutiveSkips >= INC_VAC_SKIP_ESCALATE_AT) {
+				console.warn(
+					`[incrementalVacuum] worker error (${this.incVacuumConsecutiveSkips} consecutive ` +
+						`skips, ≈${this.incVacuumConsecutiveSkips}h of missed reclamation): ` +
+						`${result.error}. ` +
+						`Sustained SQLITE_BUSY suggests writer-slot contention — investigate ` +
+						`whether long-running writers (large DELETEs, manual maintenance) are ` +
+						`overlapping the hourly tick.`,
+				);
+			} else {
+				console.warn(`[incrementalVacuum] worker error: ${result.error}`);
+			}
+		}
+	}
+
+	/**
+	 * Spawns the incremental-vacuum worker.
+	 *
+	 * The embedded (compiled) worker is served from a `Blob` URL. That URL is
+	 * registered with the parent thread's URL registry and keeps the worker
+	 * source alive until it is revoked — terminating the worker does NOT
+	 * release it, so every spawn would retain another copy of the worker code.
+	 * The URL is therefore captured here and revoked by
+	 * `closeIncVacuumWorker()` once the worker is gone (same pattern and
+	 * ordering as `wal-truncate-runner.ts`).
+	 */
+	private createIncVacuumWorker(): {
+		worker: Worker;
+		blobUrl?: string;
+	} {
+		let blobUrl: string | undefined;
+		let worker: Worker;
+		if (EMBEDDED_INCREMENTAL_VACUUM_WORKER_CODE) {
+			const workerCode = Buffer.from(
+				EMBEDDED_INCREMENTAL_VACUUM_WORKER_CODE,
+				"base64",
+			).toString("utf8");
+			const blob = new Blob([workerCode], { type: "text/javascript" });
+			blobUrl = URL.createObjectURL(blob);
+			worker = new Worker(blobUrl, { smol: true });
+		} else {
+			worker = new Worker(
+				new URL("./incremental-vacuum-worker.ts", import.meta.url).href,
+			);
+		}
+		return blobUrl === undefined ? { worker } : { worker, blobUrl };
+	}
+
+	/**
+	 * Terminates the shared incremental-vacuum worker (if any) and releases the
+	 * blob URL that served its source. The worker is terminated FIRST — the
+	 * worker may still be loading its source from the blob when the revoke
+	 * happens, and revoking first could break the spawn.
+	 *
+	 * `worker` is an optional identity check: a late error from a worker that
+	 * has already been replaced must not tear down the worker that took its
+	 * place.
+	 */
+	private closeIncVacuumWorker(worker?: Worker): void {
+		const session = this.incVacuumWorker;
+		if (!session) return;
+		if (worker !== undefined && session.worker !== worker) return;
+		this.incVacuumWorker = null;
+		try {
+			session.worker.terminate();
+		} finally {
+			if (session.blobUrl !== undefined) URL.revokeObjectURL(session.blobUrl);
 		}
 	}
 
@@ -2286,7 +2390,7 @@ OAuth tokens will need to be re-authenticated.
 		const CHUNK = opts?.chunkPages ?? 16384; // ~64 MiB per worker call — bounds each writer-slot hold
 
 		const initialFreelist = this.getFreelistCount();
-		let freelist = initialFreelist;
+		const freelist = initialFreelist;
 		if (freelist <= 0) {
 			// Nothing to reclaim — steady state. Avoid spawning a worker.
 			this.recordVacuumStatus(0, 0, 0);
@@ -2294,8 +2398,48 @@ OAuth tokens will need to be re-authenticated.
 		}
 
 		const budget = Math.min(freelist, MAX);
+
+		// Keep ONE worker alive for the whole chunk loop (WP08). Nesting is
+		// defensive only: the server's `vacuumTickInFlight` guard already
+		// serialises ticks, and without nesting an inner tick's `finally`
+		// would close a worker an outer tick still expects to reuse.
+		const outermost = !this.incVacuumTickActive;
+		this.incVacuumTickActive = true;
+		let chunks: number;
+		try {
+			chunks = await this.runIncrementalVacuumChunks(
+				budget,
+				CHUNK,
+				initialFreelist,
+			);
+		} finally {
+			if (outermost) {
+				this.incVacuumTickActive = false;
+				this.closeIncVacuumWorker();
+			}
+		}
+
+		const finalFreelist = this.getFreelistCount();
+		const reclaimedPages = Math.max(0, initialFreelist - finalFreelist);
+		this.recordVacuumStatus(finalFreelist, reclaimedPages, chunks);
+		return { reclaimedPages, chunks };
+	}
+
+	/**
+	 * The adaptive tick's chunk loop: reclaims `budget` pages in `CHUNK`-sized
+	 * worker calls, stopping early on the stall guard. Split out of
+	 * `incrementalVacuumAdaptive()` so the shared-worker lifecycle (one worker
+	 * per tick) wraps the loop in a single try/finally. Returns the number of
+	 * chunks that ran.
+	 */
+	private async runIncrementalVacuumChunks(
+		budget: number,
+		CHUNK: number,
+		initialFreelist: number,
+	): Promise<number> {
 		let requestedPages = 0;
 		let chunks = 0;
+		let freelist = initialFreelist;
 
 		while (requestedPages < budget && freelist > 0) {
 			const n = Math.min(CHUNK, budget - requestedPages);
@@ -2338,10 +2482,7 @@ OAuth tokens will need to be re-authenticated.
 			}
 		}
 
-		const finalFreelist = this.getFreelistCount();
-		const reclaimedPages = Math.max(0, initialFreelist - finalFreelist);
-		this.recordVacuumStatus(finalFreelist, reclaimedPages, chunks);
-		return { reclaimedPages, chunks };
+		return chunks;
 	}
 
 	/**
