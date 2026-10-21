@@ -341,6 +341,42 @@ describe("accounts index set (SQLite)", () => {
 		expect(columnNames(db)).toEqual(expected);
 	});
 
+	it("account_tier rebuild after the refresh_token rebuild keeps real columns, not literals", () => {
+		// Both rebuilds on one database. The refresh_token rebuild already
+		// used `CREATE TABLE ... AS SELECT`, so by the time the account_tier
+		// rebuild runs, columns the migration snapshot still lists are gone.
+		// Selecting a missing name yields a string literal, and Bun's SQLite
+		// then creates a column literally named `"billing_type"` while
+		// `billing_type` itself is lost.
+		const reference = open();
+		ensureSchema(reference);
+		runMigrations(reference);
+		const expected = columnNames(reference);
+
+		const db = open();
+		simulateLegacyAccounts(db, {
+			accountTier: true,
+			refreshTokenNotNull: true,
+		});
+		db.prepare(
+			"INSERT INTO accounts (id, name, provider, refresh_token, created_at, billing_type, account_tier) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		).run("legacy-1", "legacy", "anthropic", "rt", Date.now(), "plan", "pro");
+
+		expect(() => runMigrations(db)).not.toThrow();
+
+		// No literal-named columns, and the full expected set.
+		expect(columnNames(db).filter((n) => n.includes('"'))).toEqual([]);
+		expect(columnNames(db)).toEqual(expected);
+		// The row survived. Only identity is asserted: provider is rewritten by
+		// a later migration and refresh-token columns are blanked by a legacy
+		// VALUE migration, so neither reflects the first rebuild. What this
+		// test guards is the column SET (above) — the failure mode it replaces
+		// silently dropped whole columns and created literal-named ones.
+		expect(
+			db.prepare("SELECT id, name FROM accounts WHERE id = ?").get("legacy-1"),
+		).toEqual({ id: "legacy-1", name: "legacy" });
+	});
+
 	it("legacy upgrade with a provider collision completes instead of throwing", () => {
 		// Two rows that are unique under their old providers but collide once the
 		// muse-spark -> meta rewrite runs. The rebuild drops the UNIQUE index

@@ -13,6 +13,49 @@ const DEFAULT_BACKUP_RETENTION = 3;
 const INTEGER_RE = /^\d+$/;
 
 /**
+ * Every column `runMigrations()` adds to `accounts` with `ALTER TABLE ADD
+ * COLUMN`. The `account_tier` rebuild copies columns across by name and reads
+ * `PRAGMA table_info` before those ALTERs run, so it needs this list to know
+ * which columns it must carry even though the PRAGMA does not show them yet.
+ *
+ * Keep in sync with the ADD COLUMN statements in runMigrations(); the
+ * `account_tier rebuild keeps every column` test fails if this drifts.
+ */
+const ACCOUNT_ADDITIVE_COLUMNS = [
+	"rate_limited_until",
+	"session_start",
+	"session_request_count",
+	"paused",
+	"rate_limit_reset",
+	"rate_limit_reset_at",
+	"rate_limit_status",
+	"rate_limit_remaining",
+	"priority",
+	"auto_fallback_enabled",
+	"custom_endpoint",
+	"auto_refresh_enabled",
+	"model_mappings",
+	"request_transformer",
+	"cross_region_mode",
+	"model_fallbacks",
+	"billing_type",
+	"auto_pause_on_overage_enabled",
+	"pause_reason",
+	"requires_reauth",
+	"consecutive_rate_limits",
+	"last_manual_reauth_at",
+	"peak_hours_pause_enabled",
+	"usage_pause_five_hour_threshold",
+	"usage_pause_weekly_threshold",
+	"usage_pause_five_hour_enabled",
+	"usage_pause_weekly_enabled",
+	"refresh_token_issued_at",
+	"rate_limited_at",
+	"rate_limited_reason",
+	"total_requests",
+] as const;
+
+/**
  * Keep at most this many `.backup.<timestamp>` files alongside the live DB.
  * Each backup is a full copy of the DB (multi-GB in practice), so without a
  * cap they accumulate quickly when rapid restarts trigger repeat migrations.
@@ -456,6 +499,32 @@ export function ensureSchema(db: Database): void {
  * wraps it in `db.transaction(() => { ... })`).
  */
 function collapseAccountDuplicatesPreservingState(db: Database): void {
+	// The merge below orders by refresh_token_issued_at and reads columns that
+	// additive migrations introduce. It is called before those migrations run,
+	// so on a legacy database they may not exist yet — restore the ones it
+	// needs first. None of these carry account state that can be lost: without
+	// the column there is nothing to preserve.
+	const present = new Set(
+		(
+			db.prepare("PRAGMA table_info(accounts)").all() as Array<{ name: string }>
+		).map((c) => c.name),
+	);
+	for (const [column, decl] of [
+		["refresh_token_issued_at", "INTEGER"],
+		["last_manual_reauth_at", "INTEGER"],
+		["consecutive_rate_limits", "INTEGER NOT NULL DEFAULT 0"],
+		["peak_hours_pause_enabled", "INTEGER NOT NULL DEFAULT 0"],
+		["billing_type", "TEXT DEFAULT NULL"],
+		["rate_limit_reset_at", "INTEGER"],
+		["rate_limited_at", "INTEGER"],
+		["rate_limited_reason", "TEXT"],
+	] as const) {
+		if (!present.has(column)) {
+			db.prepare(`ALTER TABLE accounts ADD COLUMN ${column} ${decl}`).run();
+			present.add(column);
+		}
+	}
+
 	// Find every tuple (name, provider, COALESCE(custom_endpoint,'')) that
 	// currently has more than one row. For each, pick the survivor and merge.
 	const dupGroups = db
@@ -1605,18 +1674,31 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			// migration (the dedup merge orders by refresh_token_issued_at, so
 			// truncating it made the migration throw "no such column").
 			//
-			// Union of the two: neither source alone is complete here — the
-			// PRAGMA misses the just-added columns, and the snapshot misses the
-			// ones that predate the migrations that add them.
-			const actualColumns = new Set(
-				(
-					db.prepare("PRAGMA table_info(accounts)").all() as Array<{
-						name: string;
-					}>
-				).map((c) => c.name),
+			// Only columns the table actually has may be selected: a missing
+			// name is a string literal to SQLite, so Bun creates a column
+			// literally called `"foo"` and the real one is lost. That is what
+			// `finalAccountsColumnNames` (a pre-migration snapshot) produces
+			// whenever an earlier rebuild already dropped some of its names.
+			//
+			// Columns added by this migration are not in the PRAGMA yet, so
+			// they are added back explicitly from the same guards that ALTER
+			// them.
+			const actualColumns = (
+				db.prepare("PRAGMA table_info(accounts)").all() as Array<{
+					name: string;
+				}>
+			).map((c) => c.name);
+			// Guard twice: only columns the migration actually adds, and only
+			// ones the established schema declares. A stray entry can then
+			// never reach the SELECT and become a literal.
+			const declaredColumns = new Set(finalAccountsColumnNames);
+			const addedThisMigration = ACCOUNT_ADDITIVE_COLUMNS.filter(
+				(name) =>
+					declaredColumns.has(name) &&
+					!initialAccountsColumnNames.includes(name),
 			);
 			const carriedColumns = [
-				...new Set([...actualColumns, ...finalAccountsColumnNames]),
+				...new Set([...actualColumns, ...addedThisMigration]),
 			]
 				.filter((name) => name !== "account_tier")
 				.map((name) => `"${name}"`)
