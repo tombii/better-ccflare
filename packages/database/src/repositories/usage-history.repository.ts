@@ -64,6 +64,15 @@ export interface GetSeriesOptions {
 	windowKey?: string;
 	since?: number;
 	until?: number;
+	/**
+	 * Optional hard cap on the number of rows returned. Omitted (the default)
+	 * means no cap — every existing caller bounds the series with `since`
+	 * instead. When set, at most `limit` rows are returned, still ordered
+	 * `timestamp ASC`; because the series is ordered ascending, the cap keeps
+	 * the OLDEST matching rows. Pair it with `since` when the tail of the
+	 * series is what matters.
+	 */
+	limit?: number;
 }
 
 export class UsageHistoryRepository extends BaseRepository<UsageSnapshotRow> {
@@ -148,11 +157,16 @@ export class UsageHistoryRepository extends BaseRepository<UsageSnapshotRow> {
 			clauses.push("timestamp <= ?");
 			params.push(opts.until);
 		}
+		const where = clauses.join(" AND ");
+		const limit = opts.limit;
+		const limitClause =
+			limit != null && Number.isFinite(limit) && limit >= 0 ? " LIMIT ?" : "";
+		if (limitClause) params.push(limit);
 		const rows = await this.query<SnapshotDbRow>(
 			`SELECT account_id, timestamp, window_key, utilization, resets_at
 			 FROM usage_snapshots
-			 WHERE ${clauses.join(" AND ")}
-			 ORDER BY timestamp ASC`,
+			 WHERE ${where}
+			 ORDER BY timestamp ASC${limitClause}`,
 			params,
 		);
 		return rows.map((r) => ({

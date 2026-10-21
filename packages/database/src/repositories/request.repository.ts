@@ -490,6 +490,12 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		}));
 	}
 
+	/**
+	 * @deprecated No production callers. Retained for the `DatabaseOperations`
+	 * passthrough and the live-PG test suite.
+	 * Has no time bound / LIMIT; when `since` is omitted this is a full-table
+	 * aggregate. Do not wire this to a request path without adding one.
+	 */
 	async getRequestStats(since?: number): Promise<{
 		totalRequests: number;
 		successfulRequests: number;
@@ -598,6 +604,13 @@ export class RequestRepository extends BaseRepository<RequestData> {
 
 	/**
 	 * Get top models by usage
+	 *
+	 * @deprecated No production callers — `/api/stats` uses
+	 * `StatsRepository.getTopModels`, which is deliberately lifetime-scoped.
+	 * Retained for the `DatabaseOperations` passthrough and the live-PG test
+	 * suite.
+	 * Has no time bound (the `LIMIT` only caps the number of models). Do not
+	 * wire this to a request path without adding one.
 	 */
 	async getTopModels(
 		limit = 10,
@@ -617,6 +630,11 @@ export class RequestRepository extends BaseRepository<RequestData> {
 
 	/**
 	 * Get recent error messages
+	 *
+	 * @deprecated No production callers. Retained for the `DatabaseOperations`
+	 * passthrough and the live-PG test suite.
+	 * The query itself IS bounded (`ORDER BY timestamp DESC LIMIT ?`); this is
+	 * deprecated for being dead, not unbounded.
 	 */
 	async getRecentErrors(limit = 10): Promise<string[]> {
 		const errors = await this.query<{ error_message: string }>(
@@ -632,6 +650,14 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		return errors.map((e: { error_message: string }) => e.error_message);
 	}
 
+	/**
+	 * @deprecated No production callers. Retained for the `DatabaseOperations`
+	 * passthrough and the live-PG test suite.
+	 * Has no LIMIT (only `GROUP BY account_used` keeps the row count down) and
+	 * an optional `since`; without it the whole `requests` table is scanned.
+	 * Do not wire this to a request path without adding a time bound and a
+	 * LIMIT.
+	 */
 	async getRequestsByAccount(since?: number): Promise<
 		Array<{
 			accountId: string;

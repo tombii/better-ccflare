@@ -202,6 +202,25 @@ describe("UsageHistoryRepository", () => {
 		db.close();
 	});
 
+	it("getSeries honours an optional limit and stays ordered ascending", async () => {
+		const db = makeDb();
+		const repo = makeRepo(db);
+		for (const ts of [1000, 2000, 3000]) {
+			await repo.recordSnapshot(
+				"acc1",
+				{ five_hour: { utilization: ts / 1000, resets_at: null } },
+				ts,
+			);
+		}
+		const rows = await repo.getSeries({ accountId: "acc1", limit: 2 });
+		expect(rows).toHaveLength(2);
+		expect(rows.map((r) => r.timestamp)).toEqual([1000, 2000]);
+		// Omitting the limit is a no-op — all rows, still ascending.
+		const all = await repo.getSeries({ accountId: "acc1" });
+		expect(all.map((r) => r.timestamp)).toEqual([1000, 2000, 3000]);
+		db.close();
+	});
+
 	it("getLatestSnapshot returns the newest row for the window", async () => {
 		const db = makeDb();
 		const repo = makeRepo(db);
