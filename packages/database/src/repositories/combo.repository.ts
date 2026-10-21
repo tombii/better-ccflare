@@ -14,6 +14,25 @@ import {
 } from "@better-ccflare/types";
 import { BaseRepository } from "./base.repository";
 
+/**
+ * Flattened row of the joined assignment→combo→slots query.
+ * `slot_id` is NULL when the combo has no enabled slots.
+ */
+interface ActiveComboRow {
+	id: string;
+	name: string;
+	description: string | null;
+	enabled: number;
+	created_at: number;
+	updated_at: number;
+	slot_id: string | null;
+	slot_combo_id: string | null;
+	account_id: string | null;
+	model: string | null;
+	priority: number | null;
+	slot_enabled: number | null;
+}
+
 export class ComboRepository extends BaseRepository<Combo> {
 	// ── Combo CRUD ──────────────────────────────────────────────────────────
 
@@ -217,32 +236,55 @@ export class ComboRepository extends BaseRepository<Combo> {
 	async getActiveComboForFamily(
 		family: ComboFamily,
 	): Promise<ComboWithSlots | null> {
-		const assignment = await this.get<ComboFamilyAssignmentRow>(
-			`SELECT family, combo_id, enabled FROM combo_family_assignments
-       WHERE family = ? AND enabled = 1 AND combo_id IS NOT NULL`,
+		// Single round trip: the assignment, its combo and the combo's enabled
+		// slots are folded together here instead of being fetched with three
+		// sequential queries. The LEFT JOIN keeps the combo row when it has no
+		// enabled slots (slot_id IS NULL), and the `enabled = 1` filters stay
+		// in the ON clauses so a disabled slot is excluded rather than
+		// nulling the whole row.
+		const rows = await this.query<ActiveComboRow>(
+			`SELECT c.id, c.name, c.description, c.enabled, c.created_at, c.updated_at,
+         s.id AS slot_id, s.combo_id AS slot_combo_id, s.account_id, s.model,
+         s.priority, s.enabled AS slot_enabled
+       FROM combo_family_assignments a
+       JOIN combos c ON c.id = a.combo_id AND c.enabled = 1
+       LEFT JOIN combo_slots s ON s.combo_id = c.id AND s.enabled = 1
+       WHERE a.family = ? AND a.enabled = 1 AND a.combo_id IS NOT NULL
+       ORDER BY s.priority ASC`,
 			[family],
 		);
-		if (!assignment?.combo_id) return null;
+		if (rows.length === 0) return null;
 
-		const comboRow = await this.get<ComboRow>(
-			`SELECT id, name, description, enabled, created_at, updated_at
-       FROM combos WHERE id = ? AND enabled = 1`,
-			[assignment.combo_id],
-		);
-		if (!comboRow) return null;
+		const head = rows[0];
+		const combo = toCombo({
+			id: head.id,
+			name: head.name,
+			description: head.description,
+			enabled: head.enabled,
+			created_at: head.created_at,
+			updated_at: head.updated_at,
+		});
 
-		const slotRows = await this.query<ComboSlotRow>(
-			`SELECT id, combo_id, account_id, model, priority, enabled
-       FROM combo_slots
-       WHERE combo_id = ? AND enabled = 1
-       ORDER BY priority ASC`,
-			[comboRow.id],
-		);
+		const slots: ComboSlot[] = [];
+		for (const row of rows) {
+			if (row.slot_id === null || row.slot_id === undefined) continue;
+			// A row with a slot always carries the slot's own columns; the
+			// nullable typing above only describes the LEFT JOIN's empty side.
+			slots.push(
+				toComboSlot({
+					id: row.slot_id,
+					combo_id: row.slot_combo_id,
+					account_id: row.account_id,
+					model: row.model,
+					priority: row.priority,
+					enabled: row.slot_enabled,
+				} as ComboSlotRow),
+			);
+		}
 
-		const combo = toCombo(comboRow);
 		return {
 			...combo,
-			slots: slotRows.map(toComboSlot),
+			slots,
 		};
 	}
 }

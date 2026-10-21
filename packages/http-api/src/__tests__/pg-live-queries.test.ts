@@ -1080,6 +1080,74 @@ describe.skipIf(!livePgAvailable)(
 			});
 		});
 
+		describe("getActiveComboForFamily (single-query join)", () => {
+			liveIt(
+				"returns null when the family has no active assignment",
+				async () => {
+					await seedAccount({ id: "acct-1", name: "primary" });
+					const combo = await dbOps.createCombo("no-assign", null);
+					await dbOps.addComboSlot(combo.id, "acct-1", "claude-sonnet-4", 0);
+
+					// No family points at the combo yet.
+					expect(await dbOps.getActiveComboForFamily("sonnet")).toBeNull();
+				},
+			);
+
+			liveIt("returns null when the assigned combo is disabled", async () => {
+				await seedAccount({ id: "acct-1", name: "primary" });
+				const combo = await dbOps.createCombo("disabled", null);
+				await dbOps.addComboSlot(combo.id, "acct-1", "claude-sonnet-4", 0);
+				await dbOps.setFamilyCombo("sonnet", combo.id, true);
+				await dbOps.updateCombo(combo.id, { enabled: false });
+
+				expect(await dbOps.getActiveComboForFamily("sonnet")).toBeNull();
+			});
+
+			liveIt(
+				"returns the combo with an empty slot array when it has no enabled slots",
+				async () => {
+					await seedAccount({ id: "acct-1", name: "primary" });
+					const combo = await dbOps.createCombo("no-slots", null);
+					await dbOps.setFamilyCombo("sonnet", combo.id, true);
+
+					const active = await dbOps.getActiveComboForFamily("sonnet");
+					expect(active).not.toBeNull();
+					expect(active?.id).toBe(combo.id);
+					expect(active?.slots).toEqual([]);
+
+					// A slot that exists but is disabled is excluded too.
+					const slot = await dbOps.addComboSlot(
+						combo.id,
+						"acct-1",
+						"claude-sonnet-4",
+						0,
+					);
+					await dbOps.updateComboSlot(slot.id, { enabled: false });
+					const afterDisable = await dbOps.getActiveComboForFamily("sonnet");
+					expect(afterDisable?.slots).toEqual([]);
+				},
+			);
+
+			liveIt(
+				"returns enabled slots ordered by priority ascending",
+				async () => {
+					await seedAccount({ id: "acct-1", name: "primary" });
+					const combo = await dbOps.createCombo("ordered", null);
+					await dbOps.setFamilyCombo("sonnet", combo.id, true);
+
+					const c = await dbOps.addComboSlot(combo.id, "acct-1", "m-c", 20);
+					const b = await dbOps.addComboSlot(combo.id, "acct-1", "m-b", 10);
+					const a = await dbOps.addComboSlot(combo.id, "acct-1", "m-a", 5);
+					const d = await dbOps.addComboSlot(combo.id, "acct-1", "m-d", 30);
+					await dbOps.updateComboSlot(d.id, { enabled: false });
+
+					const active = await dbOps.getActiveComboForFamily("sonnet");
+					expect(active?.slots.map((s) => s.id)).toEqual([a.id, b.id, c.id]);
+					expect(active?.slots.map((s) => s.priority)).toEqual([5, 10, 20]);
+				},
+			);
+		});
+
 		describe("api-keys repository", () => {
 			liveIt("exercises the full api-key lifecycle on PostgreSQL", async () => {
 				await dbOps.createApiKey({
