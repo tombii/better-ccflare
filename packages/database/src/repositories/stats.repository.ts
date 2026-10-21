@@ -481,14 +481,42 @@ export class StatsRepository {
 
 		if (active.length === 0) return new Map();
 
-		// Build a WHERE clause: (account_used = ? AND timestamp >= ?) OR ...
-		const clauses = active
-			.map(() => "(account_used = ? AND timestamp >= ?)")
-			.join(" OR ");
-		const params: (string | number)[] = active.flatMap((a) => [
-			a.id,
-			a.session_start,
-		]);
+		// Join the per-account thresholds instead of OR-chaining them.
+		//
+		// The previous shape built one "(account_used = ? AND timestamp >= ?)"
+		// term per active account and OR-ed them together, which leaves the
+		// planner with a repeated index probe / bitmap-OR over
+		// idx_requests_account_timestamp (account_used, timestamp DESC).
+		// A VALUES CTE lets SQLite plan a loop join and PostgreSQL a
+		// nested-loop / hash join over the same index.
+		//
+		// The explicit casts pin the CTE column types. `session_start` is an
+		// epoch-millisecond BIGINT in PostgreSQL — an INTEGER cast would
+		// overflow at 2^31 — and an INTEGER in SQLite. Casting also stops the
+		// driver from leaving the parameter type unresolved inside the VALUES
+		// list (an unknown-typed column would not compare against the
+		// BIGINT `requests.timestamp` column).
+		const textCast = "CAST(? AS TEXT)";
+		const intCast = this.adapter.isSQLite
+			? "CAST(? AS INTEGER)"
+			: "CAST(? AS BIGINT)";
+
+		// Collapse duplicate account ids the way the old OR-chain did: a row
+		// matched if ANY threshold of that account matched, i.e. the union of
+		// the windows, which is the widest (earliest) threshold. Joining the
+		// raw list would count such a row once per threshold.
+		const thresholds = new Map<string, number>();
+		for (const a of active) {
+			const seen = thresholds.get(a.id);
+			if (seen === undefined || a.session_start < seen) {
+				thresholds.set(a.id, a.session_start);
+			}
+		}
+
+		const values = [...thresholds]
+			.map(() => `(${textCast}, ${intCast})`)
+			.join(", ");
+		const params: (string | number)[] = [...thresholds].flat();
 
 		const rows = await this.adapter.query<{
 			account_used: string;
@@ -500,18 +528,21 @@ export class StatsRepository {
 			plan_cost_usd: unknown;
 			api_cost_usd: unknown;
 		}>(
-			`SELECT
-				account_used,
+			`WITH thresholds(account_id, since_ts) AS (VALUES ${values})
+			SELECT
+				r.account_used,
 				COUNT(*) as requests,
-				COALESCE(SUM(input_tokens), 0) as input_tokens,
-				COALESCE(SUM(cache_creation_input_tokens), 0) as cache_creation_input_tokens,
-				COALESCE(SUM(cache_read_input_tokens), 0) as cache_read_input_tokens,
-				COALESCE(SUM(output_tokens), 0) as output_tokens,
-				COALESCE(SUM(CASE WHEN billing_type = 'plan' THEN cost_usd ELSE 0 END), 0) as plan_cost_usd,
-				COALESCE(SUM(CASE WHEN billing_type != 'plan' OR billing_type IS NULL THEN cost_usd ELSE 0 END), 0) as api_cost_usd
-			FROM requests
-			WHERE ${clauses}
-			GROUP BY account_used`,
+				COALESCE(SUM(r.input_tokens), 0) as input_tokens,
+				COALESCE(SUM(r.cache_creation_input_tokens), 0) as cache_creation_input_tokens,
+				COALESCE(SUM(r.cache_read_input_tokens), 0) as cache_read_input_tokens,
+				COALESCE(SUM(r.output_tokens), 0) as output_tokens,
+				COALESCE(SUM(CASE WHEN r.billing_type = 'plan' THEN r.cost_usd ELSE 0 END), 0) as plan_cost_usd,
+				COALESCE(SUM(CASE WHEN r.billing_type != 'plan' OR r.billing_type IS NULL THEN r.cost_usd ELSE 0 END), 0) as api_cost_usd
+			FROM requests r
+			JOIN thresholds t
+				ON r.account_used = t.account_id
+				AND r.timestamp >= t.since_ts
+			GROUP BY r.account_used`,
 			params,
 		);
 

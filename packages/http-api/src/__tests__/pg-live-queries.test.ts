@@ -706,7 +706,7 @@ describe.skipIf(!livePgAvailable)(
 			);
 
 			liveIt(
-				"getSessionStats executes with a repeated OR-clause parameter pair",
+				"getSessionStats executes with a per-account thresholds CTE join",
 				async () => {
 					await seedBaseline();
 					const sessions = await dbOps.getStatsRepository().getSessionStats([
