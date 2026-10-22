@@ -45,6 +45,12 @@ import {
 	pickCodexRolloverSlot,
 } from "./providers/codex/window-rollover";
 import {
+	fetchQoderUsageData,
+	getRepresentativeQoderUtilization,
+	getRepresentativeQoderWindow,
+	type QoderUsageData,
+} from "./qoder-usage-fetcher";
+import {
 	fetchXaiUsageData,
 	getRepresentativeXaiUtilization,
 	getRepresentativeXaiWindow,
@@ -137,7 +143,8 @@ export type AnyUsageData =
 	| OpenRouterUsageData
 	| AlibabaCodingPlanUsageData
 	| XaiUsageData
-	| MinimaxUsageData;
+	| MinimaxUsageData
+	| QoderUsageData;
 
 /**
  * Minimum advance of the upstream reset timestamp that counts as a real window
@@ -544,6 +551,9 @@ function utilizationForProvider(
 		case "kilo": {
 			return getRepresentativeKiloUtilization(data as KiloUsageData);
 		}
+		case "qoder": {
+			return getRepresentativeQoderUtilization(data as QoderUsageData);
+		}
 		case "openrouter": {
 			// Null for keys with no budget: an unlimited key's purchased credits
 			// have no depletion window, so it is never gated out of selection.
@@ -722,6 +732,9 @@ export function getRepresentativeUsageResetMs(
 					data,
 					getRepresentativeKiloWindow(data as KiloUsageData),
 				);
+			case "qoder":
+				// A credit balance has no reset window to report.
+				return null;
 			case "openrouter": {
 				// OpenRouter reports a top-level ISO `resetsAt` (sourced from the
 				// key_limit budget), not a nested window's `resets_at`, so the
@@ -1379,6 +1392,21 @@ class UsageCache {
 					const window = getRepresentativeKiloWindow(data as KiloUsageData);
 					log.debug(
 						`Successfully fetched Kilo usage data for account ${accountId}: $${(data as KiloUsageData).remainingUsd.toFixed(2)} remaining (${utilization?.toFixed(1)}% used, ${window})`,
+					);
+					return { success: true, retryAfterMs: null };
+				}
+			} else if (provider === "qoder") {
+				// Fetch the Qoder credit balance. The token is either the stored
+				// prefixed access token or a bare job token; the fetcher decodes
+				// it and fails soft (null) on anything it cannot use.
+				data = await fetchQoderUsageData(token, customEndpoint);
+				if (data) {
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const qoder = data as QoderUsageData;
+					const utilization = getRepresentativeQoderUtilization(qoder);
+					const window = getRepresentativeQoderWindow(qoder);
+					log.debug(
+						`Successfully fetched Qoder usage data for account ${accountId}: ${qoder.remainingCredits} ${qoder.unit} remaining (${utilization?.toFixed(1)}% used, ${window})`,
 					);
 					return { success: true, retryAfterMs: null };
 				}

@@ -22,6 +22,7 @@ export const PROVIDER_NAMES = {
 	OLLAMA: "ollama",
 	OLLAMA_CLOUD: "ollama-cloud",
 	META: "meta",
+	QODER: "qoder",
 } as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
@@ -174,6 +175,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: false, // No usage-tracking polling API
 		supportsOAuth: false, // Meta Model API uses API key (bearer token) authentication
 		defaultEndpoint: "https://api.meta.ai",
+	},
+	[PROVIDER_NAMES.QODER]: {
+		requiresSessionTracking: false, // Qoder is credit-based, no session windows
+		supportsUsageTracking: true, // Credit balance via /api/v2/quota/usage
+		supportsOAuth: true, // Personal Access Token exchanged for a job token
+		defaultEndpoint: "https://api3.qoder.sh",
 	},
 } as const satisfies Record<ProviderName, ProviderConfig>;
 

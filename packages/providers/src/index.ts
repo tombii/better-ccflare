@@ -23,6 +23,8 @@ export {
 } from "./providers/anthropic-compatible/factory";
 // Export providers
 export * from "./providers/index";
+// Export Qoder usage fetcher
+export * from "./qoder-usage-fetcher";
 // Export registry functions
 export {
 	getOAuthProvider,

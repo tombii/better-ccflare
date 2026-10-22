@@ -39,6 +39,10 @@ import {
 	usageCache,
 } from "@better-ccflare/providers";
 import {
+	encodeQoderAccessToken,
+	exchangeQoderPat,
+} from "@better-ccflare/providers/qoder";
+import {
 	clearAccountRefreshCache,
 	clearAutoRefreshTrackingForAccount,
 	clearCodexModelCacheForAccount,
@@ -4301,6 +4305,213 @@ export function createKiloAccountAddHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to create Kilo Gateway account"),
+			);
+		}
+	};
+}
+
+/**
+ * Create a Qoder account add handler.
+ *
+ * Qoder auth is a Personal Access Token (`pt-…`), not an OAuth flow: the PAT is
+ * verified by exchanging it for a short-lived job token up front, then stored
+ * as the account's refresh credential (the provider renews the job token from
+ * it). The minted job token goes into `access_token` in the provider's
+ * `__qoder_jwt.pat.<jt-…>` form; `api_key` stays NULL.
+ */
+export function createQoderAccountAddHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
+				transform: sanitizers.trim,
+			});
+
+			if (!name) {
+				return errorResponse(BadRequest("Account name is required"));
+			}
+
+			// Personal Access Token. Never echoed back in any response or log.
+			const personalToken = validateString(
+				body.personalToken,
+				"personalToken",
+				{
+					required: true,
+					minLength: 1,
+				},
+			);
+
+			if (!personalToken) {
+				return errorResponse(BadRequest("Personal Access Token is required"));
+			}
+
+			const priority =
+				validateNumber(body.priority, "priority", {
+					min: 0,
+					max: 100,
+					integer: true,
+				}) || 0;
+
+			const customEndpoint = validateString(
+				body.customEndpoint || null,
+				"customEndpoint",
+				{
+					required: false,
+					transform: (value: string) => {
+						if (!value) return "";
+						const trimmed = value.trim();
+						if (!trimmed) return "";
+						try {
+							new URL(trimmed);
+							return trimmed;
+						} catch {
+							throw new Error("Invalid URL format");
+						}
+					},
+				},
+			);
+
+			let validatedModelMappings = null;
+			if (body.modelMappings && typeof body.modelMappings === "object") {
+				try {
+					const sanitized = validateAndSanitizeModelMappings(
+						body.modelMappings,
+					);
+					if (sanitized && Object.keys(sanitized).length > 0) {
+						validatedModelMappings = JSON.stringify(sanitized);
+					}
+				} catch (err) {
+					return errorResponse(
+						BadRequest(
+							`Invalid model mappings: ${err instanceof Error ? err.message : String(err)}`,
+						),
+					);
+				}
+			}
+
+			// Verify the PAT before anything is persisted. exchangeQoderPat
+			// redacts credentials from its error messages; surface a fixed,
+			// generic message regardless so nothing upstream can echo the PAT.
+			let minted: Awaited<ReturnType<typeof exchangeQoderPat>>;
+			try {
+				minted = await exchangeQoderPat(
+					personalToken,
+					customEndpoint || undefined,
+				);
+			} catch (err) {
+				log.warn(
+					`Qoder PAT exchange failed for account '${name}': ${err instanceof Error ? err.message : "unknown error"}`,
+				);
+				return errorResponse(
+					BadRequest(
+						"Invalid Qoder Personal Access Token: the token could not be exchanged for a job token",
+					),
+				);
+			}
+
+			const accountId = crypto.randomUUID();
+			const now = Date.now();
+			const db = dbOps.getAdapter();
+
+			const conflict = await assertAccountNameAvailable(
+				dbOps,
+				name,
+				"qoder",
+				customEndpoint || null,
+			);
+			if (conflict) return conflict;
+
+			await db.run(
+				`INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[
+					accountId,
+					name,
+					"qoder",
+					null,
+					personalToken,
+					encodeQoderAccessToken("pat", minted.accessToken),
+					minted.expiresAt,
+					now,
+					0,
+					0,
+					priority,
+					customEndpoint || null,
+					validatedModelMappings,
+				],
+			);
+
+			log.info(
+				`Successfully added Qoder account: ${name} (Priority ${priority})`,
+			);
+
+			await startUsagePollingForNewAccount(accountId, name);
+
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(
+					InternalServerError("Failed to retrieve created account"),
+				);
+			}
+
+			return jsonResponse({
+				message: `Qoder account '${name}' added successfully`,
+				account: {
+					id: account.id,
+					name: account.name,
+					provider: account.provider,
+					requestCount: account.request_count,
+					totalRequests: account.total_requests,
+					lastUsed: account.last_used
+						? new Date(account.last_used).toISOString()
+						: null,
+					created: new Date(account.created_at).toISOString(),
+					paused: account.paused === 1,
+					priority: priority,
+					tokenStatus: "valid" as const,
+					tokenExpiresAt: new Date(account.expires_at).toISOString(),
+					rateLimitStatus: "OK",
+					rateLimitReset: null,
+					rateLimitRemaining: null,
+					rateLimitedUntil: null,
+					sessionInfo: "No active session",
+					hasRefreshToken: !!account.refresh_token,
+				},
+			});
+		} catch (error) {
+			log.error("Qoder account creation error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to create Qoder account"),
 			);
 		}
 	};

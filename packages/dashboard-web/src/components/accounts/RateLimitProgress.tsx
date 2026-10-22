@@ -272,6 +272,30 @@ export function RateLimitProgress({
 	// budget ("key") or, for keys without one, the account credit pool
 	// ("account"); "unknown" means neither could be read and the key has no cap.
 	if (providerShowsCreditsBalance(provider) && usageData) {
+		// Qoder reports a plain credit count (`remainingCredits` + `unit`) rather
+		// than USD, so its balance is formatted with its own unit.
+		if (provider === PROVIDER_NAMES.QODER) {
+			const qoder = usageData as {
+				remainingCredits?: number | null;
+				totalCredits?: number | null;
+				unit?: string | null;
+			};
+			const remaining =
+				typeof qoder.remainingCredits === "number" ? qoder.remainingCredits : 0;
+			const unit = qoder.unit ? ` ${qoder.unit}` : "";
+			return (
+				<div className={cn("space-y-2", className)}>
+					<div className="flex items-center justify-between">
+						<span className="text-xs text-muted-foreground">Qoder credits</span>
+						<span className="text-xs font-medium text-muted-foreground">
+							{remaining > 0
+								? `${remaining}${unit} remaining`
+								: "No credits remaining"}
+						</span>
+					</div>
+				</div>
+			);
+		}
 		const creditData = usageData as {
 			remainingUsd?: number | null;
 			totalMicrodollarsAcquired?: number;
