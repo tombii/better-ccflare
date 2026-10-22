@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Account } from "@better-ccflare/types";
 import { encodeQoderAccessToken } from "../auth-flow";
-import { QoderProvider } from "../provider";
+import { decodeQoderBody } from "../cosy";
+import { parseBusyError, peekQoderStream, QoderProvider } from "../provider";
 
 // ---------------------------------------------------------------------------
 // Fixtures / helpers
@@ -301,11 +302,11 @@ describe("transformRequestBody (continued)", () => {
 		);
 	});
 
-	it("rejects a Claude model id with a clear error", async () => {
+	it("rejects a body with no model at all", async () => {
 		route(() => jsonResponse({}));
-		await expect(
-			transformed(anthropicRequest({ model: "claude-sonnet-4-5" })),
-		).rejects.toThrow(/Claude model id/);
+		await expect(transformed(anthropicRequest({ model: "" }))).rejects.toThrow(
+			/model/i,
+		);
 	});
 
 	it("passes a non-JSON request through untouched", async () => {
@@ -361,6 +362,9 @@ describe("transformRequestBody (continued)", () => {
 		expect(out.url.startsWith("https://better-ccflare.local/")).toBe(true);
 		const body = (await out.json()) as { input_tokens?: number };
 		expect(typeof body.input_tokens).toBe("number");
+		// An estimate, not a zero: Qoder has no count endpoint, and a client
+		// budgeting against zero would mis-plan every request.
+		expect(body.input_tokens).toBeGreaterThan(0);
 		expect(calls).toHaveLength(0);
 	});
 });
@@ -635,6 +639,28 @@ describe("parseRateLimit", () => {
 		expect(body.error.type).toBe("overloaded_error");
 	});
 
+	it("relabels a bare-JSON busy answer as 503 + Retry-After", async () => {
+		const provider = new QoderProvider();
+		const inner = JSON.stringify({
+			isQueued: true,
+			retryAfterSeconds: 3,
+			serviceAvailable: false,
+		});
+		const middle = JSON.stringify({ code: "10605", message: inner });
+		const response = new Response(
+			JSON.stringify({ code: "403", message: middle }),
+			{
+				status: 403,
+				headers: { "content-type": "application/json" },
+			},
+		);
+		const out = await provider.processResponse(response, makeAccount());
+		expect(out.status).toBe(503);
+		expect(out.headers.get("retry-after")).toBe("3");
+		const body = (await out.json()) as { error: { type: string } };
+		expect(body.error.type).toBe("overloaded_error");
+	});
+
 	it("passes an ordinary JSON error through with its status", async () => {
 		const provider = new QoderProvider();
 		const response = new Response(JSON.stringify({ code: 116 }), {
@@ -658,5 +684,263 @@ describe("configuration", () => {
 
 	it("enables usage tracking", () => {
 		expect(new QoderProvider().supportsUsageTracking()).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Model resolution
+// ---------------------------------------------------------------------------
+
+describe("model resolution", () => {
+	const provider = new QoderProvider();
+
+	/** The wire key the provider actually put in the encoded body. */
+	async function wireKey(request: Request, account: Account): Promise<string> {
+		route(() => jsonResponse({}));
+		const out = await provider.transformRequestBody(request, account);
+		const body = JSON.parse(decodeQoderBody(await out.text())) as {
+			model_config: { key: string };
+		};
+		return body.model_config.key;
+	}
+
+	it("maps a Claude family onto the provider's default wire key", async () => {
+		const account = makeAccount();
+		expect(
+			await wireKey(anthropicRequest({ model: "claude-sonnet-4-5" }), account),
+		).toBe("dfmodel");
+		expect(
+			await wireKey(anthropicRequest({ model: "claude-opus-4-1" }), account),
+		).toBe("qfmodel");
+	});
+
+	it("prefers the account's own model mappings", async () => {
+		const account = makeAccount({
+			model_mappings: JSON.stringify({ sonnet: "gmodel" }),
+		});
+		expect(
+			await wireKey(anthropicRequest({ model: "claude-sonnet-4-5" }), account),
+		).toBe("gmodel");
+	});
+
+	it("uses a Qoder wire key verbatim", async () => {
+		const account = makeAccount();
+		expect(await wireKey(anthropicRequest({ model: "qfmodel" }), account)).toBe(
+			"qfmodel",
+		);
+	});
+
+	it("throws a clear error naming the model when nothing resolves", async () => {
+		route(() => jsonResponse({}));
+		await expect(
+			provider.transformRequestBody(
+				anthropicRequest({ model: "" }),
+				makeAccount(),
+			),
+		).rejects.toThrow(/model/i);
+	});
+
+	it("tags the request with the resolved key", async () => {
+		route(() => jsonResponse({}));
+		const out = await provider.transformRequestBody(
+			anthropicRequest({ model: "claude-sonnet-4-5" }),
+			makeAccount(),
+		);
+		expect(out.headers.get("x-better-ccflare-qoder-model")).toBe("dfmodel");
+		expect(out.headers.get("x-model-key")).toBe("dfmodel");
+		expect(out.headers.get("x-model-source")).toBe("system");
+	});
+
+	it("uses ONE uuid for the body, the COSY payload and the X-Request-Id", async () => {
+		route(() => jsonResponse({}));
+		const out = await provider.transformRequestBody(
+			anthropicRequest({ model: "qfmodel" }),
+			makeAccount(),
+		);
+		const body = JSON.parse(decodeQoderBody(await out.text())) as {
+			request_id: string;
+		};
+		const headerId = out.headers.get("x-request-id");
+		const authorization = out.headers.get("authorization") ?? "";
+		const payload = JSON.parse(
+			Buffer.from(
+				authorization.replace("Bearer COSY.", "").split(".")[0],
+				"base64",
+			).toString("utf8"),
+		) as { requestId: string };
+		expect(body.request_id).toBe(headerId);
+		expect(payload.requestId).toBe(headerId);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Response attribution
+// ---------------------------------------------------------------------------
+
+describe("response attribution", () => {
+	const provider = new QoderProvider();
+
+	const OPENAI_LIKE = [
+		frame({ model: "auto", choices: [{ delta: { content: "ok" } }] }),
+		frame({
+			model: "auto",
+			choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+		}),
+	];
+
+	function tagRequestPath(response: Response, path: string): Response {
+		const headers = new Headers(response.headers);
+		headers.set("x-better-ccflare-request-path", path);
+		return new Response(response.body, { status: response.status, headers });
+	}
+
+	it("falls back to the last key sent for the account when the tag is missing", async () => {
+		route(() => jsonResponse({}));
+		const account = makeAccount();
+		await provider.transformRequestBody(
+			anthropicRequest({ model: "claude-sonnet-4-5" }),
+			account,
+		);
+		// No tag on the response, and the proxy's own model is empty for Qoder
+		// (the transformed body is an encoded wire string).
+		const out = await provider.processResponse(
+			tagRequestPath(sseResponse(OPENAI_LIKE), "/v1/messages"),
+			account,
+			new Headers({ "x-better-ccflare-request-stream": "false" }),
+			undefined,
+			{ requestModel: "" },
+		);
+		const body = (await out.json()) as { model: string };
+		expect(body.model).toBe("dfmodel");
+	});
+
+	it("falls back to 'unknown' when nothing was ever sent", async () => {
+		const out = await provider.processResponse(
+			tagRequestPath(sseResponse(OPENAI_LIKE), "/v1/messages"),
+			makeAccount({ id: "qoder-unknown" }),
+			new Headers({ "x-better-ccflare-request-stream": "false" }),
+			undefined,
+			{ requestModel: "" },
+		);
+		const body = (await out.json()) as { model: string };
+		expect(body.model).toBe("unknown");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Busy answers
+// ---------------------------------------------------------------------------
+
+describe("parseBusyError", () => {
+	it("reads the SSE envelope shape", () => {
+		const inner = JSON.stringify({
+			isQueued: true,
+			retryAfterSeconds: 3,
+			serviceAvailable: false,
+		});
+		const middle = JSON.stringify({ code: "10605", message: inner });
+		const envelope = JSON.stringify({
+			body: JSON.stringify({ code: "403", message: middle }),
+			statusCodeValue: 403,
+		});
+		expect(parseBusyError(`data:${envelope}`)).toEqual({
+			retryAfterSeconds: 3,
+		});
+	});
+
+	it("reads a bare JSON body", () => {
+		const inner = JSON.stringify({
+			isQueued: true,
+			retryAfterSeconds: 7,
+			serviceAvailable: false,
+		});
+		const middle = JSON.stringify({ code: "10605", message: inner });
+		const body = JSON.stringify({ code: "403", message: middle });
+		expect(parseBusyError(body)).toEqual({ retryAfterSeconds: 7 });
+	});
+
+	it("reads a flat bare busy body", () => {
+		expect(parseBusyError(JSON.stringify({ code: 10605 }))).toEqual({
+			retryAfterSeconds: 30,
+		});
+	});
+
+	it("leaves an ordinary error alone", () => {
+		expect(
+			parseBusyError(JSON.stringify({ code: 116, error: "quota" })),
+		).toBeNull();
+		expect(parseBusyError("not json at all")).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Streaming failures
+// ---------------------------------------------------------------------------
+
+describe("mid-stream failures", () => {
+	it("cancels the upstream reader when the stream fails mid-response", async () => {
+		const provider = new QoderProvider();
+		let cancelled = false;
+		const encoder = new TextEncoder();
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(
+					encoder.encode(
+						frame({
+							model: "auto",
+							choices: [{ delta: { content: "partial" } }],
+						}),
+					),
+				);
+				controller.enqueue(
+					encoder.encode(frame({ code: 116, error: "quota exceeded" })),
+				);
+				// The gateway holds the connection open: it never closes.
+			},
+			cancel() {
+				cancelled = true;
+			},
+		});
+		const response = new Response(body, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+		const out = await provider.processResponse(response, makeAccount());
+		const text = await out.text();
+		expect(text).toContain("partial");
+		expect(cancelled).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// The outcome peek
+// ---------------------------------------------------------------------------
+
+describe("peekQoderStream", () => {
+	it("gives up on a stream that only sends keep-alives", async () => {
+		// The deadline is for the WHOLE peek, not for each read: a stream that
+		// keeps sending keep-alive comments would otherwise keep the peek alive
+		// forever, one short read at a time.
+		let cancelled = false;
+		let timer: ReturnType<typeof setInterval> | undefined;
+		const encoder = new TextEncoder();
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				timer = setInterval(() => {
+					try {
+						controller.enqueue(encoder.encode(": keepalive\n\n"));
+					} catch {
+						// The stream was cancelled: nothing left to feed.
+					}
+				}, 5);
+			},
+			cancel() {
+				cancelled = true;
+				if (timer) clearInterval(timer);
+			},
+		});
+		const peek = await peekQoderStream(body, 100);
+		expect(peek.error?.status).toBe(504);
+		expect(cancelled).toBe(true);
 	});
 });

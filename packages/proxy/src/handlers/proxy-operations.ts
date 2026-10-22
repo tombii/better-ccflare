@@ -2200,6 +2200,16 @@ export async function proxyWithAccount(
 				internalNativeResponses,
 			);
 		}
+		// The Qoder provider tags the request with the wire model key it actually
+		// sent (the upstream echoes "auto", and the transformed body is an
+		// encoded string, so neither the response nor `outgoing.model` can
+		// attribute it). Any non-empty value is copied.
+		const internalQoderModel = outgoing.request.headers.get(
+			"x-better-ccflare-qoder-model",
+		);
+		if (internalQoderModel) {
+			responseHeaders.set("x-better-ccflare-qoder-model", internalQoderModel);
+		}
 		// Inject the original request path so providers can identify the
 		// response type (e.g. /v1/models vs /v1/messages) in processResponse
 		// without needing the original request object.
@@ -2260,6 +2270,12 @@ export async function proxyWithAccount(
 				if (value === "true" || value === "false") {
 					retryTaggedHeaders.set(forwarded, value);
 				}
+			}
+			const retryQoderModel = outgoing.request.headers.get(
+				"x-better-ccflare-qoder-model",
+			);
+			if (retryQoderModel) {
+				retryTaggedHeaders.set("x-better-ccflare-qoder-model", retryQoderModel);
 			}
 			retryTaggedHeaders.set("x-better-ccflare-request-path", requestMeta.path);
 			const retryTaggedRaw = new Response(retryRaw.body, {

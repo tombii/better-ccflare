@@ -100,6 +100,29 @@ export function encodeQoderBody(plaintext: string): string {
 	return out;
 }
 
+/**
+ * The inverse of {@link encodeQoderBody}: the wire form back to the JSON it
+ * came from. Used by the tests and by diagnostics — the body is opaque to
+ * everything else.
+ */
+export function decodeQoderBody(encoded: string): string {
+	let base64 = "";
+	for (const ch of encoded) {
+		if (ch === "$") {
+			base64 += "=";
+			continue;
+		}
+		const idx = QODER_ALPHABET.indexOf(ch);
+		base64 += idx >= 0 ? STANDARD_ALPHABET[idx] : ch;
+	}
+	const n = base64.length;
+	const a = Math.floor(n / 3);
+	// The rotation is its own inverse.
+	const restored =
+		base64.slice(n - a) + base64.slice(a, n - a) + base64.slice(0, a);
+	return Buffer.from(restored, "base64").toString("utf8");
+}
+
 /** The pathname the signature covers: no query, and no leading `/algo`. */
 export function cosySignaturePath(url: string): string {
 	const path = new URL(url).pathname;
@@ -121,8 +144,15 @@ export function buildCosyHeaders(opts: {
 	body: string;
 	creds: QoderCosyCreds;
 	machineId: string;
+	/**
+	 * The request id. ONE uuid identifies the request in the COSY payload, in
+	 * the `X-Request-Id` header and in the request body — three different
+	 * uuids for one request make the upstream's logs disagree with ours.
+	 */
+	requestId?: string;
 }): QoderCosyHeaders {
 	const { url, body, creds, machineId } = opts;
+	const requestId = opts.requestId ?? crypto.randomUUID();
 
 	const aesKey = randomHex16();
 	const cipher = createCipheriv(
@@ -153,7 +183,7 @@ export function buildCosyHeaders(opts: {
 	const payload = Buffer.from(
 		JSON.stringify({
 			version: "v1",
-			requestId: crypto.randomUUID(),
+			requestId,
 			info,
 			cosyVersion: QODER_COSY_VERSION,
 			ideVersion: "",
@@ -186,7 +216,7 @@ export function buildCosyHeaders(opts: {
 			"Cosy-Organization-Id": "",
 			"Cosy-Organization-Tags": "",
 			"Login-Version": "v2",
-			"X-Request-Id": crypto.randomUUID(),
+			"X-Request-Id": requestId,
 		},
 		payload,
 		signature,

@@ -24,11 +24,13 @@ export {
 	type QoderCosyCreds,
 	type QoderCosyHeaders,
 } from "./cosy";
+export { resolveQoderGatewayEndpoint } from "./endpoints";
 export {
 	parseBusyError,
 	QODER_DEFAULT_GATEWAY_ENDPOINT,
 	QODER_KNOWN_MODELS,
 	QoderProvider,
+	resolveQoderModelKey,
 } from "./provider";
 export {
 	buildQoderRequest,

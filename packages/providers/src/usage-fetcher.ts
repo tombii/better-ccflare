@@ -1399,7 +1399,14 @@ class UsageCache {
 				// Fetch the Qoder credit balance. The token is either the stored
 				// prefixed access token or a bare job token; the fetcher decodes
 				// it and fails soft (null) on anything it cannot use.
-				data = await fetchQoderUsageData(token, customEndpoint);
+				//
+				// The account's custom endpoint goes in as the ACCOUNT's endpoint:
+				// Qoder's quota lives on the OpenAPI host, which the fetcher
+				// derives from the gateway host the account names.
+				data = await fetchQoderUsageData({
+					access_token: token,
+					custom_endpoint: customEndpoint,
+				});
 				if (data) {
 					this.cache.set(accountId, { data, timestamp: Date.now() });
 					const qoder = data as QoderUsageData;

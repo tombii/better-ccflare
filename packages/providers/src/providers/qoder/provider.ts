@@ -1,3 +1,4 @@
+import { getModelFamily, mapModelName } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
 	type AnthropicResponse,
@@ -19,16 +20,21 @@ import {
 	decodeQoderAccessToken,
 	fetchQoderUserInfo,
 	refreshQoderToken,
-	resolveQoderOpenApiEndpoint,
 } from "./auth-flow";
 import {
 	buildCosyHeaders,
 	deriveQoderMachineId,
 	encodeQoderBody,
 } from "./cosy";
-import { buildQoderRequest } from "./request-builder";
+import {
+	QODER_DEFAULT_GATEWAY_ENDPOINT,
+	resolveQoderGatewayEndpoint,
+	resolveQoderOpenApiEndpoint,
+} from "./endpoints";
+import { buildQoderRequest, isClaudeModelId } from "./request-builder";
 import {
 	aggregateQoderSse,
+	detectQoderBusy,
 	QoderAggregateError,
 	type QoderStreamError,
 	qoderFrameToOpenAIChunk,
@@ -38,7 +44,9 @@ import {
 
 const log = new Logger("QoderProvider");
 
-export const QODER_DEFAULT_GATEWAY_ENDPOINT = "https://api3.qoder.sh";
+// Re-exported: the default lives with the endpoint resolvers now, but the
+// provider barrel has always exported it from here.
+export { QODER_DEFAULT_GATEWAY_ENDPOINT };
 
 const QODER_CHAT_PATH =
 	"/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1";
@@ -79,6 +87,11 @@ registerProviderModelDefaultFactory("qoder", QODER_MODEL_DEFAULTS);
  */
 const STREAM_INTENT_HEADER = "x-better-ccflare-request-stream";
 const QODER_MODEL_HEADER = "x-better-ccflare-qoder-model";
+/**
+ * The request's own uuid, carried across a replay so the re-signed envelope
+ * keeps the id the body was built with.
+ */
+const QODER_REQUEST_ID_HEADER = "x-better-ccflare-qoder-request-id";
 const REQUEST_PATH_HEADER = "x-better-ccflare-request-path";
 
 /**
@@ -119,6 +132,15 @@ export class QoderProvider extends BaseProvider {
 	private readonly identities = new Map<string, QoderIdentity>();
 	/** The model key each prepared request asked for (response attribution). */
 	private readonly prepared = new WeakMap<Request, string>();
+	/**
+	 * The last wire key this provider sent for an account.
+	 *
+	 * The upstream response is tagged with the model key, but the proxy only
+	 * copies a fixed list of internal headers back — and the transformed body is
+	 * an encoded wire string, so the proxy's own `requestModel` is empty for
+	 * Qoder. This is what the response falls back to when the tag is missing.
+	 */
+	private readonly lastModelByAccount = new Map<string, string>();
 
 	canHandle(path: string): boolean {
 		return (
@@ -158,23 +180,12 @@ export class QoderProvider extends BaseProvider {
 	}
 
 	/**
-	 * The gateway host. An account's `custom_endpoint` selects the CN region
-	 * (`https://gateway.qoder.com.cn`) and may be JSON with an `endpoint`
-	 * member, the same shape other providers accept.
+	 * The gateway host: the one that serves chat and the model list. An
+	 * account's `custom_endpoint` names it (the CN region uses
+	 * `https://gateway.qoder.com.cn`); the OpenAPI host is derived from it.
 	 */
 	private resolveGatewayEndpoint(account?: Account): string {
-		const raw = account?.custom_endpoint?.trim() ?? "";
-		let candidate = raw;
-		if (raw.startsWith("{")) {
-			try {
-				const parsed = JSON.parse(raw) as { endpoint?: unknown };
-				candidate = typeof parsed.endpoint === "string" ? parsed.endpoint : "";
-			} catch {
-				candidate = "";
-			}
-		}
-		while (candidate.endsWith("/")) candidate = candidate.slice(0, -1);
-		return candidate || QODER_DEFAULT_GATEWAY_ENDPOINT;
+		return resolveQoderGatewayEndpoint(account);
 	}
 
 	/**
@@ -250,7 +261,7 @@ export class QoderProvider extends BaseProvider {
 		const cached = this.identities.get(account.id);
 		if (cached && cached.tokenKey === token) return cached;
 
-		const info = await fetchQoderUserInfo(token, account.custom_endpoint);
+		const info = await fetchQoderUserInfo(token, account);
 		if (!info) {
 			throw new Error(
 				`Qoder userinfo failed for account ${account.name}: cannot sign the request (the job token may be dead)`,
@@ -284,14 +295,15 @@ export class QoderProvider extends BaseProvider {
 			(body && isCountTokensRequest(request, body))
 		) {
 			// Answer at the synthetic origin: that prefix is what tells the proxy
-			// not to send this request upstream.
+			// not to send this request upstream. The estimate is local: Qoder has no
+			// count endpoint, and Anthropic's is advisory anyway.
 			return this.createSyntheticJsonResponse(
 				new Request(QODER_SYNTHETIC_COUNT_TOKENS_URL, {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 				}),
 				200,
-				{ input_tokens: 0 },
+				{ input_tokens: estimateQoderCountTokens(body) },
 			);
 		}
 
@@ -302,11 +314,25 @@ export class QoderProvider extends BaseProvider {
 		const replayedModel = request.headers.get(QODER_MODEL_HEADER);
 		let encoded: string;
 		let modelKey: string;
+		// ONE uuid identifies this request in the body, in the COSY envelope and
+		// in the X-Request-Id header. A replay re-signs the body it already has,
+		// so it keeps the uuid the body was built with.
+		const requestId = body
+			? crypto.randomUUID()
+			: (request.headers.get(QODER_REQUEST_ID_HEADER) ?? crypto.randomUUID());
 		if (body) {
-			modelKey = typeof body.model === "string" ? body.model : "";
-			// Throws for a Claude model id: that is a client configuration error,
-			// not something Qoder could fall back from.
-			const qoderBody = buildQoderRequest(body, { sessionScope: account.id });
+			// The client sends a Claude model id; Qoder only knows wire keys. The
+			// resolution is the account's business (its model mappings, then the
+			// provider's family defaults), so it happens here, where the account is.
+			modelKey = resolveQoderModelKey(
+				typeof body.model === "string" ? body.model : "",
+				account,
+			);
+			const qoderBody = buildQoderRequest(body, {
+				sessionScope: account.id,
+				modelKey,
+				requestId,
+			});
 			encoded = encodeQoderBody(JSON.stringify(qoderBody));
 		} else if (replayedModel !== null) {
 			encoded = text;
@@ -315,6 +341,7 @@ export class QoderProvider extends BaseProvider {
 			// Neither a client body nor this provider's own wire form.
 			return request;
 		}
+		this.lastModelByAccount.set(account.id, modelKey);
 
 		const decoded = decodeQoderAccessToken(account.access_token);
 		if (!decoded?.token) {
@@ -329,6 +356,7 @@ export class QoderProvider extends BaseProvider {
 			body: encoded,
 			creds: { uid: identity.uid, token: decoded.token },
 			machineId: identity.machineId,
+			requestId,
 		});
 
 		const headers = this.clientHeaders(request.headers);
@@ -343,6 +371,7 @@ export class QoderProvider extends BaseProvider {
 				: streamIntentOf(request),
 		);
 		headers.set(QODER_MODEL_HEADER, modelKey);
+		headers.set(QODER_REQUEST_ID_HEADER, requestId);
 		if (modelKey) {
 			headers.set("X-Model-Key", modelKey);
 			headers.set("X-Model-Source", "system");
@@ -377,9 +406,14 @@ export class QoderProvider extends BaseProvider {
 			return this.translatePassthrough(response, account);
 		}
 
+		// The proxy tags the response with the model key it saw on the request.
+		// When that tag is missing, the proxy's own model is empty for Qoder
+		// (the transformed body is an encoded wire string, not JSON), so the
+		// fallback is the last key this provider sent for the account.
 		const model =
 			response.headers.get(QODER_MODEL_HEADER) ||
 			context?.requestModel ||
+			(account ? this.lastModelByAccount.get(account.id) : undefined) ||
 			"unknown";
 		const clientWantsJson =
 			response.headers.get(STREAM_INTENT_HEADER) === "false" ||
@@ -398,19 +432,20 @@ export class QoderProvider extends BaseProvider {
 			});
 			return qoderErrorResponse(peek.error);
 		}
-		const body = new Response(relayQoderStream(peek.head, peek.reader), {
+		const reader = peek.reader;
+		const body = new Response(relayQoderStream(peek.head, reader), {
 			status: response.status,
 			headers: response.headers,
 		});
 
 		if (clientWantsJson) {
-			return this.aggregateResponse(body, model, account);
+			return this.aggregateResponse(body, model, account, reader);
 		}
 
 		return transformStreamingResponse(
 			unwrapQoderSse(body, {
 				model,
-				onError: (error) =>
+				onError: (error) => {
 					log.warn(
 						`Qoder stream failed mid-response for ${account?.name ?? "account"}`,
 						{
@@ -418,7 +453,12 @@ export class QoderProvider extends BaseProvider {
 							code: error.code ?? null,
 							message: error.message.slice(0, 300),
 						},
-					),
+					);
+					// The gateway holds the connection open after an error frame, so
+					// the upstream reader is cancelled here: without it the socket
+					// stays open for as long as the gateway keeps it.
+					void reader.cancel(error.message).catch(() => {});
+				},
 			}),
 			{ fallbackModel: model },
 		);
@@ -489,6 +529,7 @@ export class QoderProvider extends BaseProvider {
 		response: Response,
 		model: string,
 		account: Account | null,
+		reader?: ReadableStreamDefaultReader<Uint8Array>,
 	): Promise<Response> {
 		try {
 			const message = await aggregateQoderSse(response, model);
@@ -497,6 +538,9 @@ export class QoderProvider extends BaseProvider {
 				headers: { "Content-Type": "application/json" },
 			});
 		} catch (error) {
+			// The gateway holds the connection open after an error frame, so the
+			// upstream reader is released here as well.
+			if (reader) void reader.cancel(String(error)).catch(() => {});
 			if (error instanceof QoderAggregateError) {
 				log.warn(`Qoder stream failed for ${account?.name ?? "account"}`, {
 					status: error.status,
@@ -539,7 +583,7 @@ export class QoderProvider extends BaseProvider {
 
 	/** Qoder openapi base for this account (usage fetcher / diagnostics). */
 	openApiEndpoint(account?: Account | null): string {
-		return resolveQoderOpenApiEndpoint(account?.custom_endpoint);
+		return resolveQoderOpenApiEndpoint(account);
 	}
 
 	private async transformModelList(response: Response): Promise<Response> {
@@ -613,19 +657,154 @@ export class QoderProvider extends BaseProvider {
 }
 
 /**
- * Detect Qoder's queued/busy answer in any of the shapes it sends: a flat
- * `{code: 10605}`, or the gateway's `{code:"403", message:"{\"code\":\"10605\",…}"}`
- * nest. Returns the wait it suggests, defaulting to 30s.
+ * Detect Qoder's queued/busy answer in any of the shapes it sends.
+ *
+ * Two shapes, both real:
+ *
+ *   1. the SSE envelope — `data:{"headers":…,"body":"…","statusCodeValue":403}`;
+ *   2. a BARE JSON body — `{"code":"403","message":"{\"code\":\"10605\",…}"}`.
+ *
+ * The second shape is not an envelope: read as one it has no status code and
+ * no body, so it used to be passed through as the 403 it arrived as, instead
+ * of being relabelled 503 + Retry-After. Its layers are merged the same way
+ * the envelope's are, so the queue hint is found wherever it sits.
+ *
+ * Returns the wait it suggests, defaulting to 30s.
  */
 export function parseBusyError(
 	text: string,
 ): { retryAfterSeconds: number } | null {
+	const trimmed = text.trim();
+	if (!trimmed) return null;
+
+	// Shape 1: the SSE envelope (or a bare JSON envelope, read as one).
 	const decoded = qoderFrameToOpenAIChunk(
-		text.trim().startsWith("data:") ? text : `data:${text}`,
+		trimmed.startsWith("data:") ? trimmed : `data:${trimmed}`,
 	);
-	if ("empty" in decoded || decoded.ok) return null;
-	if (decoded.error.code !== 10605) return null;
-	return { retryAfterSeconds: decoded.error.retryAfterSeconds ?? 30 };
+	if (!("empty" in decoded) && !decoded.ok) {
+		if (decoded.error.code !== 10605) return null;
+		return { retryAfterSeconds: decoded.error.retryAfterSeconds ?? 30 };
+	}
+
+	// Shape 2: a bare JSON body.
+	const parsed = tryParseJsonObject(trimmed);
+	if (!parsed) return null;
+	return detectQoderBusy(parsed);
+}
+
+/**
+ * Resolve the client's model to a Qoder wire key.
+ *
+ * Claude Code always asks for a Claude model id, and Qoder only knows wire
+ * keys (`qfmodel`, `dfmodel`, …), so the mapping has to happen here — where
+ * the account is. Precedence:
+ *
+ *   1. a model that is already a wire key is used verbatim;
+ *   2. the account's own model mappings (what the CLI asks for);
+ *   3. the provider's family defaults (the operator's override, the account's
+ *      derived defaults, then the built-in map).
+ *
+ * @throws when nothing resolves to a wire key
+ */
+export function resolveQoderModelKey(
+	requested: string,
+	account: Account,
+): string {
+	const model = requested.trim();
+	if (!model) {
+		throw new Error("Qoder requires a model in the request body");
+	}
+	if (!isClaudeModelId(model)) return model;
+
+	const mapped = mapModelName(model, account);
+	if (mapped && !isClaudeModelId(mapped)) return mapped;
+
+	const family = getModelFamily(model);
+	if (family) {
+		const resolved = resolveProviderModelDefault("qoder", family, account.id);
+		if (resolved && !isClaudeModelId(resolved)) return resolved;
+	}
+
+	throw new Error(
+		`Qoder cannot serve the model "${model}": no Qoder wire key is mapped for it (set a model mapping for the account, or a provider model default for "${family ?? "unknown"}")`,
+	);
+}
+
+/**
+ * A conservative estimate of the prompt's token count.
+ *
+ * Qoder has no count endpoint. Anthropic's is advisory for client-side
+ * budgeting, so a local estimate over the prompt material is better than an
+ * answer of zero — the same approach CodeBuddy takes.
+ */
+export function estimateQoderCountTokens(body: unknown): number {
+	const material = extractCountTokensMaterial(body);
+	let serialized = material.join("\n");
+	if (serialized.length === 0) {
+		try {
+			serialized = JSON.stringify(body) ?? "";
+		} catch {
+			serialized = String(body ?? "");
+		}
+	}
+	return Math.max(1, Math.ceil(serialized.length / 3));
+}
+
+function extractCountTokensMaterial(body: unknown): string[] {
+	if (!body || typeof body !== "object") return [];
+	const request = body as Record<string, unknown>;
+	const chunks: string[] = [];
+	appendCountTokensContent(chunks, request.system);
+	const messages = request.messages;
+	if (Array.isArray(messages)) {
+		for (const message of messages) {
+			if (!message || typeof message !== "object") continue;
+			const msg = message as Record<string, unknown>;
+			if (typeof msg.role === "string") chunks.push(msg.role);
+			appendCountTokensContent(chunks, msg.content);
+		}
+	}
+	const tools = request.tools;
+	if (Array.isArray(tools)) {
+		for (const tool of tools) {
+			appendCountTokensContent(chunks, tool);
+		}
+	}
+	return chunks;
+}
+
+function appendCountTokensContent(chunks: string[], value: unknown): void {
+	if (typeof value === "string") {
+		chunks.push(value);
+		return;
+	}
+	if (Array.isArray(value)) {
+		for (const item of value) {
+			appendCountTokensContent(chunks, item);
+		}
+		return;
+	}
+	if (!value || typeof value !== "object") return;
+	const record = value as Record<string, unknown>;
+	const before = chunks.length;
+	if (typeof record.text === "string") chunks.push(record.text);
+	if (typeof record.name === "string") chunks.push(record.name);
+	if (typeof record.description === "string") chunks.push(record.description);
+	if ("input" in record) appendCountTokensContent(chunks, record.input);
+	if ("content" in record) appendCountTokensContent(chunks, record.content);
+	if ("input_schema" in record) {
+		appendCountTokensContent(chunks, record.input_schema);
+	}
+	if ("parameters" in record) {
+		appendCountTokensContent(chunks, record.parameters);
+	}
+	if (Object.keys(record).length > 0 && chunks.length === before) {
+		try {
+			chunks.push(JSON.stringify(record));
+		} catch {
+			// Ignore non-serializable objects; the caller has a fallback.
+		}
+	}
 }
 
 /**
@@ -634,7 +813,7 @@ export function parseBusyError(
  * The busy answer arrives in well under a second, and a healthy stream starts
  * just as fast; anything slower is a stalled connection, not a slow model.
  */
-const QODER_FIRST_FRAME_TIMEOUT_MS = 30_000;
+export const QODER_FIRST_FRAME_TIMEOUT_MS = 30_000;
 
 type QoderPeek =
 	| {
@@ -661,8 +840,9 @@ type QoderPeek =
  * comes and wedge the request. So the peek stops at the first frame that
  * decides the outcome, and the bytes it consumed are handed back for replay.
  */
-async function peekQoderStream(
+export async function peekQoderStream(
 	body: ReadableStream<Uint8Array> | null,
+	timeoutMs: number = QODER_FIRST_FRAME_TIMEOUT_MS,
 ): Promise<QoderPeek> {
 	if (!body) {
 		return {
@@ -676,6 +856,9 @@ async function peekQoderStream(
 	const decoder = new TextDecoder();
 	const consumed: Uint8Array[] = [];
 	let text = "";
+	// A TOTAL deadline for the peek, not a per-read one: a stream that keeps
+	// sending keep-alive comments would otherwise keep the peek alive forever.
+	const deadline = Date.now() + timeoutMs;
 
 	const head = (): Uint8Array => {
 		const total = consumed.reduce((sum, chunk) => sum + chunk.length, 0);
@@ -693,14 +876,15 @@ async function peekQoderStream(
 			| { done: true }
 			| { done: false; value: Uint8Array }
 			| typeof TIMEOUT;
+		const remaining = deadline - Date.now();
 		try {
-			next = await withTimeout(reader.read(), QODER_FIRST_FRAME_TIMEOUT_MS);
+			next = await withTimeout(reader.read(), remaining > 0 ? remaining : 1);
 		} catch (_error) {
 			void reader.cancel().catch(() => {});
 			return {
 				error: {
 					status: 504,
-					message: `Qoder sent no response within ${QODER_FIRST_FRAME_TIMEOUT_MS}ms`,
+					message: `Qoder sent no response within ${timeoutMs}ms`,
 				},
 				head: new Uint8Array(0),
 				reader: null,
@@ -711,7 +895,7 @@ async function peekQoderStream(
 			return {
 				error: {
 					status: 504,
-					message: `Qoder sent no response within ${QODER_FIRST_FRAME_TIMEOUT_MS}ms`,
+					message: `Qoder sent no response within ${timeoutMs}ms`,
 				},
 				head: new Uint8Array(0),
 				reader: null,

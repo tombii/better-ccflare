@@ -671,9 +671,29 @@ Claude families map to CodeBuddy aliases: `fable`/`opus` → `primary-model`, `s
 
 The `QoderProvider` (registered as `"qoder"`) extends `BaseProvider` and talks to Qoder's own COSY-signed gateway, not an Anthropic- or OpenAI-shaped API.
 
-- **Core files**: `packages/providers/src/providers/qoder/` — `provider.ts`, `auth-flow.ts`, `cosy.ts`, `request-builder.ts`, `sse-unwrap.ts`
+- **Core files**: `packages/providers/src/providers/qoder/` — `provider.ts`, `auth-flow.ts`, `cosy.ts`, `endpoints.ts`, `request-builder.ts`, `sse-unwrap.ts`
 - **Default gateway endpoint**: `https://api3.qoder.sh`
 - **OpenAPI endpoint** (token exchange and quota): `https://openapi.qoder.sh`; the CN region uses `https://openapi.qoder.com.cn`, selected per account with a custom endpoint or process-wide with `CCFLARE_QODER_OPENAPI_ENDPOINT`
+
+### Endpoints: one custom endpoint, two hosts
+
+Qoder serves the account surface (token exchange, userinfo, quota) on
+`openapi.qoder.sh` and the inference gateway on `api3.qoder.sh`; the CN region
+uses `openapi.qoder.com.cn` and `gateway.qoder.com.cn`. An account therefore
+has **one** custom endpoint, and it names the **gateway** — the host that
+serves chat and the model list. The OpenAPI host is derived from it:
+
+| account's `custom_endpoint` | gateway host | OpenAPI host |
+|---|---|---|
+| unset | `https://api3.qoder.sh` | `https://openapi.qoder.sh` |
+| `https://gateway.qoder.com.cn` | `https://gateway.qoder.com.cn` | `https://openapi.qoder.com.cn` (the documented CN pair) |
+| `{"endpoint": "https://gw.example.com", "openapiEndpoint": "https://api.example.com"}` | `https://gw.example.com` | `https://api.example.com` |
+
+The OpenAPI host falls back to the `CCFLARE_QODER_OPENAPI_ENDPOINT` environment
+override when the account names no explicit one. Both resolutions live in
+`endpoints.ts` (`resolveQoderGatewayEndpoint` / `resolveQoderOpenApiEndpoint`)
+and are the only place that decides which host is which — the provider, the
+auth flow and the usage fetcher all go through them.
 
 ### Authentication
 
@@ -692,6 +712,24 @@ Each chat request is COSY-signed (`cosy.ts`) with a machine id derived per accou
 ### Model defaults
 
 Claude families map to Qoder's free models: `fable`/`opus` → `qfmodel`, `sonnet`/`haiku` → `dfmodel`. Qoder's live model catalog is read through the provider (`GET /v1/models` on the gateway) and returns Qwen/DeepSeek wire keys.
+
+Claude Code always asks for a Claude model id, and Qoder only knows wire keys,
+so the provider **resolves the model before it builds the request**:
+
+1. a model that is already a wire key (`qfmodel`, `dfmodel`, …) is used verbatim;
+2. otherwise the account's own **model mappings** (what the CLI and the
+   dashboard ask for) are applied;
+3. otherwise the provider's **model defaults** for the Claude family are used
+   (the operator's override, then the account's derived defaults, then the
+   built-in map above);
+4. if none of that resolves, the request fails with an error naming the model —
+   a Claude id is never sent upstream.
+
+The resolved key is what goes into the request body (`model_config.key`,
+`chat_context.extra.modelConfig.key`), into `X-Model-Key` / `X-Model-Source`,
+and into the internal `x-better-ccflare-qoder-model` tag the proxy copies back
+onto the response. The upstream always echoes `auto`, so that tag is the only
+way the provider can attribute an answer to the model that served it.
 
 ### Usage
 
@@ -712,6 +750,15 @@ it — by id when the client kept it, otherwise to the oldest call still
 outstanding. A result with no call left to answer goes out as text in the user
 turn.
 
+**Contingency — a model writing the call as text.** No model has been seen
+doing this: the free models return calls natively, in the standard OpenAI
+shape, and the shared emitter turns them into `tool_use` blocks unchanged. If
+a model ever writes a call as text instead (an XML or JSON blob in the
+content), the call is currently passed through as ordinary text and the turn
+answers in prose. The reference implementation for that case is magpie's
+`Splitter`/`parseCall`, which handles both the JSON and the
+`<function=name><parameter=k>v</parameter></function>` forms.
+
 ### Saturated models (10605)
 
 When a free model is saturated the gateway answers with an error frame — code
@@ -728,9 +775,17 @@ The free models are **intermittently unavailable** — they can be queued for
 tens of minutes at a time. A Qoder account can therefore be "valid" and still
 fail every request for a while.
 
+### Count tokens
+
+Qoder has no count endpoint, so `/v1/messages/count_tokens` is answered
+locally with a conservative estimate over the prompt material (the same
+approach CodeBuddy takes). Anthropic's endpoint is advisory for client-side
+budgeting, so the estimate only has to be in the right order of magnitude.
+
 ### Known limitations
 
 - The gateway always echoes the model name as `auto`, regardless of the model requested, so the serving model is not observable from the response.
+- Image blocks are dropped: the shared Anthropic→OpenAI converter keeps only text blocks, and Qoder's request shape has no documented place for an image yet (`image_urls` / `chat_context.imageUrls` exist in the body, but their format is not specified). Qoder's models are VL-capable, so this is a known gap rather than an upstream limit.
 - The free models are the only ones that work on a zero-credit balance; the paid catalogue is unreachable without credits.
 - Qoder has no usage pause thresholds, and no 5-hour/7-day windows (it is a credit balance, like Kilo).
 

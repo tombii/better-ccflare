@@ -103,6 +103,8 @@ export {
 	qoderStatusForCode,
 	refreshQoderJobToken,
 	refreshQoderToken,
+	resolveQoderGatewayEndpoint,
+	resolveQoderModelKey,
 	resolveQoderOpenApiEndpoint,
 	unwrapQoderSse,
 } from "./qoder/index";

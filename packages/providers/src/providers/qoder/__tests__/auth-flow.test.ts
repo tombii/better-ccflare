@@ -108,11 +108,39 @@ describe("resolveQoderOpenApiEndpoint", () => {
 		expect(resolveQoderOpenApiEndpoint(null)).toBe("https://env.example.com");
 	});
 
-	it("prefers the account endpoint over the environment", () => {
+	it("prefers the environment over a gateway-derived host", () => {
 		process.env[ENV] = "https://env.example.com";
-		expect(resolveQoderOpenApiEndpoint("https://acct.example.com")).toBe(
-			"https://acct.example.com",
+		expect(resolveQoderOpenApiEndpoint("https://gateway.qoder.com.cn")).toBe(
+			"https://env.example.com",
 		);
+	});
+
+	it("prefers an explicit openapiEndpoint in a JSON endpoint", () => {
+		process.env[ENV] = "https://env.example.com";
+		expect(
+			resolveQoderOpenApiEndpoint(
+				JSON.stringify({
+					endpoint: "https://gateway.qoder.com.cn",
+					openapiEndpoint: "https://openapi.example.com",
+				}),
+			),
+		).toBe("https://openapi.example.com");
+	});
+
+	it("derives the documented CN pair from a gateway host", () => {
+		expect(
+			resolveQoderOpenApiEndpoint({
+				custom_endpoint: "https://gateway.qoder.com.cn",
+			}),
+		).toBe("https://openapi.qoder.com.cn");
+	});
+
+	it("keeps an account that already names the OpenAPI host working", () => {
+		expect(
+			resolveQoderOpenApiEndpoint({
+				custom_endpoint: "https://openapi.qoder.com.cn/",
+			}),
+		).toBe("https://openapi.qoder.com.cn");
 	});
 });
 
@@ -240,6 +268,26 @@ describe("fetchQoderUserInfo", () => {
 	it("returns null for a non-ok response", async () => {
 		respond({}, 401);
 		expect(await fetchQoderUserInfo("jt")).toBeNull();
+	});
+
+	it("reads the uid from the account's OpenAPI host", async () => {
+		respond({ id: "u-42" });
+		await fetchQoderUserInfo("jt-abc", {
+			custom_endpoint: "https://gateway.qoder.com.cn",
+		});
+		expect(calls[0].url).toBe("https://openapi.qoder.com.cn/api/v1/userinfo");
+	});
+});
+
+describe("the PAT exchange follows the account's OpenAPI host", () => {
+	it("exchanges against the derived CN host", async () => {
+		respond({ token: "jt-access" });
+		await exchangeQoderPat("pt-abc", {
+			custom_endpoint: "https://gateway.qoder.com.cn",
+		});
+		expect(calls[0].url).toBe(
+			"https://openapi.qoder.com.cn/api/v1/jobToken/exchange",
+		);
 	});
 });
 

@@ -675,11 +675,15 @@ export interface UsagePollingRestarterDeps {
 	serverId: string;
 	dbOps: DatabaseOperations;
 	usageCache: UsageCacheRegistrar & { stopPolling(accountId: string): void };
-	/** Starts refresh-backed polling; `startUsagePollingWithRefresh` at runtime. */
+	/**
+	 * Starts refresh-backed polling; `startUsagePollingWithRefresh` at runtime.
+	 * The third argument is the account's own `custom_endpoint` — not a host
+	 * for a specific API; each provider's fetcher resolves what it needs.
+	 */
 	startRefreshBackedPolling: (
 		account: Account,
 		intervalMs: number,
-		customEndpoint?: string | null,
+		accountCustomEndpoint?: string | null,
 	) => void;
 	intervalMs: number;
 	log: Logger;
@@ -749,6 +753,8 @@ export function createUsagePollingRestarter(
 			startRefreshBackedPolling(
 				account,
 				intervalMs,
+				// The account's own custom endpoint; the Qoder fetcher derives the
+				// OpenAPI host from it rather than treating it as that host.
 				account.custom_endpoint ?? undefined,
 			);
 			return true;
@@ -1048,7 +1054,7 @@ function startUsagePollingWithRefresh(
 	proxyContext: ProxyContext,
 	startupDelayMs: number = 0,
 	intervalMs: number = 90000,
-	customEndpoint?: string,
+	accountCustomEndpoint?: string,
 ) {
 	const logger = new Logger("UsagePolling");
 	const MAX_RETRY_ATTEMPTS = 10;
@@ -1070,10 +1076,11 @@ function startUsagePollingWithRefresh(
 				tokenProvider,
 				account.provider,
 				intervalMs,
-				// Qoder's quota endpoint lives on the account's OpenAPI host (a
-				// CN-region account needs its own); the other refresh-backed
-				// providers have a single fixed host.
-				account.provider === "qoder" ? customEndpoint : undefined,
+				// Qoder's quota endpoint lives on the OpenAPI host, which its fetcher
+				// derives from the account's own custom endpoint (a CN-region account
+				// needs its own); the other refresh-backed providers have a single
+				// fixed host.
+				account.provider === "qoder" ? accountCustomEndpoint : undefined,
 				(accountId) => {
 					// Usage window has rolled over — reset session tracking so the
 					// dashboard reflects the new window without waiting for the next request.
@@ -1796,13 +1803,13 @@ export default async function startServer(options?: {
 			usageCache,
 			log,
 			intervalMs: config.getUsagePollIntervalMs(),
-			startRefreshBackedPolling: (account, intervalMs, customEndpoint) =>
+			startRefreshBackedPolling: (account, intervalMs, accountCustomEndpoint) =>
 				startUsagePollingWithRefresh(
 					account,
 					proxyContext,
 					0,
 					intervalMs,
-					customEndpoint ?? undefined,
+					accountCustomEndpoint ?? undefined,
 				),
 		}),
 	);
@@ -2290,6 +2297,8 @@ Available endpoints:
 			proxyContext,
 			0,
 			config.getUsagePollIntervalMs(),
+			// The account's own custom endpoint; the Qoder fetcher derives the
+			// OpenAPI host from it rather than treating it as that host.
 			account.custom_endpoint ?? undefined,
 		);
 		log.info(`Started usage polling for Qoder account ${account.name}`);

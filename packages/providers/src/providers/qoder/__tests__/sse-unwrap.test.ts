@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { transformStreamingResponse } from "@better-ccflare/openai-formats";
 import {
 	aggregateQoderSse,
+	QODER_AGGREGATE_TIMEOUT_MS,
 	qoderFrameToOpenAIChunk,
 	qoderStatusForCode,
 	unwrapQoderSse,
@@ -572,6 +573,35 @@ describe("aggregateQoderSse", () => {
 		await expect(aggregateQoderSse(response, "qfmodel")).rejects.toThrow(
 			/complete|ended/i,
 		);
+	});
+
+	it("gives a reasoning model five minutes, not thirty seconds", () => {
+		// The 30s cap turned a slow-but-healthy answer into a 502; the held-open
+		// connection it guarded against is handled by the provider's peek.
+		expect(QODER_AGGREGATE_TIMEOUT_MS).toBe(300_000);
+	});
+
+	it("cancels the upstream when the aggregation deadline passes", async () => {
+		let cancelled = false;
+		const encoder = new TextEncoder();
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(encoder.encode(frame(contentChunk("partial"))));
+				// The gateway holds the connection open: it never closes.
+			},
+			cancel() {
+				cancelled = true;
+			},
+		});
+		const response = new Response(body, {
+			headers: { "content-type": "text/event-stream" },
+		});
+		await expect(
+			aggregateQoderSse(response, "qfmodel", { timeoutMs: 50 }),
+		).rejects.toThrow(/within 50ms/);
+		// A whole-body read would have left the socket open: the body is read
+		// through a reader precisely so it can be cancelled.
+		expect(cancelled).toBe(true);
 	});
 
 	it("throws when the stream carries no choices at all", async () => {

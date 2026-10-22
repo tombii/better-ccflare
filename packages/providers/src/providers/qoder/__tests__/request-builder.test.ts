@@ -61,6 +61,50 @@ describe("buildQoderRequest", () => {
 			);
 			expect(a.request_set_id).not.toBe(b.request_set_id);
 		});
+
+		// The conversation identity must survive the turns that follow it: the
+		// transcript grows every turn, so hashing it would give every turn of the
+		// same conversation a different identity.
+		it("keeps the same id for every turn of one conversation", () => {
+			const first = buildQoderRequest(
+				anthropic({
+					system: "You are terse.",
+					messages: [{ role: "user", content: "the first question" }],
+				}),
+			);
+			const second = buildQoderRequest(
+				anthropic({
+					system: "You are terse.",
+					messages: [
+						{ role: "user", content: "the first question" },
+						{ role: "assistant", content: "an answer" },
+						{ role: "user", content: "a follow-up question" },
+					],
+				}),
+			);
+			expect(second.request_set_id).toBe(first.request_set_id);
+			expect(second.chat_record_id).toBe(first.request_set_id);
+		});
+
+		it("gives a different conversation a different id even when the later turns match", () => {
+			const a = buildQoderRequest(
+				anthropic({
+					messages: [
+						{ role: "user", content: "question one" },
+						{ role: "assistant", content: "an answer" },
+					],
+				}),
+			);
+			const b = buildQoderRequest(
+				anthropic({
+					messages: [
+						{ role: "user", content: "question two" },
+						{ role: "assistant", content: "an answer" },
+					],
+				}),
+			);
+			expect(a.request_set_id).not.toBe(b.request_set_id);
+		});
 	});
 
 	describe("model key", () => {
@@ -77,10 +121,27 @@ describe("buildQoderRequest", () => {
 			expect(body.chat_context.extra.modelConfig.is_reasoning).toBe(true);
 		});
 
-		it("rejects a Claude model id rather than sending it upstream", () => {
+		it("uses the resolved key even when the body's model is a Claude id", () => {
+			const body = buildQoderRequest(
+				anthropic({ model: "claude-sonnet-4-5" }),
+				{ sessionScope: "acct", modelKey: "dfmodel" },
+			);
+			expect(body.model_config.key).toBe("dfmodel");
+			expect(body.chat_context.extra.modelConfig.key).toBe("dfmodel");
+		});
+
+		it("rejects a key that was not resolved rather than sending it upstream", () => {
 			expect(() =>
 				buildQoderRequest(anthropic({ model: "claude-sonnet-4-5" })),
-			).toThrow(/model/i);
+			).toThrow(/Claude model id/);
+		});
+
+		it("carries the request id it was given", () => {
+			const body = buildQoderRequest(anthropic(), {
+				sessionScope: "acct",
+				requestId: "11111111-2222-3333-4444-555555555555",
+			});
+			expect(body.request_id).toBe("11111111-2222-3333-4444-555555555555");
 		});
 	});
 

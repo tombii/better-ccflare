@@ -51,24 +51,34 @@ export function mapQoderQuota(quota: QoderQuota): QoderUsageData {
 }
 
 /**
+ * What the fetcher needs from an account.
+ *
+ * The ACCOUNT, not a bare endpoint string: the quota endpoint lives on
+ * Qoder's OpenAPI host, which is derived from the account's custom endpoint
+ * (the gateway host) by the shared resolver. Handing the fetcher a host
+ * string instead is how the two hosts got confused.
+ */
+export interface QoderUsageAccount {
+	access_token?: string | null;
+	custom_endpoint?: string | null;
+}
+
+/**
  * Fetch usage for a Qoder account.
  *
- * `accessToken` may be the account's stored access token (prefixed
- * `__qoder_jwt.<mode>.<token>`) or a bare job token; it is decoded first, and
+ * The account's `access_token` may be the stored prefixed token
+ * (`__qoder_jwt.<mode>.<token>`) or a bare job token; it is decoded first, and
  * an undecodable value yields null rather than a request with a broken bearer.
- * `endpoint` is the account's custom endpoint (a CN-region OpenAPI host), when
- * one is set.
  *
  * Non-blocking: never throws, returns null on any failure.
  */
 export async function fetchQoderUsageData(
-	accessToken: string | null | undefined,
-	endpoint?: string | null,
+	account: QoderUsageAccount | null | undefined,
 ): Promise<QoderUsageData | null> {
 	try {
-		const decoded = decodeQoderAccessToken(accessToken);
+		const decoded = decodeQoderAccessToken(account?.access_token);
 		if (!decoded?.token) return null;
-		const quota = await fetchQoderQuota(decoded.token, endpoint);
+		const quota = await fetchQoderQuota(decoded.token, account);
 		if (!quota) return null;
 		return mapQoderQuota(quota);
 	} catch {

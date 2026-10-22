@@ -83,9 +83,9 @@ describe("Qoder Usage Fetcher", () => {
 				userQuota: { total: 400, used: 100, remaining: 300, unit: "credits" },
 				isQuotaExceeded: false,
 			});
-			const data = await fetchQoderUsageData(
-				encodeQoderAccessToken("pat", "jt-abc"),
-			);
+			const data = await fetchQoderUsageData({
+				access_token: encodeQoderAccessToken("pat", "jt-abc"),
+			});
 			expect(data).not.toBeNull();
 			expect(data?.totalCredits).toBe(400);
 			expect(data?.usedCredits).toBe(100);
@@ -101,7 +101,7 @@ describe("Qoder Usage Fetcher", () => {
 				userQuota: { total: 0, used: 0, remaining: 0, unit: "credits" },
 				isQuotaExceeded: true,
 			});
-			const data = await fetchQoderUsageData("jt-abc");
+			const data = await fetchQoderUsageData({ access_token: "jt-abc" });
 			expect(data?.isQuotaExceeded).toBe(true);
 			// No opinion, not "exhausted": selection falls back to the
 			// usage-free check and the account stays in the rotation.
@@ -112,7 +112,7 @@ describe("Qoder Usage Fetcher", () => {
 			const calls = mockQuota({
 				userQuota: { total: 10, used: 1, remaining: 9, unit: "credits" },
 			});
-			const data = await fetchQoderUsageData("jt-bare");
+			const data = await fetchQoderUsageData({ access_token: "jt-bare" });
 			expect(data).not.toBeNull();
 			expect(calls[0]?.authorization).toBe("Bearer jt-bare");
 		});
@@ -121,25 +121,61 @@ describe("Qoder Usage Fetcher", () => {
 			const calls = mockQuota({
 				userQuota: { total: 10, used: 1, remaining: 9, unit: "credits" },
 			});
-			await fetchQoderUsageData(encodeQoderAccessToken("jrt", "jt-cli"));
+			await fetchQoderUsageData({
+				access_token: encodeQoderAccessToken("jrt", "jt-cli"),
+			});
 			expect(calls[0]?.authorization).toBe("Bearer jt-cli");
 		});
 
 		it("returns null for an undecodable prefixed token without calling upstream", async () => {
 			const calls = mockQuota({});
-			expect(await fetchQoderUsageData("__qoder_jwt.bogus")).toBeNull();
+			expect(
+				await fetchQoderUsageData({ access_token: "__qoder_jwt.bogus" }),
+			).toBeNull();
 			expect(calls).toHaveLength(0);
 		});
 
 		it("returns null for a missing token", async () => {
 			const calls = mockQuota({});
 			expect(await fetchQoderUsageData(null)).toBeNull();
+			expect(await fetchQoderUsageData({})).toBeNull();
 			expect(calls).toHaveLength(0);
 		});
 
 		it("returns null on a non-OK response", async () => {
 			mockQuota({ error: "unauthorized" }, 401);
 			expect(await fetchQoderUsageData("jt-abc")).toBeNull();
+		});
+
+		it("reads the quota from the OpenAPI host of a CN-region account", async () => {
+			const calls = mockQuota({
+				userQuota: { total: 10, used: 1, remaining: 9, unit: "credits" },
+			});
+			// The account names the GATEWAY host; the quota lives on the OpenAPI
+			// host, which the fetcher derives from it.
+			await fetchQoderUsageData({
+				access_token: "jt-abc",
+				custom_endpoint: "https://gateway.qoder.com.cn",
+			});
+			expect(calls[0]?.url).toBe(
+				"https://openapi.qoder.com.cn/api/v2/quota/usage",
+			);
+		});
+
+		it("reads the quota from an explicit OpenAPI host", async () => {
+			const calls = mockQuota({
+				userQuota: { total: 10, used: 1, remaining: 9, unit: "credits" },
+			});
+			await fetchQoderUsageData({
+				access_token: "jt-abc",
+				custom_endpoint: JSON.stringify({
+					endpoint: "https://gateway.qoder.com.cn",
+					openapiEndpoint: "https://openapi.example.com",
+				}),
+			});
+			expect(calls[0]?.url).toBe(
+				"https://openapi.example.com/api/v2/quota/usage",
+			);
 		});
 
 		it("returns null on a network error", async () => {

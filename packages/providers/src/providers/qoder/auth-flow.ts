@@ -1,15 +1,25 @@
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import type { TokenRefreshResult } from "../../types";
+import {
+	QODER_DEFAULT_OPENAPI_ENDPOINT,
+	QODER_OPENAPI_ENDPOINT_ENV,
+	type QoderEndpointSource,
+	resolveQoderOpenApiEndpoint,
+} from "./endpoints";
 
 const log = new Logger("QoderAuthFlow");
 
 /**
- * Qoder's account surface. The CN region uses `openapi.qoder.com.cn` instead;
- * an account's custom endpoint selects it (see resolveQoderOpenApiEndpoint).
+ * The OpenAPI host constants live with the endpoint resolvers; they are
+ * re-exported here because the auth flow is where callers have always
+ * imported them from.
  */
-export const QODER_DEFAULT_OPENAPI_ENDPOINT = "https://openapi.qoder.sh";
-export const QODER_OPENAPI_ENDPOINT_ENV = "CCFLARE_QODER_OPENAPI_ENDPOINT";
+export {
+	QODER_DEFAULT_OPENAPI_ENDPOINT,
+	QODER_OPENAPI_ENDPOINT_ENV,
+	resolveQoderOpenApiEndpoint,
+};
 
 /** Job tokens are documented as ~1 day; used when `expires_at` is absent. */
 const DEFAULT_JOB_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
@@ -18,17 +28,6 @@ export interface QoderUserInfo {
 	uid: string;
 	email: string;
 	name: string;
-}
-
-/** Same-resolve as CodeBuddy: explicit, then env, then the public default. */
-export function resolveQoderOpenApiEndpoint(endpoint?: string | null): string {
-	const candidate =
-		endpoint?.trim() ||
-		process.env[QODER_OPENAPI_ENDPOINT_ENV]?.trim() ||
-		QODER_DEFAULT_OPENAPI_ENDPOINT;
-	let end = candidate.length;
-	while (end > 0 && candidate.charCodeAt(end - 1) === 47) end -= 1;
-	return candidate.slice(0, end);
 }
 
 /** Never let a credential reach a log line or an error message. */
@@ -130,7 +129,7 @@ async function postJobToken(
  */
 export async function exchangeQoderPat(
 	pat: string,
-	endpoint?: string | null,
+	endpoint?: QoderEndpointSource,
 ): Promise<QoderJobToken> {
 	return postJobToken(
 		`${resolveQoderOpenApiEndpoint(endpoint)}/api/v1/jobToken/exchange`,
@@ -145,7 +144,7 @@ export async function exchangeQoderPat(
  */
 export async function refreshQoderJobToken(
 	jobRefreshToken: string,
-	endpoint?: string | null,
+	endpoint?: QoderEndpointSource,
 ): Promise<QoderJobToken | null> {
 	try {
 		return await postJobToken(
@@ -167,7 +166,7 @@ export async function refreshQoderJobToken(
  */
 export async function fetchQoderUserInfo(
 	jobToken: string,
-	endpoint?: string | null,
+	endpoint?: QoderEndpointSource,
 ): Promise<QoderUserInfo | null> {
 	try {
 		const response = await fetch(
@@ -214,7 +213,7 @@ export interface QoderQuota {
 /** Credit balance, for the usage fetcher. Read-only; failures return null. */
 export async function fetchQoderQuota(
 	jobToken: string,
-	endpoint?: string | null,
+	endpoint?: QoderEndpointSource,
 ): Promise<QoderQuota | null> {
 	try {
 		const response = await fetch(
@@ -304,11 +303,10 @@ export function decodeQoderAccessToken(
 export async function refreshQoderToken(
 	account: Account,
 ): Promise<TokenRefreshResult> {
-	const endpoint = account.custom_endpoint;
 	const pat = account.refresh_token?.trim();
 
 	if (pat) {
-		const minted = await exchangeQoderPat(pat, endpoint);
+		const minted = await exchangeQoderPat(pat, account);
 		return {
 			accessToken: encodeQoderAccessToken("pat", minted.accessToken),
 			expiresAt: minted.expiresAt,
@@ -321,7 +319,7 @@ export async function refreshQoderToken(
 
 	const decoded = decodeQoderAccessToken(account.access_token);
 	if (decoded?.token) {
-		const rotated = await refreshQoderJobToken(decoded.token, endpoint);
+		const rotated = await refreshQoderJobToken(decoded.token, account);
 		if (rotated) {
 			return {
 				accessToken: encodeQoderAccessToken(decoded.mode, rotated.accessToken),

@@ -116,13 +116,37 @@ function countRetryAfter(...bodies: unknown[]): number | undefined {
 }
 
 /**
+ * Whether a Qoder error payload is the busy/queued answer, and how long to
+ * wait for it.
+ *
+ * The gateway nests its decision fields at different levels — the outer layer
+ * carries `403`, the next `10605`, the innermost the queue hint — so the
+ * layers are merged before they are read. `isQueued` and `serviceAvailable`
+ * are checked as well as the code, because Qoder sends all three.
+ */
+export function detectQoderBusy(
+	body: unknown,
+): { retryAfterSeconds: number } | null {
+	const merged = mergeErrorLayers(body);
+	const code = numericCode(merged);
+	const isQueued = merged.isQueued === true || merged.is_queued === true;
+	const unavailable = merged.serviceAvailable === false;
+	if (code !== 10605 && !isQueued && !unavailable) return null;
+	const retryAfter = countRetryAfter(merged);
+	return { retryAfterSeconds: retryAfter ?? 30 };
+}
+
+/**
  * Unwrap the JSON-in-a-string layers Qoder wraps its error bodies in. The
  * decision fields (`code`, `retryAfterSeconds`, …) live at DIFFERENT levels —
  * the outermost layer carries `403`, the next `10605`, the innermost the queue
  * hint — so the layers are merged from the inside out, letting an inner layer
  * override an outer one. Each layer costs a JSON parse, so depth is bounded.
  */
-function mergeErrorLayers(body: unknown, depth = 0): Record<string, unknown> {
+export function mergeErrorLayers(
+	body: unknown,
+	depth = 0,
+): Record<string, unknown> {
 	if (depth > 8) return {};
 	if (typeof body === "string") {
 		const parsed = tryParse(body);
@@ -364,34 +388,74 @@ export function unwrapQoderSse(
 }
 
 /**
- * Read a response body, giving up after `timeoutMs` (30s by default).
+ * How long a non-streaming aggregation waits for the answer.
  *
- * The provider's outcome peek has already established that the stream opens
- * with content, so this read is waiting for the END of a healthy stream — but
- * the gateway is known to hold a connection open after an error frame, and a
- * non-streaming client must not be wedged by that.
+ * Qoder's free models are reasoning models and a long prompt can take minutes;
+ * the 30s cap that used to be here turned a slow-but-healthy answer into a
+ * 502. The held-open connection after an error frame — the reason the cap
+ * existed — is handled by the provider's outcome peek, not by this deadline.
+ */
+export const QODER_AGGREGATE_TIMEOUT_MS = 300_000;
+
+/** A timeout marker, so a stalled read is distinguishable from a failed one. */
+const TIMEOUT = Symbol("timeout");
+
+async function withTimeout<T>(
+	promise: Promise<T>,
+	ms: number,
+): Promise<T | typeof TIMEOUT> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<typeof TIMEOUT>((resolve) => {
+		timer = setTimeout(() => resolve(TIMEOUT), ms);
+	});
+	try {
+		return await Promise.race([promise, timeout]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
+/**
+ * Read a response body chunk by chunk, giving up after `timeoutMs`.
+ *
+ * The body is read through a READER, not through `response.text()`: the text
+ * helper locks the body, so cancelling it afterwards is a no-op and the
+ * upstream socket is left open — the claim the old code made and did not
+ * keep. Cancelling the reader really does release the connection.
  */
 async function readBodyWithTimeout(
 	response: Response,
-	timeoutMs = 30_000,
+	timeoutMs = QODER_AGGREGATE_TIMEOUT_MS,
 ): Promise<string> {
-	if (!response.body) return "";
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const timeout = new Promise<"TIMEOUT">((resolve) => {
-		timer = setTimeout(() => resolve("TIMEOUT"), timeoutMs);
-	});
+	const body = response.body;
+	if (!body) return "";
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	const deadline = Date.now() + timeoutMs;
+	let text = "";
 	try {
-		const result = await Promise.race([response.text(), timeout]);
-		if (result === "TIMEOUT") {
-			// Release the socket rather than leaving it open.
-			void response.body.cancel().catch(() => {});
-			throw new Error(
-				`Qoder did not finish the response within ${timeoutMs}ms`,
-			);
+		for (;;) {
+			const remaining = deadline - Date.now();
+			if (remaining <= 0) {
+				throw new Error(
+					`Qoder did not finish the response within ${timeoutMs}ms`,
+				);
+			}
+			const next = await withTimeout(reader.read(), remaining);
+			if (next === TIMEOUT) {
+				throw new Error(
+					`Qoder did not finish the response within ${timeoutMs}ms`,
+				);
+			}
+			if (next.done) break;
+			text += decoder.decode(next.value, { stream: true });
 		}
-		return result;
-	} finally {
-		if (timer) clearTimeout(timer);
+		text += decoder.decode();
+		return text;
+	} catch (error) {
+		// Release the socket rather than leaving it open.
+		await reader.cancel().catch(() => {});
+		throw error;
 	}
 }
 

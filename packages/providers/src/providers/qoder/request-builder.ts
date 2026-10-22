@@ -26,8 +26,17 @@ export const QODER_DEFAULT_MAX_OUTPUT_TOKENS = 32768;
  * Claude model ids are never a valid Qoder wire key. A body that still carries
  * one reached the provider unmapped — better to fail the request than to have
  * Qoder silently fall back to an `auto` model.
+ *
+ * The provider resolves the client's model to a wire key BEFORE building the
+ * body (see `resolveQoderModelKey`); this is the defensive check for a caller
+ * that forgot to.
  */
-const CLAUDE_FAMILY = /fable|opus|sonnet|haiku/i;
+export const CLAUDE_FAMILY = /fable|opus|sonnet|haiku/i;
+
+/** True when a model id names a Claude family rather than a Qoder wire key. */
+export function isClaudeModelId(model: string): boolean {
+	return CLAUDE_FAMILY.test(model);
+}
 
 export interface QoderRequestBody {
 	request_id: string;
@@ -108,6 +117,47 @@ function systemText(system: unknown): string {
 		}
 	}
 	return parts.join("");
+}
+
+/**
+ * The text of an Anthropic content value: a string, or the text blocks of a
+ * content-part array. Non-text blocks (images, tool results) contribute
+ * nothing — this is only used to identify a conversation.
+ */
+function anthropicContentText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	const parts: string[] = [];
+	for (const block of content) {
+		if (
+			block &&
+			typeof block === "object" &&
+			(block as { type?: unknown }).type === "text" &&
+			typeof (block as { text?: unknown }).text === "string"
+		) {
+			parts.push((block as { text: string }).text);
+		}
+	}
+	return parts.join("");
+}
+
+/**
+ * The FIRST user turn's text.
+ *
+ * The conversation identity must survive the turns that follow it: a
+ * transcript grows with every exchange, so hashing the transcript would give
+ * every turn of the same conversation a different identity — the opposite of
+ * what Qoder's `request_set_id` is for.
+ */
+function firstUserText(messages: unknown): string {
+	if (!Array.isArray(messages)) return "";
+	for (const message of messages) {
+		if (!message || typeof message !== "object") continue;
+		const record = message as Record<string, unknown>;
+		if (record.role !== "user") continue;
+		return anthropicContentText(record.content);
+	}
+	return "";
 }
 
 function messageText(content: OpenAIMessage["content"]): string {
@@ -250,21 +300,37 @@ function resolveReasoning(anthropicBody: AnthropicBody): {
 export interface BuildQoderRequestOptions {
 	/** Opaque per-account key (uid or account id) for the session hash. */
 	sessionScope: string;
+	/**
+	 * The RESOLVED Qoder wire key (qfmodel, dfmodel, ...). The provider resolves
+	 * the client's model before calling this; when it is absent the body's own
+	 * `model` is used, which is only correct for a caller that already has a
+	 * wire key.
+	 */
+	modelKey?: string;
+	/**
+	 * The request id. The same UUID identifies the request in the body, in the
+	 * COSY envelope and in the `X-Request-Id` header, so the three cannot
+	 * disagree about which request this is.
+	 */
+	requestId?: string;
 }
 
 /**
  * @param anthropicBody - The client's Anthropic Messages body
- * @throws when the body carries no model, or a Claude model id
+ * @throws when the resolved key is a Claude model id (the caller forgot to
+ *   resolve it) or when no key can be found at all
  */
 export function buildQoderRequest(
 	anthropicBody: AnthropicBody,
 	options: BuildQoderRequestOptions = { sessionScope: "default" },
 ): QoderRequestBody {
-	const model = anthropicBody.model;
-	if (typeof model !== "string" || !model) {
+	const model =
+		options.modelKey ??
+		(typeof anthropicBody.model === "string" ? anthropicBody.model : "");
+	if (!model) {
 		throw new Error("Qoder requires a model in the request body");
 	}
-	if (CLAUDE_FAMILY.test(model)) {
+	if (isClaudeModelId(model)) {
 		throw new Error(
 			`Qoder model "${model}" is a Claude model id, not a Qoder wire key (expected qfmodel, dfmodel, ...)`,
 		);
@@ -317,18 +383,20 @@ export function buildQoderRequest(
 
 	const { isReasoning, effort } = resolveReasoning(anthropicBody);
 
-	// The conversation identity is stable for a transcript so follow-up turns
+	// The conversation identity: stable for a CONVERSATION so follow-up turns
 	// continue it, and distinct per conversation so parallel sessions do not.
+	// The transcript grows every turn, so it cannot be the hashed material —
+	// the system prompt and the FIRST user turn identify the conversation.
 	const requestSetId = shortHash(
 		JSON.stringify({
 			system: systemText(anthropicBody.system),
-			messages: anthropicBody.messages ?? [],
+			firstUser: firstUserText(anthropicBody.messages),
 		}),
 	);
 	const sessionId = shortHash(`qoder-session:${options.sessionScope}`);
 
 	return {
-		request_id: crypto.randomUUID(),
+		request_id: options.requestId ?? crypto.randomUUID(),
 		request_set_id: requestSetId,
 		chat_record_id: requestSetId,
 		session_id: sessionId,
