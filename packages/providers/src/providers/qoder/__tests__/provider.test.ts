@@ -115,6 +115,22 @@ function anthropicRequest(
 	});
 }
 
+/** Resolve with a marker if the promise does not settle in time. */
+async function withWatchdog<T>(
+	promise: Promise<T>,
+	ms: number,
+): Promise<T | "TIMEOUT"> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<"TIMEOUT">((resolve) => {
+		timer = setTimeout(() => resolve("TIMEOUT"), ms);
+	});
+	try {
+		return await Promise.race([promise, timeout]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
 function _headersOf(call: Captured): Headers {
 	return new Headers(call.init?.headers);
 }
@@ -527,6 +543,63 @@ describe("parseRateLimit", () => {
 	it("does not emit a statusHeader snapshot it cannot know", () => {
 		const info = provider.parseRateLimit(new Response("", { status: 429 }));
 		expect(info.statusHeader).toBeUndefined();
+	});
+
+	/**
+	 * Qoder's gateway answers a saturated model with an error frame and then
+	 * holds the SSE connection open indefinitely. A provider that waits for
+	 * the body to end wedges the request forever; the peek must decide on the
+	 * frame and release the connection.
+	 */
+	it("answers a busy stream without waiting for the connection to close", async () => {
+		const provider = new QoderProvider();
+		const inner = JSON.stringify({
+			isQueued: true,
+			retryAfterSeconds: 3,
+			subCode: "RESOURCE_LIMIT",
+		});
+		const middle = JSON.stringify({ code: "10605", message: inner });
+		const frameEnvelope = {
+			body: JSON.stringify({ code: "403", message: middle }),
+			statusCodeValue: 403,
+			statusCode: "FORBIDDEN",
+			headers: { "Retry-After": ["3"] },
+		};
+		// The frame arrives, and then the socket stays open: `close()` is never
+		// called, exactly as the gateway does.
+		let closed = false;
+		const encoder = new TextEncoder();
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(
+					encoder.encode(
+						`data:${JSON.stringify({ body: JSON.stringify(frameEnvelope), statusCodeValue: 200 })}\n\n`,
+					),
+				);
+			},
+			pull() {
+				// Deliberately never enqueues and never closes.
+			},
+			cancel() {
+				closed = true;
+			},
+		});
+		const response = new Response(body, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const out = await withWatchdog(
+			provider.processResponse(response, makeAccount()),
+			2000,
+		);
+		expect(out).not.toBe("TIMEOUT");
+		const result = out as Response;
+		expect(result.status).toBe(503);
+		expect(result.headers.get("retry-after")).toBe("3");
+		const payload = (await result.json()) as { error: { type: string } };
+		expect(payload.error.type).toBe("overloaded_error");
+		expect(closed).toBe(true);
 	});
 
 	it("relabels the gateway's busy 403 as 503 + Retry-After", async () => {

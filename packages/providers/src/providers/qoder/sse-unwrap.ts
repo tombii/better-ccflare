@@ -363,6 +363,38 @@ export function unwrapQoderSse(
 	});
 }
 
+/**
+ * Read a response body, giving up after `timeoutMs` (30s by default).
+ *
+ * The provider's outcome peek has already established that the stream opens
+ * with content, so this read is waiting for the END of a healthy stream — but
+ * the gateway is known to hold a connection open after an error frame, and a
+ * non-streaming client must not be wedged by that.
+ */
+async function readBodyWithTimeout(
+	response: Response,
+	timeoutMs = 30_000,
+): Promise<string> {
+	if (!response.body) return "";
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<"TIMEOUT">((resolve) => {
+		timer = setTimeout(() => resolve("TIMEOUT"), timeoutMs);
+	});
+	try {
+		const result = await Promise.race([response.text(), timeout]);
+		if (result === "TIMEOUT") {
+			// Release the socket rather than leaving it open.
+			void response.body.cancel().catch(() => {});
+			throw new Error(
+				`Qoder did not finish the response within ${timeoutMs}ms`,
+			);
+		}
+		return result;
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
 /** An aggregation failure carrying everything the provider reports on it. */
 export class QoderAggregateError extends Error {
 	readonly status: number;
@@ -391,8 +423,11 @@ export class QoderAggregateError extends Error {
 export async function aggregateQoderSse(
 	response: Response,
 	model: string,
+	options?: { timeoutMs?: number },
 ): Promise<AnthropicResponse> {
-	const text = await response.text();
+	// Bounded: the gateway can hold the connection open after an error frame,
+	// so a whole-body read must not be able to wait forever.
+	const text = await readBodyWithTimeout(response, options?.timeoutMs);
 	let responseId: string | undefined;
 	let finishReason: string | undefined;
 	let usage: OpenAIResponse["usage"];

@@ -385,13 +385,10 @@ export class QoderProvider extends BaseProvider {
 			response.headers.get(STREAM_INTENT_HEADER) === "false" ||
 			requestHeaders?.get(STREAM_INTENT_HEADER) === "false";
 
-		if (clientWantsJson) {
-			return this.aggregateResponse(response, model, account);
-		}
-
 		// The shared emitter has no error path, so the stream's outcome is
 		// determined first: an in-band failure becomes a real error response
-		// with a mapped status, never a truncated 200.
+		// with a mapped status, never a truncated 200. The peek is incremental
+		// because the gateway holds the connection open after an error frame.
 		const peek = await peekQoderStream(response.body);
 		if (peek.error) {
 			log.warn(`Qoder stream failed for ${account?.name ?? "account"}`, {
@@ -401,10 +398,21 @@ export class QoderProvider extends BaseProvider {
 			});
 			return qoderErrorResponse(peek.error);
 		}
-		const body = new Response(peek.body, {
-			status: response.status,
-			headers: response.headers,
-		});
+		const body = new Response(
+			relayQoderStream(
+				peek.head,
+				peek.reader as ReadableStreamDefaultReader<Uint8Array>,
+			),
+			{
+				status: response.status,
+				headers: response.headers,
+			},
+		);
+
+		if (clientWantsJson) {
+			return this.aggregateResponse(body, model, account);
+		}
+
 		return transformStreamingResponse(
 			unwrapQoderSse(body, {
 				model,
@@ -627,62 +635,185 @@ export function parseBusyError(
 }
 
 /**
- * Read a Qoder SSE body far enough to learn its outcome: the first content
- * frame, an in-band error, or `[DONE]` for an empty answer. The body is
- * buffered (answers are a few dozen KB of JSON) and returned as a fresh stream
- * for the unwrap: relaying a partially read upstream stream is not reliable
- * across runtimes, and a second reader on the same Response tees a branch
- * nothing consumes (#382).
+ * How long to wait for the gateway's first frame before giving up.
+ *
+ * The busy answer arrives in well under a second, and a healthy stream starts
+ * just as fast; anything slower is a stalled connection, not a slow model.
+ */
+const QODER_FIRST_FRAME_TIMEOUT_MS = 30_000;
+
+interface QoderPeek {
+	/** The in-band failure, when the stream opens with one. */
+	error: QoderStreamError | null;
+	/** The bytes the peek consumed; the consumer must see them too. */
+	head: Uint8Array;
+	/** The reader, positioned after `head`, for the rest of the stream. */
+	reader: ReadableStreamDefaultReader<Uint8Array> | null;
+}
+
+/**
+ * Read a Qoder SSE body only far enough to learn its outcome: the first
+ * content frame, or an in-band error.
+ *
+ * The read is INCREMENTAL and bounded on purpose. Qoder's gateway answers a
+ * saturated model with an error frame and then **holds the SSE connection
+ * open indefinitely** — a whole-body read would wait for a close that never
+ * comes and wedge the request. So the peek stops at the first frame that
+ * decides the outcome, and the bytes it consumed are handed back for replay.
  */
 async function peekQoderStream(
 	body: ReadableStream<Uint8Array> | null,
-): Promise<
-	| { error: QoderStreamError; text: ""; body: null }
-	| { error: null; text: string; body: ReadableStream<Uint8Array> }
-> {
+): Promise<QoderPeek> {
 	if (!body) {
 		return {
 			error: { status: 502, message: "Qoder returned an empty response" },
-			text: "",
-			body: null,
+			head: new Uint8Array(0),
+			reader: null,
 		};
 	}
 
-	const text = await new Response(body).text();
-	let sawOutcome = false;
-	for (const line of text.split("\n")) {
-		const frame = qoderFrameToOpenAIChunk(line);
-		if ("empty" in frame) {
-			if (frame.done) sawOutcome = true;
-			continue;
-		}
-		if (!frame.ok) {
-			return { error: frame.error, text: "", body: null };
-		}
-		if (frame.chunk.choices?.length) {
-			sawOutcome = true;
-			break;
-		}
-	}
-	if (!sawOutcome) {
-		return {
-			error: { status: 502, message: "Qoder returned an empty stream" },
-			text: "",
-			body: null,
-		};
-	}
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	const consumed: Uint8Array[] = [];
+	let text = "";
 
-	const bytes = new TextEncoder().encode(text);
-	return {
-		error: null,
-		text,
-		body: new ReadableStream<Uint8Array>({
-			start(controller) {
-				controller.enqueue(bytes);
-				controller.close();
-			},
-		}),
+	const head = (): Uint8Array => {
+		const total = consumed.reduce((sum, chunk) => sum + chunk.length, 0);
+		const out = new Uint8Array(total);
+		let offset = 0;
+		for (const chunk of consumed) {
+			out.set(chunk, offset);
+			offset += chunk.length;
+		}
+		return out;
 	};
+
+	for (;;) {
+		let next:
+			| { done: true }
+			| { done: false; value: Uint8Array }
+			| typeof TIMEOUT;
+		try {
+			next = await withTimeout(reader.read(), QODER_FIRST_FRAME_TIMEOUT_MS);
+		} catch (error) {
+			void reader.cancel().catch(() => {});
+			return {
+				error: {
+					status: 504,
+					message: `Qoder sent no response within ${QODER_FIRST_FRAME_TIMEOUT_MS}ms`,
+				},
+				head: new Uint8Array(0),
+				reader: null,
+			};
+		}
+		if (next === TIMEOUT) {
+			void reader.cancel().catch(() => {});
+			return {
+				error: {
+					status: 504,
+					message: `Qoder sent no response within ${QODER_FIRST_FRAME_TIMEOUT_MS}ms`,
+				},
+				head: new Uint8Array(0),
+				reader: null,
+			};
+		}
+		if (next.done) {
+			void reader.cancel().catch(() => {});
+			// A final frame without a trailing newline is still a frame.
+			const outcome = text.trim() ? considerQoderFrame(text) : null;
+			if (outcome?.error) {
+				return {
+					error: outcome.error,
+					head: new Uint8Array(0),
+					reader: null,
+				};
+			}
+			return {
+				error: { status: 502, message: "Qoder returned an empty stream" },
+				head: new Uint8Array(0),
+				reader: null,
+			};
+		}
+
+		consumed.push(next.value);
+		text += decoder.decode(next.value, { stream: true });
+
+		const lines = text.split("\n");
+		text = lines.pop() ?? "";
+		for (const line of lines) {
+			const outcome = considerQoderFrame(line);
+			if (outcome?.error) {
+				// The gateway holds the connection open after an error frame, so
+				// stop here and release it rather than waiting for a close.
+				void reader.cancel().catch(() => {});
+				return {
+					error: outcome.error,
+					head: new Uint8Array(0),
+					reader: null,
+				};
+			}
+			if (outcome?.content) {
+				return { error: null, head: head(), reader };
+			}
+		}
+	}
+}
+
+/**
+ * What one SSE line decides, if anything: an in-band error, the arrival of
+ * content, or neither.
+ */
+function considerQoderFrame(
+	line: string,
+): { error?: QoderStreamError; content?: boolean } | null {
+	const frame = qoderFrameToOpenAIChunk(line);
+	if ("empty" in frame) return null;
+	if (!frame.ok) return { error: frame.error };
+	if (frame.chunk.choices?.length) return { content: true };
+	return null;
+}
+
+/** A timeout marker, so a stalled read is distinguishable from a failed one. */
+const TIMEOUT = Symbol("timeout");
+
+async function withTimeout<T>(
+	promise: Promise<T>,
+	ms: number,
+): Promise<T | typeof TIMEOUT> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<typeof TIMEOUT>((resolve) => {
+		timer = setTimeout(() => resolve(TIMEOUT), ms);
+	});
+	try {
+		return await Promise.race([promise, timeout]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
+/**
+ * Rebuild the upstream stream for the consumer: the bytes the peek consumed,
+ * then the rest, read from the same reader.
+ */
+function relayQoderStream(
+	head: Uint8Array,
+	reader: ReadableStreamDefaultReader<Uint8Array>,
+): ReadableStream<Uint8Array> {
+	return new ReadableStream<Uint8Array>({
+		start(controller) {
+			if (head.length > 0) controller.enqueue(head);
+		},
+		async pull(controller) {
+			try {
+				const next = await reader.read();
+				if (next.done) controller.close();
+				else controller.enqueue(next.value);
+			} catch (error) {
+				controller.error(error);
+			}
+		},
+		cancel: (reason) => reader.cancel(reason),
+	});
 }
 
 function qoderErrorResponse(error: QoderStreamError): Response {
