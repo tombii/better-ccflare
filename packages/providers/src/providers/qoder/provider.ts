@@ -695,7 +695,7 @@ async function peekQoderStream(
 			| typeof TIMEOUT;
 		try {
 			next = await withTimeout(reader.read(), QODER_FIRST_FRAME_TIMEOUT_MS);
-		} catch (error) {
+		} catch (_error) {
 			void reader.cancel().catch(() => {});
 			return {
 				error: {
