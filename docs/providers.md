@@ -697,10 +697,41 @@ Claude families map to Qoder's free models: `fable`/`opus` → `qfmodel`, `sonne
 
 `supportsUsageTracking: true`, but polling uses a different path from the API-key credit providers: Qoder has no `api_key`, so the server polls it through the refresh-backed token provider (which mints a job token when needed) and reads the credit balance from `GET /api/v2/quota/usage`. Utilization is `used / total`; the dashboard renders the remaining credits with their own unit.
 
+### Tool calling
+
+The gateway returns tool calls natively, in the standard OpenAI shape
+(`delta.tool_calls` with the arguments split across chunks), so the shared
+OpenAI→Anthropic emitter handles them unchanged: a tool-call turn arrives as an
+Anthropic `tool_use` block and no text block. The request side is OpenAI's
+`{type: "function", function: {name, description, parameters}}`, which is
+Anthropic's `{name, description, input_schema}` with `input_schema` renamed.
+
+Qoder refuses a whole request that carries a tool result answering no call
+made **before** it, so the provider matches each result to a call that precedes
+it — by id when the client kept it, otherwise to the oldest call still
+outstanding. A result with no call left to answer goes out as text in the user
+turn.
+
+### Saturated models (10605)
+
+When a free model is saturated the gateway answers with an error frame — code
+`10605`, `RESOURCE_LIMIT`, "queued" — **and then holds the SSE connection open
+indefinitely**. Two consequences the provider handles:
+
+- The stream's outcome is decided on its **first frame**, not by reading the
+  body to its end, so a queued model is answered `503` with `Retry-After` in
+  milliseconds instead of wedging the request.
+- A queued model is a transient condition, not a credential problem: it is
+  never treated as a lapsed sign-in.
+
+The free models are **intermittently unavailable** — they can be queued for
+tens of minutes at a time. A Qoder account can therefore be "valid" and still
+fail every request for a while.
+
 ### Known limitations
 
-- Tool calling on the gateway route is unverified.
-- The gateway always echoes the model name as `auto`, regardless of the model requested.
+- The gateway always echoes the model name as `auto`, regardless of the model requested, so the serving model is not observable from the response.
+- The free models are the only ones that work on a zero-credit balance; the paid catalogue is unreachable without credits.
 - Qoder has no usage pause thresholds, and no 5-hour/7-day windows (it is a credit balance, like Kilo).
 
 ## Format Conversion Details
