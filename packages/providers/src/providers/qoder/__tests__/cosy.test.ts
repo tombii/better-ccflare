@@ -3,6 +3,7 @@ import { createDecipheriv, createHash } from "node:crypto";
 import {
 	buildCosyHeaders,
 	cosySignaturePath,
+	decodeQoderBody,
 	encodeQoderBody,
 	QODER_COSY_CLIENT_TYPE,
 	QODER_COSY_VERSION,
@@ -21,7 +22,7 @@ const STD_ALPHABET =
  * then base64-decode. Proving encode∘decode is the identity for arbitrary
  * input is stronger than any single pinned string.
  */
-function decodeQoderBody(encoded: string): string {
+function independentDecodeQoderBody(encoded: string): string {
 	const custom =
 		"_doRTgHZBKcGVjlvpC,@aFSx#DPuNJme&i*MzLOEn)sUrthbf%Y^w.(kIQyXqWA!";
 	let std = "";
@@ -44,29 +45,31 @@ function decodeQoderBody(encoded: string): string {
 	return Buffer.from(head + middle + tail, "base64").toString("utf8");
 }
 
+/** The payloads the codec has to survive, shared by both directions. */
+const SAMPLES = [
+	"",
+	"{}",
+	'{"a":1}',
+	'{"model":"qfmodel","messages":[{"role":"user","content":"héllo ✓ 你好"}]}',
+	JSON.stringify({ long: "x".repeat(1000) }),
+	Buffer.from([0x00, 0x01, 0xfe, 0xff]).toString("utf8"),
+];
+
 // ---------------------------------------------------------------------------
 // Body codec
 // ---------------------------------------------------------------------------
 
 describe("encodeQoderBody", () => {
 	it("round-trips arbitrary JSON-like payloads through the published codec", () => {
-		const samples = [
-			"",
-			"{}",
-			'{"a":1}',
-			'{"model":"qfmodel","messages":[{"role":"user","content":"héllo ✓ 你好"}]}',
-			JSON.stringify({ long: "x".repeat(1000) }),
-			Buffer.from([0x00, 0x01, 0xfe, 0xff]).toString("utf8"),
-		];
-		for (const sample of samples) {
-			expect(decodeQoderBody(encodeQoderBody(sample))).toBe(sample);
+		for (const sample of SAMPLES) {
+			expect(independentDecodeQoderBody(encodeQoderBody(sample))).toBe(sample);
 		}
 	});
 
 	it("maps standard base64 padding to $", () => {
 		// "a" -> "YQ==" — two padding characters.
 		expect(encodeQoderBody("a")).not.toContain("=");
-		expect(decodeQoderBody(encodeQoderBody("a"))).toBe("a");
+		expect(independentDecodeQoderBody(encodeQoderBody("a"))).toBe("a");
 	});
 
 	it("keeps the encoded length equal to the base64 length", () => {
@@ -87,6 +90,38 @@ describe("encodeQoderBody", () => {
 		for (const ch of encoded) {
 			expect(allowed.has(ch)).toBe(true);
 		}
+	});
+});
+
+describe("decodeQoderBody", () => {
+	it("is the exact inverse of encodeQoderBody", () => {
+		for (const sample of SAMPLES) {
+			expect(decodeQoderBody(encodeQoderBody(sample))).toBe(sample);
+		}
+	});
+
+	it("re-encodes to the identical wire string", () => {
+		for (const sample of SAMPLES) {
+			const encoded = encodeQoderBody(sample);
+			expect(encodeQoderBody(decodeQoderBody(encoded))).toBe(encoded);
+		}
+	});
+
+	it("agrees with an independently written inverse", () => {
+		for (const sample of SAMPLES) {
+			const encoded = encodeQoderBody(sample);
+			expect(decodeQoderBody(encoded)).toBe(
+				independentDecodeQoderBody(encoded),
+			);
+		}
+	});
+
+	it("refuses a body that is not Qoder wire text", () => {
+		// Plain JSON, a base64 string that is not a Qoder wire body, and text
+		// with characters outside the alphabet.
+		expect(decodeQoderBody('{"request_id":"x"}')).toBe("");
+		expect(decodeQoderBody("aGVsbG8=")).toBe("");
+		expect(decodeQoderBody("not encoded at all")).toBe("");
 	});
 });
 

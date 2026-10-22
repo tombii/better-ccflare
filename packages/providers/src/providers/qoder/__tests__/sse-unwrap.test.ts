@@ -136,6 +136,12 @@ describe("qoderStatusForCode", () => {
 		expect(qoderStatusForCode(100403)).toBe(400);
 	});
 
+	it("maps the duplicate-request rejection to 409, not to a 5xx", () => {
+		// A 5xx would bench the account for 60s over a resend the upstream
+		// refused — the account and the upstream are both fine.
+		expect(qoderStatusForCode(103)).toBe(409);
+	});
+
 	it("unwraps the gateway's stringified, nested busy payload", () => {
 		// Captured live (2026-10-22): the real 403 envelope, three JSON layers.
 		const inner = JSON.stringify({

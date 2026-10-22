@@ -101,6 +101,21 @@ export interface Provider {
 	transformRequestBody?(request: Request, account?: Account): Promise<Request>;
 
 	/**
+	 * Give a resend of this request a fresh identity.
+	 *
+	 * Some upstreams refuse a byte-identical resend as a duplicate, so a retry
+	 * must carry a new per-request id. A provider that needs this implements
+	 * it; the proxy calls it before re-issuing a request in place (its 529 and
+	 * 5xx/503 retry loops). The returned request must be equivalent to the one
+	 * passed in, differing only in its identity. Providers that do not
+	 * implement it are unaffected — the member is optional.
+	 */
+	refreshRequestIdentity?(
+		request: Request,
+		account: Account | null,
+	): Promise<Request>;
+
+	/**
 	 * Extract tier information from response if available
 	 */
 	extractTierInfo?(response: Response): Promise<number | null>;

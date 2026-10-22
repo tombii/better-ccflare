@@ -49,10 +49,27 @@ type DecodedFrame =
 	| { ok: false; error: QoderStreamError }
 	| { ok: false; error: null; empty: true; done?: boolean };
 
+/**
+ * Qoder's duplicate-request rejection.
+ *
+ * The gateway refuses a byte-identical resend of a request it has already
+ * seen and answers with code 103 ("Duplicate request"). This is NOT a server
+ * error: neither the account nor the upstream is unwell, the resend itself
+ * was refused. Reporting it as a 5xx would bench the account for a minute
+ * (the proxy's `upstream_5xx_server_error` rule), so it is mapped to 409 and
+ * forwarded to the client.
+ *
+ * With the provider's `refreshRequestIdentity` in place a duplicate should not
+ * happen any more — a resend carries a fresh per-request id — so this is the
+ * defensive path for a resend that raced another client of the same account.
+ */
+export const QODER_DUPLICATE_REQUEST_CODE = 103;
+
 /** Qoder's in-band codes, from the reference error table (§5.4). */
 export function qoderStatusForCode(code: number | undefined): number {
 	if (code === undefined) return 502;
 	if (code === 105) return 401;
+	if (code === QODER_DUPLICATE_REQUEST_CODE) return 409;
 	if (code === 10605) return 503;
 	if (code === 406 || code === 416 || code === 430) return 400;
 	if ((code >= 110 && code <= 119) || code === 122) {
@@ -63,6 +80,14 @@ export function qoderStatusForCode(code: number | undefined): number {
 	return 502;
 }
 
+/**
+ * Whether an error payload is Qoder's duplicate-request rejection, in any of
+ * the shapes it sends it (flat, or nested one JSON layer deeper).
+ */
+export function isQoderDuplicateRequest(body: unknown): boolean {
+	return numericCode(mergeErrorLayers(body)) === QODER_DUPLICATE_REQUEST_CODE;
+}
+
 function openAIErrorType(status: number): string {
 	switch (status) {
 		case 401:
@@ -70,6 +95,8 @@ function openAIErrorType(status: number): string {
 		case 429:
 			return "rate_limit_error";
 		case 400:
+			return "invalid_request_error";
+		case 409:
 			return "invalid_request_error";
 		case 503:
 			return "overloaded_error";

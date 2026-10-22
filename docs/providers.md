@@ -775,6 +775,31 @@ The free models are **intermittently unavailable** — they can be queued for
 tens of minutes at a time. A Qoder account can therefore be "valid" and still
 fail every request for a while.
 
+### Retries and the duplicate request (103)
+
+Qoder deduplicates on the **per-request id** (`request_id` in the body, the
+COSY payload's `requestId`, the `X-Request-Id` header — one uuid for all
+three), and it **refuses a byte-identical resend** of a request it has already
+seen: the replay comes back as code `103`, "Duplicate request". The
+conversation ids (`request_set_id`, `chat_record_id`, `session_id`) are NOT the
+dedup key — they identify the conversation and stay the same across its
+turns, so signing a conversation again (a fresh transform) is accepted.
+
+The proxy's in-place retries (the 529 overload loop and the 5xx/503 loop)
+replay the request verbatim — same body bytes, same signature, same id — so
+every retry of a Qoder request was refused as a duplicate. The provider
+therefore implements the optional `Provider.refreshRequestIdentity` hook:
+before the proxy re-issues a request in place, the provider decodes the body,
+gives it a **fresh `request_id` and a fresh `business.id`**, re-encodes and
+re-signs it, and keeps the conversation ids untouched. Providers without the
+hook are unaffected.
+
+Should a duplicate still arrive (a resend that raced another client of the
+same account), the provider maps code `103` to **409 Conflict** with an
+Anthropic-shaped error body — deliberately NOT a 5xx, because the proxy's
+`upstream_5xx_server_error` rule would bench the account for 60 seconds over a
+retry that was refused rather than an upstream that is unwell.
+
 ### Count tokens
 
 Qoder has no count endpoint, so `/v1/messages/count_tokens` is answered

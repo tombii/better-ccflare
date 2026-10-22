@@ -148,6 +148,15 @@ afterEach(() => {
 // Identity
 // ---------------------------------------------------------------------------
 
+/** The parts of Qoder's wire body the identity rules talk about. */
+interface QoderWireBody {
+	request_id: string;
+	request_set_id: string;
+	chat_record_id: string;
+	session_id: string;
+	business: { id: string };
+}
+
 describe("QoderProvider identity", () => {
 	const provider = new QoderProvider();
 
@@ -320,7 +329,7 @@ describe("transformRequestBody (continued)", () => {
 		expect(out).toBe(req);
 	});
 
-	it("re-signs an already encoded body on a proxy retry, without re-encoding", async () => {
+	it("re-signs an already encoded body on a proxy replay, with a fresh id", async () => {
 		route(() => jsonResponse({}));
 		const first = await provider.transformRequestBody(
 			anthropicRequest({ model: "qfmodel" }),
@@ -333,12 +342,25 @@ describe("transformRequestBody (continued)", () => {
 			body: encoded,
 		});
 		const again = await provider.transformRequestBody(replay, ACCOUNT);
-		expect(await again.text()).toBe(encoded);
+		const firstBody = JSON.parse(decodeQoderBody(encoded)) as QoderWireBody;
+		const againBody = JSON.parse(
+			decodeQoderBody(await again.text()),
+		) as QoderWireBody;
+		// A resend is refused as a duplicate unless it carries a fresh
+		// per-request id — so the replay gets one.
+		expect(againBody.request_id).not.toBe(firstBody.request_id);
+		expect(againBody.business.id).not.toBe(firstBody.business.id);
+		// It is still the SAME conversation.
+		expect(againBody.request_set_id).toBe(firstBody.request_set_id);
+		expect(againBody.chat_record_id).toBe(firstBody.chat_record_id);
+		expect(againBody.session_id).toBe(firstBody.session_id);
 		// A signature is one-shot; the replay carries a fresh one.
 		expect(again.headers.get("authorization")).not.toBe(
 			first.headers.get("authorization"),
 		);
 		expect(again.headers.get("cosy-user")).toBe("uid-42");
+		// The body's id, the COSY payload's id and the header's id agree.
+		expect(again.headers.get("x-request-id")).toBe(againBody.request_id);
 	});
 
 	it("answers the rewritten count_tokens request with a synthetic response", async () => {
@@ -366,6 +388,100 @@ describe("transformRequestBody (continued)", () => {
 		// budgeting against zero would mis-plan every request.
 		expect(body.input_tokens).toBeGreaterThan(0);
 		expect(calls).toHaveLength(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// refreshRequestIdentity
+// ---------------------------------------------------------------------------
+
+describe("refreshRequestIdentity", () => {
+	const provider = new QoderProvider();
+	const ACCOUNT = makeAccount();
+
+	/** A request the provider already transformed: the encoded wire form. */
+	async function transformed(account = ACCOUNT): Promise<Request> {
+		route(() => jsonResponse({}));
+		return provider.transformRequestBody(
+			anthropicRequest({ model: "qfmodel" }),
+			account,
+		);
+	}
+
+	it("gives a resent request a fresh per-request id and a fresh signature", async () => {
+		const first = await transformed();
+		const firstBody = JSON.parse(
+			decodeQoderBody(await first.clone().text()),
+		) as QoderWireBody;
+
+		const resent = await provider.refreshRequestIdentity(first, ACCOUNT);
+		const resentBody = JSON.parse(
+			decodeQoderBody(await resent.clone().text()),
+		) as QoderWireBody;
+
+		// The id that Qoder deduplicates on has changed...
+		expect(resentBody.request_id).not.toBe(firstBody.request_id);
+		expect(resentBody.business.id).not.toBe(firstBody.business.id);
+		// ...the conversation identity has not.
+		expect(resentBody.request_set_id).toBe(firstBody.request_set_id);
+		expect(resentBody.chat_record_id).toBe(firstBody.chat_record_id);
+		expect(resentBody.session_id).toBe(firstBody.session_id);
+		// The signature covers the new body, so it cannot be the old one.
+		expect(resent.headers.get("authorization")).not.toBe(
+			first.headers.get("authorization"),
+		);
+		// The body's id, the COSY payload's id and the header's id agree.
+		expect(resent.headers.get("x-request-id")).toBe(resentBody.request_id);
+		const payload = JSON.parse(
+			Buffer.from(
+				(resent.headers.get("authorization") ?? "")
+					.replace("Bearer COSY.", "")
+					.split(".")[0],
+				"base64",
+			).toString("utf8"),
+		) as { requestId: string };
+		expect(payload.requestId).toBe(resentBody.request_id);
+	});
+
+	it("keeps the model key and the rest of the request as it was", async () => {
+		const first = await transformed();
+		const resent = await provider.refreshRequestIdentity(first, ACCOUNT);
+		expect(resent.headers.get("x-model-key")).toBe(
+			first.headers.get("x-model-key"),
+		);
+		expect(resent.headers.get("x-better-ccflare-qoder-model")).toBe(
+			first.headers.get("x-better-ccflare-qoder-model"),
+		);
+		expect(resent.headers.get("x-better-ccflare-request-stream")).toBe(
+			first.headers.get("x-better-ccflare-request-stream"),
+		);
+		expect(resent.url).toBe(first.url);
+		expect(resent.method).toBe(first.method);
+	});
+
+	it("returns a body it cannot decode unchanged", async () => {
+		const plainText = JSON.stringify({ model: "qfmodel", messages: [] });
+		const plain = new Request("https://better-ccflare.local/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: plainText,
+		});
+		const resent = await provider.refreshRequestIdentity(plain, ACCOUNT);
+		expect(await resent.text()).toBe(plainText);
+		expect(resent.headers.get("authorization")).toBeNull();
+	});
+
+	it("leaves the request alone when there is no account to sign it with", async () => {
+		const first = await transformed();
+		const resent = await provider.refreshRequestIdentity(first, null);
+		// The body still carries the id the first transform gave it.
+		const body = JSON.parse(
+			decodeQoderBody(await resent.text()),
+		) as QoderWireBody;
+		expect(body.request_id).toBe(first.headers.get("x-request-id"));
+		expect(resent.headers.get("authorization")).toBe(
+			first.headers.get("authorization"),
+		);
 	});
 });
 
@@ -478,6 +594,52 @@ describe("processResponse", () => {
 			{ requestModel: "qfmodel" },
 		);
 		expect(out.status).toBe(503);
+	});
+
+	it("answers a duplicate-request rejection with 409, not with a 5xx", async () => {
+		// Qoder refuses a byte-identical resend with code 103. A 5xx would bench
+		// the account for 60s over a resend the upstream refused.
+		const response = tagged(
+			tagRequestPath(
+				sseResponse([frame({ code: 103, error: "Duplicate request" })]),
+				"/v1/messages",
+			),
+		);
+		const out = await provider.processResponse(
+			response,
+			ACCOUNT,
+			new Headers({ "x-better-ccflare-request-stream": "false" }),
+			undefined,
+			{ requestModel: "qfmodel" },
+		);
+		expect(out.status).toBe(409);
+		const body = (await out.json()) as {
+			type: string;
+			error: { type: string; message: string };
+		};
+		expect(body.type).toBe("error");
+		expect(body.error.message).toContain("Duplicate");
+	});
+
+	it("relabels a duplicate-request rejection in a plain JSON error body", async () => {
+		const upstream = new Response(
+			JSON.stringify({
+				status: 502,
+				code: 103,
+				message: "Duplicate request",
+			}),
+			{ status: 502, headers: { "content-type": "application/json" } },
+		);
+		const out = await provider.processResponse(
+			tagRequestPath(upstream, "/v1/messages"),
+			ACCOUNT,
+		);
+		expect(out.status).toBe(409);
+		const body = (await out.json()) as {
+			type: string;
+			error: { type: string };
+		};
+		expect(body.type).toBe("error");
 	});
 
 	it("passes a non-OK, non-SSE response through", async () => {

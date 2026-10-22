@@ -102,10 +102,21 @@ export function encodeQoderBody(plaintext: string): string {
 
 /**
  * The inverse of {@link encodeQoderBody}: the wire form back to the JSON it
- * came from. Used by the tests and by diagnostics — the body is opaque to
- * everything else.
+ * came from.
+ *
+ * The three-way rotation is its own inverse — the rearranged string has the
+ * same length, so the same slice order undoes it — and the alphabet
+ * substitution is a bijection, so the two together are exactly invertible.
+ *
+ * A body that is not a Qoder wire body decodes to `""` rather than to
+ * plausible-looking garbage: every character must come from Qoder's alphabet
+ * (or be the `$` padding), the substituted string must be a whole number of
+ * base64 quads, and the result must re-encode to the very same string. The
+ * caller treats `""` as "this is not decodable" and leaves the request alone.
  */
 export function decodeQoderBody(encoded: string): string {
+	if (encoded.length === 0) return "";
+
 	let base64 = "";
 	for (const ch of encoded) {
 		if (ch === "$") {
@@ -113,14 +124,23 @@ export function decodeQoderBody(encoded: string): string {
 			continue;
 		}
 		const idx = QODER_ALPHABET.indexOf(ch);
-		base64 += idx >= 0 ? STANDARD_ALPHABET[idx] : ch;
+		if (idx < 0) return "";
+		base64 += STANDARD_ALPHABET[idx];
 	}
+	// Standard base64 is always padded to a multiple of four.
+	if (base64.length % 4 !== 0) return "";
+
 	const n = base64.length;
 	const a = Math.floor(n / 3);
 	// The rotation is its own inverse.
 	const restored =
 		base64.slice(n - a) + base64.slice(a, n - a) + base64.slice(0, a);
-	return Buffer.from(restored, "base64").toString("utf8");
+	const decoded = Buffer.from(restored, "base64").toString("utf8");
+	// The codec is a bijection, so the only body that decodes to `decoded` is
+	// the one that encodes back to `encoded`. A body that does not survive the
+	// round trip was never a Qoder wire body.
+	if (encodeQoderBody(decoded) !== encoded) return "";
+	return decoded;
 }
 
 /** The pathname the signature covers: no query, and no leading `/algo`. */

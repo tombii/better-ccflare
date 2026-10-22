@@ -23,6 +23,7 @@ import {
 } from "./auth-flow";
 import {
 	buildCosyHeaders,
+	decodeQoderBody,
 	deriveQoderMachineId,
 	encodeQoderBody,
 } from "./cosy";
@@ -35,6 +36,8 @@ import { buildQoderRequest, isClaudeModelId } from "./request-builder";
 import {
 	aggregateQoderSse,
 	detectQoderBusy,
+	isQoderDuplicateRequest,
+	QODER_DUPLICATE_REQUEST_CODE,
 	QoderAggregateError,
 	type QoderStreamError,
 	qoderFrameToOpenAIChunk,
@@ -314,13 +317,11 @@ export class QoderProvider extends BaseProvider {
 		const replayedModel = request.headers.get(QODER_MODEL_HEADER);
 		let encoded: string;
 		let modelKey: string;
-		// ONE uuid identifies this request in the body, in the COSY envelope and
-		// in the X-Request-Id header. A replay re-signs the body it already has,
-		// so it keeps the uuid the body was built with.
-		const requestId = body
-			? crypto.randomUUID()
-			: (request.headers.get(QODER_REQUEST_ID_HEADER) ?? crypto.randomUUID());
+		let requestId: string;
 		if (body) {
+			// ONE uuid identifies this request in the body, in the COSY envelope
+			// and in the X-Request-Id header.
+			requestId = crypto.randomUUID();
 			// The client sends a Claude model id; Qoder only knows wire keys. The
 			// resolution is the account's business (its model mappings, then the
 			// provider's family defaults), so it happens here, where the account is.
@@ -335,8 +336,21 @@ export class QoderProvider extends BaseProvider {
 			});
 			encoded = encodeQoderBody(JSON.stringify(qoderBody));
 		} else if (replayedModel !== null) {
-			encoded = text;
 			modelKey = replayedModel;
+			// A replay is a RESEND, and Qoder refuses a byte-identical resend as a
+			// duplicate (code 103). The resend therefore gets a fresh per-request
+			// id and a fresh signature; the conversation identity is untouched.
+			const refreshed = await this.resignWithFreshId(request, account, text);
+			if (refreshed) {
+				this.lastModelByAccount.set(account.id, modelKey);
+				return refreshed;
+			}
+			// The body could not be re-signed (not a Qoder wire body, or the
+			// account cannot be signed for): fall back to re-signing what we have,
+			// which is what this path always did.
+			requestId =
+				request.headers.get(QODER_REQUEST_ID_HEADER) ?? crypto.randomUUID();
+			encoded = text;
 		} else {
 			// Neither a client body nor this provider's own wire form.
 			return request;
@@ -388,6 +402,113 @@ export class QoderProvider extends BaseProvider {
 		});
 		this.prepared.set(signed, modelKey);
 		return signed;
+	}
+
+	/**
+	 * Give a resend of this request a fresh identity.
+	 *
+	 * Qoder refuses a byte-identical resend of a request it has already seen
+	 * (code 103, "Duplicate request"), and the proxy's in-place 529/5xx
+	 * retries replay the request verbatim — same body bytes, same signature,
+	 * same id — so every retry of a Qoder request was refused as a duplicate.
+	 *
+	 * The body is decoded, given a fresh `request_id` and a fresh
+	 * `business.id`, re-encoded and re-signed. The conversation identity
+	 * (`request_set_id`, `chat_record_id`, `session_id`) is left alone: that is
+	 * what makes the resend a resend of the SAME conversation.
+	 *
+	 * A body that is not a Qoder wire body, or an account that cannot be
+	 * signed for, is returned exactly as it came in — a resend that cannot be
+	 * re-signed is still better than no resend.
+	 */
+	async refreshRequestIdentity(
+		request: Request,
+		account: Account | null,
+	): Promise<Request> {
+		if (!account) return request;
+		let encoded: string;
+		try {
+			// The clone leaves the caller's request readable, so a body that
+			// cannot be refreshed is returned unchanged — body included.
+			encoded = await request.clone().text();
+		} catch {
+			return request;
+		}
+		const refreshed = await this.resignWithFreshId(request, account, encoded);
+		return refreshed ?? request;
+	}
+
+	/**
+	 * Re-sign an encoded Qoder wire body with a fresh per-request id.
+	 *
+	 * @returns the re-signed request, or null when the body is not a Qoder wire
+	 *   body or the account cannot be signed for
+	 */
+	private async resignWithFreshId(
+		request: Request,
+		account: Account,
+		encoded: string,
+	): Promise<Request | null> {
+		const decoded = decodeQoderBody(encoded);
+		if (!decoded) return null;
+		const body = tryParseJsonObject(decoded);
+		if (!body) return null;
+		// Not the Qoder request JSON: leave it alone.
+		if (typeof body.request_id !== "string") return null;
+
+		// ONE uuid identifies the request in the body, in the COSY envelope and
+		// in the X-Request-Id header — the invariant the first transform keeps.
+		const requestId = crypto.randomUUID();
+		body.request_id = requestId;
+		const business = body.business;
+		if (business && typeof business === "object" && !Array.isArray(business)) {
+			(business as Record<string, unknown>).id = crypto.randomUUID();
+		}
+		const refreshedBody = encodeQoderBody(JSON.stringify(body));
+
+		const decodedToken = decodeQoderAccessToken(account.access_token);
+		if (!decodedToken?.token) return null;
+		let identity: QoderIdentity;
+		try {
+			identity = await this.ensureIdentity(account, decodedToken.token);
+		} catch (error) {
+			log.warn(
+				`Qoder cannot re-sign a resent request for ${account.name}: ${String(error)}`,
+			);
+			return null;
+		}
+
+		const { headers: cosy } = buildCosyHeaders({
+			url: request.url,
+			body: refreshedBody,
+			creds: { uid: identity.uid, token: decodedToken.token },
+			machineId: identity.machineId,
+			requestId,
+		});
+
+		// Everything the request already carried (content-type, the model key,
+		// the stream intent) stays; only the COSY envelope and the request id
+		// are replaced.
+		const headers = new Headers(request.headers);
+		headers.delete("content-length");
+		headers.set("content-type", "application/json");
+		headers.set(QODER_REQUEST_ID_HEADER, requestId);
+		for (const [name, value] of Object.entries(cosy)) {
+			headers.set(name, value);
+		}
+
+		const refreshed = new Request(request.url, {
+			method: request.method,
+			headers,
+			body: refreshedBody,
+			signal: request.signal,
+		});
+		const modelKey = request.headers.get(QODER_MODEL_HEADER);
+		if (modelKey) {
+			this.prepared.set(refreshed, modelKey);
+			this.lastModelByAccount.set(account.id, modelKey);
+		}
+		return refreshed;
 	}
 
 	async processResponse(
@@ -490,6 +611,21 @@ export class QoderProvider extends BaseProvider {
 				status: response.status,
 				statusText: response.statusText,
 				headers: sanitizeHeaders(response.headers),
+			});
+		}
+		if (isQoderDuplicateRequest(text)) {
+			// Qoder refused a RESEND as a duplicate. That is not a server error:
+			// the account is fine and the upstream is fine, the resend itself was
+			// refused. Forwarded as 409 so the proxy does not bench the account
+			// for a minute over a retry it should not have made.
+			log.warn(
+				`Qoder refused a duplicate request for ${account?.name ?? "account"}`,
+			);
+			return qoderErrorResponse({
+				status: 409,
+				code: QODER_DUPLICATE_REQUEST_CODE,
+				message:
+					"Qoder refused the request as a duplicate: it was already sent",
 			});
 		}
 		const busy = parseBusyError(text);
@@ -1023,6 +1159,11 @@ function errorTypeForStatus(status: number): string {
 		case 503:
 			return "overloaded_error";
 		case 400:
+			return "invalid_request_error";
+		// A duplicate-request rejection is the upstream refusing a RESEND, not a
+		// malformed request — but it is a client-visible conflict, and the
+		// Anthropic error types have no "conflict" member.
+		case 409:
 			return "invalid_request_error";
 		default:
 			return "api_error";

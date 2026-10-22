@@ -2251,9 +2251,28 @@ export async function proxyWithAccount(
 				body: outgoing.bodyText || undefined,
 				signal: req.signal,
 			});
-			const retryRaw = isSyntheticProviderResponse(retryRequest)
-				? materializeSyntheticResponse(retryRequest)
-				: await forwardUpstream(retryRequest);
+			// Some upstreams refuse a byte-identical resend (Qoder answers code
+			// 103, "Duplicate request"), and this retry replays the request
+			// verbatim. The provider may give the resend a fresh identity — a
+			// new per-request id and a new signature — before it goes out.
+			// Providers without the hook keep today's behaviour byte for byte.
+			let refreshed = retryRequest;
+			if (provider.refreshRequestIdentity) {
+				try {
+					refreshed = await provider.refreshRequestIdentity(
+						retryRequest,
+						account,
+					);
+				} catch (error) {
+					log.warn(
+						`Account ${account.name}: could not refresh the request identity for the retry: ${String(error)}`,
+					);
+					refreshed = retryRequest;
+				}
+			}
+			const retryRaw = isSyntheticProviderResponse(refreshed)
+				? materializeSyntheticResponse(refreshed)
+				: await forwardUpstream(refreshed);
 
 			// Mirror the first response's metadata tagging: providers read
 			// stream intent / custom-tool state from these headers, and the
