@@ -825,6 +825,7 @@ Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks f
 - [@valentinyanakiev](https://github.com/valentinyanakiev) — [#450](https://github.com/tombii/better-ccflare/pull/450), [#454](https://github.com/tombii/better-ccflare/pull/454), [#459](https://github.com/tombii/better-ccflare/pull/459), [#482](https://github.com/tombii/better-ccflare/pull/482)
 - [@flex-minhyeok](https://github.com/flex-minhyeok) — [#466](https://github.com/tombii/better-ccflare/pull/466)
 - [@omcdowell](https://github.com/omcdowell) — [#493](https://github.com/tombii/better-ccflare/pull/493)
+- [@chatoo2412](https://github.com/chatoo2412) — [#504](https://github.com/tombii/better-ccflare/pull/504)
 
 ## Contributing
 
