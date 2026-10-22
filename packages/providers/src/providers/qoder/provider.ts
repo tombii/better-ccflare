@@ -30,8 +30,8 @@ import { buildQoderRequest } from "./request-builder";
 import {
 	aggregateQoderSse,
 	QoderAggregateError,
-	qoderFrameToOpenAIChunk,
 	type QoderStreamError,
+	qoderFrameToOpenAIChunk,
 	qoderStatusForCode,
 	unwrapQoderSse,
 } from "./sse-unwrap";
@@ -512,9 +512,12 @@ export class QoderProvider extends BaseProvider {
 			}
 			// Not an upstream answer: a truncated or unparseable stream.
 			const message = error instanceof Error ? error.message : String(error);
-			log.warn(`Qoder stream ended abnormally for ${account?.name ?? "account"}`, {
-				message: message.slice(0, 300),
-			});
+			log.warn(
+				`Qoder stream ended abnormally for ${account?.name ?? "account"}`,
+				{
+					message: message.slice(0, 300),
+				},
+			);
 			return qoderErrorResponse({ status: 502, message });
 		}
 	}

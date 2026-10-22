@@ -1,11 +1,11 @@
-import { createDecipheriv, createHash } from "node:crypto";
 import { describe, expect, it } from "bun:test";
+import { createDecipheriv, createHash } from "node:crypto";
 import {
 	buildCosyHeaders,
 	cosySignaturePath,
 	encodeQoderBody,
-	QODER_COSY_VERSION,
 	QODER_COSY_CLIENT_TYPE,
+	QODER_COSY_VERSION,
 } from "../cosy";
 
 // ---------------------------------------------------------------------------

@@ -127,9 +127,7 @@ describe("buildQoderRequest", () => {
 
 	describe("system prompt", () => {
 		it("lifts a string system prompt to the top-level system member", () => {
-			const body = buildQoderRequest(
-				anthropic({ system: "You are terse." }),
-			);
+			const body = buildQoderRequest(anthropic({ system: "You are terse." }));
 			expect(body.system).toBe("You are terse.");
 			expect(body.messages.some((m) => m.role === "system")).toBe(false);
 		});
@@ -138,7 +136,11 @@ describe("buildQoderRequest", () => {
 			const body = buildQoderRequest(
 				anthropic({
 					system: [
-						{ type: "text", text: "Part one.", cache_control: { type: "ephemeral" } },
+						{
+							type: "text",
+							text: "Part one.",
+							cache_control: { type: "ephemeral" },
+						},
 						{ type: "text", text: "Part two." },
 					],
 				}),
@@ -175,7 +177,10 @@ describe("buildQoderRequest", () => {
 					messages: [
 						{ role: "user", content: "first" },
 						{ role: "assistant", content: "reply" },
-						{ role: "user", content: [{ type: "text", text: "the last question" }] },
+						{
+							role: "user",
+							content: [{ type: "text", text: "the last question" }],
+						},
 					],
 				}),
 			);
@@ -249,7 +254,11 @@ describe("buildQoderRequest", () => {
 				role: "assistant",
 				content: "",
 				tool_calls: [
-					{ id: "t1", type: "function", function: { name: "Read", arguments: "{}" } },
+					{
+						id: "t1",
+						type: "function",
+						function: { name: "Read", arguments: "{}" },
+					},
 				],
 			});
 		});
@@ -268,7 +277,11 @@ describe("buildQoderRequest", () => {
 						{
 							role: "user",
 							content: [
-								{ type: "tool_result", tool_use_id: "toolu_1", content: "a.txt" },
+								{
+									type: "tool_result",
+									tool_use_id: "toolu_1",
+									content: "a.txt",
+								},
 							],
 						},
 					],
@@ -288,7 +301,9 @@ describe("buildQoderRequest", () => {
 						{ role: "user", content: "go" },
 						{
 							role: "assistant",
-							content: [{ type: "tool_use", id: "t1", name: "View", input: {} }],
+							content: [
+								{ type: "tool_use", id: "t1", name: "View", input: {} },
+							],
 						},
 						{
 							role: "user",
@@ -329,7 +344,11 @@ describe("buildQoderRequest", () => {
 						{
 							role: "user",
 							content: [
-								{ type: "tool_result", tool_use_id: "unknown-1", content: "r1" },
+								{
+									type: "tool_result",
+									tool_use_id: "unknown-1",
+									content: "r1",
+								},
 								{ type: "tool_result", content: "r2" },
 							],
 						},
@@ -359,7 +378,11 @@ describe("buildQoderRequest", () => {
 						{
 							role: "user",
 							content: [
-								{ type: "tool_result", tool_use_id: "orphan", content: "stray" },
+								{
+									type: "tool_result",
+									tool_use_id: "orphan",
+									content: "stray",
+								},
 								{ type: "text", text: "and now?" },
 							],
 						},
@@ -368,7 +391,9 @@ describe("buildQoderRequest", () => {
 			);
 			const last = body.messages[body.messages.length - 1];
 			expect(last.role).toBe("user");
-			expect(body.messages.some((m) => m.tool_call_id === "orphan")).toBe(false);
+			expect(body.messages.some((m) => m.tool_call_id === "orphan")).toBe(
+				false,
+			);
 			expect(String(last.content)).toContain("stray");
 			expect(String(last.content)).toContain("and now?");
 		});
@@ -520,7 +545,9 @@ describe("buildQoderRequest", () => {
 		});
 
 		it("disables reasoning when the client explicitly turns thinking off", () => {
-			const body = buildQoderRequest(anthropic({ thinking: { type: "disabled" } }));
+			const body = buildQoderRequest(
+				anthropic({ thinking: { type: "disabled" } }),
+			);
 			expect(body.model_config.is_reasoning).toBe(false);
 			expect(body.chat_context.extra.modelConfig.is_reasoning).toBe(false);
 		});

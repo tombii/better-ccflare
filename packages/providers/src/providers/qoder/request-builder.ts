@@ -178,8 +178,7 @@ function repairToolResults(messages: OpenAIMessage[]): OpenAIMessage[] {
 			// id — Qoder refuses a result whose id matches no tool_call.
 			// A call id later in the transcript still names a call (the client
 			// simply reordered turns); only an id that is nowhere is lost.
-			const match =
-				id && callIds.has(id) ? id : (outstanding[0] ?? null);
+			const match = id && callIds.has(id) ? id : (outstanding[0] ?? null);
 			if (match) {
 				if (outstanding.includes(match)) {
 					outstanding.splice(outstanding.indexOf(match), 1);
@@ -278,8 +277,11 @@ export function buildQoderRequest(
 	// it in place would push a system message into `messages`), Qoder is always
 	// streamed, and its reasoning knobs live on `model_config` (below) rather
 	// than the OpenAI `reasoning` field the converter would emit.
-	const { system: _system, reasoning: _reasoning, ...messagesAndParams } =
-		anthropicBody;
+	const {
+		system: _system,
+		reasoning: _reasoning,
+		...messagesAndParams
+	} = anthropicBody;
 	void _system;
 	void _reasoning;
 	const openai = convertAnthropicRequestToOpenAI({

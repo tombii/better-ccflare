@@ -238,7 +238,8 @@ export async function fetchQoderQuota(
 			isQuotaExceeded?: unknown;
 		};
 		const q = payload.userQuota ?? {};
-		const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+		const num = (v: unknown) =>
+			typeof v === "number" && Number.isFinite(v) ? v : 0;
 		return {
 			total: num(q.total),
 			used: num(q.used),
@@ -273,7 +274,9 @@ export function encodeQoderAccessToken(
 	return `${ACCESS_TOKEN_PREFIX}${mode}.${token}`;
 }
 
-export function decodeQoderAccessToken(accessToken: string | null | undefined): {
+export function decodeQoderAccessToken(
+	accessToken: string | null | undefined,
+): {
 	token: string;
 	mode: QoderTokenMode;
 } | null {
