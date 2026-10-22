@@ -398,16 +398,10 @@ export class QoderProvider extends BaseProvider {
 			});
 			return qoderErrorResponse(peek.error);
 		}
-		const body = new Response(
-			relayQoderStream(
-				peek.head,
-				peek.reader as ReadableStreamDefaultReader<Uint8Array>,
-			),
-			{
-				status: response.status,
-				headers: response.headers,
-			},
-		);
+		const body = new Response(relayQoderStream(peek.head, peek.reader), {
+			status: response.status,
+			headers: response.headers,
+		});
 
 		if (clientWantsJson) {
 			return this.aggregateResponse(body, model, account);
@@ -642,14 +636,20 @@ export function parseBusyError(
  */
 const QODER_FIRST_FRAME_TIMEOUT_MS = 30_000;
 
-interface QoderPeek {
-	/** The in-band failure, when the stream opens with one. */
-	error: QoderStreamError | null;
-	/** The bytes the peek consumed; the consumer must see them too. */
-	head: Uint8Array;
-	/** The reader, positioned after `head`, for the rest of the stream. */
-	reader: ReadableStreamDefaultReader<Uint8Array> | null;
-}
+type QoderPeek =
+	| {
+			/** The stream opens with an in-band failure: nothing to relay. */
+			error: QoderStreamError;
+			head: Uint8Array;
+			reader: null;
+	  }
+	| {
+			error: null;
+			/** The bytes the peek consumed; the consumer must see them too. */
+			head: Uint8Array;
+			/** The reader, positioned after `head`, for the rest of the stream. */
+			reader: ReadableStreamDefaultReader<Uint8Array>;
+	  };
 
 /**
  * Read a Qoder SSE body only far enough to learn its outcome: the first
