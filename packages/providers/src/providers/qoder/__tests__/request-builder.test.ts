@@ -359,6 +359,39 @@ describe("buildQoderRequest", () => {
 			expect(tools.map((t) => t.tool_call_id)).toEqual(["t1", "t2"]);
 		});
 
+		it("does not let a result answer a call made after it", () => {
+			// Qoder refuses "a result that answers no call before it", so a result
+			// naming a call that comes later in the conversation is not a match:
+			// it takes the oldest outstanding call instead.
+			const body = buildQoderRequest(
+				anthropic({
+					messages: [
+						{ role: "user", content: "go" },
+						{
+							role: "user",
+							content: [
+								{ type: "tool_result", tool_use_id: "later", content: "r" },
+							],
+						},
+						{
+							role: "assistant",
+							content: [
+								{ type: "tool_use", id: "later", name: "A", input: {} },
+							],
+						},
+					],
+				}),
+			);
+			// No call precedes the result, so it has no call to answer and goes
+			// out as text in a user turn.
+			expect(body.messages.some((m) => m.role === "tool")).toBe(false);
+			expect(
+				body.messages.some(
+					(m) => m.role === "user" && String(m.content).includes("r"),
+				),
+			).toBe(true);
+		});
+
 		it("sends an unanswerable tool_result as text in the user turn", () => {
 			const body = buildQoderRequest(
 				anthropic({

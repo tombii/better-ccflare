@@ -140,21 +140,15 @@ function withStringContent(message: OpenAIMessage): OpenAIMessage {
  * call left to answer is folded into the user turn as text.
  */
 function repairToolResults(messages: OpenAIMessage[]): OpenAIMessage[] {
-	// Pass 1: every call id, in conversation order. A result keeps the id of a
-	// call that precedes it; one that matches no earlier call is reassigned
-	// below rather than being left unmatched.
-	const callIds = new Set<string>();
-	for (const message of messages) {
-		for (const call of message.tool_calls ?? []) {
-			if (call.id) callIds.add(call.id);
-		}
-	}
+	// The calls made SO FAR, and those of them not yet answered, in order.
+	//
+	// Qoder refuses a whole request with a result that answers no call before
+	// it, so the match is positional: a result may only answer a call that
+	// precedes it in the conversation. A result whose id names a call made
+	// LATER is treated like a result whose id was lost.
+	const seen = new Set<string>();
 	const outstanding: string[] = [];
 
-	// Pass 2: walk the transcript. A result answers the call it names when that
-	// call exists anywhere in the request; otherwise it takes the oldest call
-	// still outstanding, or — with none — becomes text in the next user turn.
-	// (Parallel results legitimately arrive out of order, so there is no FIFO.)
 	const out: OpenAIMessage[] = [];
 	const pendingOrphans: string[] = [];
 	const flushOrphansInto = (message: OpenAIMessage): OpenAIMessage => {
@@ -168,17 +162,20 @@ function repairToolResults(messages: OpenAIMessage[]): OpenAIMessage[] {
 	for (const message of messages) {
 		if (message.role === "assistant") {
 			for (const call of message.tool_calls ?? []) {
-				if (call.id) outstanding.push(call.id);
+				if (call.id) {
+					seen.add(call.id);
+					outstanding.push(call.id);
+				}
 			}
 		}
 		if (message.role === "tool") {
 			const id = message.tool_call_id ?? "";
-			// A result that names no call this request carries (an id the client
-			// lost or invented) answers the oldest unmatched one under that call's
-			// id — Qoder refuses a result whose id matches no tool_call.
-			// A call id later in the transcript still names a call (the client
-			// simply reordered turns); only an id that is nowhere is lost.
-			const match = id && callIds.has(id) ? id : (outstanding[0] ?? null);
+			// A result that names no call made before it (an id the client lost,
+			// invented, or took from a later turn) answers the oldest outstanding
+			// call under that call's id — Qoder refuses a result whose id
+			// matches no tool_call. Parallel results legitimately arrive out of
+			// order, so an id that names an earlier call is always preferred.
+			const match = id && seen.has(id) ? id : (outstanding[0] ?? null);
 			if (match) {
 				if (outstanding.includes(match)) {
 					outstanding.splice(outstanding.indexOf(match), 1);
