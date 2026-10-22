@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Account } from "@better-ccflare/types";
 import { encodeQoderAccessToken } from "../auth-flow";
@@ -62,8 +61,6 @@ interface Captured {
 let calls: Captured[] = [];
 const originalFetch = globalThis.fetch;
 
-
-
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
 		status,
@@ -97,7 +94,7 @@ function frame(chunk: unknown): string {
 function anthropicRequest(
 	body: Record<string, unknown> = {},
 	headers: Record<string, string> = {},
-	accessToken?: string,
+	_accessToken?: string,
 ): Request {
 	return new Request("https://better-ccflare.local/v1/messages", {
 		method: "POST",
@@ -118,7 +115,7 @@ function anthropicRequest(
 	});
 }
 
-function headersOf(call: Captured): Headers {
+function _headersOf(call: Captured): Headers {
 	return new Headers(call.init?.headers);
 }
 
@@ -332,14 +329,17 @@ describe("transformRequestBody (continued)", () => {
 		calls = [];
 		// After buildUrl(), the proxy sees the chat route with the client's
 		// count_tokens body; the provider must not ship that upstream.
-		const request = new Request(provider.buildUrl("/v1/messages/count_tokens", "", ACCOUNT), {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				model: "qfmodel",
-				messages: [{ role: "user", content: "hello" }],
-			}),
-		});
+		const request = new Request(
+			provider.buildUrl("/v1/messages/count_tokens", "", ACCOUNT),
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "qfmodel",
+					messages: [{ role: "user", content: "hello" }],
+				}),
+			},
+		);
 		const out = await provider.transformRequestBody(request, ACCOUNT);
 		expect(out.headers.get("x-better-ccflare-synthetic-response")).toBe("true");
 		expect(out.url.startsWith("https://better-ccflare.local/")).toBe(true);
@@ -385,7 +385,9 @@ describe("processResponse", () => {
 	}
 
 	it("streams Anthropic SSE for a streaming client", async () => {
-		const response = tagged(tagRequestPath(sseResponse(OPENAI_LIKE), "/v1/messages"));
+		const response = tagged(
+			tagRequestPath(sseResponse(OPENAI_LIKE), "/v1/messages"),
+		);
 		const out = await provider.processResponse(response, ACCOUNT);
 		const text = await out.text();
 		expect(text).toContain('"type":"message_start"');
@@ -394,7 +396,9 @@ describe("processResponse", () => {
 	});
 
 	it("aggregates into an Anthropic JSON message for a non-streaming client", async () => {
-		const response = tagged(tagRequestPath(sseResponse(OPENAI_LIKE), "/v1/messages"));
+		const response = tagged(
+			tagRequestPath(sseResponse(OPENAI_LIKE), "/v1/messages"),
+		);
 		const headers = new Headers({ "x-better-ccflare-request-stream": "false" });
 		const out = await provider.processResponse(
 			response,
@@ -525,21 +529,48 @@ describe("parseRateLimit", () => {
 		expect(info.statusHeader).toBeUndefined();
 	});
 
-	it("reads the retry-after from an in-band busy response body", async () => {
-		const body = new Response(
-			JSON.stringify({ code: 10605, error: "busy", retry_after: 30 }),
-			{ status: 200, headers: { "content-type": "application/json" } },
+	it("relabels the gateway's busy 403 as 503 + Retry-After", async () => {
+		const provider = new QoderProvider();
+		const inner = JSON.stringify({
+			isQueued: true,
+			retryAfterSeconds: 3,
+			subCode: "RESOURCE_LIMIT",
+		});
+		// Captured live: HTTP 200, an outer 200 SSE frame, then the gateway's
+		// 403 frame whose `message` is itself JSON, then a third JSON layer.
+		const middle = JSON.stringify({ code: "10605", message: inner });
+		// The gateway answers HTTP 200 with an SSE-framed 403 envelope; the
+		// relabelling happens on that frame, not on an HTTP status.
+		const frameEnvelope = {
+			body: JSON.stringify({ code: "403", message: middle }),
+			statusCodeValue: 403,
+			statusCode: "FORBIDDEN",
+			headers: { "Retry-After": ["3"] },
+		};
+		const response = new Response(
+			`data:${JSON.stringify({ body: JSON.stringify(frameEnvelope), statusCodeValue: 200 })}`,
+			{ status: 200, headers: { "content-type": "text/event-stream" } },
 		);
-		const reset = await provider.parseRateLimitFromBody(body);
-		expect(reset).toBeGreaterThan(Date.now() + 25_000);
+		const out = await provider.processResponse(
+			response,
+			makeAccount(),
+			new Headers({ "x-better-ccflare-request-stream": "false" }),
+		);
+		expect(out.status).toBe(503);
+		expect(out.headers.get("retry-after")).toBe("3");
+		const body = (await out.json()) as { error: { type: string } };
+		expect(body.error.type).toBe("overloaded_error");
 	});
 
-	it("returns undefined for an ordinary error body", async () => {
-		const body = new Response(JSON.stringify({ code: 116 }), {
-			status: 429,
+	it("passes an ordinary JSON error through with its status", async () => {
+		const provider = new QoderProvider();
+		const response = new Response(JSON.stringify({ code: 116 }), {
+			status: 402,
 			headers: { "content-type": "application/json" },
 		});
-		expect(await provider.parseRateLimitFromBody(body)).toBeUndefined();
+		const out = await provider.processResponse(response, makeAccount());
+		expect(out.status).toBe(402);
+		expect(await out.json()).toEqual({ code: 116 });
 	});
 });
 

@@ -135,6 +135,43 @@ describe("qoderStatusForCode", () => {
 		expect(qoderStatusForCode(100403)).toBe(400);
 	});
 
+	it("unwraps the gateway's stringified, nested busy payload", () => {
+		// Captured live (2026-10-22): the real 403 envelope, three JSON layers.
+		const inner = JSON.stringify({
+			isQueued: true,
+			modelKey: "qfmodel",
+			queueCount: 0,
+			queueType: "p3",
+			retryAfterSeconds: 3,
+			serviceAvailable: false,
+			subCode: "RESOURCE_LIMIT",
+			waitTime: 3,
+		});
+		const middle = JSON.stringify({
+			code: "10605",
+			message: inner,
+			subCode: "RESOURCE_LIMIT",
+		});
+		const envelope = {
+			headers: { "Content-Type": ["application/json"], "Retry-After": ["3"] },
+			// Captured live: the payload is a JSON string that itself holds a
+			// JSON string (`deepestErrorBody` bounds this nested parsing).
+			body: JSON.stringify({ code: "403", message: middle }),
+			statusCodeValue: 403,
+			statusCode: "FORBIDDEN",
+		};
+		const decoded = qoderFrameToOpenAIChunk(
+			`data:${JSON.stringify({ body: JSON.stringify(envelope), statusCodeValue: 200 })}`,
+		);
+		expect(decoded.ok).toBe(false);
+		if (!decoded.ok && decoded.error) {
+			expect(decoded.error.code).toBe(10605);
+			expect(decoded.error.status).toBe(503);
+			expect(decoded.error.retryAfterSeconds).toBe(3);
+			expect(decoded.error.upstreamStatus).toBe(403);
+		}
+	});
+
 	it("falls back to 502 for unknown codes", () => {
 		expect(qoderStatusForCode(99999)).toBe(502);
 		expect(qoderStatusForCode(undefined)).toBe(502);
@@ -162,9 +199,7 @@ describe("unwrapQoderSse", () => {
 			"data: [DONE]\n\n",
 		]);
 
-		const text = await readAll(
-			unwrapQoderSse(response, { model: "qfmodel" }),
-		);
+		const text = await readAll(unwrapQoderSse(response, { model: "qfmodel" }));
 		const chunks = text
 			.split("\n")
 			.filter((l) => l.startsWith("data:"))
@@ -184,10 +219,9 @@ describe("unwrapQoderSse", () => {
 
 	it("does not duplicate a [DONE] the upstream already sent", async () => {
 		const text = await readAll(
-			unwrapQoderSse(
-				streamOf([frame(contentChunk("x")), "data: [DONE]\n\n"]),
-				{ model: "qfmodel" },
-			),
+			unwrapQoderSse(streamOf([frame(contentChunk("x")), "data: [DONE]\n\n"]), {
+				model: "qfmodel",
+			}),
 		);
 		expect(text.match(/\[DONE\]/g)).toHaveLength(1);
 	});
@@ -229,10 +263,9 @@ describe("unwrapQoderSse", () => {
 
 	it("emits a single error chunk when the very first frame fails", async () => {
 		const text = await readAll(
-			unwrapQoderSse(
-				streamOf([frame({ code: 10605, error: "busy" })]),
-				{ model: "qfmodel" },
-			),
+			unwrapQoderSse(streamOf([frame({ code: 10605, error: "busy" })]), {
+				model: "qfmodel",
+			}),
 		);
 		const payloads = text
 			.split("\n")
@@ -278,9 +311,7 @@ describe("unwrapQoderSse -> transformStreamingResponse", () => {
 		const response = streamOf([
 			frame({
 				model: "auto",
-				choices: [
-					{ index: 0, delta: { reasoning_content: "let me think. " } },
-				],
+				choices: [{ index: 0, delta: { reasoning_content: "let me think. " } }],
 			}),
 			frame(contentChunk("ok")),
 			frame({
@@ -362,9 +393,7 @@ describe("unwrapQoderSse -> transformStreamingResponse", () => {
 					{
 						index: 0,
 						delta: {
-							tool_calls: [
-								{ index: 0, function: { arguments: '{"comm' } },
-							],
+							tool_calls: [{ index: 0, function: { arguments: '{"comm' } }],
 						},
 					},
 				],
@@ -375,18 +404,14 @@ describe("unwrapQoderSse -> transformStreamingResponse", () => {
 					{
 						index: 0,
 						delta: {
-							tool_calls: [
-								{ index: 0, function: { arguments: 'and":"ls"}' } },
-							],
+							tool_calls: [{ index: 0, function: { arguments: 'and":"ls"}' } }],
 						},
 					},
 				],
 			}),
 			frame({
 				model: "auto",
-				choices: [
-					{ index: 0, delta: {}, finish_reason: "tool_calls" },
-				],
+				choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
 			}),
 			"data: [DONE]\n\n",
 		]);
@@ -420,9 +445,9 @@ describe("unwrapQoderSse -> transformStreamingResponse", () => {
 		);
 
 		const end = events.find((e) => e.type === "message_delta");
-		expect((end as { delta?: { stop_reason?: string } })?.delta?.stop_reason).toBe(
-			"tool_use",
-		);
+		expect(
+			(end as { delta?: { stop_reason?: string } })?.delta?.stop_reason,
+		).toBe("tool_use");
 	});
 
 	// The shared emitter has no error-event path: it assumes every chunk is a
@@ -448,7 +473,10 @@ describe("unwrapQoderSse -> transformStreamingResponse", () => {
 describe("aggregateQoderSse", () => {
 	const fullStream = (): Response =>
 		streamOf([
-			frame({ model: "auto", choices: [{ delta: { reasoning_content: "hmm" } }] }),
+			frame({
+				model: "auto",
+				choices: [{ delta: { reasoning_content: "hmm" } }],
+			}),
 			frame(contentChunk("ok")),
 			frame({
 				model: "auto",

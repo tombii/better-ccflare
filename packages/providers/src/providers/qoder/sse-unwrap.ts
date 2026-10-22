@@ -21,9 +21,14 @@ import {
 export interface UnwrapOptions {
 	/** The wire key that was actually sent (qfmodel, dfmodel, ...). */
 	model: string;
+	/** Called once when an in-band error ends the stream. */
+	onError?: (error: QoderStreamError) => void;
+	/** Called once when the upstream [DONE] marker is seen. */
+	onDone?: () => void;
 }
 
 interface QoderEnvelope {
+	headers?: unknown;
 	body?: unknown;
 	statusCodeValue?: unknown;
 	statusCode?: unknown;
@@ -35,6 +40,8 @@ export interface QoderStreamError {
 	code?: number;
 	/** The envelope's own statusCodeValue, when it was the error's source. */
 	upstreamStatus?: number;
+	/** Qoder's own hint (e.g. the busy queue's `retryAfterSeconds`). */
+	retryAfterSeconds?: number;
 }
 
 type DecodedFrame =
@@ -48,10 +55,7 @@ export function qoderStatusForCode(code: number | undefined): number {
 	if (code === 105) return 401;
 	if (code === 10605) return 503;
 	if (code === 406 || code === 416 || code === 430) return 400;
-	if (
-		(code >= 110 && code <= 119) ||
-		code === 122
-	) {
+	if ((code >= 110 && code <= 119) || code === 122) {
 		return 429;
 	}
 	if (code === 80411 || code === 80412) return 400;
@@ -89,10 +93,95 @@ function errorText(body: unknown): string {
 	return "";
 }
 
+/**
+ * Qoder's codes are usually numbers but the gateway sometimes stringifies
+ * them, and nests its real payload one (or two) JSON layers deeper — a busy
+ * response looks like `{code: "403", message: "{\"code\":\"10605\", …}"}`.
+ */
 function numericCode(body: unknown): number | undefined {
 	if (!body || typeof body !== "object") return undefined;
-	const code = (body as Record<string, unknown>).code;
-	return typeof code === "number" && Number.isFinite(code) ? code : undefined;
+	const raw = (body as Record<string, unknown>).code;
+	if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+	if (typeof raw === "string" && /^\d+$/.test(raw)) return Number(raw);
+	return undefined;
+}
+
+function countRetryAfter(...bodies: unknown[]): number | undefined {
+	for (const body of bodies) {
+		if (!body || typeof body !== "object") continue;
+		const value = (body as Record<string, unknown>).retryAfterSeconds;
+		if (typeof value === "number" && value > 0) return value;
+	}
+	return undefined;
+}
+
+/**
+ * Unwrap the JSON-in-a-string layers Qoder wraps its error bodies in. The
+ * decision fields (`code`, `retryAfterSeconds`, …) live at DIFFERENT levels —
+ * the outermost layer carries `403`, the next `10605`, the innermost the queue
+ * hint — so the layers are merged from the inside out, letting an inner layer
+ * override an outer one. Each layer costs a JSON parse, so depth is bounded.
+ */
+function mergeErrorLayers(body: unknown, depth = 0): Record<string, unknown> {
+	if (depth > 8) return {};
+	if (typeof body === "string") {
+		const parsed = tryParse(body);
+		return parsed === body ? {} : mergeErrorLayers(parsed, depth + 1);
+	}
+	if (!body || typeof body !== "object" || Array.isArray(body)) return {};
+	const record = body as Record<string, unknown>;
+	const message = record.message;
+	const inner =
+		typeof message === "string"
+			? mergeErrorLayers(tryParse(message), depth + 1)
+			: {};
+	return { ...record, ...inner };
+}
+
+/** Build a stream error from an envelope whose statusCodeValue is not 200. */
+function errorFromEnvelope(
+	envelope: QoderEnvelope,
+	upstreamStatus: number,
+): QoderStreamError {
+	const outer =
+		typeof envelope.body === "string" ? tryParse(envelope.body) : envelope.body;
+	const merged = mergeErrorLayers(outer);
+	const code = numericCode(merged) ?? numericCode(outer);
+	const retryAfterSeconds =
+		countRetryAfter(merged, outer) ?? retryAfterHeader(envelope);
+	return {
+		status: qoderStatusForCode(code),
+		message: errorText(merged) || errorText(outer) || "Qoder error",
+		upstreamStatus,
+		...(code !== undefined ? { code } : {}),
+		...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+	};
+}
+
+function retryAfterHeader(envelope: QoderEnvelope): number | undefined {
+	const headers = envelope.headers;
+	if (!headers || typeof headers !== "object") return undefined;
+	const raw = (headers as Record<string, unknown>)["Retry-After"];
+	const value = Array.isArray(raw) ? raw[0] : raw;
+	const n = Number(value);
+	return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * An SSE frame nested inside a 200 one (the gateway does this for its 403
+ * busy answer) carries its own statusCodeValue and body.
+ */
+function decodeEnvelopeStatus(inner: unknown): QoderStreamError | null {
+	if (!inner || typeof inner !== "object") return null;
+	const nested = inner as QoderEnvelope;
+	const status =
+		typeof nested.statusCodeValue === "number"
+			? nested.statusCodeValue
+			: typeof nested.statusCode === "number"
+				? nested.statusCode
+				: 200;
+	if (status === 200) return null;
+	return errorFromEnvelope(nested, status);
 }
 
 /**
@@ -127,30 +216,13 @@ export function qoderFrameToOpenAIChunk(line: string): DecodedFrame {
 				? envelope.statusCode
 				: 200;
 	if (upstreamStatus !== 200) {
-		const inner =
-			typeof envelope.body === "string"
-				? tryParse(envelope.body)
-				: envelope.body;
-		const code = numericCode(inner);
-		return {
-			ok: false,
-			error: {
-				status:
-					code !== undefined
-						? qoderStatusForCode(code)
-						: upstreamStatus >= 400
-							? upstreamStatus
-							: 502,
-				message: errorText(inner) || errorText(envelope.body) || "Qoder error",
-				upstreamStatus,
-				...(code !== undefined ? { code } : {}),
-			},
-		};
+		return { ok: false, error: errorFromEnvelope(envelope, upstreamStatus) };
 	}
 
 	let inner: unknown;
 	try {
-		inner = typeof envelope.body === "string" ? JSON.parse(envelope.body) : null;
+		inner =
+			typeof envelope.body === "string" ? JSON.parse(envelope.body) : null;
 	} catch {
 		return { ok: false, error: null, empty: true };
 	}
@@ -158,8 +230,11 @@ export function qoderFrameToOpenAIChunk(line: string): DecodedFrame {
 		return { ok: false, error: null, empty: true };
 	}
 
-	// A 200 envelope can still carry an in-band error object. Qoder sends
-	// `error` as an object on some paths and as a bare string on others.
+	// A 200 envelope can still carry an in-band error: Qoder sends `error` as
+	// an object on some paths and as a bare string on others, and wraps some
+	// failures in another SSE frame whose own statusCodeValue is the error.
+	const requestError = decodeEnvelopeStatus(inner);
+	if (requestError) return { ok: false, error: requestError };
 	const record = inner as Record<string, unknown>;
 	const hasError = record.error !== undefined && record.error !== null;
 	if (hasError && !("choices" in record)) {
@@ -205,20 +280,20 @@ function encodeChunk(chunk: OpenAIResponse, model: string): string {
 /**
  * Wrap a Qoder SSE response so it reads as plain OpenAI SSE, with `[DONE]`
  * guaranteed and in-band errors surfaced as an OpenAI error chunk (the shared
- * emitter turns that into an Anthropic `error` event).
+ * emitter ignores that chunk, which is why `onError` exists — the provider
+ * turns an immediate failure into an error response before this point).
+ *
  */
 export function unwrapQoderSse(
 	response: Response,
 	options: UnwrapOptions,
 ): Response {
 	if (!response.body) return response;
-	const { model } = options;
+	const { model, onError, onDone } = options;
 	const decoder = new TextDecoder();
 	const encoder = new TextEncoder();
 
-	// `finished`: the stream's outcome is decided (error, upstream [DONE], or
-	// end). `doneSent`: the terminating [DONE] has been written. Both are needed
-	// so a frame queued behind an error chunk is still discarded.
+	// The undecoded remainder of the last line read.
 	let buffer = "";
 	let finished = false;
 	let doneSent = false;
@@ -239,19 +314,25 @@ export function unwrapQoderSse(
 	) => {
 		for (const line of lines) {
 			if (finished) return;
-			const decoded = qoderFrameToOpenAIChunk(line);
-			if ("empty" in decoded) {
+			const frame = qoderFrameToOpenAIChunk(line);
+			if ("empty" in frame) {
 				// The gateway does not send [DONE]; if it ever does, honour it and
 				// do not append a second one.
-				if (decoded.done) terminate(controller);
+				if (frame.done) {
+					onDone?.();
+					terminate(controller);
+				}
 				continue;
 			}
-			if (!decoded.ok) {
-				controller.enqueue(encoder.encode(encodeErrorChunk(decoded.error, model)));
+			if (!frame.ok) {
+				onError?.(frame.error);
+				controller.enqueue(
+					encoder.encode(encodeErrorChunk(frame.error, model)),
+				);
 				terminate(controller);
 				return;
 			}
-			controller.enqueue(encoder.encode(encodeChunk(decoded.chunk, model)));
+			controller.enqueue(encoder.encode(encodeChunk(frame.chunk, model)));
 		}
 	};
 
@@ -282,10 +363,21 @@ export function unwrapQoderSse(
 	});
 }
 
-function aggregateError(error: QoderStreamError): Error & { status: number } {
-	const err = new Error(error.message) as Error & { status: number };
-	err.status = error.status;
-	return err;
+/** An aggregation failure carrying everything the provider reports on it. */
+export class QoderAggregateError extends Error {
+	readonly status: number;
+	readonly code?: number;
+	readonly retryAfterSeconds?: number;
+
+	constructor(error: QoderStreamError) {
+		super(error.message);
+		this.name = "QoderAggregateError";
+		this.status = error.status;
+		if (error.code !== undefined) this.code = error.code;
+		if (error.retryAfterSeconds !== undefined) {
+			this.retryAfterSeconds = error.retryAfterSeconds;
+		}
+	}
 }
 
 /**
@@ -317,7 +409,7 @@ export async function aggregateQoderSse(
 			if (decoded.done) sawDone = true;
 			continue;
 		}
-		if (!decoded.ok) throw aggregateError(decoded.error);
+		if (!decoded.ok) throw new QoderAggregateError(decoded.error);
 
 		const chunk = decoded.chunk;
 		responseId ??= chunk.id;
@@ -329,8 +421,7 @@ export async function aggregateQoderSse(
 		if (!delta) continue;
 
 		const thinkingDelta =
-			delta.reasoning_content ??
-			(delta as { reasoning?: unknown }).reasoning;
+			delta.reasoning_content ?? (delta as { reasoning?: unknown }).reasoning;
 		if (typeof thinkingDelta === "string") reasoning += thinkingDelta;
 		if (typeof delta.content === "string") content += delta.content;
 

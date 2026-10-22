@@ -21,10 +21,17 @@ import {
 	refreshQoderToken,
 	resolveQoderOpenApiEndpoint,
 } from "./auth-flow";
-import { buildCosyHeaders, deriveQoderMachineId, encodeQoderBody } from "./cosy";
+import {
+	buildCosyHeaders,
+	deriveQoderMachineId,
+	encodeQoderBody,
+} from "./cosy";
 import { buildQoderRequest } from "./request-builder";
 import {
 	aggregateQoderSse,
+	QoderAggregateError,
+	qoderFrameToOpenAIChunk,
+	type QoderStreamError,
 	qoderStatusForCode,
 	unwrapQoderSse,
 } from "./sse-unwrap";
@@ -37,9 +44,17 @@ const QODER_CHAT_PATH =
 	"/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1";
 const QODER_MODEL_LIST_PATH = "/algo/api/v2/model/list";
 
+/**
+ * Count_tokens is answered locally: Qoder has no count endpoint, and
+ * Anthropic's is advisory, so the client's own message body is all the answer
+ * needs. The proxy may or may not keep the path when it rewrites the URL, so
+ * both the path and the body shape are recognised.
+ */
+const QODER_COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
+
 // The proxy only materialises a synthetic response from a URL under
-// `https://better-ccflare.local/` (SYNTHETIC_RESPONSE_URL_PREFIX), so the
-// path segment after the origin is ours to choose.
+// `https://better-ccflare.local/` (SYNTHETIC_RESPONSE_URL_PREFIX); the path
+// segment after the origin is ours to choose.
 const QODER_SYNTHETIC_COUNT_TOKENS_URL =
 	"https://better-ccflare.local/qoder/count_tokens";
 
@@ -255,7 +270,19 @@ export class QoderProvider extends BaseProvider {
 		request: Request,
 		account?: Account,
 	): Promise<Request> {
-		if (this.isSyntheticCountTokens(request)) {
+		if (!account) return request;
+		const contentType = request.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return request;
+
+		// Read the body exactly once: it may have been consumed already (the
+		// proxy's replays), and every decision below works from this one parse.
+		const text = await request.text();
+		const body = tryParseJsonObject(text);
+
+		if (
+			request.url.includes(QODER_COUNT_TOKENS_PATH) ||
+			(body && isCountTokensRequest(request, body))
+		) {
 			// Answer at the synthetic origin: that prefix is what tells the proxy
 			// not to send this request upstream.
 			return this.createSyntheticJsonResponse(
@@ -268,33 +295,11 @@ export class QoderProvider extends BaseProvider {
 			);
 		}
 
-		const contentType = request.headers.get("content-type");
-		if (!contentType?.includes("application/json")) return request;
-		if (!account) return request;
-
-		const text = await request.text();
-
-		// A request that is neither the client's JSON body nor this provider's
-		// own encoded wire form: leave it alone, and do not fetch the identity
-		// for a request that will not be sent.
-		if (!tryParseJsonObject(text) && !request.headers.has(QODER_MODEL_HEADER)) {
-			return request;
-		}
-
-		const decoded = decodeQoderAccessToken(account.access_token);
-		if (!decoded?.token) {
-			throw new Error(
-				`Qoder account ${account.name} has no job token; refresh it before sending`,
-			);
-		}
-		const identity = await this.ensureIdentity(account, decoded.token);
-
-		// A request the proxy already transformed and is now replaying (in-place
-		// retries on 529/5xx, model fallback, recovery paths). The body is the
-		// encoded wire form, and the signature is only valid for one send — so
-		// re-sign it rather than encoding it a second time.
+		// A request the proxy already transformed and is now replaying
+		// (in-place retries on 529/5xx, model fallback, recovery paths). Its
+		// body is the encoded wire form and the signature is valid for one
+		// send only, so re-sign it rather than encoding it a second time.
 		const replayedModel = request.headers.get(QODER_MODEL_HEADER);
-		const body = tryParseJsonObject(text);
 		let encoded: string;
 		let modelKey: string;
 		if (body) {
@@ -311,6 +316,14 @@ export class QoderProvider extends BaseProvider {
 			return request;
 		}
 
+		const decoded = decodeQoderAccessToken(account.access_token);
+		if (!decoded?.token) {
+			throw new Error(
+				`Qoder account ${account.name} has no job token; refresh it before sending`,
+			);
+		}
+		const identity = await this.ensureIdentity(account, decoded.token);
+
 		const { headers: cosy } = buildCosyHeaders({
 			url: request.url,
 			body: encoded,
@@ -323,7 +336,11 @@ export class QoderProvider extends BaseProvider {
 		headers.delete("content-length");
 		headers.set(
 			STREAM_INTENT_HEADER,
-			body ? (body.stream === true ? "true" : "false") : streamIntentOf(request),
+			body
+				? body.stream === true
+					? "true"
+					: "false"
+				: streamIntentOf(request),
 		);
 		headers.set(QODER_MODEL_HEADER, modelKey);
 		if (modelKey) {
@@ -357,11 +374,7 @@ export class QoderProvider extends BaseProvider {
 
 		const contentType = response.headers.get("content-type")?.toLowerCase();
 		if (!contentType?.includes("text/event-stream")) {
-			return new Response(response.body, {
-				status: response.status,
-				statusText: response.statusText,
-				headers: sanitizeHeaders(response.headers),
-			});
+			return this.translatePassthrough(response, account);
 		}
 
 		const model =
@@ -376,13 +389,92 @@ export class QoderProvider extends BaseProvider {
 			return this.aggregateResponse(response, model, account);
 		}
 
-		// In-band failures cannot reach the client as an Anthropic `error` event
-		// from the shared emitter, so a stream that fails before producing
-		// anything is reported as an error *response* by the aggregation path.
-		// Peek at the stream's outcome lazily: if the first meaningful frame is
-		// an error, take that path; otherwise hand the whole stream on.
-		return transformStreamingResponse(unwrapQoderSse(response, { model }), {
-			fallbackModel: model,
+		// The shared emitter has no error path, so the stream's outcome is
+		// determined first: an in-band failure becomes a real error response
+		// with a mapped status, never a truncated 200.
+		const peek = await peekQoderStream(response.body);
+		if (peek.error) {
+			log.warn(`Qoder stream failed for ${account?.name ?? "account"}`, {
+				status: peek.error.status,
+				code: peek.error.code ?? null,
+				message: peek.error.message.slice(0, 300),
+			});
+			return qoderErrorResponse(peek.error);
+		}
+		const body = new Response(peek.body, {
+			status: response.status,
+			headers: response.headers,
+		});
+		return transformStreamingResponse(
+			unwrapQoderSse(body, {
+				model,
+				onError: (error) =>
+					log.warn(
+						`Qoder stream failed mid-response for ${account?.name ?? "account"}`,
+						{
+							status: error.status,
+							code: error.code ?? null,
+							message: error.message.slice(0, 300),
+						},
+					),
+			}),
+			{ fallbackModel: model },
+		);
+	}
+
+	/**
+	 * Qoder answers a busy model with HTTP 403 and a nested `10605`
+	 * (`RESOURCE_LIMIT`, "queued") — a transient saturation notice, not a
+	 * credential or request problem. Relabel it 503 + `Retry-After` so the
+	 * proxy's retry/failover logic treats it the way Qoder's own error table
+	 * says it should. Every other non-2xx passes through unchanged.
+	 */
+	private async translatePassthrough(
+		response: Response,
+		account: Account | null,
+	): Promise<Response> {
+		const contentType = response.headers.get("content-type") ?? "";
+		if (!contentType.includes("json")) {
+			return new Response(response.body, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: sanitizeHeaders(response.headers),
+			});
+		}
+		// Buffered: a busy answer is relabelled rather than passed through.
+		const text = await response.text();
+		if (response.status < 400) {
+			return new Response(text, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: sanitizeHeaders(response.headers),
+			});
+		}
+		const busy = parseBusyError(text);
+		if (busy) {
+			log.info(`Qoder busy for ${account?.name ?? "account"}`, {
+				retry_after_seconds: busy.retryAfterSeconds,
+				upstream_status: response.status,
+			});
+			const headers = new Headers({
+				"content-type": "application/json",
+				"retry-after": String(busy.retryAfterSeconds),
+			});
+			return new Response(
+				JSON.stringify({
+					type: "error",
+					error: {
+						type: "overloaded_error",
+						message: `Qoder is busy (queued); retry after ${busy.retryAfterSeconds}s`,
+					},
+				}),
+				{ status: 503, headers },
+			);
+		}
+		return new Response(text, {
+			status: response.status,
+			statusText: response.statusText,
+			headers: sanitizeHeaders(response.headers),
 		});
 	}
 
@@ -403,51 +495,27 @@ export class QoderProvider extends BaseProvider {
 				headers: { "Content-Type": "application/json" },
 			});
 		} catch (error) {
-			const status =
-				typeof (error as { status?: unknown }).status === "number"
-					? (error as { status: number }).status
-					: 502;
+			if (error instanceof QoderAggregateError) {
+				log.warn(`Qoder stream failed for ${account?.name ?? "account"}`, {
+					status: error.status,
+					code: error.code ?? null,
+					message: error.message.slice(0, 300),
+				});
+				return qoderErrorResponse({
+					status: error.status,
+					message: error.message,
+					...(error.code !== undefined ? { code: error.code } : {}),
+					...(error.retryAfterSeconds !== undefined
+						? { retryAfterSeconds: error.retryAfterSeconds }
+						: {}),
+				});
+			}
+			// Not an upstream answer: a truncated or unparseable stream.
 			const message = error instanceof Error ? error.message : String(error);
-			log.warn(`Qoder stream failed for ${account?.name ?? "account"}`, {
-				status,
+			log.warn(`Qoder stream ended abnormally for ${account?.name ?? "account"}`, {
 				message: message.slice(0, 300),
 			});
-			return new Response(
-				JSON.stringify({
-					type: "error",
-					error: {
-						type: errorTypeForStatus(status),
-						message,
-					},
-				}),
-				{ status, headers: { "Content-Type": "application/json" } },
-			);
-		}
-	}
-
-	/**
-	 * Qoder's in-band failures (quota, busy) are not HTTP statuses — the proxy
-	 * needs this to bench an account for the right reason.
-	 */
-	async parseRateLimitFromBody(
-		response: Response,
-	): Promise<number | undefined> {
-		const contentType = response.headers.get("content-type") ?? "";
-		if (!contentType.includes("json")) return undefined;
-		try {
-			const body = (await response.clone().json()) as {
-				code?: unknown;
-				retry_after?: unknown;
-				isQueued?: unknown;
-			};
-			if (body.code !== 10605 && body.isQueued !== true) return undefined;
-			const seconds =
-				typeof body.retry_after === "number" && body.retry_after > 0
-					? body.retry_after
-					: 30;
-			return Date.now() + seconds * 1000;
-		} catch {
-			return undefined;
+			return qoderErrorResponse({ status: 502, message });
 		}
 	}
 
@@ -521,15 +589,6 @@ export class QoderProvider extends BaseProvider {
 		}
 	}
 
-	/**
-	 * The count_tokens request after the proxy has rewritten its URL. The
-	 * dedicated synthetic URL is the pre-rewrite form used by direct callers.
-	 */
-	private isSyntheticCountTokens(request: Request): boolean {
-		if (request.url === QODER_SYNTHETIC_COUNT_TOKENS_URL) return true;
-		return request.url.includes(QODER_CHAT_PATH.split("?")[0]);
-	}
-
 	private createSyntheticJsonResponse(
 		request: Request,
 		status: number,
@@ -548,6 +607,95 @@ export class QoderProvider extends BaseProvider {
 	}
 }
 
+/**
+ * Detect Qoder's queued/busy answer in any of the shapes it sends: a flat
+ * `{code: 10605}`, or the gateway's `{code:"403", message:"{\"code\":\"10605\",…}"}`
+ * nest. Returns the wait it suggests, defaulting to 30s.
+ */
+export function parseBusyError(
+	text: string,
+): { retryAfterSeconds: number } | null {
+	const decoded = qoderFrameToOpenAIChunk(
+		text.trim().startsWith("data:") ? text : `data:${text}`,
+	);
+	if ("empty" in decoded || decoded.ok) return null;
+	if (decoded.error.code !== 10605) return null;
+	return { retryAfterSeconds: decoded.error.retryAfterSeconds ?? 30 };
+}
+
+/**
+ * Read a Qoder SSE body far enough to learn its outcome: the first content
+ * frame, an in-band error, or `[DONE]` for an empty answer. The body is
+ * buffered (answers are a few dozen KB of JSON) and returned as a fresh stream
+ * for the unwrap: relaying a partially read upstream stream is not reliable
+ * across runtimes, and a second reader on the same Response tees a branch
+ * nothing consumes (#382).
+ */
+async function peekQoderStream(
+	body: ReadableStream<Uint8Array> | null,
+): Promise<
+	| { error: QoderStreamError; text: ""; body: null }
+	| { error: null; text: string; body: ReadableStream<Uint8Array> }
+> {
+	if (!body) {
+		return {
+			error: { status: 502, message: "Qoder returned an empty response" },
+			text: "",
+			body: null,
+		};
+	}
+
+	const text = await new Response(body).text();
+	let sawOutcome = false;
+	for (const line of text.split("\n")) {
+		const frame = qoderFrameToOpenAIChunk(line);
+		if ("empty" in frame) {
+			if (frame.done) sawOutcome = true;
+			continue;
+		}
+		if (!frame.ok) {
+			return { error: frame.error, text: "", body: null };
+		}
+		if (frame.chunk.choices?.length) {
+			sawOutcome = true;
+			break;
+		}
+	}
+	if (!sawOutcome) {
+		return {
+			error: { status: 502, message: "Qoder returned an empty stream" },
+			text: "",
+			body: null,
+		};
+	}
+
+	const bytes = new TextEncoder().encode(text);
+	return {
+		error: null,
+		text,
+		body: new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(bytes);
+				controller.close();
+			},
+		}),
+	};
+}
+
+function qoderErrorResponse(error: QoderStreamError): Response {
+	const headers = new Headers({ "content-type": "application/json" });
+	if (error.retryAfterSeconds !== undefined) {
+		headers.set("retry-after", String(error.retryAfterSeconds));
+	}
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: { type: errorTypeForStatus(error.status), message: error.message },
+		}),
+		{ status: error.status, headers },
+	);
+}
+
 function errorTypeForStatus(status: number): string {
 	switch (status) {
 		case 401:
@@ -561,6 +709,21 @@ function errorTypeForStatus(status: number): string {
 		default:
 			return "api_error";
 	}
+}
+
+/**
+ * Whether this is a count_tokens request. The proxy rewrites the URL to
+ * buildUrl() first, so /v1/messages and /v1/messages/count_tokens arrive at
+ * the same chat route; a messages body always carries `max_tokens` and
+ * `stream`, a count_tokens body typically neither.
+ */
+function isCountTokensRequest(
+	request: Request,
+	body: Record<string, unknown>,
+): boolean {
+	if (request.url === QODER_SYNTHETIC_COUNT_TOKENS_URL) return true;
+	if (!request.url.includes(QODER_CHAT_PATH.split("?")[0])) return false;
+	return !("max_tokens" in body) && !("stream" in body);
 }
 
 /**

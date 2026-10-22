@@ -75,6 +75,8 @@ export {
 export { MinimaxProvider } from "./minimax/index";
 export { NanoGPTProvider } from "./nanogpt/index";
 export { OllamaCloudProvider, OllamaProvider } from "./ollama/index";
+export { OpenAICompatibleProvider } from "./openai/index";
+export { OpenRouterProvider } from "./openrouter/index";
 export {
 	aggregateQoderSse,
 	buildCosyHeaders,
@@ -82,10 +84,12 @@ export {
 	cosySignaturePath,
 	decodeQoderAccessToken,
 	deriveQoderMachineId,
+	encodeQoderAccessToken,
 	encodeQoderBody,
 	exchangeQoderPat,
 	fetchQoderQuota,
 	fetchQoderUserInfo,
+	parseBusyError,
 	QODER_COSY_CLIENT_TYPE,
 	QODER_COSY_VERSION,
 	QODER_DEFAULT_GATEWAY_ENDPOINT,
@@ -94,6 +98,7 @@ export {
 	QODER_KNOWN_MODELS,
 	QODER_OPENAPI_ENDPOINT_ENV,
 	QoderProvider,
+	type QoderStreamError,
 	qoderFrameToOpenAIChunk,
 	qoderStatusForCode,
 	refreshQoderJobToken,
@@ -101,8 +106,6 @@ export {
 	resolveQoderOpenApiEndpoint,
 	unwrapQoderSse,
 } from "./qoder/index";
-export { OpenAICompatibleProvider } from "./openai/index";
-export { OpenRouterProvider } from "./openrouter/index";
 export { type VertexAIConfig, VertexAIProvider } from "./vertex-ai/index";
 export {
 	applyXaiConvIdHeader,

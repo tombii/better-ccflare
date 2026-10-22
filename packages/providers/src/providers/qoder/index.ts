@@ -1,5 +1,6 @@
 export {
 	decodeQoderAccessToken,
+	encodeQoderAccessToken,
 	exchangeQoderPat,
 	fetchQoderQuota,
 	fetchQoderUserInfo,
@@ -24,6 +25,7 @@ export {
 	type QoderCosyHeaders,
 } from "./cosy";
 export {
+	parseBusyError,
 	QODER_DEFAULT_GATEWAY_ENDPOINT,
 	QODER_KNOWN_MODELS,
 	QoderProvider,
@@ -35,6 +37,8 @@ export {
 } from "./request-builder";
 export {
 	aggregateQoderSse,
+	QoderAggregateError,
+	type QoderStreamError,
 	qoderFrameToOpenAIChunk,
 	qoderStatusForCode,
 	unwrapQoderSse,
