@@ -676,7 +676,11 @@ export interface UsagePollingRestarterDeps {
 	dbOps: DatabaseOperations;
 	usageCache: UsageCacheRegistrar & { stopPolling(accountId: string): void };
 	/** Starts refresh-backed polling; `startUsagePollingWithRefresh` at runtime. */
-	startRefreshBackedPolling: (account: Account, intervalMs: number) => void;
+	startRefreshBackedPolling: (
+		account: Account,
+		intervalMs: number,
+		customEndpoint?: string | null,
+	) => void;
 	intervalMs: number;
 	log: Logger;
 }
@@ -742,7 +746,11 @@ export function createUsagePollingRestarter(
 				`Restarting usage polling for account ${account.name} on ${serverId}`,
 			);
 			usageCache.stopPolling(accountId);
-			startRefreshBackedPolling(account, intervalMs);
+			startRefreshBackedPolling(
+				account,
+				intervalMs,
+				account.custom_endpoint ?? undefined,
+			);
 			return true;
 		}
 		if (!supportsUsagePollingForAccount(account)) {
@@ -1040,7 +1048,7 @@ function startUsagePollingWithRefresh(
 	proxyContext: ProxyContext,
 	startupDelayMs: number = 0,
 	intervalMs: number = 90000,
-	_customEndpoint?: string,
+	customEndpoint?: string,
 ) {
 	const logger = new Logger("UsagePolling");
 	const MAX_RETRY_ATTEMPTS = 10;
@@ -1062,7 +1070,10 @@ function startUsagePollingWithRefresh(
 				tokenProvider,
 				account.provider,
 				intervalMs,
-				undefined, // customEndpoint
+				// Qoder's quota endpoint lives on the account's OpenAPI host (a
+				// CN-region account needs its own); the other refresh-backed
+				// providers have a single fixed host.
+				account.provider === "qoder" ? customEndpoint : undefined,
 				(accountId) => {
 					// Usage window has rolled over — reset session tracking so the
 					// dashboard reflects the new window without waiting for the next request.
@@ -1785,8 +1796,14 @@ export default async function startServer(options?: {
 			usageCache,
 			log,
 			intervalMs: config.getUsagePollIntervalMs(),
-			startRefreshBackedPolling: (account, intervalMs) =>
-				startUsagePollingWithRefresh(account, proxyContext, 0, intervalMs),
+			startRefreshBackedPolling: (account, intervalMs, customEndpoint) =>
+				startUsagePollingWithRefresh(
+					account,
+					proxyContext,
+					0,
+					intervalMs,
+					customEndpoint ?? undefined,
+				),
 		}),
 	);
 
