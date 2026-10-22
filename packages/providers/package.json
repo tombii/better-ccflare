@@ -8,6 +8,7 @@
 		"./bedrock": "./src/providers/bedrock/index.ts",
 		"./codebuddy": "./src/providers/codebuddy/index.ts",
 		"./codex": "./src/providers/codex/index.ts",
+		"./qoder": "./src/providers/qoder/index.ts",
 		"./qwen": "./src/providers/qwen/index.ts",
 		"./xai": "./src/providers/xai/index.ts"
 	},

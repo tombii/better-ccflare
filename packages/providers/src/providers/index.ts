@@ -75,6 +75,32 @@ export {
 export { MinimaxProvider } from "./minimax/index";
 export { NanoGPTProvider } from "./nanogpt/index";
 export { OllamaCloudProvider, OllamaProvider } from "./ollama/index";
+export {
+	aggregateQoderSse,
+	buildCosyHeaders,
+	buildQoderRequest,
+	cosySignaturePath,
+	decodeQoderAccessToken,
+	deriveQoderMachineId,
+	encodeQoderBody,
+	exchangeQoderPat,
+	fetchQoderQuota,
+	fetchQoderUserInfo,
+	QODER_COSY_CLIENT_TYPE,
+	QODER_COSY_VERSION,
+	QODER_DEFAULT_GATEWAY_ENDPOINT,
+	QODER_DEFAULT_MAX_OUTPUT_TOKENS,
+	QODER_DEFAULT_OPENAPI_ENDPOINT,
+	QODER_KNOWN_MODELS,
+	QODER_OPENAPI_ENDPOINT_ENV,
+	QoderProvider,
+	qoderFrameToOpenAIChunk,
+	qoderStatusForCode,
+	refreshQoderJobToken,
+	refreshQoderToken,
+	resolveQoderOpenApiEndpoint,
+	unwrapQoderSse,
+} from "./qoder/index";
 export { OpenAICompatibleProvider } from "./openai/index";
 export { OpenRouterProvider } from "./openrouter/index";
 export { type VertexAIConfig, VertexAIProvider } from "./vertex-ai/index";
