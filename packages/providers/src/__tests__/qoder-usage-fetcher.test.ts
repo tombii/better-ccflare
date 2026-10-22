@@ -58,26 +58,22 @@ describe("Qoder Usage Fetcher", () => {
 			expect(mapped.isQuotaExceeded).toBe(true);
 		});
 
-		it("reports 100% when an exceeded quota has no total", () => {
-			const mapped = mapQoderQuota({
-				total: 0,
-				used: 0,
-				remaining: 0,
-				unit: "credits",
-				isQuotaExceeded: true,
-			});
-			expect(mapped.utilizationPercent).toBe(100);
-		});
-
-		it("reports 0% when a quota with no total is not exceeded", () => {
-			const mapped = mapQoderQuota({
-				total: 0,
-				used: 0,
-				remaining: 0,
-				unit: "credits",
-				isQuotaExceeded: false,
-			});
-			expect(mapped.utilizationPercent).toBe(0);
+		// A zero-credit account is not out of service: Qoder's free models are
+		// served at a zero balance (`billable: false`). Reporting 100% here
+		// marked the account usage-exhausted and removed it from the rotation —
+		// the exact account this provider exists to serve.
+		it("reports no utilization for a zero-credit account, exceeded or not", () => {
+			for (const isQuotaExceeded of [true, false]) {
+				const mapped = mapQoderQuota({
+					total: 0,
+					used: 0,
+					remaining: 0,
+					unit: "credits",
+					isQuotaExceeded,
+				});
+				expect(mapped.utilizationPercent).toBeNull();
+				expect(mapped.isQuotaExceeded).toBe(isQuotaExceeded);
+			}
 		});
 	});
 
@@ -100,14 +96,16 @@ describe("Qoder Usage Fetcher", () => {
 			expect(calls[0]?.authorization).toBe("Bearer jt-abc");
 		});
 
-		it("carries isQuotaExceeded through to 100% utilization", async () => {
+		it("keeps a zero-credit account routable", async () => {
 			mockQuota({
 				userQuota: { total: 0, used: 0, remaining: 0, unit: "credits" },
 				isQuotaExceeded: true,
 			});
 			const data = await fetchQoderUsageData("jt-abc");
 			expect(data?.isQuotaExceeded).toBe(true);
-			expect(getRepresentativeQoderUtilization(data)).toBe(100);
+			// No opinion, not "exhausted": selection falls back to the
+			// usage-free check and the account stays in the rotation.
+			expect(getRepresentativeQoderUtilization(data)).toBeNull();
 		});
 
 		it("accepts a bare job token (no prefix)", async () => {

@@ -24,20 +24,22 @@ export interface QoderUsageData {
  * Map an upstream quota payload to the fetcher's shape.
  *
  * A credit balance has no percentage window, so utilization is used/total.
- * When `total` is 0 there is nothing to divide by: an exhausted quota reports
- * 100% (the account genuinely cannot serve), and anything else reports 0 —
- * a zero-balance account with no cap left to spend against is not "used up" in
- * any way a threshold or ranking could act on.
+ *
+ * When `total` is 0 there is nothing to divide by, and the utilization is
+ * reported as **null** — "no opinion" — rather than as 0 or 100. A zero-credit
+ * account is NOT out of service: Qoder's free models are served at a zero
+ * balance and report `billable: false`, so `isQuotaExceeded` describes the
+ * *credit* balance, not the account's ability to answer. Reading it as 100%
+ * would mark the account usage-exhausted and take it out of the rotation
+ * entirely, which is exactly the account this provider exists to serve. A
+ * paid model on a zero-credit account fails at request time (Qoder's quota
+ * code), and that failure — not the balance — is what benches the account.
  */
 export function mapQoderQuota(quota: QoderQuota): QoderUsageData {
 	const total = Math.max(0, quota.total);
 	const used = Math.max(0, quota.used);
-	let utilizationPercent: number | null;
-	if (total > 0) {
-		utilizationPercent = Math.min(100, (used / total) * 100);
-	} else {
-		utilizationPercent = quota.isQuotaExceeded ? 100 : 0;
-	}
+	const utilizationPercent =
+		total > 0 ? Math.min(100, (used / total) * 100) : null;
 	return {
 		totalCredits: total,
 		usedCredits: used,
