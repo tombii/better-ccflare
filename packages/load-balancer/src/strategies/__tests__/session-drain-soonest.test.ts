@@ -210,6 +210,30 @@ describe("SessionDrainSoonestStrategy", () => {
 			expect(result[1]).toBe(lowPriority);
 		});
 
+		it("treats weekly resets reported a fraction of a second apart as equal and falls back to priority", () => {
+			const now = Date.now();
+			const reset = Math.round((now + 60 * 60 * 1000) / 60_000) * 60_000;
+
+			const highPriority = makeAccount({
+				id: "high-priority",
+				name: "high-priority",
+				priority: 30,
+			});
+			const lowPriority = makeAccount({
+				id: "low-priority",
+				name: "low-priority",
+				priority: 90,
+			});
+
+			mockStore.setWeeklyReset("high-priority", reset + 319);
+			mockStore.setWeeklyReset("low-priority", reset - 368);
+
+			const result = strategy.select([lowPriority, highPriority], meta);
+
+			expect(result[0]).toBe(highPriority);
+			expect(result[1]).toBe(lowPriority);
+		});
+
 		it("falls back to utilization ASC when weekly reset and priority are both equal", () => {
 			const now = Date.now();
 			const sharedReset = now + 60 * 60 * 1000;

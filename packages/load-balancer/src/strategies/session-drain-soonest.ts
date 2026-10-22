@@ -97,12 +97,17 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 	 * OR already in the past (stale telemetry that hasn't caught up to a
 	 * reset that already happened — treated the same as "no data" rather than
 	 * ranked as if it were the soonest reset).
+	 *
+	 * Rounded to the nearest minute: the provider reports the same reset
+	 * instant with up to about 1.5 s of jitter, straddling the hour (two
+	 * entries for one subscription came back 00:59:59.632 and 01:00:00.319),
+	 * and comparing raw milliseconds let that jitter outrank `priority`.
 	 */
 	private getWeeklyReset(account: Account, now: number): number | null {
 		const reset =
 			this.store?.getAccountWeeklyReset?.(account.id, account.provider) ?? null;
 		if (reset === null || reset <= now) return null;
-		return reset;
+		return Math.round(reset / 60_000) * 60_000;
 	}
 
 	/**
