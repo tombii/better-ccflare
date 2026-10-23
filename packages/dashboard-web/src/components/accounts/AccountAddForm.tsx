@@ -30,6 +30,7 @@ interface AccountAddFormProps {
 			| "alibaba-coding-plan"
 			| "codex"
 			| "codebuddy"
+			| "qoder"
 			| "qwen"
 			| "ollama";
 		priority: number;
@@ -104,6 +105,13 @@ interface AccountAddFormProps {
 		priority: number;
 		modelMappings?: { [key: string]: string };
 	}) => Promise<void>;
+	onAddQoderAccount: (params: {
+		name: string;
+		personalToken: string;
+		priority: number;
+		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
+	}) => Promise<void>;
 	onAddOpenRouterAccount: (params: {
 		name: string;
 		apiKey: string;
@@ -147,6 +155,7 @@ export function AccountAddForm({
 	onAddBedrockAccount,
 	onAddAlibabaCodingPlanAccount,
 	onAddKiloAccount,
+	onAddQoderAccount,
 	onAddOpenRouterAccount,
 	onAddOllamaAccount,
 	onAddOllamaCloudAccount,
@@ -179,9 +188,11 @@ export function AccountAddForm({
 			| "qwen"
 			| "ollama"
 			| "ollama-cloud"
-			| "meta",
+			| "meta"
+			| "qoder",
 		priority: 0,
 		apiKey: "",
+		personalToken: "",
 		customEndpoint: "",
 		projectId: "",
 		region: "global",
@@ -443,6 +454,7 @@ export function AccountAddForm({
 								mode: "claude-oauth",
 								priority: 0,
 								apiKey: "",
+								personalToken: "",
 								customEndpoint: "",
 								projectId: "",
 								region: "global",
@@ -512,6 +524,7 @@ export function AccountAddForm({
 								mode: "claude-oauth",
 								priority: 0,
 								apiKey: "",
+								personalToken: "",
 								customEndpoint: "",
 								projectId: "",
 								region: "global",
@@ -582,6 +595,7 @@ export function AccountAddForm({
 								mode: "claude-oauth",
 								priority: 0,
 								apiKey: "",
+								personalToken: "",
 								customEndpoint: "",
 								projectId: "",
 								region: "global",
@@ -667,6 +681,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -709,6 +724,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -753,6 +769,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -786,6 +803,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -837,6 +855,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -884,6 +903,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -925,6 +945,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -962,6 +983,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -999,6 +1021,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -1041,6 +1064,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -1089,6 +1113,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -1128,6 +1153,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -1166,6 +1192,50 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
+				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
+				crossRegionMode: "geographic",
+				customBedrockModel: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+				fableModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
+		if (newAccount.mode === "qoder") {
+			if (!newAccount.personalToken.trim()) {
+				onError("Personal Access Token is required for Qoder accounts");
+				return;
+			}
+			const qoderModelMappings: { [key: string]: string } = {};
+			if (newAccount.opusModel) qoderModelMappings.opus = newAccount.opusModel;
+			if (newAccount.sonnetModel)
+				qoderModelMappings.sonnet = newAccount.sonnetModel;
+			if (newAccount.haikuModel)
+				qoderModelMappings.haiku = newAccount.haikuModel;
+			await onAddQoderAccount({
+				name: newAccount.name,
+				personalToken: newAccount.personalToken.trim(),
+				priority: newAccount.priority,
+				customEndpoint: newAccount.customEndpoint.trim() || undefined,
+				modelMappings:
+					Object.keys(qoderModelMappings).length > 0
+						? qoderModelMappings
+						: undefined,
+			});
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -1205,6 +1275,7 @@ export function AccountAddForm({
 				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
+				personalToken: "",
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
@@ -1255,6 +1326,7 @@ export function AccountAddForm({
 			mode: "claude-oauth",
 			priority: 0,
 			apiKey: "",
+			personalToken: "",
 			customEndpoint: "",
 			projectId: "",
 			region: "global",
@@ -1289,6 +1361,7 @@ export function AccountAddForm({
 			mode: "claude-oauth",
 			priority: 0,
 			apiKey: "",
+			personalToken: "",
 			customEndpoint: "",
 			projectId: "",
 			region: "global",
@@ -1350,7 +1423,8 @@ export function AccountAddForm({
 									| "qwen"
 									| "ollama"
 									| "ollama-cloud"
-									| "meta",
+									| "meta"
+									| "qoder",
 							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
@@ -1388,6 +1462,9 @@ export function AccountAddForm({
 									Ollama Cloud (ollama.com)
 								</SelectItem>
 								<SelectItem value="meta">Meta Model API (API Key)</SelectItem>
+								<SelectItem value="qoder">
+									Qoder (Personal Access Token)
+								</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>
@@ -2145,6 +2222,112 @@ export function AccountAddForm({
 												})
 											}
 											placeholder="e.g., anthropic/claude-haiku-4-5 (default)"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
+						</>
+					)}
+					{newAccount.mode === "qoder" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="personalToken">
+									Qoder Personal Access Token
+								</Label>
+								<Input
+									id="personalToken"
+									type="password"
+									value={newAccount.personalToken}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											personalToken: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="pt-…"
+								/>
+								<p className="text-xs text-muted-foreground">
+									Generate a token at qoder.com/account/integrations. It is
+									verified immediately and stored as the account's refresh
+									credential; the short-lived job token is renewed from it
+									automatically.
+								</p>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="qoderCustomEndpoint">
+									Custom Endpoint (Optional)
+								</Label>
+								<Input
+									id="qoderCustomEndpoint"
+									value={newAccount.customEndpoint}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											customEndpoint: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="https://openapi.qoder.sh (default) or https://openapi.qoder.com.cn"
+									className="mt-1"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label className="text-sm font-medium">
+									Model Mappings (Optional)
+								</Label>
+								<p className="text-xs text-muted-foreground">
+									Map Anthropic model names to Qoder models. Leave empty to use
+									the defaults (Opus/Fable → qfmodel, Sonnet/Haiku → dfmodel).
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="qoderOpusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="qoderOpusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="qfmodel (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="qoderSonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="qoderSonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="dfmodel (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="qoderHaikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="qoderHaikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="dfmodel (default)"
 											className="mt-1"
 										/>
 									</div>

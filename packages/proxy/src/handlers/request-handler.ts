@@ -27,6 +27,10 @@ function stripInternalControlHeaders(headers: Headers): void {
 	headers.delete("x-better-ccflare-prompt-cache-breakpoint");
 	headers.delete("x-better-ccflare-codex-path");
 	headers.delete("x-better-ccflare-codex-transport");
+	// Qoder's resolved wire model key and request id: internal signals the
+	// proxy tags the response with, never anything the upstream should see.
+	headers.delete("x-better-ccflare-qoder-model");
+	headers.delete("x-better-ccflare-qoder-request-id");
 }
 
 /**

@@ -16,7 +16,10 @@ export function providerSupportsAutoFeatures(provider: string): boolean {
 	return (
 		provider === PROVIDER_NAMES.ANTHROPIC ||
 		provider === PROVIDER_NAMES.CODEX ||
-		provider === PROVIDER_NAMES.ZAI
+		provider === PROVIDER_NAMES.ZAI ||
+		// Qoder stores a PAT in refresh_token and renews its job token through the
+		// same token-manager refresh path, so auto-refresh applies.
+		provider === PROVIDER_NAMES.QODER
 	);
 }
 
@@ -103,7 +106,11 @@ export function providerShowsWeeklyUsage(provider: string): boolean {
  */
 export function providerShowsCreditsBalance(provider: string): boolean {
 	return (
-		provider === PROVIDER_NAMES.KILO || provider === PROVIDER_NAMES.OPENROUTER
+		provider === PROVIDER_NAMES.KILO ||
+		provider === PROVIDER_NAMES.OPENROUTER ||
+		// Qoder's quota API reports a credit count, rendered by its own branch in
+		// RateLimitProgress.
+		provider === PROVIDER_NAMES.QODER
 	);
 }
 

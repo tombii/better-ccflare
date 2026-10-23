@@ -200,6 +200,29 @@ export function supportsUsagePollingForAccount(account: {
 }
 
 /**
+ * Qoder authenticates with a PAT (`refresh_token`) exchanged for a short-lived
+ * job token (`access_token`). It has no `api_key`, but it is refresh-backed all
+ * the same: every poll needs a live job token, which the token manager mints
+ * through the provider's `refreshToken` when the stored one is expired.
+ *
+ * Kept out of `supportsRefreshBackedUsagePolling` because the generic
+ * refresh-backed bootstrap passes no custom endpoint — Qoder's quota endpoint
+ * needs it to follow a CN-region account — and because it installs a
+ * window-reset/session-reset callback a credit balance has no use for. It gets
+ * its own branch in the polling restarter and its own boot block instead.
+ */
+export function supportsQoderRefreshBackedUsagePolling(account: {
+	provider?: string | null;
+	refresh_token?: string | null;
+	access_token?: string | null;
+}): boolean {
+	return (
+		account.provider === "qoder" &&
+		!!(account.refresh_token || account.access_token)
+	);
+}
+
+/**
  * Build the `onSnapshot` callback `usageCache.startPolling` fires after every
  * successful poll. Anthropic rows are written as-is. Codex goes through
  * `recordCodexUsageSnapshot` (drops windows without a real reset, shares the
@@ -652,8 +675,16 @@ export interface UsagePollingRestarterDeps {
 	serverId: string;
 	dbOps: DatabaseOperations;
 	usageCache: UsageCacheRegistrar & { stopPolling(accountId: string): void };
-	/** Starts refresh-backed polling; `startUsagePollingWithRefresh` at runtime. */
-	startRefreshBackedPolling: (account: Account, intervalMs: number) => void;
+	/**
+	 * Starts refresh-backed polling; `startUsagePollingWithRefresh` at runtime.
+	 * The third argument is the account's own `custom_endpoint` — not a host
+	 * for a specific API; each provider's fetcher resolves what it needs.
+	 */
+	startRefreshBackedPolling: (
+		account: Account,
+		intervalMs: number,
+		accountCustomEndpoint?: string | null,
+	) => void;
 	intervalMs: number;
 	log: Logger;
 }
@@ -713,6 +744,20 @@ export function createUsagePollingRestarter(
 				);
 			}
 			return started;
+		}
+		if (supportsQoderRefreshBackedUsagePolling(account)) {
+			log.info(
+				`Restarting usage polling for account ${account.name} on ${serverId}`,
+			);
+			usageCache.stopPolling(accountId);
+			startRefreshBackedPolling(
+				account,
+				intervalMs,
+				// The account's own custom endpoint; the Qoder fetcher derives the
+				// OpenAPI host from it rather than treating it as that host.
+				account.custom_endpoint ?? undefined,
+			);
+			return true;
 		}
 		if (!supportsUsagePollingForAccount(account)) {
 			// Debug, not warn: every account creation now asks to start polling,
@@ -1009,6 +1054,7 @@ function startUsagePollingWithRefresh(
 	proxyContext: ProxyContext,
 	startupDelayMs: number = 0,
 	intervalMs: number = 90000,
+	accountCustomEndpoint?: string,
 ) {
 	const logger = new Logger("UsagePolling");
 	const MAX_RETRY_ATTEMPTS = 10;
@@ -1030,7 +1076,11 @@ function startUsagePollingWithRefresh(
 				tokenProvider,
 				account.provider,
 				intervalMs,
-				undefined, // customEndpoint
+				// Qoder's quota endpoint lives on the OpenAPI host, which its fetcher
+				// derives from the account's own custom endpoint (a CN-region account
+				// needs its own); the other refresh-backed providers have a single
+				// fixed host.
+				account.provider === "qoder" ? accountCustomEndpoint : undefined,
 				(accountId) => {
 					// Usage window has rolled over — reset session tracking so the
 					// dashboard reflects the new window without waiting for the next request.
@@ -1753,8 +1803,14 @@ export default async function startServer(options?: {
 			usageCache,
 			log,
 			intervalMs: config.getUsagePollIntervalMs(),
-			startRefreshBackedPolling: (account, intervalMs) =>
-				startUsagePollingWithRefresh(account, proxyContext, 0, intervalMs),
+			startRefreshBackedPolling: (account, intervalMs, accountCustomEndpoint) =>
+				startUsagePollingWithRefresh(
+					account,
+					proxyContext,
+					0,
+					intervalMs,
+					accountCustomEndpoint ?? undefined,
+				),
 		}),
 	);
 
@@ -2227,6 +2283,25 @@ Available endpoints:
 		log.info(
 			`No refresh-backed usage accounts found, usage polling will not start`,
 		);
+	}
+
+	// Qoder has no `api_key` (its PAT lives in refresh_token and is exchanged
+	// for a job token), so it does not fit the API-key loop below; the token
+	// provider re-reads the row and mints a job token when needed, exactly as
+	// the runtime restarter path does.
+	for (const account of accounts.filter((a) =>
+		supportsQoderRefreshBackedUsagePolling(a),
+	)) {
+		startUsagePollingWithRefresh(
+			account,
+			proxyContext,
+			0,
+			config.getUsagePollIntervalMs(),
+			// The account's own custom endpoint; the Qoder fetcher derives the
+			// OpenAPI host from it rather than treating it as that host.
+			account.custom_endpoint ?? undefined,
+		);
+		log.info(`Started usage polling for Qoder account ${account.name}`);
 	}
 
 	// Start usage polling for API-key providers (Kilo Gateway, OpenRouter,

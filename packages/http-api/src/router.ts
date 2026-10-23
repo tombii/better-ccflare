@@ -34,6 +34,7 @@ import {
 	createOllamaCloudAccountAddHandler,
 	createOpenAIAccountAddHandler,
 	createOpenRouterAccountAddHandler,
+	createQoderAccountAddHandler,
 	createVertexAIAccountAddHandler,
 	createZaiAccountAddHandler,
 } from "./handlers/accounts";
@@ -214,6 +215,7 @@ export class APIRouter {
 		const alibabaCodingPlanAccountAddHandler =
 			createAlibabaCodingPlanAccountAddHandler(dbOps);
 		const kiloAccountAddHandler = createKiloAccountAddHandler(dbOps);
+		const qoderAccountAddHandler = createQoderAccountAddHandler(dbOps);
 		const openrouterAccountAddHandler =
 			createOpenRouterAccountAddHandler(dbOps);
 		const nanogptAccountAddHandler = createNanoGPTAccountAddHandler(dbOps);
@@ -308,6 +310,9 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/accounts/kilo", (req) =>
 			kiloAccountAddHandler(req),
+		);
+		this.handlers.set("POST:/api/accounts/qoder", (req) =>
+			qoderAccountAddHandler(req),
 		);
 		this.handlers.set("POST:/api/accounts/openrouter", (req) =>
 			openrouterAccountAddHandler(req),

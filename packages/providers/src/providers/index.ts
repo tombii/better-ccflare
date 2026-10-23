@@ -77,6 +77,37 @@ export { NanoGPTProvider } from "./nanogpt/index";
 export { OllamaCloudProvider, OllamaProvider } from "./ollama/index";
 export { OpenAICompatibleProvider } from "./openai/index";
 export { OpenRouterProvider } from "./openrouter/index";
+export {
+	aggregateQoderSse,
+	buildCosyHeaders,
+	buildQoderRequest,
+	cosySignaturePath,
+	decodeQoderAccessToken,
+	deriveQoderMachineId,
+	encodeQoderAccessToken,
+	encodeQoderBody,
+	exchangeQoderPat,
+	fetchQoderQuota,
+	fetchQoderUserInfo,
+	parseBusyError,
+	QODER_COSY_CLIENT_TYPE,
+	QODER_COSY_VERSION,
+	QODER_DEFAULT_GATEWAY_ENDPOINT,
+	QODER_DEFAULT_MAX_OUTPUT_TOKENS,
+	QODER_DEFAULT_OPENAPI_ENDPOINT,
+	QODER_KNOWN_MODELS,
+	QODER_OPENAPI_ENDPOINT_ENV,
+	QoderProvider,
+	type QoderStreamError,
+	qoderFrameToOpenAIChunk,
+	qoderStatusForCode,
+	refreshQoderJobToken,
+	refreshQoderToken,
+	resolveQoderGatewayEndpoint,
+	resolveQoderModelKey,
+	resolveQoderOpenApiEndpoint,
+	unwrapQoderSse,
+} from "./qoder/index";
 export { type VertexAIConfig, VertexAIProvider } from "./vertex-ai/index";
 export {
 	applyXaiConvIdHeader,
