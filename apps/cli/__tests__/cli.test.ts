@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 const CLI_PATH = join(process.cwd(), "apps/cli/src/main.ts");
 
@@ -12,6 +12,37 @@ const CLI_PATH = join(process.cwd(), "apps/cli/src/main.ts");
 // tempDir/Ssl-fixture rmSync. Without this the runCLI-routed BETTER_CCFLARE_DB_PATH
 // files accumulate across repeated suite invocations under $TMPDIR.
 const createdDbPaths = new Set<string>();
+
+// Every runCLI() database is named `better-ccflare-cli-test-<pid>-<start>-<seq>.db`.
+// The `<start>` disambiguates a reused PID (a killed run leaves its leaks behind,
+// a later OS process can get the same PID), and the exact `-` delimiter keeps
+// `<pid>-1` from prefix-matching `<pid>-10`.
+//
+// Cleanup runs in a module-scope afterEach (after each test, not each describe
+// block) so an earlier test's database doesn't survive into the next one: a
+// lingering child from a timed-out test keeps writing to a deleted inode while
+// the next test's CLI fresh-migrates a ~0.5 GiB schema.
+const CLI_TEST_DB_PREFIX = "better-ccflare-cli-test-";
+const RUN_STARTED_AT = Date.now();
+let dbSeq = 0;
+
+/**
+ * Prefix shared by every database this run creates before its sequence number.
+ * The sweep below removes this run's files outright and leaves any other
+ * run's alone.
+ */
+function testFilePrefix(): string {
+	return `${CLI_TEST_DB_PREFIX}${process.pid}-${RUN_STARTED_AT}`;
+}
+
+function runTempDir(): string {
+	return process.env.TMPDIR || "/tmp";
+}
+
+function nextDbSeq(): number {
+	dbSeq += 1;
+	return dbSeq;
+}
 
 /**
  * Helper function to run CLI command and get output
@@ -30,13 +61,16 @@ function runCLI(args: string[]): Promise<{
 		// ~/.config/better-ccflare/better-ccflare.db dependency the test never
 		// asked for. Falls back to ~/.config in the unlikely event neither
 		// TMPDIR nor HOME is writable.
-		const cliDbPath = `${process.env.TMPDIR || "/tmp"}/better-ccflare-cli-test-${process.pid}-${Date.now()}.db`;
+		const cliDbPath = `${runTempDir()}/${testFilePrefix()}-${nextDbSeq()}.db`;
 		createdDbPaths.add(cliDbPath);
 		const proc = spawn("bun", ["run", CLI_PATH, ...args], {
 			env: {
 				...process.env,
 				NODE_ENV: "test",
 				BETTER_CCFLARE_DB_PATH: cliDbPath,
+				// Keep the CLI's log file in this run's own temp directory instead
+				// of the shared `$TMPDIR/better-ccflare-logs` (packages/logger).
+				BETTER_CCFLARE_LOG_DIR: runTempDir(),
 			},
 		});
 
@@ -389,25 +423,70 @@ describe("CLI Integration Tests", () => {
 	});
 });
 
-// File-scope afterEach: cleans up the per-invocation CLI databases (and
-// their SQLite WAL/SHM siblings) registered by every runCLI() call in this
-// file — including the sibling describe blocks at the bottom of this file
-// ("CLI Security Tests" and the parse-logic describe) that don't have their
-// own afterEach. Without this, repeated suite runs accumulate *.db /
-// *.db-wal / *.db-shm under $TMPDIR (verified: +7 of each per run on
-// upstream's pre-fix version; this hook drops that to +0).
+// File-scope afterEach: cleans up the per-invocation CLI databases registered
+// by every runCLI() call in this file — including the sibling describe blocks
+// at the bottom of this file ("CLI Security Tests" and the parse-logic
+// describe) that don't have their own afterEach. Each database takes its
+// SQLite WAL/SHM/journal siblings and the CLI's pre-migration backups
+// (`<db>.backup.<ts>`, ~0.5 GiB each) with it; otherwise they accumulate
+// across runs.
+//
+// It runs after every test (not just at the end of a describe) so no database
+// outlives its test. It also sweeps this run's own leftovers (files from tests
+// that were killed or timed out before their hook could run). Other runs'
+// files are left alone: they share $TMPDIR but may still be in use.
 afterEach(() => {
+	removeCliTestDatabases();
+});
+
+function removeCliTestDatabases(): void {
 	for (const dbPath of createdDbPaths) {
+		const base = dbPath.slice(0, -".db".length);
 		try {
-			rmSync(dbPath, { force: true });
-			rmSync(`${dbPath}-wal`, { force: true });
-			rmSync(`${dbPath}-shm`, { force: true });
+			for (const suffix of [
+				".db",
+				".db-wal",
+				".db-shm",
+				".db-journal",
+				"-wal",
+				"-shm",
+				"-journal",
+			]) {
+				rmSync(`${base}${suffix}`, { force: true });
+			}
+			const dbDir = dirname(dbPath);
+			const backupPrefix = `${basename(base)}.backup.`;
+			for (const name of readdirSync(dbDir)) {
+				if (name.startsWith(backupPrefix)) {
+					rmSync(join(dbDir, name), { force: true });
+				}
+			}
 		} catch (_e) {
 			// Ignore cleanup errors
 		}
 	}
 	createdDbPaths.clear();
-});
+
+	const tempDir = runTempDir();
+	const ownPrefix = testFilePrefix();
+	try {
+		for (const name of readdirSync(tempDir)) {
+			if (!name.startsWith(ownPrefix)) continue;
+			const rest = name.slice(ownPrefix.length);
+			// Only `<seq>.db` and its siblings — never a differently-shaped entry.
+			if (!/^-\d+\.db(-wal|-shm|-journal)?(\.backup\.\d+)?$/.test(rest)) {
+				continue;
+			}
+			try {
+				rmSync(join(tempDir, name), { force: true });
+			} catch (_e) {
+				// Ignore per-file cleanup errors
+			}
+		}
+	} catch (_e) {
+		// Ignore cleanup errors
+	}
+}
 
 /**
  * Security tests
