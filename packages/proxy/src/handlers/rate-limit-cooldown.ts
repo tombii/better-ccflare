@@ -3,6 +3,7 @@ import {
 	computeOverloadWithResetCapMs,
 	computeRateLimitBackoffMs,
 	computeServerErrorCooldownMs,
+	isExplicitResetHonoured,
 	isOverloadReason,
 	isServerErrorReason,
 	logError,
@@ -175,7 +176,8 @@ export function resetRateLimitProbeGatesForTests(): void {
  *   ramp is only used when no reset was reported — clamping a real window to
  *   the ramp re-probed a spent window every 30s-5min until it cleared. A
  *   provider-side default (`resetIsInferred`, e.g. Codex's one hour) is not an
- *   upstream window and stays on the ramp.
+ *   upstream window and stays on the ramp, and
+ *   CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET=false restores the old clamp.
  * - A reset-less 529 (`upstream_529_overloaded_no_reset`) uses a short fixed
  *   cooldown instead (`computeOverloadCooldownMs`): Anthropic gave no
  *   retry-after for it, so there is no account-specific signal to honor, and
@@ -254,6 +256,9 @@ export function applyRateLimitCooldown(
 	breaker: CircuitBreaker = getDefaultCircuitBreaker(),
 ): void {
 	const now = Date.now();
+	// A reported-but-clamped window (honouring switched off) still says
+	// `upstream_429_with_reset`: the upstream did report one, the switch only
+	// bounds how long we act on it.
 	const reason: RateLimitReason =
 		rateLimitInfo.reason ??
 		(rateLimitInfo.resetTime && !rateLimitInfo.resetIsInferred
@@ -295,6 +300,7 @@ export function applyRateLimitCooldown(
 				? Math.min(rateLimitInfo.resetTime, capUntil)
 				: capUntil;
 	} else if (
+		isExplicitResetHonoured() &&
 		!rateLimitInfo.resetIsInferred &&
 		rateLimitInfo.resetTime != null &&
 		rateLimitInfo.resetTime > now
@@ -312,7 +318,17 @@ export function applyRateLimitCooldown(
 			now + MAX_EXPLICIT_RESET_COOLDOWN_MS,
 		);
 	} else {
-		cooldownUntil = now + computeRateLimitBackoffMs(nextCount);
+		// No upstream-reported window (our own default, an inferred one, or
+		// nothing at all): the adaptive ramp is the whole answer. With
+		// honouring switched off a reported window is clamped to the ramp
+		// instead, which is the pre-v3.5.101 `min(resetTime, now + backoff)`.
+		const rampUntil = now + computeRateLimitBackoffMs(nextCount);
+		cooldownUntil =
+			rateLimitInfo.resetTime != null &&
+			!rateLimitInfo.resetIsInferred &&
+			rateLimitInfo.resetTime > now
+				? Math.min(rateLimitInfo.resetTime, rampUntil)
+				: rampUntil;
 	}
 
 	if (

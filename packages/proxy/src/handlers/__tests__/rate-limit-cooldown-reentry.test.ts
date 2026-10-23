@@ -4,6 +4,7 @@ import {
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import type { Account } from "@better-ccflare/types";
+import { isExplicitUpstreamCooldown } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 import {
 	applyRateLimitCooldown,
@@ -562,5 +563,124 @@ describe("529 overload cooldown separation", () => {
 		expect(account.rate_limited_reason).toBe(
 			"upstream_529_overloaded_no_reset",
 		);
+	});
+});
+
+describe("explicit-reset honouring switch (#506)", () => {
+	const ENV = [
+		"CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET",
+		"CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS",
+		"CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS",
+	] as const;
+	const saved: Record<string, string | undefined> = {};
+
+	function setEnv(values: Partial<Record<(typeof ENV)[number], string>>) {
+		for (const name of ENV) {
+			const value = values[name];
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	}
+
+	afterEach(() => {
+		for (const name of ENV) {
+			const previous = saved[name];
+			if (previous === undefined) delete process.env[name];
+			else process.env[name] = previous;
+		}
+		Date.now = realDateNow;
+	});
+
+	for (const name of ENV) saved[name] = process.env[name];
+
+	it("bench until a real reset by default", () => {
+		setEnv({ CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS: "1000" });
+		Date.now = () => NOW;
+		const account = makeAccount();
+		const { ctx } = makeCtx({ rateLimited: true });
+		const resetTime = NOW + 60 * 60_000;
+
+		applyRateLimitCooldown(
+			account,
+			{ resetTime, reason: "model_fallback_429" },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(resetTime);
+	});
+
+	it("clamps a real reset to the ramp when the switch is off", () => {
+		// The pre-3.5.101 `min(resetTime, now + backoff)` behaviour, for
+		// deployments that keep a model-scoped limit from benching the account.
+		setEnv({
+			CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET: "false",
+			CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS: "1000",
+			CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS: "1000",
+		});
+		Date.now = () => NOW;
+		const account = makeAccount();
+		const { ctx } = makeCtx({ rateLimited: true });
+
+		applyRateLimitCooldown(
+			account,
+			{ resetTime: NOW + 60 * 60_000, reason: "model_fallback_429" },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(NOW + 1000);
+	});
+
+	it("keeps the full wait for a real window shorter than the ramp", () => {
+		setEnv({
+			CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET: "false",
+			CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS: "600000",
+			CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS: "600000",
+		});
+		Date.now = () => NOW;
+		const account = makeAccount();
+		const { ctx } = makeCtx({ rateLimited: true });
+		const resetTime = NOW + 5_000;
+
+		applyRateLimitCooldown(
+			account,
+			{ resetTime, reason: "model_fallback_429" },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(resetTime);
+	});
+
+	it("never benches until our own default, even with the switch on", () => {
+		// `source: "default"` reaches here as `resetIsInferred`, so the 60s
+		// probe-cooldown default stays on the ramp in both modes.
+		setEnv({ CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET: "true" });
+		Date.now = () => NOW;
+		const account = makeAccount();
+		const { ctx } = makeCtx({ rateLimited: true });
+
+		applyRateLimitCooldown(
+			account,
+			{
+				resetTime: NOW + 60_000,
+				resetIsInferred: true,
+				reason: "model_fallback_429",
+			},
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(NOW + computeRateLimitBackoffMs(1));
+		expect(account.rate_limited_until).toBeLessThan(NOW + 60_000);
+	});
+});
+
+describe("extractCooldownUntilWithSource — provenance helpers (#506)", () => {
+	it("only a header- or body-derived deadline is an upstream window", () => {
+		// Our own 60s default is not the account's quota, so it must never take
+		// the full bench. `usage_cache` is a window we learned from the account's
+		// own usage API, not invented — it keeps the bench.
+		expect(isExplicitUpstreamCooldown("header")).toBe(true);
+		expect(isExplicitUpstreamCooldown("provider")).toBe(true);
+		expect(isExplicitUpstreamCooldown("usage_cache")).toBe(true);
+		expect(isExplicitUpstreamCooldown("default")).toBe(false);
 	});
 });

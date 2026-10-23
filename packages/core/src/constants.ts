@@ -184,6 +184,21 @@ export function computeRateLimitBackoffMs(consecutiveCount: number): number {
 }
 
 /**
+ * Whether a 429 that names a real reset window benches the account until that
+ * reset. Reads CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET (default true).
+ *
+ * `false` restores the pre-3.5.101 `min(resetTime, now + backoff)` clamp, so a
+ * deployment that treats 429s as model-scoped can keep the adaptive ramp from
+ * escalating into a whole-account bench. Resets that are merely our own
+ * defaults are never honoured either way — see `resetIsInferred`.
+ */
+export function isExplicitResetHonoured(): boolean {
+	const raw = process.env.CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET?.trim();
+	if (raw === undefined || raw === "") return true;
+	return !["false", "0", "off", "no"].includes(raw.toLowerCase());
+}
+
+/**
  * Read the stability-reset window (ms) for the consecutive_rate_limits counter.
  * Reads CCFLARE_RATE_LIMIT_RESET_STABILITY_MS from env.
  */
