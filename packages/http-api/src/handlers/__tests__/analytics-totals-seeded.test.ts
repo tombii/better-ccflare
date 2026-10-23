@@ -1,8 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+	afterAll,
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from "bun:test";
 import { DatabaseOperations } from "@better-ccflare/database";
+import {
+	cleanupTempDbs,
+	tempDbPath,
+} from "@better-ccflare/database/test-utils";
 import type { APIContext } from "../../types";
 import { createAnalyticsHandler } from "../analytics";
 
@@ -10,9 +18,7 @@ describe("analytics totals on a seeded database", () => {
 	let dbOps: DatabaseOperations;
 
 	beforeEach(async () => {
-		dbOps = new DatabaseOperations(
-			join(tmpdir(), `test-analytics-${randomBytes(6).toString("hex")}.db`),
-		);
+		dbOps = new DatabaseOperations(tempDbPath("test-analytics"));
 		const adapter = dbOps.getAdapter();
 		const ts = Date.now() - 60_000;
 		const rows: Array<
@@ -64,6 +70,8 @@ describe("analytics totals on a seeded database", () => {
 	afterEach(() => {
 		dbOps.dispose?.();
 	});
+
+	afterAll(cleanupTempDbs);
 
 	it("returns the expected totals and token breakdown", async () => {
 		const handler = createAnalyticsHandler({

@@ -1,7 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+	afterAll,
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from "bun:test";
+import { cleanupTempDbs, tempDbPath } from "../__test-utils__/temp-db";
 import { DatabaseOperations } from "../database-operations";
 
 // biome-ignore lint/suspicious/noExplicitAny: test reaches into private fields
@@ -13,9 +18,7 @@ describe("DatabaseOperations.getTableRowCounts cache", () => {
 	let clock: number;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(
-			join(tmpdir(), `test-rowcounts-${randomBytes(6).toString("hex")}.db`),
-		);
+		dbOps = new DatabaseOperations(tempDbPath("test-rowcounts"));
 		const internals = dbOps as Internals;
 		clock = 1_000_000;
 		internals.tableCountsClock = () => clock;
@@ -33,6 +36,8 @@ describe("DatabaseOperations.getTableRowCounts cache", () => {
 	afterEach(() => {
 		dbOps.dispose?.();
 	});
+
+	afterAll(cleanupTempDbs);
 
 	it("does not re-run the payload size scan within the TTL", async () => {
 		const a = await dbOps.getTableRowCounts();
