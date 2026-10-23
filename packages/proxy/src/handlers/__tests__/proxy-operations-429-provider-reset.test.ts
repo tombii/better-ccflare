@@ -214,6 +214,11 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 		process.env.CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS = String(
 			30 * 24 * 60 * 60 * 1000,
 		);
+		// Pin the switch these tests rely on: they assert that a real upstream
+		// reset wins over the (deliberately wide) ramp. A developer with the
+		// documented opt-out exported would otherwise clamp the reset and fail
+		// them. The tests that exercise the switch off set it themselves.
+		process.env.CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET = "true";
 		resetRateLimitProbeGatesForTests();
 	});
 

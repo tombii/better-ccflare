@@ -324,6 +324,21 @@ describe("transient 5xx server-error cooldown", () => {
 });
 
 describe("529 overload cooldown separation", () => {
+	// The 429 cases below assert that a real upstream reset wins over the ramp,
+	// so they need the honouring switch on regardless of the developer's shell
+	// (the documented opt-out would clamp the reset instead).
+	const savedSwitch = process.env.CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET;
+	beforeEach(() => {
+		process.env.CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET = "true";
+	});
+	afterEach(() => {
+		if (savedSwitch === undefined) {
+			delete process.env.CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET;
+		} else {
+			process.env.CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET = savedSwitch;
+		}
+	});
+
 	it("applies the fixed overload cooldown for a reset-less 529, ignoring the 429 streak depth", () => {
 		Date.now = () => NOW;
 		// A mature 429 streak would normally ramp the exponential backoff to
