@@ -407,16 +407,30 @@ afterEach(() => {
 });
 
 function removeRunTempFiles(): void {
+	// Everything in this directory belongs to this run — the databases,
+	// backups and WAL sidecars this file named, and the CLI's `app.log`
+	// (see packages/logger) — so none of it is filtered by name.
 	try {
 		for (const name of readdirSync(RUN_TEMP_DIR)) {
-			if (name.startsWith("cli-test-")) {
-				rmSync(join(RUN_TEMP_DIR, name), { force: true });
-			}
+			rmSync(join(RUN_TEMP_DIR, name), { force: true, recursive: true });
 		}
 	} catch (_e) {
 		// Ignore cleanup errors
 	}
 }
+
+describe("CLI test temp directory cleanup", () => {
+	it("empties the run directory, including the CLI log", () => {
+		// The logger writes `app.log`, which the old name filter skipped.
+		writeFileSync(join(RUN_TEMP_DIR, "app.log"), "");
+		writeFileSync(join(RUN_TEMP_DIR, "cli-test-999.db"), "");
+		writeFileSync(join(RUN_TEMP_DIR, "cli-test-999.db.backup.1"), "");
+
+		removeRunTempFiles();
+
+		expect(readdirSync(RUN_TEMP_DIR)).toEqual([]);
+	});
+});
 
 /**
  * Security tests
