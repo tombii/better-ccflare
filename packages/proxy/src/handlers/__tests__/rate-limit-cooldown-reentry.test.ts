@@ -630,6 +630,40 @@ describe("explicit-reset honouring switch (#506)", () => {
 		expect(account.rate_limited_until).toBe(NOW + 1000);
 	});
 
+	it("switch-off clamp is exactly the pre-d5897bb6 min(resetTime, now + backoff)", () => {
+		// d5897bb6^ computed `Math.min(resetTime, now + computeRateLimitBackoffMs(consecutive_rate_limits + 1))`
+		// with none of the inferred/past filters the current code adds.
+		// streak 10 -> nextCount 11 -> 1024s ramp, longer than the 600s reset:
+		// the clamp must land on the reset, not the ramp.
+		setEnv({
+			CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET: "false",
+			CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS: "1000",
+			CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS: String(TIME_CONSTANTS.DAY),
+		});
+		Date.now = () => NOW;
+		expect(computeRateLimitBackoffMs(11)).toBeGreaterThan(600_000);
+
+		const longReset = makeAccount({ consecutive_rate_limits: 10 });
+		applyRateLimitCooldown(
+			longReset,
+			{ resetTime: NOW + 600_000, reason: "model_fallback_429" },
+			makeCtx({ rateLimited: true }).ctx,
+		);
+		expect(longReset.rate_limited_until).toBe(NOW + 600_000);
+
+		// The reset is already past: the pre-d5897bb6 formula still returns
+		// the (positive) ramp, never a past deadline.
+		const pastReset = makeAccount({ consecutive_rate_limits: 10 });
+		applyRateLimitCooldown(
+			pastReset,
+			{ resetTime: NOW - 60_000, reason: "model_fallback_429" },
+			makeCtx({ rateLimited: true }).ctx,
+		);
+		expect(pastReset.rate_limited_until).toBe(
+			NOW + computeRateLimitBackoffMs(11),
+		);
+	});
+
 	it("keeps the full wait for a real window shorter than the ramp", () => {
 		setEnv({
 			CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET: "false",

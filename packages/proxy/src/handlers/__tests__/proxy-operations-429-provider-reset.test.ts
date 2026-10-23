@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	setSystemTime,
+} from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
@@ -161,6 +169,24 @@ async function runProxy(
 	);
 }
 
+// The 1ms-backoff assertions expect the deadline to be `now + 1ms`. Against the
+// real clock, a test that finishes the await more than 1ms later reads a
+// negative remainder and fails on correct behaviour, so these tests freeze the
+// clock (`setSystemTime`) and drive it forward themselves. The frozen clock is
+// restored in `afterEach`.
+const FROZEN_NOW = 1_800_000_000_000;
+
+async function runProxyAtFrozenTime(
+	account: Account,
+	ctx: ProxyContext,
+	advanceMs = 0,
+): Promise<Response | null> {
+	setSystemTime(FROZEN_NOW);
+	const result = await runProxy(account, ctx);
+	setSystemTime(FROZEN_NOW + advanceMs);
+	return result;
+}
+
 const BACKOFF_ENV_VARS = [
 	"CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS",
 	"CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS",
@@ -192,6 +218,7 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 	});
 
 	afterEach(() => {
+		setSystemTime();
 		globalThis.fetch = originalFetch;
 		for (const name of BACKOFF_ENV_VARS) {
 			const previous = originalBackoffEnv[name];
@@ -284,13 +311,13 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 		}));
 		const account = makeAccount();
 
-		const result = await runProxy(account, ctx);
+		const result = await runProxyAtFrozenTime(account, ctx);
 
 		expect(result).toBeNull();
 		expect(account.rate_limited_reason).toBe("model_fallback_429");
-		const benchMs = (account.rate_limited_until ?? 0) - Date.now();
+		const benchMs = (account.rate_limited_until ?? 0) - FROZEN_NOW;
 		expect(benchMs).toBeGreaterThanOrEqual(0);
-		expect(benchMs).toBeLessThanOrEqual(5_000);
+		expect(benchMs).toBeLessThanOrEqual(5);
 	});
 
 	it("clamps a real retry-after to the ramp when honouring it is off", async () => {
@@ -317,12 +344,12 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 		}));
 		const account = makeAccount();
 
-		const result = await runProxy(account, ctx);
+		const result = await runProxyAtFrozenTime(account, ctx);
 
 		expect(result).toBeNull();
-		const benchMs = (account.rate_limited_until ?? 0) - Date.now();
+		const benchMs = (account.rate_limited_until ?? 0) - FROZEN_NOW;
 		expect(benchMs).toBeGreaterThanOrEqual(0);
-		expect(benchMs).toBeLessThanOrEqual(5_000);
+		expect(benchMs).toBeLessThanOrEqual(1_000);
 	});
 
 	it("benches until the reset the provider parsed out of the 429 body", async () => {
@@ -414,13 +441,13 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 			}),
 		});
 
-		const result = await runProxy(account, ctx);
+		const result = await runProxyAtFrozenTime(account, ctx);
 
 		expect(result).toBeNull();
 		expect(account.rate_limited_reason).toBe("all_models_exhausted_429");
-		const benchMs = (account.rate_limited_until ?? 0) - Date.now();
+		const benchMs = (account.rate_limited_until ?? 0) - FROZEN_NOW;
 		expect(benchMs).toBeGreaterThanOrEqual(0);
-		expect(benchMs).toBeLessThanOrEqual(5_000);
+		expect(benchMs).toBeLessThanOrEqual(5);
 	});
 
 	it("falls back to the header parse when the body parser throws", async () => {
