@@ -1,17 +1,18 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-
-// ---------------------------------------------------------------------------
-// Minimal DatabaseOperations stand-in exposing only the methods under test.
-// We construct with an in-memory SQLite DB so no file I/O is needed.
-// ---------------------------------------------------------------------------
-
-import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+	afterAll,
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from "bun:test";
+import { cleanupTempDbs, tempDbPath } from "../__test-utils__/temp-db";
 import { DatabaseOperations } from "../database-operations";
 
-function tempDbPath(): string {
-	return join(tmpdir(), `test-integrity-${randomBytes(6).toString("hex")}.db`);
+afterAll(cleanupTempDbs);
+
+function tempIntegrityDbPath(): string {
+	return tempDbPath("test-integrity");
 }
 
 // ---------------------------------------------------------------------------
@@ -22,7 +23,7 @@ describe("DatabaseOperations.getIntegrityStatus / recordIntegrityResult", () => 
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIntegrityDbPath());
 	});
 
 	afterEach(() => {
@@ -150,7 +151,7 @@ describe("DatabaseOperations.recordIntegritySkipped", () => {
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIntegrityDbPath());
 	});
 
 	afterEach(() => {
@@ -238,7 +239,7 @@ describe("DatabaseOperations integrity PRAgMA checks", () => {
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIntegrityDbPath());
 	});
 
 	afterEach(() => {
@@ -264,7 +265,7 @@ describe("DatabaseOperations.getStorageMetrics", () => {
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIntegrityDbPath());
 	});
 
 	afterEach(() => {
@@ -346,7 +347,7 @@ describe("DatabaseOperations.generateRecoveryInstructions", () => {
 	let dbPath: string;
 
 	beforeEach(() => {
-		dbPath = tempDbPath();
+		dbPath = tempIntegrityDbPath();
 		dbOps = new DatabaseOperations(dbPath);
 	});
 

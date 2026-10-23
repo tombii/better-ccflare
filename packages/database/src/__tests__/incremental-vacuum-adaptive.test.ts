@@ -11,17 +11,21 @@
  * bootstrap, which is what makes `PRAGMA incremental_vacuum(N)` actually
  * return free pages to the OS.
  */
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+	afterAll,
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from "bun:test";
+import { cleanupTempDbs, tempDbPath } from "../__test-utils__/temp-db";
 import { DatabaseOperations } from "../database-operations";
 
-function tempDbPath(): string {
-	return join(
-		tmpdir(),
-		`test-incvac-adaptive-${randomBytes(6).toString("hex")}.db`,
-	);
+afterAll(cleanupTempDbs);
+
+function tempIncVacDbPath(): string {
+	return tempDbPath("test-incvac-adaptive");
 }
 
 /**
@@ -56,7 +60,7 @@ describe("DatabaseOperations.getFreelistCount", () => {
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIncVacDbPath());
 	});
 
 	afterEach(async () => {
@@ -75,7 +79,7 @@ describe("DatabaseOperations.incrementalVacuumAdaptive", () => {
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIncVacDbPath());
 	});
 
 	afterEach(async () => {
@@ -323,7 +327,7 @@ describe("DatabaseOperations.getPageCount", () => {
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIncVacDbPath());
 	});
 
 	afterEach(async () => {
@@ -351,7 +355,7 @@ describe("DatabaseOperations.incrementalVacuumAdaptive — unsupported backend (
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIncVacDbPath());
 	});
 
 	afterEach(async () => {
@@ -389,7 +393,7 @@ describe("DatabaseOperations.incrementalVacuumAdaptive — records a rejected re
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIncVacDbPath());
 	});
 
 	afterEach(async () => {
@@ -446,7 +450,7 @@ describe("DatabaseOperations.recordVacuumCatchUpBusySkip / resetVacuumCatchUpBus
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIncVacDbPath());
 	});
 
 	afterEach(async () => {
@@ -504,7 +508,7 @@ describe("DatabaseOperations.incrementalVacuum — worker timeout (internal-3)",
 	let OriginalWorker: typeof Worker;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIncVacDbPath());
 		OriginalWorker = globalThis.Worker;
 	});
 
@@ -586,7 +590,7 @@ describe("DatabaseOperations — worker blob-URL lifecycle (WP08)", () => {
 	}
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(tempDbPath());
+		dbOps = new DatabaseOperations(tempIncVacDbPath());
 		OriginalWorker = globalThis.Worker;
 		originalCreateObjectURL = URL.createObjectURL;
 		originalRevokeObjectURL = URL.revokeObjectURL;

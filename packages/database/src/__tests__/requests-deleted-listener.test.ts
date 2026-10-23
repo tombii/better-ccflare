@@ -1,24 +1,26 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+	afterAll,
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from "bun:test";
+import { cleanupTempDbs, tempDbPath } from "../__test-utils__/temp-db";
 import { DatabaseOperations } from "../database-operations";
 
 describe("DatabaseOperations.onRequestsDeleted", () => {
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		dbOps = new DatabaseOperations(
-			join(
-				tmpdir(),
-				`test-deleted-listener-${randomBytes(6).toString("hex")}.db`,
-			),
-		);
+		dbOps = new DatabaseOperations(tempDbPath("test-deleted-listener"));
 	});
 
 	afterEach(() => {
 		dbOps.dispose?.();
 	});
+
+	afterAll(cleanupTempDbs);
 
 	const seedOldRequests = async (n: number) => {
 		const old = Date.now() - 60_000;
