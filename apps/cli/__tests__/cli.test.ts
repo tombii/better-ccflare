@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 const CLI_PATH = join(process.cwd(), "apps/cli/src/main.ts");
 
@@ -12,6 +18,37 @@ const CLI_PATH = join(process.cwd(), "apps/cli/src/main.ts");
 // tempDir/Ssl-fixture rmSync. Without this the runCLI-routed BETTER_CCFLARE_DB_PATH
 // files accumulate across repeated suite invocations under $TMPDIR.
 const createdDbPaths = new Set<string>();
+
+// Every runCLI() database is named `better-ccflare-cli-test-<pid>-<start>-<seq>.db`.
+// The `<start>` disambiguates a reused PID (a killed run leaves its leaks behind,
+// a later OS process can get the same PID), and the exact `-` delimiter keeps
+// `<pid>-1` from prefix-matching `<pid>-10`.
+//
+// Cleanup runs in a module-scope afterEach (after each test, not each describe
+// block) so an earlier test's database doesn't survive into the next one: a
+// lingering child from a timed-out test keeps writing to a deleted inode while
+// the next test's CLI fresh-migrates a ~0.5 GiB schema.
+const CLI_TEST_DB_PREFIX = "better-ccflare-cli-test-";
+const RUN_STARTED_AT = Date.now();
+let dbSeq = 0;
+
+/**
+ * Prefix shared by every database this run creates before its sequence number.
+ * The sweep below removes this run's files outright and leaves any other
+ * run's alone.
+ */
+function testFilePrefix(): string {
+	return `${CLI_TEST_DB_PREFIX}${process.pid}-${RUN_STARTED_AT}`;
+}
+
+function runTempDir(): string {
+	return process.env.TMPDIR || "/tmp";
+}
+
+function nextDbSeq(): number {
+	dbSeq += 1;
+	return dbSeq;
+}
 
 /**
  * Helper function to run CLI command and get output
@@ -30,13 +67,16 @@ function runCLI(args: string[]): Promise<{
 		// ~/.config/better-ccflare/better-ccflare.db dependency the test never
 		// asked for. Falls back to ~/.config in the unlikely event neither
 		// TMPDIR nor HOME is writable.
-		const cliDbPath = `${process.env.TMPDIR || "/tmp"}/better-ccflare-cli-test-${process.pid}-${Date.now()}.db`;
+		const cliDbPath = `${runTempDir()}/${testFilePrefix()}-${nextDbSeq()}.db`;
 		createdDbPaths.add(cliDbPath);
 		const proc = spawn("bun", ["run", CLI_PATH, ...args], {
 			env: {
 				...process.env,
 				NODE_ENV: "test",
 				BETTER_CCFLARE_DB_PATH: cliDbPath,
+				// Keep the CLI's log file in this run's own temp directory instead
+				// of the shared `$TMPDIR/better-ccflare-logs` (packages/logger).
+				BETTER_CCFLARE_LOG_DIR: runTempDir(),
 			},
 		});
 
@@ -389,24 +429,184 @@ describe("CLI Integration Tests", () => {
 	});
 });
 
-// File-scope afterEach: cleans up the per-invocation CLI databases (and
-// their SQLite WAL/SHM siblings) registered by every runCLI() call in this
-// file — including the sibling describe blocks at the bottom of this file
-// ("CLI Security Tests" and the parse-logic describe) that don't have their
-// own afterEach. Without this, repeated suite runs accumulate *.db /
-// *.db-wal / *.db-shm under $TMPDIR (verified: +7 of each per run on
-// upstream's pre-fix version; this hook drops that to +0).
+// File-scope afterEach: cleans up the per-invocation CLI databases registered
+// by every runCLI() call in this file — including the sibling describe blocks
+// at the bottom of this file ("CLI Security Tests" and the parse-logic
+// describe) that don't have their own afterEach. Each database takes its
+// SQLite WAL/SHM/journal siblings and the CLI's pre-migration backups
+// (`<db>.backup.<ts>`, ~0.5 GiB each) with it; otherwise they accumulate
+// across runs.
+//
+// It runs after every test (not just at the end of a describe) so no database
+// outlives its test. It also sweeps this run's own leftovers (files from tests
+// that were killed or timed out before their hook could run), and the files of
+// runs whose process is no longer alive — a killed run never reaches its own
+// hook, so the next run has to clear what it left.
 afterEach(() => {
+	removeCliTestDatabases();
+});
+
+function removeCliTestDatabases(): void {
 	for (const dbPath of createdDbPaths) {
+		const base = dbPath.slice(0, -".db".length);
 		try {
-			rmSync(dbPath, { force: true });
-			rmSync(`${dbPath}-wal`, { force: true });
-			rmSync(`${dbPath}-shm`, { force: true });
+			for (const suffix of [
+				".db",
+				".db-wal",
+				".db-shm",
+				".db-journal",
+				"-wal",
+				"-shm",
+				"-journal",
+			]) {
+				rmSync(`${base}${suffix}`, { force: true });
+			}
+			const dbDir = dirname(dbPath);
+			const backupPrefix = `${basename(base)}.backup.`;
+			for (const name of readdirSync(dbDir)) {
+				if (name.startsWith(backupPrefix)) {
+					rmSync(join(dbDir, name), { force: true });
+				}
+			}
 		} catch (_e) {
 			// Ignore cleanup errors
 		}
 	}
 	createdDbPaths.clear();
+
+	const tempDir = runTempDir();
+	const ownPrefix = testFilePrefix();
+	const deadRunPrefixes = new Set<string>();
+	try {
+		for (const name of readdirSync(tempDir)) {
+			const parsed = parseTestFileName(name);
+			if (!parsed) continue;
+			if (name.startsWith(ownPrefix)) {
+				const rest = name.slice(ownPrefix.length);
+				// Only `<seq>.db` and its siblings — never a differently-shaped entry.
+				if (!/^-\d+\.db(-wal|-shm|-journal)?(\.backup\.\d+)?$/.test(rest)) {
+					continue;
+				}
+			} else if (!isRunAlive(parsed.pid)) {
+				deadRunPrefixes.add(
+					`${CLI_TEST_DB_PREFIX}${parsed.pid}-${parsed.startedAt}`,
+				);
+			} else {
+				// Another live run owns this file and may still be using it.
+				continue;
+			}
+			try {
+				rmSync(join(tempDir, name), { force: true });
+			} catch (_e) {
+				// Ignore per-file cleanup errors
+			}
+		}
+	} catch (_e) {
+		// Ignore cleanup errors
+	}
+
+	// A dead run's CLI log directory is only safe to remove once the *last* of
+	// its files is gone: if it still holds anything, a live child is writing.
+	for (const prefix of deadRunPrefixes) {
+		const logDir = join(tempDir, `${prefix}-logs`);
+		try {
+			if (readdirSync(logDir).length === 0)
+				rmSync(logDir, { force: true, recursive: true });
+		} catch (_e) {
+			// No log directory, or still in use — leave it
+		}
+	}
+}
+
+const TEST_FILE_RE =
+	/^better-ccflare-cli-test-(\d+)-(\d+)-(\d+)\.db(?:-wal|-shm|-journal)?(?:\.backup\.\d+)?$/;
+
+/**
+ * Split a test temp file name into the run that owns it.
+ * `null` for anything this suite did not create (a hand-made file, a
+ * differently shaped entry), so a stray name is never deleted.
+ */
+function parseTestFileName(
+	name: string,
+): { pid: number; startedAt: number } | null {
+	const match = TEST_FILE_RE.exec(name);
+	if (!match) return null;
+	return { pid: Number(match[1]), startedAt: Number(match[2]) };
+}
+
+/**
+ * Whether the process that owns a test file still exists.
+ *
+ * `EPERM` means it exists but belongs to another user: assume alive and leave
+ * its files alone. Any other error (typically `ESRCH`) means the owner is
+ * gone, so its files are leftovers.
+ */
+function isRunAlive(pid: number): boolean {
+	// PID 0 addresses the caller's whole process group (`kill(0, 0)` succeeds
+	// even though no process owns it), so a file naming it is never live.
+	if (pid === 0) return false;
+	if (pid === process.pid) return true;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+describe("test temp file cleanup", () => {
+	// Each case points TMPDIR at a directory it owns, so the sweep in
+	// removeCliTestDatabases() never sees the real temp dir.
+	let dir: string;
+	let savedTmpDir: string | undefined;
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "ccflare-cleanup-"));
+		savedTmpDir = process.env.TMPDIR;
+		process.env.TMPDIR = dir;
+	});
+
+	afterEach(() => {
+		if (savedTmpDir === undefined) delete process.env.TMPDIR;
+		else process.env.TMPDIR = savedTmpDir;
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("does not delete a live run's files", () => {
+		// The current process is its own live owner — the same signal the sweep
+		// uses for a concurrent suite run sharing $TMPDIR.
+		const foreign = `${CLI_TEST_DB_PREFIX}${process.pid}-1-1.db`;
+		const foreignBackup = `${foreign}.backup.123`;
+		writeFileSync(join(dir, foreign), "");
+		writeFileSync(join(dir, foreignBackup), "");
+
+		removeCliTestDatabases();
+
+		expect(readdirSync(dir).sort()).toEqual([foreign, foreignBackup].sort());
+	});
+
+	it("removes a dead run's files and log directory", () => {
+		// PID 0 never names a process, so a file naming it stands in for a run
+		// that was killed before its hook could clean up.
+		const dead = `${CLI_TEST_DB_PREFIX}0-0-1.db`;
+		const deadBackup = `${dead}.backup.123`;
+		writeFileSync(join(dir, dead), "");
+		writeFileSync(join(dir, deadBackup), "");
+		mkdirSync(join(dir, `${CLI_TEST_DB_PREFIX}0-0-logs`));
+
+		removeCliTestDatabases();
+
+		expect(readdirSync(dir)).toEqual([]);
+	});
+
+	it("leaves names it did not create alone", () => {
+		const foreign = `${CLI_TEST_DB_PREFIX}0-0-not-a-seq.db`;
+		writeFileSync(join(dir, foreign), "");
+
+		removeCliTestDatabases();
+
+		expect(readdirSync(dir)).toEqual([foreign]);
+	});
 });
 
 /**
