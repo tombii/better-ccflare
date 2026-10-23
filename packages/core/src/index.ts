@@ -11,6 +11,7 @@ export {
 	getServerErrorRetryEnabled,
 	getStreamReadTimeoutMs,
 	HTTP_STATUS,
+	isExplicitResetHonoured,
 	isOverloadReason,
 	isServerErrorReason,
 	LIMITS,

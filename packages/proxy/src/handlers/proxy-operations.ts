@@ -123,6 +123,21 @@ function currentScopedPercentForFamily(
  */
 export type CooldownSource = "header" | "provider" | "usage_cache" | "default";
 
+/**
+ * Whether a `CooldownSource` names a window the account itself is known to be
+ * inside — the only kind that may bench until the deadline.
+ *
+ * `default` is ccflare's own 60s probe-cooldown fallback, returned when the 429
+ * named nothing; treating it as the account's window benched every header-less
+ * 429 for a full minute and bypassed the backoff settings (#506). `usage_cache`
+ * is a window learned from the account's own usage API, so it is not invented
+ * and keeps the bench. `provider` is left to `resetIsInferred`, which the
+ * provider sets when its value is its own default.
+ */
+export function isExplicitUpstreamCooldown(source: CooldownSource): boolean {
+	return source !== "default";
+}
+
 export function extractCooldownUntil(
 	response: Response,
 	accountId: string,
@@ -1751,6 +1766,7 @@ export async function proxyWithAccount(
 				// Provenance travels with the deadline: the provider's inferred
 				// flag only applies when its own value is what won. A real
 				// `retry-after` header outranks it, and must keep its full wait.
+				// Our own `default` fallback is never an upstream window (#506).
 				const cooldown = extractCooldownUntilWithSource(
 					rawResponse,
 					account.id,
@@ -1763,7 +1779,8 @@ export async function proxyWithAccount(
 					{
 						resetTime: cooldown.until,
 						resetIsInferred:
-							cooldown.source === "provider" && providerReset.resetIsInferred,
+							!isExplicitUpstreamCooldown(cooldown.source) ||
+							(cooldown.source === "provider" && providerReset.resetIsInferred),
 						reason,
 					},
 					ctx,
@@ -2117,8 +2134,9 @@ export async function proxyWithAccount(
 							{
 								resetTime: cooldown.until,
 								resetIsInferred:
-									cooldown.source === "provider" &&
-									providerReset.resetIsInferred,
+									!isExplicitUpstreamCooldown(cooldown.source) ||
+									(cooldown.source === "provider" &&
+										providerReset.resetIsInferred),
 								reason,
 							},
 							ctx,

@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	setSystemTime,
+} from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
@@ -161,9 +169,28 @@ async function runProxy(
 	);
 }
 
+// The 1ms-backoff assertions expect the deadline to be `now + 1ms`. Against the
+// real clock, a test that finishes the await more than 1ms later reads a
+// negative remainder and fails on correct behaviour, so these tests freeze the
+// clock (`setSystemTime`) and drive it forward themselves. The frozen clock is
+// restored in `afterEach`.
+const FROZEN_NOW = 1_800_000_000_000;
+
+async function runProxyAtFrozenTime(
+	account: Account,
+	ctx: ProxyContext,
+	advanceMs = 0,
+): Promise<Response | null> {
+	setSystemTime(FROZEN_NOW);
+	const result = await runProxy(account, ctx);
+	setSystemTime(FROZEN_NOW + advanceMs);
+	return result;
+}
+
 const BACKOFF_ENV_VARS = [
 	"CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS",
 	"CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS",
+	"CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET",
 ] as const;
 
 describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () => {
@@ -187,10 +214,16 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 		process.env.CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS = String(
 			30 * 24 * 60 * 60 * 1000,
 		);
+		// Pin the switch these tests rely on: they assert that a real upstream
+		// reset wins over the (deliberately wide) ramp. A developer with the
+		// documented opt-out exported would otherwise clamp the reset and fail
+		// them. The tests that exercise the switch off set it themselves.
+		process.env.CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET = "true";
 		resetRateLimitProbeGatesForTests();
 	});
 
 	afterEach(() => {
+		setSystemTime();
 		globalThis.fetch = originalFetch;
 		for (const name of BACKOFF_ENV_VARS) {
 			const previous = originalBackoffEnv[name];
@@ -231,7 +264,12 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 		);
 	});
 
-	it("keeps the 60s default when the provider reports no reset", async () => {
+	it("keeps the backoff ramp when the provider reports no reset", async () => {
+		// #506: a 429 naming no reset falls through to our own 60s default
+		// (`source: "default"`). That default is not the account's window, so it
+		// must stay on the adaptive ramp — 30 days here, so a regression back to
+		// benching until the default is unmistakable. The honour-explicit-reset
+		// switch is pinned on: even then, an invented deadline is not upstream.
 		const before = Date.now();
 		globalThis.fetch = mock(
 			async () =>
@@ -251,12 +289,72 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 
 		expect(result).toBeNull();
 		expect(account.rate_limited_reason).toBe("model_fallback_429");
-		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
-			before + 60_000 - 5_000,
-		);
+		const benchMs = (account.rate_limited_until ?? 0) - Date.now();
+		expect(benchMs).toBeGreaterThan(FOUR_DAYS_MS);
 		expect(account.rate_limited_until ?? 0).toBeLessThanOrEqual(
-			Date.now() + 60_000 + 5_000,
+			before + 30 * 24 * 60 * 60 * 1000 + 5_000,
 		);
+	});
+
+	it("leaves a header-less 429 on a 1ms ramp when the backoff is disabled", async () => {
+		// The reproduction from #506: with the ramp configured effectively off,
+		// a 429 that names no window must not bench the account for the 60s
+		// default.
+		process.env.CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS = "1";
+		process.env.CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS = "1";
+		globalThis.fetch = mock(
+			async () =>
+				new Response(rateLimitBody, {
+					status: 429,
+					headers: { "content-type": "application/json" },
+				}),
+		);
+
+		const ctx = makeProxyContext(() => ({
+			isRateLimited: false,
+			resetTime: undefined,
+		}));
+		const account = makeAccount();
+
+		const result = await runProxyAtFrozenTime(account, ctx);
+
+		expect(result).toBeNull();
+		expect(account.rate_limited_reason).toBe("model_fallback_429");
+		const benchMs = (account.rate_limited_until ?? 0) - FROZEN_NOW;
+		expect(benchMs).toBeGreaterThanOrEqual(0);
+		expect(benchMs).toBeLessThanOrEqual(5);
+	});
+
+	it("clamps a real retry-after to the ramp when honouring it is off", async () => {
+		// The pre-3.5.101 behaviour, now opt-in: the ramp bounds even a real
+		// upstream window, so a model-scoped 429 that the upstream reports for an
+		// hour does not bench every model on the account.
+		process.env.CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET = "false";
+		process.env.CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS = "1000";
+		process.env.CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS = "1000";
+		globalThis.fetch = mock(
+			async () =>
+				new Response(rateLimitBody, {
+					status: 429,
+					headers: {
+						"content-type": "application/json",
+						"retry-after": "3600",
+					},
+				}),
+		);
+
+		const ctx = makeProxyContext(() => ({
+			isRateLimited: false,
+			resetTime: undefined,
+		}));
+		const account = makeAccount();
+
+		const result = await runProxyAtFrozenTime(account, ctx);
+
+		expect(result).toBeNull();
+		const benchMs = (account.rate_limited_until ?? 0) - FROZEN_NOW;
+		expect(benchMs).toBeGreaterThanOrEqual(0);
+		expect(benchMs).toBeLessThanOrEqual(1_000);
 	});
 
 	it("benches until the reset the provider parsed out of the 429 body", async () => {
@@ -322,6 +420,39 @@ describe("proxyWithAccount — 429 bench honours the provider-parsed reset", () 
 		const benchMs = (account.rate_limited_until ?? 0) - Date.now();
 		expect(benchMs).toBeGreaterThan(3_500_000);
 		expect(benchMs).toBeLessThanOrEqual(3_600_000);
+	});
+
+	it("keeps a header-less all-models 429 on the backoff ramp", async () => {
+		// The second 429 site (`all_models_exhausted_429`): a model-mapping list
+		// makes every model answer 429 with no reset. The account must land on
+		// the ramp, not on our own 60s default (#506).
+		process.env.CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS = "1";
+		process.env.CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS = "1";
+		globalThis.fetch = mock(
+			async () =>
+				new Response(rateLimitBody, {
+					status: 429,
+					headers: { "content-type": "application/json" },
+				}),
+		);
+
+		const ctx = makeProxyContext(() => ({
+			isRateLimited: false,
+			resetTime: undefined,
+		}));
+		const account = makeAccount({
+			model_mappings: JSON.stringify({
+				"claude-sonnet-4-5": ["gpt-a", "gpt-b"],
+			}),
+		});
+
+		const result = await runProxyAtFrozenTime(account, ctx);
+
+		expect(result).toBeNull();
+		expect(account.rate_limited_reason).toBe("all_models_exhausted_429");
+		const benchMs = (account.rate_limited_until ?? 0) - FROZEN_NOW;
+		expect(benchMs).toBeGreaterThanOrEqual(0);
+		expect(benchMs).toBeLessThanOrEqual(5);
 	});
 
 	it("falls back to the header parse when the body parser throws", async () => {
