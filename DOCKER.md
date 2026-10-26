@@ -39,6 +39,8 @@ The Docker images support the following platforms:
 
 Docker will automatically pull the correct image for your architecture.
 
+The `linux/amd64` image contains two binaries and picks one at runtime: the default build (requires AVX2) or, when `/proc/cpuinfo` has no `avx2` flag, the baseline build (SSE4.2/POPCNT only). Older x86-64 CPUs such as AMD Jaguar/GX thin clients therefore run the same image instead of exiting with `Illegal instruction` (exit code 132). Images built from releases that predate the baseline binary only contain the default build.
+
 ## Configuration
 
 ### Environment Variables

@@ -19,6 +19,12 @@ const platforms: Platform[] = [
 		description: "Linux x86_64",
 	},
 	{
+		// Bun's default x64 target needs AVX2; baseline only needs SSE4.2/POPCNT
+		target: "bun-linux-x64-baseline",
+		outfile: "better-ccflare-linux-amd64-baseline",
+		description: "Linux x86_64 baseline (CPUs without AVX2)",
+	},
+	{
 		target: "bun-linux-arm64",
 		outfile: "better-ccflare-linux-arm64",
 		description: "Linux ARM64",

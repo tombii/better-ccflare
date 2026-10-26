@@ -153,6 +153,11 @@ wget https://github.com/tombii/better-ccflare/releases/latest/download/better-cc
 chmod +x better-ccflare-linux-amd64
 ./better-ccflare-linux-amd64
 
+# Linux x64, CPUs without AVX2 ("Illegal instruction" with the build above)
+wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-amd64-baseline
+chmod +x better-ccflare-linux-amd64-baseline
+./better-ccflare-linux-amd64-baseline
+
 # Linux ARM64
 wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-arm64
 chmod +x better-ccflare-linux-arm64

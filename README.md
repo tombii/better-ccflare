@@ -91,6 +91,12 @@ wget https://github.com/tombii/better-ccflare/releases/latest/download/better-cc
 chmod +x better-ccflare-linux-amd64
 ./better-ccflare-linux-amd64
 ```
+If it exits with `Illegal instruction`, your CPU has no AVX2 (e.g. AMD Jaguar/GX thin clients, pre-Haswell Intel). Use the baseline build instead:
+```bash
+wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-amd64-baseline
+chmod +x better-ccflare-linux-amd64-baseline
+./better-ccflare-linux-amd64-baseline
+```
 Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
 #### Linux ARM64 (Raspberry Pi 3/4/5, Oracle Cloud ARM, AWS Graviton)
 ```bash

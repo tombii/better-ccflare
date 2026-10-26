@@ -43,14 +43,36 @@ RUN echo "=== Binary Download Information ===" && \
     else \
       DOWNLOAD_URL="https://github.com/tombii/better-ccflare/releases/download/v${VERSION}/better-ccflare-linux-${ARCH}"; \
     fi && \
+    mkdir -p /usr/local/lib/better-ccflare && \
     echo "Downloading from: ${DOWNLOAD_URL}" && \
-    curl -L -f -o /usr/local/bin/better-ccflare "${DOWNLOAD_URL}" || (echo "Failed to download binary from ${DOWNLOAD_URL}"; exit 1) && \
-    chmod +x /usr/local/bin/better-ccflare && \
+    curl -L -f -o /usr/local/lib/better-ccflare/better-ccflare "${DOWNLOAD_URL}" || (echo "Failed to download binary from ${DOWNLOAD_URL}"; exit 1) && \
+    chmod +x /usr/local/lib/better-ccflare/better-ccflare && \
     echo "Binary downloaded successfully" && \
-    file /usr/local/bin/better-ccflare && \
+    file /usr/local/lib/better-ccflare/better-ccflare && \
     # Verify the binary can execute (basic sanity check)
-    /usr/local/bin/better-ccflare --version || (echo "Binary verification failed - exec format error"; exit 1) && \
+    /usr/local/lib/better-ccflare/better-ccflare --version || (echo "Binary verification failed - exec format error"; exit 1) && \
+    # amd64 also ships the baseline build for CPUs without AVX2 (missing on older releases)
+    if [ "${ARCH}" = "amd64" ]; then \
+      if curl -L -f -o /usr/local/lib/better-ccflare/better-ccflare-baseline "${DOWNLOAD_URL}-baseline"; then \
+        chmod +x /usr/local/lib/better-ccflare/better-ccflare-baseline && \
+        /usr/local/lib/better-ccflare/better-ccflare-baseline --version || (echo "Baseline binary verification failed"; exit 1); \
+      else \
+        rm -f /usr/local/lib/better-ccflare/better-ccflare-baseline; \
+        echo "No baseline binary at ${DOWNLOAD_URL}-baseline; CPUs without AVX2 are not supported by this image"; \
+      fi; \
+    fi && \
     echo "==================================="
+
+# Pick the baseline build at runtime when the CPU lacks AVX2 (the default x64 build dies with SIGILL)
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'BIN_DIR=/usr/local/lib/better-ccflare' \
+      'if [ -x "$BIN_DIR/better-ccflare-baseline" ] && ! grep -qw avx2 /proc/cpuinfo; then' \
+      '  exec "$BIN_DIR/better-ccflare-baseline" "$@"' \
+      'fi' \
+      'exec "$BIN_DIR/better-ccflare" "$@"' \
+      > /usr/local/bin/better-ccflare && \
+    chmod +x /usr/local/bin/better-ccflare
 
 # Create a non-root user to run the application
 RUN useradd -r -u 1000 -m -s /bin/bash ccflare && \
