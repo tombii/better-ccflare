@@ -49,17 +49,21 @@ RUN echo "=== Binary Download Information ===" && \
     chmod +x /usr/local/lib/better-ccflare/better-ccflare && \
     echo "Binary downloaded successfully" && \
     file /usr/local/lib/better-ccflare/better-ccflare && \
-    # Verify the binary can execute (basic sanity check)
-    /usr/local/lib/better-ccflare/better-ccflare --version || (echo "Binary verification failed - exec format error"; exit 1) && \
-    # amd64 also ships the baseline build for CPUs without AVX2 (missing on older releases)
+    # amd64 also ships the baseline build for CPUs without AVX2. Only a confirmed 404 means
+    # "older release without it"; network errors and other HTTP codes fail the build so a
+    # published image never silently loses baseline support.
     if [ "${ARCH}" = "amd64" ]; then \
-      if curl -L -f -o /usr/local/lib/better-ccflare/better-ccflare-baseline "${DOWNLOAD_URL}-baseline"; then \
-        chmod +x /usr/local/lib/better-ccflare/better-ccflare-baseline && \
-        /usr/local/lib/better-ccflare/better-ccflare-baseline --version || (echo "Baseline binary verification failed"; exit 1); \
-      else \
-        rm -f /usr/local/lib/better-ccflare/better-ccflare-baseline; \
-        echo "No baseline binary at ${DOWNLOAD_URL}-baseline; CPUs without AVX2 are not supported by this image"; \
-      fi; \
+      BASELINE_HTTP=$(curl -L -sS --retry 3 --retry-delay 2 \
+        -o /usr/local/lib/better-ccflare/better-ccflare-baseline \
+        -w '%{http_code}' "${DOWNLOAD_URL}-baseline") || \
+        { echo "Failed to download ${DOWNLOAD_URL}-baseline (network error)"; exit 1; }; \
+      case "${BASELINE_HTTP}" in \
+        200) chmod +x /usr/local/lib/better-ccflare/better-ccflare-baseline && \
+             echo "Baseline binary downloaded successfully" ;; \
+        404) rm -f /usr/local/lib/better-ccflare/better-ccflare-baseline && \
+             echo "No baseline binary at ${DOWNLOAD_URL}-baseline (older release); CPUs without AVX2 are not supported by this image" ;; \
+        *) echo "Unexpected HTTP ${BASELINE_HTTP} downloading ${DOWNLOAD_URL}-baseline"; exit 1 ;; \
+      esac; \
     fi && \
     echo "==================================="
 
@@ -73,6 +77,16 @@ RUN printf '%s\n' \
       'exec "$BIN_DIR/better-ccflare" "$@"' \
       > /usr/local/bin/better-ccflare && \
     chmod +x /usr/local/bin/better-ccflare
+
+# Verify through the wrapper so the build host runs the binary its CPU supports (building on a
+# CPU without AVX2 no longer dies on the default build); the baseline build runs on any x86-64,
+# so it is always checked when present.
+RUN /usr/local/bin/better-ccflare --version || \
+      { echo "Binary verification failed: exec format error, or this CPU lacks AVX2 and the release has no baseline binary"; exit 1; } && \
+    if [ -x /usr/local/lib/better-ccflare/better-ccflare-baseline ]; then \
+      /usr/local/lib/better-ccflare/better-ccflare-baseline --version || \
+        { echo "Baseline binary verification failed"; exit 1; }; \
+    fi
 
 # Create a non-root user to run the application
 RUN useradd -r -u 1000 -m -s /bin/bash ccflare && \
