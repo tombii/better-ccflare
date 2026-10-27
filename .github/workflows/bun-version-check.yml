@@ -110,43 +110,7 @@ jobs:
           set -euo pipefail
           branch="chore/bun-version-${LATEST}"
 
-          # Reuse the branch if it already exists (e.g. rerun the same day).
-          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-            echo "Branch $branch already exists; nothing to do."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$branch"
-
-          echo "$LATEST" > .bun-version
-
-          # Keep package.json in step with the pinned runtime.
-          python3 - "$LATEST" <<'PY'
-          import json, sys
-          latest = sys.argv[1]
-          with open("package.json") as f:
-              pkg = json.load(f)
-          pkg["packageManager"] = f"bun@{latest}"
-          pkg["engines"]["bun"] = f">={latest}"
-          pkg.setdefault("overrides", {})["bun"] = latest
-          with open("package.json", "w") as f:
-              json.dump(pkg, f, indent="\t")
-              f.write("\n")
-          PY
-
-          # Re-resolve the lockfile with the new Bun so the transitive `bun`
-          # package (pulled in as a peer of bun-plugin-tailwind) follows the
-          # override.
-          curl -fsSL https://bun.com/install | bash
-          export PATH="$HOME/.bun/bin:$PATH"
-          bun --version
-          bun install
-
-          git add .bun-version package.json bun.lock
-          git commit -m "chore: bump Bun to ${LATEST}"
-          git push origin "$branch"
+          branch="chore/bun-version-${LATEST}"
 
           cat > body.md <<EOF
           Automated daily check from \`bun-version-check\`.
@@ -165,8 +129,55 @@ jobs:
           built binaries embed the pinned version and refuses to ship otherwise.
           EOF
 
+          # A previous run may have pushed the branch but failed before opening
+          # the PR (or the PR was closed). In that case the branch is reused as
+          # is: a rerun of the same version must be able to finish the job.
+          open_pr=$(gh pr list --head "$branch" --state open --json number --jq 'length')
+          if [ "$open_pr" != "0" ]; then
+            echo "PR for $branch is already open; nothing to do."
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch exists without an open PR; opening the PR."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch -c "$branch"
+
+            echo "$LATEST" > .bun-version
+
+            # Keep package.json in step with the pinned runtime.
+            python3 - "$LATEST" <<'PY'
+            import json, sys
+            latest = sys.argv[1]
+            with open("package.json") as f:
+                pkg = json.load(f)
+            pkg["packageManager"] = f"bun@{latest}"
+            pkg["engines"]["bun"] = f">={latest}"
+            pkg.setdefault("overrides", {})["bun"] = latest
+            with open("package.json", "w") as f:
+                json.dump(pkg, f, indent="\t")
+                f.write("\n")
+            PY
+
+            # Re-resolve the lockfile with the new Bun so the transitive `bun`
+            # package (pulled in as a peer of bun-plugin-tailwind) follows the
+            # override.
+            curl -fsSL https://bun.com/install | bash
+            export PATH="$HOME/.bun/bin:$PATH"
+            bun --version
+            bun install
+
+            git add .bun-version package.json bun.lock
+            git commit -m "chore: bump Bun to ${LATEST}"
+            git push origin "$branch"
+          fi
+
+          # No `|| true` here: a failed PR creation must fail the run so it is
+          # visible and retried, instead of leaving a branch with no PR.
           gh pr create \
             --title "chore: bump Bun to ${LATEST}" \
             --body-file body.md \
             --base main \
-            --head "$branch" || echo "PR already exists"
+            --head "$branch"

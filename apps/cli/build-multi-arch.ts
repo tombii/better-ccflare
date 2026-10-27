@@ -301,10 +301,14 @@ function readBunVersion(binary: string): string | null {
  */
 function verifyBinary(binary: string, platform: Platform) {
 	const pinned = readFileSync(join(projectRoot, ".bun-version"), "utf8").trim();
-	const hostTarget = process.platform === "win32" ? "win" : "linux";
+	// Must match the "bun-<os>-…" target names, so darwin stays darwin.
+	const hostTarget =
+		process.platform === "win32" ? "windows" : process.platform;
+	// Linux targets are named amd64/arm64, the darwin/windows ones x64/arm64.
+	const isArm64 = platform.target.includes("arm64");
 	const native =
 		platform.target.startsWith(`bun-${hostTarget}`) &&
-		process.arch === (platform.target.includes("arm64") ? "arm64" : "x64");
+		(isArm64 ? process.arch === "arm64" : process.arch === "x64");
 
 	// Relative executables are resolved against the parent cwd, not ours.
 	const path = resolve("dist", basename(binary));
