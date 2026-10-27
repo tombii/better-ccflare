@@ -24,8 +24,12 @@
 		"format": "bunx biome format --write .",
 		"lint": "bunx --bun biome check --write --unsafe ."
 	},
+	"packageManager": "bun@1.4.4",
 	"engines": {
-		"bun": ">=1.2.8"
+		"bun": ">=1.4.4"
+	},
+	"overrides": {
+		"bun": "1.4.4"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.4.10",

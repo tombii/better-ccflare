@@ -37,7 +37,9 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # Single source of truth, shared with package.json and the build
+          # scripts; bumped by the daily Bun version check PR.
+          bun-version-file: .bun-version
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
