@@ -1,0 +1,183 @@
+name: Bun Version Check
+
+# Daily check for a newer Bun release or a Bun security advisory. Opens (or
+# updates) a PR bumping .bun-version — never pushes to main and never touches a
+# release on its own. Mirrors CLAUDE_CLI_VERSION tracking: humans review the
+# bump, the schedule only creates the reminder.
+
+on:
+  schedule:
+    # 06:17 UTC daily — offset from other scheduled jobs to avoid piling on
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bun-version-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Set up pinned Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Check latest Bun release and advisories
+        id: bun
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          current=$(tr -d '[:space:]' < .bun-version)
+          latest=$(gh api repos/oven-sh/bun/releases/latest --jq '.tag_name' | sed 's/^bun-v//')
+
+          # High/critical advisories, listed in the PR body.
+          advisories=$(gh api "repos/oven-sh/bun/security-advisories?per_page=100" \
+            --jq '[.[] | select(.severity == "high" or .severity == "critical")
+                   | "\(.ghsa_id) [\(.severity)] \(.summary)"] | .[0:10] | join("\n")')
+
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          {
+            echo "advisories<<EOF"
+            echo "$advisories"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          # Bump when Bun publishes a new version, or when any advisory exists
+          # for the pinned version. Version-only comparison would have missed
+          # 1.3.11 → 1.4.4: the later 1.4.x line exists, but the advisory
+          # ranges (`>=1.0.21,<1.4.4`) are what make the bump urgent.
+          affected=false
+          for adv in $(gh api "repos/oven-sh/bun/security-advisories?per_page=100" \
+              --jq ".[] | select(.severity == \"high\" or .severity == \"critical\") | .ghsa_id"); do
+            range=$(gh api "repos/oven-sh/bun/security-advisories/${adv}" \
+              --jq '.vulnerabilities[0].vulnerable_version_range')
+            if bun -e '
+              const [semver, range] = process.argv.slice(2);
+              const cmp = (a, b) => {
+                const x = a.split(".").map(Number);
+                const y = b.split(".").map(Number);
+                for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i];
+                return 0;
+              };
+              const ok = range
+                .split(",")
+                .map((p) => p.trim())
+                .filter(Boolean)
+                .every((p) => {
+                  const m = /^(>=|>|<=|<)\s*v?(\d+\.\d+\.\d+)$/.exec(p);
+                  if (!m) return true;
+                  const c = cmp(semver, m[2]);
+                  return m[1] === ">=" ? c >= 0
+                    : m[1] === ">" ? c > 0
+                    : m[1] === "<=" ? c <= 0
+                    : c < 0;
+                });
+              process.exit(ok ? 0 : 1);
+            ' "$current" "$range"; then
+              affected=true
+              break
+            fi
+          done
+          echo "affected=$affected" >> "$GITHUB_OUTPUT"
+
+          if [ "$current" != "$latest" ] || [ "$affected" = "true" ]; then
+            echo "update=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "update=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update bump PR
+        if: steps.bun.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT: ${{ steps.bun.outputs.current }}
+          LATEST: ${{ steps.bun.outputs.latest }}
+          ADVISORIES: ${{ steps.bun.outputs.advisories }}
+        run: |
+          set -euo pipefail
+          branch="chore/bun-version-${LATEST}"
+
+          branch="chore/bun-version-${LATEST}"
+
+          cat > body.md <<EOF
+          Automated daily check from \`bun-version-check\`.
+
+          - \`.bun-version\`: \`${CURRENT}\` → \`${LATEST}\`
+          - \`package.json\`: \`packageManager\`, \`engines.bun\`, \`overrides.bun\` updated
+          - \`bun.lock\` re-resolved
+
+          Recent high/critical Bun advisories (GHSA list):
+
+          \`\`\`
+          ${ADVISORIES}
+          \`\`\`
+
+          Before merging, confirm CI is green. The release workflow verifies that
+          built binaries embed the pinned version and refuses to ship otherwise.
+          EOF
+
+          # A previous run may have pushed the branch but failed before opening
+          # the PR (or the PR was closed). In that case the branch is reused as
+          # is: a rerun of the same version must be able to finish the job.
+          open_pr=$(gh pr list --head "$branch" --state open --json number --jq 'length')
+          if [ "$open_pr" != "0" ]; then
+            echo "PR for $branch is already open; nothing to do."
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch exists without an open PR; opening the PR."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch -c "$branch"
+
+            echo "$LATEST" > .bun-version
+
+            # Keep package.json in step with the pinned runtime.
+            python3 - "$LATEST" <<'PY'
+            import json, sys
+            latest = sys.argv[1]
+            with open("package.json") as f:
+                pkg = json.load(f)
+            pkg["packageManager"] = f"bun@{latest}"
+            pkg["engines"]["bun"] = f">={latest}"
+            pkg.setdefault("overrides", {})["bun"] = latest
+            with open("package.json", "w") as f:
+                json.dump(pkg, f, indent="\t")
+                f.write("\n")
+            PY
+
+            # Re-resolve the lockfile with the new Bun so the transitive `bun`
+            # package (pulled in as a peer of bun-plugin-tailwind) follows the
+            # override.
+            curl -fsSL https://bun.com/install | bash
+            export PATH="$HOME/.bun/bin:$PATH"
+            bun --version
+            bun install
+
+            git add .bun-version package.json bun.lock
+            git commit -m "chore: bump Bun to ${LATEST}"
+            git push origin "$branch"
+          fi
+
+          # No `|| true` here: a failed PR creation must fail the run so it is
+          # visible and retried, instead of leaving a branch with no PR.
+          gh pr create \
+            --title "chore: bump Bun to ${LATEST}" \
+            --body-file body.md \
+            --base main \
+            --head "$branch"

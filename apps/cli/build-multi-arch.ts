@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 
 interface Platform {
 	target: string;
@@ -39,6 +39,25 @@ const platforms: Platform[] = [
 		description: "Windows x86_64",
 	},
 ];
+
+/**
+ * Run `bun build` with the Bun that is executing this script, not whatever
+ * `bun` happens to be first on PATH. `node_modules/.bin/bun` (the npm `bun`
+ * package, historically pinned to an old version by bun.lock) used to win over
+ * the CI's setup-bun runtime, so releases were silently compiled by a stale
+ * Bun. process.execPath is the runtime running this file, which is the one the
+ * workflow selected from .bun-version.
+ */
+function bunBuild(args: string[]) {
+	// Bun 1.4.4 drops a space-form `--define X=Y` argument passed as its own
+	// argv entry (it then ignores --outfile and writes ./main). Normalise every
+	// `--flag value` entry to `--flag=value`.
+	const argv = args.map((arg) => {
+		const m = /^(--[a-z-]+) (.*)$/.exec(arg);
+		return m ? `${m[1]}=${m[2]}` : arg;
+	});
+	execFileSync(process.execPath, ["build", ...argv], { stdio: "inherit" });
+}
 
 async function buildWorker() {
 	console.log("🔨 Building workers...");
@@ -92,10 +111,13 @@ async function buildWorker() {
 	}
 
 	// Build vacuum worker
-	execSync(
-		`bun build ../../packages/database/src/vacuum-worker.ts --outfile dist/vacuum-worker.js --target=bun --minify`,
-		{ stdio: "inherit" },
-	);
+	bunBuild([
+		"../../packages/database/src/vacuum-worker.ts",
+		"--outfile",
+		"dist/vacuum-worker.js",
+		"--target=bun",
+		"--minify",
+	]);
 
 	// Encode vacuum worker
 	const vacuumWorkerCode = await Bun.file("dist/vacuum-worker.js").text();
@@ -112,10 +134,13 @@ async function buildWorker() {
 	);
 
 	// Build integrity-check worker
-	execSync(
-		`bun build ../../packages/database/src/integrity-check-worker.ts --outfile dist/integrity-check-worker.js --target=bun --minify`,
-		{ stdio: "inherit" },
-	);
+	bunBuild([
+		"../../packages/database/src/integrity-check-worker.ts",
+		"--outfile",
+		"dist/integrity-check-worker.js",
+		"--target=bun",
+		"--minify",
+	]);
 
 	// Encode integrity-check worker
 	const integrityCheckWorkerCode = await Bun.file(
@@ -136,10 +161,13 @@ async function buildWorker() {
 	);
 
 	// Build incremental-vacuum worker
-	execSync(
-		`bun build ../../packages/database/src/incremental-vacuum-worker.ts --outfile dist/incremental-vacuum-worker.js --target=bun --minify`,
-		{ stdio: "inherit" },
-	);
+	bunBuild([
+		"../../packages/database/src/incremental-vacuum-worker.ts",
+		"--outfile",
+		"dist/incremental-vacuum-worker.js",
+		"--target=bun",
+		"--minify",
+	]);
 
 	// Encode incremental-vacuum worker
 	const incVacuumWorkerCode = await Bun.file(
@@ -158,10 +186,13 @@ async function buildWorker() {
 	);
 
 	// Build wal-truncate worker
-	execSync(
-		`bun build ../../packages/database/src/wal-truncate-worker.ts --outfile dist/wal-truncate-worker.js --target=bun --minify`,
-		{ stdio: "inherit" },
-	);
+	bunBuild([
+		"../../packages/database/src/wal-truncate-worker.ts",
+		"--outfile",
+		"dist/wal-truncate-worker.js",
+		"--target=bun",
+		"--minify",
+	]);
 
 	// Encode wal-truncate worker
 	const walTruncateWorkerCode = await Bun.file(
@@ -199,18 +230,21 @@ async function buildPlatform(platform: Platform) {
 		? `${packageJson.version}+${suffix}`
 		: packageJson.version;
 
-	const buildCmd = [
-		"bun build src/main.ts",
+	// --outfile and --define use the --flag=value form; bun 1.4.4 drops a
+	// space-separated --define passed through execFileSync and then writes the
+	// executable as ./main, ignoring --outfile, while still exiting 0.
+	const buildArgs = [
+		"src/main.ts",
 		"--compile",
-		`--outfile dist/${platform.outfile}`,
+		`--outfile=dist/${platform.outfile}`,
 		`--target=${platform.target}`,
 		"--minify",
-		`--define __BETTER_CCFLARE_VERSION__='"${version}"'`,
-	].join(" ");
+		`--define=__BETTER_CCFLARE_VERSION__="${version}"`,
+	];
 
 	try {
-		execSync(buildCmd, { stdio: "inherit" });
-		console.log(`✅ ${platform.description} build complete\n`);
+		bunBuild(buildArgs);
+		verifyBinary(`dist/${platform.outfile}`, platform);
 	} catch (error) {
 		console.error(`❌ Failed to build for ${platform.description}`);
 		throw error;
@@ -219,6 +253,8 @@ async function buildPlatform(platform: Platform) {
 
 async function main() {
 	console.log("🚀 Starting multi-architecture build...\n");
+
+	assertBunVersion();
 
 	// Create dist directory
 	mkdirSync("dist", { recursive: true });
@@ -243,6 +279,69 @@ async function main() {
 	console.log("\n📦 Built binaries:");
 	for (const platform of platformsToBuild) {
 		console.log(`   - dist/${platform.outfile} (${platform.description})`);
+	}
+}
+
+/**
+ * Read the Bun version embedded in a compiled executable. The standalone
+ * binary has no --version for the runtime (that flag goes to the app), so scan
+ * the image for the `Bun vX.Y.Z` string Bun writes into every executable.
+ */
+function readBunVersion(binary: string): string | null {
+	const image = readFileSync(binary).toString("latin1");
+	const match = /Bun v(\d+\.\d+\.\d+)/.exec(image);
+	return match ? match[1] : null;
+}
+
+/**
+ * Smoke-run a freshly compiled binary and prove it embeds the pinned Bun.
+ * The embedded runtime is the one that ran the build (bunBuild uses
+ * process.execPath), so this is the only check that proves what ships — the
+ * CI runtime installed by setup-bun never reaches the artefact.
+ */
+function verifyBinary(binary: string, platform: Platform) {
+	const pinned = readFileSync(join(projectRoot, ".bun-version"), "utf8").trim();
+	// Must match the "bun-<os>-…" target names, so darwin stays darwin.
+	const hostTarget =
+		process.platform === "win32" ? "windows" : process.platform;
+	// Linux targets are named amd64/arm64, the darwin/windows ones x64/arm64.
+	const isArm64 = platform.target.includes("arm64");
+	const native =
+		platform.target.startsWith(`bun-${hostTarget}`) &&
+		(isArm64 ? process.arch === "arm64" : process.arch === "x64");
+
+	// Relative executables are resolved against the parent cwd, not ours.
+	const path = resolve("dist", basename(binary));
+	const embedded = readBunVersion(path);
+	if (embedded !== pinned) {
+		throw new Error(
+			`${binary} embeds Bun ${embedded ?? "(unknown)"}, but .bun-version pins ${pinned}`,
+		);
+	}
+	console.log(`   embedded Bun ${embedded} matches .bun-version`);
+
+	if (!native) {
+		console.log(
+			`   (${platform.description}: cross-target, not executable here)`,
+		);
+		return;
+	}
+	execFileSync(path, ["--version"], { stdio: "inherit" });
+}
+
+/**
+ * Fail unless the Bun that compiled this build is the one pinned in
+ * .bun-version. Catches both the child-process compiler mismatching the runner
+ * and a workflow installing a different runtime, before any artefact ships.
+ */
+function assertBunVersion() {
+	const pinned = readFileSync(join(projectRoot, ".bun-version"), "utf8").trim();
+	const running = Bun.version;
+	if (running !== pinned) {
+		throw new Error(
+			`Bun version mismatch: building with ${running} but .bun-version pins ${pinned}. ` +
+				`Install ${pinned} (https://bun.com/docs/installation) or update .bun-version.`,
+		);
 	}
 }
 
