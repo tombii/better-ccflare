@@ -1565,6 +1565,11 @@ export class CodexProvider extends BaseProvider {
 			return null;
 		let error: { code?: unknown; param?: unknown; type?: unknown } | undefined;
 		try {
+			// Clone only after the content-type gate: cloning first teed the body
+			// and returning here for a non-JSON 400/404 left that copy unread, so
+			// the tee buffers for whoever consumes the original. See #382, #356.
+			if (!response.headers.get("content-type")?.includes("application/json"))
+				return null;
 			error = ((await response.clone().json()) as { error?: typeof error })
 				.error;
 		} catch {
@@ -2353,6 +2358,11 @@ export class CodexProvider extends BaseProvider {
 			return response;
 		}
 		try {
+			// Clone only after the content-type gate: a non-JSON 200 took the
+			// clone and then the throw path, leaving the tee branch unread. See
+			// #382, #356.
+			if (!response.headers.get("content-type")?.includes("application/json"))
+				throw new Error("non-JSON content-type");
 			const raw = (await response.clone().json()) as {
 				models?: Array<
 					Record<string, unknown> & {

@@ -93,6 +93,37 @@ test("surfaces malformed Codex model-list responses as an error instead of an em
 	expect(body.error?.type).toBe("api_error");
 });
 
+test("treats non-JSON Codex model-list responses as unparseable without throwing", async () => {
+	const provider = new CodexProvider();
+	const response = new Response("<html>bad gateway</html>", {
+		status: 200,
+		headers: {
+			"content-type": "text/html",
+			"x-better-ccflare-request-path": "/v1/models",
+		},
+	});
+
+	const transformed = await provider.processResponse(response, null);
+
+	expect(transformed.status).toBe(502);
+	const body = (await transformed.json()) as { error?: { type?: string } };
+	expect(body.error?.type).toBe("api_error");
+});
+
+test("treats a Codex model-list response with no content-type as unparseable", async () => {
+	const provider = new CodexProvider();
+	const response = new Response('{"models":[{"slug":"gpt-6-astra"}]}', {
+		status: 200,
+		headers: { "x-better-ccflare-request-path": "/v1/models" },
+	});
+
+	const transformed = await provider.processResponse(response, null);
+
+	expect(transformed.status).toBe(502);
+	const body = (await transformed.json()) as { error?: { type?: string } };
+	expect(body.error?.type).toBe("api_error");
+});
+
 test("passes through non-2xx Codex model-list responses unchanged", async () => {
 	const provider = new CodexProvider();
 	const response = new Response("upstream down", {
