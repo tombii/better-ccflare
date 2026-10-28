@@ -2361,8 +2361,15 @@ export class CodexProvider extends BaseProvider {
 			// Clone only after the content-type gate: a non-JSON 200 took the
 			// clone and then the throw path, leaving the tee branch unread. See
 			// #382, #356.
-			if (!response.headers.get("content-type")?.includes("application/json"))
-				throw new Error("non-JSON content-type");
+			const contentType = response.headers.get("content-type");
+			if (!contentType?.includes("application/json")) {
+				// We replace this response, so the caller never reads the
+				// original body — drain it or its native buffer leaks (#273).
+				if (response.body && !response.body.locked) {
+					void drainReader(response.body.getReader());
+				}
+				throw new Error(`non-JSON content-type (${contentType ?? "none"})`);
+			}
 			const raw = (await response.clone().json()) as {
 				models?: Array<
 					Record<string, unknown> & {

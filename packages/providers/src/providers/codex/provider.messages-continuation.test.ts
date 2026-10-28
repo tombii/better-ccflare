@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type { Account } from "@better-ccflare/types";
 import { CodexProvider } from "./provider";
 
@@ -570,13 +570,17 @@ describe("Messages fallback cache and continuation", () => {
 			});
 			const headers: Record<string, string> = {};
 			if (contentType) headers["content-type"] = contentType;
+			const rejected = new Response("<html>bad gateway</html>", {
+				status: 400,
+				headers,
+			});
+			// A clone above the gate keeps the same `null` result but strands the
+			// tee branch, so assert the clone never happens (#382).
+			const clone = spyOn(rejected, "clone");
 			expect(
-				await provider.recoverMessagesContinuation(
-					new Response("<html>bad gateway</html>", { status: 400, headers }),
-					original,
-					account,
-				),
+				await provider.recoverMessagesContinuation(rejected, original, account),
 			).toBeNull();
+			expect(clone).not.toHaveBeenCalled();
 		});
 	test("unrelated HTTP errors do not trigger continuation recovery", async () => {
 		const provider = new CodexProvider();
