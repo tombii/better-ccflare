@@ -136,6 +136,16 @@ function emitStreamEnd(
 		contextWindowSize > 0
 			? contextWindowSize
 			: undefined;
+	// promptTokens is the upstream cache-inclusive total (OpenAI/xAI semantics);
+	// Anthropic's input_tokens and context_window.current_usage.input_tokens are
+	// both additive and must exclude the cached subset, otherwise the proxy's
+	// usage collector adds input_tokens and cache_read_input_tokens together and
+	// records the cached prompt twice.
+	const cachedTokens = Math.max(
+		0,
+		Math.min(cacheReadInputTokens, promptTokens),
+	);
+	const uncachedInputTokens = Math.max(0, promptTokens - cachedTokens);
 	const messageDelta = {
 		type: "message_delta",
 		delta: {
@@ -143,27 +153,19 @@ function emitStreamEnd(
 			stop_sequence: null,
 		},
 		usage: {
-			input_tokens: promptTokens,
+			input_tokens: uncachedInputTokens,
 			output_tokens: completionTokens,
-			cache_read_input_tokens: cacheReadInputTokens,
+			cache_read_input_tokens: cachedTokens,
 			cache_creation_input_tokens: cacheCreationInputTokens,
 		},
 		...(advertisedContextWindow
 			? {
 					context_window: {
-						// promptTokens is the upstream cache-inclusive total (OpenAI/xAI
-						// semantics); Anthropic's context_window.current_usage.input_tokens
-						// is additive and must exclude the cached subset, matching the
+						// Same additive-normalization as usage above, matching the
 						// normalization CodexProvider applies via normalizeCodexInputUsage.
 						current_usage: {
-							input_tokens: Math.max(
-								0,
-								promptTokens - Math.min(cacheReadInputTokens, promptTokens),
-							),
-							cache_read_input_tokens: Math.min(
-								cacheReadInputTokens,
-								promptTokens,
-							),
+							input_tokens: uncachedInputTokens,
+							cache_read_input_tokens: cachedTokens,
 							cache_creation_input_tokens: cacheCreationInputTokens,
 						},
 						context_window_size: advertisedContextWindow,

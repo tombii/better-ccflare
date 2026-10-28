@@ -375,6 +375,62 @@ describe("transformStreamingResponse — text responses", () => {
 		expect(JSON.parse(msgDelta.data)).not.toHaveProperty("context_window");
 	});
 
+	it("does not double-count cached tokens in message_delta usage", async () => {
+		// Reproduces request 280cee17-3dbb-49cb-8928-314d81f724f6 (codebuddy,
+		// deepseek-v4.1-flash): prompt_tokens is cache-inclusive upstream, so
+		// Anthropic's additive input_tokens must exclude the cached subset or
+		// the proxy records 33730 + 33536 input tokens for a 194-token prompt.
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-v4.1-flash",
+				choices: [{ index: 0, delta: { content: "Hi" }, finish_reason: null }],
+				usage: {
+					prompt_tokens: 33730,
+					completion_tokens: 61,
+					prompt_tokens_details: { cached_tokens: 33536 },
+				},
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body);
+		const events = parseSSEEvents(raw);
+		const msgDelta = events.find((e) => e.event === "message_delta");
+		expect(msgDelta).toBeDefined();
+		if (!msgDelta) throw new Error("expected message_delta event");
+		const usage = JSON.parse(msgDelta.data).usage;
+
+		expect(usage).toEqual({
+			input_tokens: 194,
+			output_tokens: 61,
+			cache_read_input_tokens: 33536,
+			cache_creation_input_tokens: 0,
+		});
+	});
+
+	it("keeps message_delta input_tokens as the full prompt when nothing is cached", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "grok-4.6",
+				choices: [{ index: 0, delta: { content: "Hi" }, finish_reason: null }],
+				usage: { prompt_tokens: 20, completion_tokens: 5 },
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body);
+		const events = parseSSEEvents(raw);
+		const msgDelta = events.find((e) => e.event === "message_delta");
+		expect(msgDelta).toBeDefined();
+		if (!msgDelta) throw new Error("expected message_delta event");
+		const usage = JSON.parse(msgDelta.data).usage;
+
+		expect(usage.input_tokens).toBe(20);
+		expect(usage.cache_read_input_tokens).toBe(0);
+	});
+
 	it("does not double-count a fully cached prompt in context_window.current_usage", async () => {
 		const upstream = makeOpenAIStream([
 			JSON.stringify({
