@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { CodexProvider } from "./provider";
 
 test("preserves custom tool calls in labeled Codex SSE", async () => {
@@ -91,6 +91,71 @@ test("surfaces malformed Codex model-list responses as an error instead of an em
 	expect(transformed.status).toBe(502);
 	const body = (await transformed.json()) as { error?: { type?: string } };
 	expect(body.error?.type).toBe("api_error");
+});
+
+test("treats non-JSON Codex model-list responses as unparseable without throwing", async () => {
+	const provider = new CodexProvider();
+	const response = new Response("<html>bad gateway</html>", {
+		status: 200,
+		headers: {
+			"content-type": "text/html",
+			"x-better-ccflare-request-path": "/v1/models",
+		},
+	});
+
+	// A clone above the gate still yields the 502, so assert it never happens:
+	// the tee branch it strands is the leak (#382).
+	const clone = spyOn(response, "clone");
+	const transformed = await provider.processResponse(response, null);
+
+	expect(clone).not.toHaveBeenCalled();
+	expect(transformed.status).toBe(502);
+	const body = (await transformed.json()) as { error?: { type?: string } };
+	expect(body.error?.type).toBe("api_error");
+});
+
+test("treats a Codex model-list response with no content-type as unparseable", async () => {
+	const provider = new CodexProvider();
+	const response = new Response('{"models":[{"slug":"gpt-6-astra"}]}', {
+		status: 200,
+		headers: { "x-better-ccflare-request-path": "/v1/models" },
+	});
+
+	const clone = spyOn(response, "clone");
+	const transformed = await provider.processResponse(response, null);
+
+	expect(clone).not.toHaveBeenCalled();
+	expect(transformed.status).toBe(502);
+	const body = (await transformed.json()) as { error?: { type?: string } };
+	expect(body.error?.type).toBe("api_error");
+});
+
+test("drains the discarded non-JSON model-list body instead of abandoning it", async () => {
+	const provider = new CodexProvider();
+	let pulls = 0;
+	const upstream = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			pulls += 1;
+			if (pulls <= 2) controller.enqueue(new TextEncoder().encode("<html>"));
+			else controller.close();
+		},
+	});
+	const response = new Response(upstream, {
+		status: 200,
+		headers: {
+			"content-type": "text/html",
+			"x-better-ccflare-request-path": "/v1/models",
+		},
+	});
+
+	const transformed = await provider.processResponse(response, null);
+
+	expect(transformed.status).toBe(502);
+	// The drain is fire-and-forget; let it run to `done`.
+	for (let i = 0; i < 20 && pulls <= 2; i++) {
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	}
+	expect(pulls).toBeGreaterThan(2);
 });
 
 test("passes through non-2xx Codex model-list responses unchanged", async () => {
