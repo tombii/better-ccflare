@@ -391,6 +391,51 @@ describe("CodeBuddyProvider", () => {
 			expect(body.store).toBe(false);
 		});
 
+		it("strips the canonical identity opener and powered-by line from system messages", async () => {
+			const transformed = await provider.transformRequestBody(
+				anthropicRequest({
+					system:
+						"You are Claude Code, Anthropic's official CLI for Claude.\n\nYou are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5. Assistant knowledge cutoff is June 2026.\n\nHelp with tasks.",
+				}),
+				makeAccount(),
+			);
+			const body = (await transformed.json()) as {
+				messages: Array<{ role: string; content: unknown }>;
+			};
+			const system = body.messages.find((m) => m.role === "system");
+			const text = JSON.stringify(system?.content);
+			// The gateway 11128-fingerprints the canonical sentence (A/B-probed
+			// against the live gateway on 2026-10-29); the powered-by line names
+			// a model that is wrong on CodeBuddy anyway.
+			expect(text).not.toContain("official CLI for Claude");
+			expect(text).not.toContain("powered by the model named");
+			expect(text).not.toContain("knowledge cutoff");
+			expect(text).toContain("Help with tasks.");
+		});
+
+		it("leaves non-system messages untouched by the identity strip", async () => {
+			const transformed = await provider.transformRequestBody(
+				anthropicRequest({
+					system: "You are an assistant.",
+					messages: [
+						{
+							role: "user",
+							content:
+								"You are Claude Code, Anthropic's official CLI for Claude. Translate this.",
+						},
+					],
+				}),
+				makeAccount(),
+			);
+			const body = (await transformed.json()) as {
+				messages: Array<{ role: string; content: unknown }>;
+			};
+			const user = body.messages.find((m) => m.role === "user");
+			expect(JSON.stringify(user)).toContain(
+				"You are Claude Code, Anthropic's official CLI for Claude.",
+			);
+		});
+
 		it("attaches harnessMetadata as a JSON-string extra_vars envelope", async () => {
 			const transformed = await provider.transformRequestBody(
 				anthropicRequest(),

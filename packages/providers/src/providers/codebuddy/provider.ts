@@ -241,6 +241,54 @@ function normalizeToolChoice(record: Record<string, unknown>): void {
 }
 
 /**
+ * Claude Code client-identity sentences that CodeBuddy's gateway 11128
+ * channel verification fingerprints in system messages (2026-10-29):
+ *  - the canonical opener "You are Claude Code, Anthropic's official CLI for
+ *    Claude." — A/B-probed against the live gateway with the identical failing
+ *    body: present → 11128, absent/paraphrased → accepted. Neither brand token
+ *    alone triggers it; only the canonical sentence does.
+ *  - the "You are powered by the model named ... The exact model ID is ...
+ *    Assistant knowledge cutoff is ..." line — removed as well: it names the
+ *    Claude model ccflare would have used, which is wrong on CodeBuddy where
+ *    the mapped model (e.g. deepseek) actually answers.
+ * Both sentences are removed outright; everything else in the system prompt
+ * (brand names, model mentions, environment details) passes unchanged, and
+ * conversation messages are never touched.
+ */
+const CLAUDE_CODE_IDENTITY_PATTERN =
+	/You are Claude Code, Anthropic['’]s official CLI for Claude\.?\n*/g;
+const POWERED_BY_PATTERN =
+	/You are powered by the model named .*? Assistant knowledge cutoff is [^.]+\.\n*/g;
+
+/**
+ * Strip the client-identity sentences inside system messages. Conversation
+ * messages are never touched — the gateway only flags the system prompt, and
+ * conversation content is the caller's data.
+ */
+function stripClaudeCodeIdentity(record: Record<string, unknown>): void {
+	const messages = record.messages;
+	if (!Array.isArray(messages)) return;
+	for (const message of messages) {
+		const m = message as { role?: unknown; content?: unknown };
+		if (m.role !== "system") continue;
+		if (typeof m.content === "string") {
+			m.content = m.content
+				.replace(CLAUDE_CODE_IDENTITY_PATTERN, "")
+				.replace(POWERED_BY_PATTERN, "");
+		} else if (Array.isArray(m.content)) {
+			for (const part of m.content) {
+				const p = part as { type?: unknown; text?: unknown };
+				if (p.type === "text" && typeof p.text === "string") {
+					p.text = p.text
+						.replace(CLAUDE_CODE_IDENTITY_PATTERN, "")
+						.replace(POWERED_BY_PATTERN, "");
+				}
+			}
+		}
+	}
+}
+
+/**
  * CodeBuddy's gateway rejection body is a flat `{code, msg, ...}` envelope —
  * no Anthropic `error` object and no [OI] `choices`, so it matches none of
  * the proxy's model-unavailable patterns and used to be forwarded to the
@@ -531,6 +579,7 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 		// 11101). Both are request-shape failures, not account problems.
 		ensureSystemMessageFirst(record);
 		normalizeToolChoice(record);
+		stripClaudeCodeIdentity(record);
 
 		// CodeBuddy's backend reviews content before inference and frequently
 		// rejects the client's fixed compliance system template. Inserting
