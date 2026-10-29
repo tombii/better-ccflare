@@ -348,6 +348,11 @@ describe("CodeBuddyProvider", () => {
 
 			expect(headers.get("X-Agent-Intent")).toBe("craft");
 			expect(headers.get("X-Agent-Runtime")).toBe("local-agent");
+			// Sent unconditionally by the official CLI on every chat completion
+			// (AgentPurpose.Conversation / AgentType.MAIN). Omitting them left
+			// the client fingerprint incomplete relative to the real client.
+			expect(headers.get("X-Agent-Purpose")).toBe("conversation");
+			expect(headers.get("X-Agent-Type")).toBe("main");
 			expect(headers.get("X-IDE-Type")).toBe("CLI");
 			expect(headers.get("X-IDE-Name")).toBe("CLI");
 			expect(headers.get("X-IDE-Version")).toBe(CODEBUDDY_CLI_VERSION);
@@ -384,6 +389,83 @@ describe("CodeBuddyProvider", () => {
 			expect(body.reasoning_summary).toBe("auto");
 			expect(body.cache_retention).toBe("long");
 			expect(body.store).toBe(false);
+		});
+
+		it("strips the canonical identity opener and powered-by line from system messages", async () => {
+			const transformed = await provider.transformRequestBody(
+				anthropicRequest({
+					system:
+						"You are Claude Code, Anthropic's official CLI for Claude.\n\nYou are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5. Assistant knowledge cutoff is June 2026.\n\nHelp with tasks.",
+				}),
+				makeAccount(),
+			);
+			const body = (await transformed.json()) as {
+				messages: Array<{ role: string; content: unknown }>;
+			};
+			const system = body.messages.find((m) => m.role === "system");
+			const text = JSON.stringify(system?.content);
+			// The gateway 11128-fingerprints the canonical sentence (A/B-probed
+			// against the live gateway on 2026-10-29); the powered-by line names
+			// a model that is wrong on CodeBuddy anyway.
+			expect(text).not.toContain("official CLI for Claude");
+			expect(text).not.toContain("powered by the model named");
+			expect(text).not.toContain("knowledge cutoff");
+			expect(text).toContain("Help with tasks.");
+		});
+
+		it("leaves non-system messages untouched by the identity strip", async () => {
+			const transformed = await provider.transformRequestBody(
+				anthropicRequest({
+					system: "You are an assistant.",
+					messages: [
+						{
+							role: "user",
+							content:
+								"You are Claude Code, Anthropic's official CLI for Claude. Translate this.",
+						},
+					],
+				}),
+				makeAccount(),
+			);
+			const body = (await transformed.json()) as {
+				messages: Array<{ role: string; content: unknown }>;
+			};
+			const user = body.messages.find((m) => m.role === "user");
+			expect(JSON.stringify(user)).toContain(
+				"You are Claude Code, Anthropic's official CLI for Claude.",
+			);
+		});
+
+		it("attaches harnessMetadata as a JSON-string extra_vars envelope", async () => {
+			const transformed = await provider.transformRequestBody(
+				anthropicRequest(),
+				makeAccount(),
+			);
+			const body = (await transformed.json()) as {
+				extra_vars?: unknown;
+			};
+
+			// The gateway's Go type is `extra_vars map[string]string` — a
+			// nested object value or a string envelope both fail to unmarshal
+			// with 11101 (observed live 2026-10-29). The CLI stringifies the
+			// harnessMetadata object into that single string value.
+			const envelope = body.extra_vars as {
+				harnessMetadata?: unknown;
+			};
+			expect(envelope && typeof envelope).toBe("object");
+			expect(typeof envelope.harnessMetadata).toBe("string");
+			const meta = JSON.parse(envelope.harnessMetadata as string) as {
+				schemaVersion: unknown;
+				harnessVersion: unknown;
+				agent: { depth: unknown };
+				stepIndex?: unknown;
+			};
+			expect(meta.schemaVersion).toBe(1);
+			expect(meta.harnessVersion).toBe(CODEBUDDY_CLI_VERSION);
+			expect(meta.agent).toEqual({ depth: 0 });
+			// The CLI omits stepIndex on a conversation's first call, and
+			// ccflare always starts a fresh conversation id per request.
+			expect(meta.stepIndex).toBeUndefined();
 		});
 
 		it("prepends a fallback system message when the client sends none", async () => {

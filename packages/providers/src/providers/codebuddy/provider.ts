@@ -240,6 +240,87 @@ function normalizeToolChoice(record: Record<string, unknown>): void {
 	delete record.tool_choice;
 }
 
+/**
+ * Claude Code client-identity sentences that CodeBuddy's gateway 11128
+ * channel verification fingerprints in system messages (2026-10-29):
+ *  - the canonical opener "You are Claude Code, Anthropic's official CLI for
+ *    Claude." — A/B-probed against the live gateway with the identical failing
+ *    body: present → 11128, absent/paraphrased → accepted. Neither brand token
+ *    alone triggers it; only the canonical sentence does.
+ *  - the "You are powered by the model named ... The exact model ID is ...
+ *    Assistant knowledge cutoff is ..." line — removed as well: it names the
+ *    Claude model ccflare would have used, which is wrong on CodeBuddy where
+ *    the mapped model (e.g. deepseek) actually answers.
+ * Both sentences are removed outright; everything else in the system prompt
+ * (brand names, model mentions, environment details) passes unchanged, and
+ * conversation messages are never touched.
+ */
+const CLAUDE_CODE_IDENTITY_PATTERN =
+	/You are Claude Code, Anthropic['’]s official CLI for Claude\.?\n*/g;
+const POWERED_BY_PATTERN =
+	/You are powered by the model named .*? Assistant knowledge cutoff is [^.]+\.\n*/g;
+
+/**
+ * Strip the client-identity sentences inside system messages. Conversation
+ * messages are never touched — the gateway only flags the system prompt, and
+ * conversation content is the caller's data.
+ */
+function stripClaudeCodeIdentity(record: Record<string, unknown>): void {
+	const messages = record.messages;
+	if (!Array.isArray(messages)) return;
+	for (const message of messages) {
+		const m = message as { role?: unknown; content?: unknown };
+		if (m.role !== "system") continue;
+		if (typeof m.content === "string") {
+			m.content = m.content
+				.replace(CLAUDE_CODE_IDENTITY_PATTERN, "")
+				.replace(POWERED_BY_PATTERN, "");
+		} else if (Array.isArray(m.content)) {
+			for (const part of m.content) {
+				const p = part as { type?: unknown; text?: unknown };
+				if (p.type === "text" && typeof p.text === "string") {
+					p.text = p.text
+						.replace(CLAUDE_CODE_IDENTITY_PATTERN, "")
+						.replace(POWERED_BY_PATTERN, "");
+				}
+			}
+		}
+	}
+}
+
+/**
+ * CodeBuddy's gateway rejection body is a flat `{code, msg, ...}` envelope —
+ * no Anthropic `error` object and no [OI] `choices`, so it matches none of
+ * the proxy's model-unavailable patterns and used to be forwarded to the
+ * client as terminal. The observed rejection (2026-10-29, live) is
+ * `400 {"code":11128,"msg":"Illegal API invocation from an unapproved
+ * channel"}` — the gateway's channel verification ("not sent from an
+ * official client"). The same code also covers first-message-shape
+ * rejections (see `ensureSystemMessageFirst`). Both meanings are
+ * CodeBuddy-specific problems, so every other account in the rotation can
+ * still serve the request and the proxy fails over on any 11128.
+ */
+export async function readCodeBuddyGatewayRejection(
+	response: Response,
+): Promise<{ code: number; msg: string } | null> {
+	if (response.status !== 400) return null;
+	try {
+		const contentType = response.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return null;
+		const json = await response.clone().json();
+		if (json?.code !== 11128 || typeof json?.msg !== "string") return null;
+		return { code: 11128, msg: json.msg };
+	} catch {
+		return null;
+	}
+}
+
+export async function isCodeBuddyChannelRejection(
+	response: Response,
+): Promise<boolean> {
+	return (await readCodeBuddyGatewayRejection(response)) !== null;
+}
+
 export class CodeBuddyProvider extends OpenAICompatibleProvider {
 	name = "codebuddy";
 
@@ -330,6 +411,13 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 
 		newHeaders.set("X-Agent-Intent", "craft");
 		newHeaders.set("X-Agent-Runtime", "local-agent");
+		// The official CLI sends both of these unconditionally on every chat
+		// completion — `conversation` is AgentPurpose.Conversation and `main`
+		// is AgentType.MAIN (subagent turns send `subagent`). Verified against
+		// the 2.178.1 bundle; ccflare omitted them, which left its client
+		// fingerprint incomplete relative to the real client.
+		newHeaders.set("X-Agent-Purpose", "conversation");
+		newHeaders.set("X-Agent-Type", "main");
 		newHeaders.set("X-IDE-Type", "CLI");
 		newHeaders.set("X-IDE-Name", "CLI");
 		newHeaders.set("X-IDE-Version", CODEBUDDY_CLI_VERSION);
@@ -452,6 +540,33 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 		}
 		record.store = false;
 
+		// Since 2.174.0 the official CLI attaches harness metadata to every
+		// built-in-model request, and the 11128 channel verification that
+		// started 2026-10-29 rejects exactly the real-workload requests that
+		// lack it while letting small background calls through. Wire shape,
+		// learned live (2026-10-29) from the gateway's own 11101 unmarshal
+		// errors: `extra_vars` is Go's map[string]string — an object envelope
+		// whose values must be strings. The CLI therefore stringifies the
+		// harnessMetadata object into that single string value. Its
+		// buildHarnessMetadata emits schemaVersion 1, the client version, and
+		// `agent.depth` 0 for a main-conversation first call; stepIndex and
+		// previous are omitted there, and ccflare gives every request a fresh
+		// X-Conversation-ID, so from the gateway's view each request is step 0
+		// of its conversation.
+		const existingExtraVars = record.extra_vars;
+		record.extra_vars = {
+			...(existingExtraVars &&
+			typeof existingExtraVars === "object" &&
+			!Array.isArray(existingExtraVars)
+				? (existingExtraVars as Record<string, string>)
+				: {}),
+			harnessMetadata: JSON.stringify({
+				schemaVersion: 1,
+				harnessVersion: CODEBUDDY_CLI_VERSION,
+				agent: { depth: 0 },
+			}),
+		};
+
 		// CodeBuddy's gateway is stream-only in practice: the official CLI always
 		// sends stream: true, and a non-streaming request is not a supported
 		// shape. Always stream upstream and aggregate in processResponse for
@@ -464,6 +579,7 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 		// 11101). Both are request-shape failures, not account problems.
 		ensureSystemMessageFirst(record);
 		normalizeToolChoice(record);
+		stripClaudeCodeIdentity(record);
 
 		// CodeBuddy's backend reviews content before inference and frequently
 		// rejects the client's fixed compliance system template. Inserting

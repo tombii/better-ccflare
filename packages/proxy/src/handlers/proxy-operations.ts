@@ -21,6 +21,7 @@ import {
 	isAnthropicOrgPermissionDenied,
 	isAnthropicOutOfCredits,
 	type Provider,
+	readCodeBuddyGatewayRejection,
 	recoverCodexMessagesContinuation,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -892,6 +893,95 @@ export async function proxyUnauthenticated(
  * @param ctx - The proxy context
  * @returns Promise resolving to response or null if failed
  */
+/**
+ * Thinking modes ccflare knows about. `thinking.type` is client-controlled, so
+ * the fingerprint maps it through this allow-list instead of echoing the raw
+ * value: the text logger preserves newlines verbatim, and an unconstrained
+ * string would let a caller inject fabricated log lines.
+ */
+const KNOWN_THINKING_TYPES = new Set(["adaptive", "enabled", "disabled"]);
+
+function thinkingTypeLabel(thinking: unknown): string {
+	if (thinking === undefined || thinking === null) return "none";
+	if (typeof thinking !== "object") return "unknown";
+	const type = (thinking as { type?: unknown }).type;
+	if (typeof type !== "string") return "unknown";
+	return KNOWN_THINKING_TYPES.has(type) ? type : "unknown";
+}
+
+/**
+ * Cap on a buffered terminal-rejection body. CodeBuddy's gateway rejections
+ * are small JSON envelopes; anything larger is not one.
+ */
+const MAX_TERMINAL_REJECTION_BYTES = 64 * 1024;
+
+/**
+ * Read a response body into a string, giving up (and cancelling the source)
+ * as soon as it exceeds `maxBytes`. Returns null when the body is too large or
+ * unreadable, so the caller can fall back to discarding.
+ */
+async function readBoundedBody(
+	body: ReadableStream<Uint8Array> | null,
+	maxBytes: number,
+): Promise<string | null> {
+	if (!body) return "";
+	const reader = body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > maxBytes) {
+				await reader.cancel().catch(() => {});
+				return null;
+			}
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	const merged = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		merged.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return new TextDecoder().decode(merged);
+}
+
+/**
+ * Compact, PII-free description of a request body, for diagnosing gateway
+ * rejections whose payloads are never stored. Returns a fixed string on any
+ * parse failure so the log line always renders. Every value is either a
+ * number, a boolean derived from one, or drawn from a fixed vocabulary —
+ * nothing client-supplied reaches the log verbatim.
+ */
+function requestShapeFingerprint(buffer: ArrayBuffer | null): string {
+	if (!buffer) return "no-body";
+	try {
+		const body = JSON.parse(new TextDecoder().decode(buffer)) as {
+			stream?: unknown;
+			messages?: unknown;
+			tools?: unknown;
+			system?: unknown;
+			thinking?: unknown;
+			metadata?: unknown;
+		};
+		const messages = Array.isArray(body.messages) ? body.messages.length : 0;
+		const tools = Array.isArray(body.tools) ? body.tools.length : 0;
+		const systemBlocks = Array.isArray(body.system)
+			? body.system.length
+			: typeof body.system === "string"
+				? 1
+				: 0;
+		return `stream=${body.stream === true} msgs=${messages} tools=${tools} system_blocks=${systemBlocks} thinking=${thinkingTypeLabel(body.thinking)} metadata=${body.metadata !== undefined}`;
+	} catch {
+		return "unparseable";
+	}
+}
+
 export async function proxyWithAccount(
 	req: Request,
 	url: URL,
@@ -906,6 +996,15 @@ export async function proxyWithAccount(
 	apiKeyName?: string | null,
 	requestBodyContext?: RequestBodyContext | null,
 	returnRateLimitedResponseOnExhaustion = false,
+	/**
+	 * Receives a replay of this attempt's terminal CodeBuddy gateway
+	 * rejection. The attempt itself still returns `null` so the caller keeps
+	 * failing over; the caller invokes the capture only if *every* candidate
+	 * fails, turning the generic "all accounts failed" 503 into the gateway's
+	 * own explanation. The response cannot be returned directly here because
+	 * returning it would stop failover.
+	 */
+	onTerminalRejection?: (capture: () => Promise<Response | null>) => void,
 ): Promise<Response | null> {
 	try {
 		// Extracted once for the whole call: every direct `saveRequest` audit
@@ -1827,6 +1926,150 @@ export async function proxyWithAccount(
 			return NOT_CLASSIFIED;
 		};
 
+		// ── codebuddy_gateway_rejection: 400 code 11128 from CodeBuddy's gateway ──
+		// The flat {code, msg} body matches none of the model-unavailable
+		// patterns below, so before this branch the 400 was forwarded to the
+		// client as terminal — a combo's remaining slots (often a different
+		// provider entirely) were never tried. Channel verification (observed
+		// live 2026-10-29: "Illegal API invocation from an unapproved channel")
+		// and first-message-shape rejections are both CodeBuddy-specific, so
+		// failing over to the next account is always the right move. No bench:
+		// the cause is upstream gateway policy that can clear on its own, and
+		// benching would hide the failure behind an ever-growing cooldown.
+		// The rejected attempt keeps its audit row (same saveRequest pattern as
+		// the org_permission_denied path) so the pattern stays diagnosable from
+		// the dashboard.
+		const classifyCodeBuddyChannelRejection = async (
+			response: Response,
+			terminal: boolean,
+		): Promise<UpstreamErrorClassification> => {
+			if (provider.name !== "codebuddy" || response.status !== 400)
+				return NOT_CLASSIFIED;
+			// The reader clones internally only after the content-type gate
+			// (issue #356); pass the response un-cloned.
+			const rejection = await readCodeBuddyGatewayRejection(response);
+			if (rejection === null) return NOT_CLASSIFIED;
+			let requestedModel: string | null = null;
+			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
+			// The gateway reuses 11128 for channel verification AND for
+			// request-shape rejections, so the upstream msg is the only way
+			// to tell a client-identity block from a malformed request in
+			// the journal. Keep it in the log, not the audit row, so the
+			// dashboard's error grouping stays stable. The shape fingerprint
+			// answers the follow-up no payload can (rejected attempts store
+			// none): which client requests does the gateway accept?
+			log.warn(
+				`codebuddy_gateway_rejection shape: ${requestShapeFingerprint(effectiveBodyBuffer)}`,
+			);
+			log.warn(
+				`Account ${account.name} codebuddy_gateway_rejection (400 code ${rejection.code}${requestedModel ? `, model=${requestedModel}` : ""}) — ${rejection.msg}; failing over to next account`,
+			);
+			// The audit row stays real-traffic-only, same rationale as the
+			// org_permission_denied path: a synthetic probe's rejection was
+			// never a client-visible request.
+			if (!isSyntheticInternal) {
+				const responseTime = Date.now() - requestMeta.timestamp;
+				const modelRewrite = isModelRewrite(
+					requestMeta.originalModel,
+					requestMeta.appliedModel,
+				);
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.saveRequest(
+						crypto.randomUUID(),
+						req.method,
+						url.pathname,
+						account.id,
+						400,
+						false,
+						"codebuddy_gateway_rejection",
+						responseTime,
+						failoverAttempts,
+						requestedModel ? { model: requestedModel } : undefined,
+						requestMeta.agentUsed ?? undefined,
+						apiKeyId ?? undefined,
+						apiKeyName ?? undefined,
+						requestMeta.project ?? null,
+						undefined,
+						requestMeta.comboName ?? null,
+						modelRewrite ? (requestMeta.originalModel ?? null) : null,
+						modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+						requestMeta.projectAttributionSource ?? null,
+						requestMeta.agentAttributionSource ?? null,
+						null,
+						requestMeta.clientSessionId ?? null,
+						gatewayHint.requestClass,
+						gatewayHint.agentType,
+						gatewayHint.prevToolDurations,
+						gatewayHint.compaction,
+						gatewayHint.contextCompacted,
+					),
+				);
+			}
+			if (terminal) {
+				// Nothing left to fail over to in this attempt's own view, but the
+				// caller may still have other accounts: hand it a replay instead
+				// of discarding the explanation.
+				//
+				// The body is read NOW, bounded, rather than left on the
+				// response for the replay to consume later (#273). The caller
+				// may abandon the replay without ever invoking it — for example
+				// handleProxyRequest throws its OAuth-expiry error before
+				// reaching the replay — and an unread native body in that case
+				// is exactly the leak class cancelDiscardedResponseBody exists
+				// for. A gateway rejection is a small JSON envelope, so an
+				// over-cap body is not a real rejection: it is discarded and
+				// treated as an ordinary failover instead of being buffered.
+				let terminalBody: string | null = null;
+				try {
+					terminalBody = await readBoundedBody(
+						response.body,
+						MAX_TERMINAL_REJECTION_BYTES,
+					);
+				} catch {
+					terminalBody = null;
+				}
+				if (terminalBody === null) {
+					cancelDiscardedResponseBody(response);
+					return null;
+				}
+				const capturedStatus = response.status;
+				const capturedStatusText = response.statusText;
+				const capturedHeaders = new Headers(response.headers);
+				// The replay is rebuilt from a string, not the original response,
+				// so it misses the tags added further down the normal path (which
+				// this branch returns before reaching). Restore the ones providers
+				// read off the response: CodeBuddy's logModerationBlockIfPresent
+				// takes the request id from this header, and processResponse
+				// branches on the request path.
+				capturedHeaders.set("x-better-ccflare-request-id", requestMeta.id);
+				capturedHeaders.set("x-better-ccflare-request-path", requestMeta.path);
+				const capturedModel = effectiveBodyContext.getModel();
+				onTerminalRejection?.(() =>
+					provider.processResponse(
+						new Response(terminalBody, {
+							status: capturedStatus,
+							statusText: capturedStatusText,
+							headers: capturedHeaders,
+						}),
+						account,
+						req.headers,
+						drainAbortController,
+						{ requestModel: capturedModel },
+					),
+				);
+				return null;
+			}
+			cancelDiscardedResponseBody(response);
+			return null;
+		};
+
+		const codeBuddyRejectionOutcome = await classifyCodeBuddyChannelRejection(
+			rawResponse,
+			returnRateLimitedResponseOnExhaustion,
+		);
+		if (codeBuddyRejectionOutcome !== NOT_CLASSIFIED)
+			return codeBuddyRejectionOutcome;
+
 		/**
 		 * The classification chain as a retry response has to see it: every
 		 * handler above, in the first-response order, minus the model-cycling
@@ -1858,6 +2101,12 @@ export async function proxyWithAccount(
 
 			const orgDenied = await classifyOrgPermissionDenied(retried);
 			if (orgDenied !== NOT_CLASSIFIED) return orgDenied;
+
+			const codeBuddyRejected = await classifyCodeBuddyChannelRejection(
+				retried,
+				returnRateLimitedResponseOnExhaustion,
+			);
+			if (codeBuddyRejected !== NOT_CLASSIFIED) return codeBuddyRejected;
 
 			// Everything below lived under `isModelUnavailableError`, which is
 			// unconditionally true for a 429 and only reachable for 404/400

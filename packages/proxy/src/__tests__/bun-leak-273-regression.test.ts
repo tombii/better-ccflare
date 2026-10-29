@@ -117,10 +117,14 @@ describe("issue #273 — Group A: helper contract", () => {
 // continuation recovery (99f5dce0), which discards the superseded response
 // before re-issuing. 17 and 18 are the transient-5xx path (500/502/503/504):
 // it discards each superseded retry response and the terminal one when it
-// fails over to the next account.
+// fails over to the next account. 19 is the codebuddy_gateway_rejection
+// branch (400 code 11128 from the CodeBuddy gateway), which discards the
+// masked flat-body response before failing over to the next account. 20 is
+// the same branch's over-cap path: a terminal rejection whose body exceeds
+// the bounded-read cap is discarded rather than buffered for a replay.
 // ---------------------------------------------------------------------------
 
-const EXPECTED_SITE_COUNT = 18;
+const EXPECTED_SITE_COUNT = 20;
 
 describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", () => {
 	it("proxy-operations.ts has exactly 18 cancelDiscardedResponseBody call sites", () => {

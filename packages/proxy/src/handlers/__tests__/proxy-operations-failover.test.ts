@@ -1234,3 +1234,279 @@ describe("proxyWithAccount — 401 failover", () => {
 		}
 	});
 });
+
+describe("proxyWithAccount — CodeBuddy 11128 gateway rejection", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	function makeCodeBuddyAccount(): Account {
+		return makeAccount({
+			id: "acc-cb",
+			name: "codebuddy-test",
+			provider: "codebuddy",
+			api_key: null,
+			access_token: "tok",
+			refresh_token: "refresh",
+			expires_at: Date.now() + 24 * 60 * 60 * 1000,
+			custom_endpoint: "https://codebuddy.example.com",
+			model_mappings: null,
+		});
+	}
+
+	it("fails over (returns null) on 400 code 11128 channel-verification rejection", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					code: 11128,
+					msg: "Illegal API invocation from an unapproved channel",
+					requestId: "upstream-req-1",
+				},
+				400,
+			),
+		);
+
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+		const result = await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeCodeBuddyAccount(),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+		);
+
+		expect(result).toBeNull();
+	});
+
+	it("still forwards other 400 flat-code bodies to the client", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					code: 11101,
+					msg: "tool_choice must be a string",
+					requestId: "upstream-req-2",
+				},
+				400,
+			),
+		);
+
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+		let result: Response | null = null;
+		let threwUsageCollectorError = false;
+		try {
+			result = await proxyWithAccount(
+				req,
+				new URL("https://proxy.local/v1/messages"),
+				makeCodeBuddyAccount(),
+				makeRequestMeta(),
+				bodyBuffer,
+				() => undefined,
+				0,
+				makeProxyContext(),
+			);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			if (!msg.includes("UsageCollector not initialized")) throw e;
+			threwUsageCollectorError = true;
+		}
+
+		// The 400 must be forwarded (not failover): either the response object is
+		// returned, or forwardToClient threw the expected collector error.
+		if (result) {
+			expect(result.status).toBe(400);
+		} else {
+			expect(threwUsageCollectorError).toBe(true);
+		}
+	});
+});
+
+describe("proxyWithAccount — CodeBuddy 11128 terminal rejection", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	function makeCodeBuddyAccount(): Account {
+		return makeAccount({
+			id: "acc-cb",
+			name: "codebuddy-test",
+			provider: "codebuddy",
+			api_key: null,
+			access_token: "tok",
+			refresh_token: "refresh",
+			expires_at: Date.now() + 24 * 60 * 60 * 1000,
+			custom_endpoint: "https://codebuddy.example.com",
+			model_mappings: null,
+		});
+	}
+
+	it("hands the caller a replay so the gateway's message can reach the client", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					code: 11128,
+					msg: "Illegal API invocation from an unapproved channel",
+				},
+				400,
+			),
+		);
+
+		const captures: Array<() => Promise<Response | null>> = [];
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+		// The upstream body is consumed eagerly (bounded) so abandoning the
+		// replay cannot leak the native body (#273); the replay must therefore
+		// be invokable any number of times.
+		const result = await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeCodeBuddyAccount(),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			true, // terminal attempt: nothing left to fail over to
+			(capture) => {
+				captures.push(capture);
+			},
+		);
+
+		// The attempt still fails over (null) so the caller's loop semantics are
+		// unchanged; only the terminal path registers a replay.
+		expect(result).toBeNull();
+		expect(captures).toHaveLength(1);
+
+		const replayed = await captures[0]();
+		expect(replayed).not.toBeNull();
+		expect(replayed?.status).toBe(400);
+		// Providers read these off the response; the replay is rebuilt from a
+		// string, so they must be restored explicitly (CodeBuddy's rejection
+		// log takes its request id from the header).
+		expect(replayed?.headers.get("x-better-ccflare-request-id")).toBe("req-1");
+		expect(replayed?.headers.get("x-better-ccflare-request-path")).toBe(
+			"/v1/messages",
+		);
+		const replayedBody = (await replayed?.json()) as {
+			error?: { message?: string };
+		};
+		// The converter now passes the real gateway message through instead of
+		// the generic invalid_response text.
+		expect(replayedBody.error?.message).toContain("11128");
+	});
+
+	it("does not register a replay while other candidates remain", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse({ code: 11128, msg: "rejected" }, 400),
+		);
+
+		const captures: Array<() => Promise<Response | null>> = [];
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+		const result = await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeCodeBuddyAccount(),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			false, // another account may still serve this request
+			(capture) => {
+				captures.push(capture);
+			},
+		);
+
+		expect(result).toBeNull();
+		expect(captures).toHaveLength(0);
+	});
+});
+
+describe("proxyWithAccount — CodeBuddy 11128 oversized body", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it("discards instead of buffering an oversized terminal rejection", async () => {
+		// A real gateway rejection is a small JSON envelope. Anything past the
+		// cap is not one, so it must fall back to ordinary failover rather than
+		// being held in memory for a replay.
+		const huge = JSON.stringify({
+			code: 11128,
+			msg: "Illegal API invocation from an unapproved channel",
+			padding: "x".repeat(80 * 1024),
+		});
+		globalThis.fetch = mock(
+			async () =>
+				new Response(huge, {
+					status: 400,
+					headers: { "Content-Type": "application/json" },
+				}),
+		);
+
+		const captures: Array<() => Promise<Response | null>> = [];
+		const bodyBuffer = makeRequestBody();
+		const result = await proxyWithAccount(
+			makeRequest(bodyBuffer),
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				id: "acc-cb",
+				name: "codebuddy-test",
+				provider: "codebuddy",
+				api_key: null,
+				access_token: "tok",
+				refresh_token: "refresh",
+				expires_at: Date.now() + 24 * 60 * 60 * 1000,
+				custom_endpoint: "https://codebuddy.example.com",
+				model_mappings: null,
+			}),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			true,
+			(capture) => {
+				captures.push(capture);
+			},
+		);
+
+		expect(result).toBeNull();
+		expect(captures).toHaveLength(0);
+	});
+});
