@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
-import { isModelUnavailableError, proxyWithAccount } from "../proxy-operations";
+import {
+	isModelUnavailableError,
+	proxyWithAccount,
+	systemSuspectScan,
+} from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 
 // Minimal Account fixture for openai-compatible provider
@@ -1508,5 +1512,39 @@ describe("proxyWithAccount — CodeBuddy 11128 oversized body", () => {
 
 		expect(result).toBeNull();
 		expect(captures).toHaveLength(0);
+	});
+});
+
+describe("systemSuspectScan", () => {
+	function buffer(text: string): ArrayBuffer {
+		return new TextEncoder().encode(text).buffer as ArrayBuffer;
+	}
+
+	it("reports fixed identity terms by count", () => {
+		const scan = systemSuspectScan(
+			buffer(
+				"You are Claude Code, Anthropic's official CLI for Claude. Claude Code again.",
+			),
+		);
+		expect(scan).toContain("official CLI for Claude=1");
+		expect(scan).toContain("Claude Code=2");
+		expect(scan).toContain("Anthropic=1");
+	});
+
+	it("reports none when no known term is present", () => {
+		expect(
+			systemSuspectScan(buffer("You are a helpful coding assistant.")),
+		).toBe("none");
+	});
+
+	it("never echoes raw request text", () => {
+		const secret = "SENTINEL-do-not-log\n[FAKE LOG LINE]";
+		const scan = systemSuspectScan(buffer(secret));
+		expect(scan).not.toContain("SENTINEL");
+		expect(scan).not.toContain("FAKE LOG LINE");
+	});
+
+	it("handles a missing body", () => {
+		expect(systemSuspectScan(null)).toBe("no-body");
 	});
 });
