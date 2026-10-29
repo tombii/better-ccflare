@@ -65,7 +65,8 @@ jobs:
             range=$(gh api "repos/oven-sh/bun/security-advisories/${adv}" \
               --jq '.vulnerabilities[0].vulnerable_version_range')
             if bun -e '
-              const [semver, range] = process.argv.slice(2);
+              // bun -e has no script path in argv, so user args start at 1
+              const [semver, range] = process.argv.slice(1);
               const cmp = (a, b) => {
                 const x = a.split(".").map(Number);
                 const y = b.split(".").map(Number);
