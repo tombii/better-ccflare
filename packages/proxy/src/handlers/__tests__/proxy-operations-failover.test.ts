@@ -1400,6 +1400,13 @@ describe("proxyWithAccount — CodeBuddy 11128 terminal rejection", () => {
 		const replayed = await captures[0]();
 		expect(replayed).not.toBeNull();
 		expect(replayed?.status).toBe(400);
+		// Providers read these off the response; the replay is rebuilt from a
+		// string, so they must be restored explicitly (CodeBuddy's rejection
+		// log takes its request id from the header).
+		expect(replayed?.headers.get("x-better-ccflare-request-id")).toBe("req-1");
+		expect(replayed?.headers.get("x-better-ccflare-request-path")).toBe(
+			"/v1/messages",
+		);
 		const replayedBody = (await replayed?.json()) as {
 			error?: { message?: string };
 		};

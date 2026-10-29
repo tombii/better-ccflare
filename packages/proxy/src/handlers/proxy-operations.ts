@@ -2035,6 +2035,14 @@ export async function proxyWithAccount(
 				const capturedStatus = response.status;
 				const capturedStatusText = response.statusText;
 				const capturedHeaders = new Headers(response.headers);
+				// The replay is rebuilt from a string, not the original response,
+				// so it misses the tags added further down the normal path (which
+				// this branch returns before reaching). Restore the ones providers
+				// read off the response: CodeBuddy's logModerationBlockIfPresent
+				// takes the request id from this header, and processResponse
+				// branches on the request path.
+				capturedHeaders.set("x-better-ccflare-request-id", requestMeta.id);
+				capturedHeaders.set("x-better-ccflare-request-path", requestMeta.path);
 				const capturedModel = effectiveBodyContext.getModel();
 				onTerminalRejection?.(() =>
 					provider.processResponse(
