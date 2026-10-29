@@ -60,11 +60,17 @@ import type {
 	RequestTransformer,
 } from "@better-ccflare/types";
 import {
+	ACCOUNT_MODES,
+	type AccountMode,
 	type CodexCreditsData,
 	computeReauthDeadline,
+	getProviderFromMode,
 	isEligibleForReauthDeadline,
+	isKnownProvider,
+	PROVIDER_NAMES,
 	REQUEST_TRANSFORMERS,
 	requiresSessionDurationTracking,
+	usesApiKey,
 } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 import {
@@ -969,28 +975,86 @@ export function createAccountAddHandler(
 				return errorResponse(BadRequest("Account name is required"));
 			}
 
-			// Validate tokens
-			const accessToken = validateString(body.accessToken, "accessToken", {
-				required: true,
-				minLength: 1,
+			// Validate provider. This endpoint was long restricted to
+			// "anthropic" while every other provider got its own
+			// POST /api/accounts/<provider> route; the restriction made it
+			// impossible to create e.g. a nanogpt account here, and it silently
+			// stored whatever was asked for as an Anthropic account. Accept any
+			// provider ccflare implements, keeping "anthropic" as the default.
+			const explicitProvider = validateString(body.provider, "provider", {
+				allowedValues: Object.values(PROVIDER_NAMES),
 			});
-
-			const refreshToken = validateString(body.refreshToken, "refreshToken", {
-				required: true,
-				minLength: 1,
+			// `mode` is the CLI's account-type vocabulary (claude-oauth, zai,
+			// nanogpt, ...). Accept it as an alias so a CLI-shaped body creates
+			// the account it names instead of silently defaulting to anthropic —
+			// the exact failure that hid a wrong provider behind "added
+			// successfully". An unknown mode is an error, not a default.
+			const explicitMode = validateString(body.mode, "mode", {
+				allowedValues: Object.values(ACCOUNT_MODES),
 			});
-
-			if (!accessToken || !refreshToken) {
-				return errorResponse(
-					BadRequest("Access token and refresh token are required"),
-				);
+			let providerFromMode: string | undefined;
+			if (explicitMode) {
+				const fromMode = getProviderFromMode(explicitMode as AccountMode);
+				if (explicitProvider && explicitProvider !== fromMode) {
+					return errorResponse(
+						BadRequest(
+							`provider "${explicitProvider}" contradicts mode "${explicitMode}" (which means provider "${fromMode}"); send one or make them agree`,
+						),
+					);
+				}
+				providerFromMode = fromMode;
+			}
+			const provider =
+				explicitProvider || providerFromMode || PROVIDER_NAMES.ANTHROPIC;
+			if (!isKnownProvider(provider)) {
+				return errorResponse(BadRequest(`Unknown provider: ${provider}`));
 			}
 
-			// Validate provider
-			const provider =
-				validateString(body.provider, "provider", {
-					allowedValues: ["anthropic"] as const,
-				}) || "anthropic";
+			// Where the secret goes depends on how the provider authenticates,
+			// and getting it wrong yields an account that looks fine and fails
+			// on every request:
+			//   - api_key providers (usesApiKey), including claude-console-api:
+			//     every dedicated handler stores the key in `api_key` with a
+			//     1-year "never expires" sentinel.
+			//     The token columns are per-provider convention — some mirror
+			//     the key into access/refresh, kilo/openrouter/meta leave them
+			//     null — and providers read api_key, so only that is needed here.
+			//   - OAuth providers (anthropic, codex, codebuddy, qwen, xai): a
+			//     pasted token pair, as before. claude-console-api is NOT one
+			//     of these: it reports no OAuth, takes an Anthropic API key
+			//     (the CLI's console mode stores it in api_key, and the
+			//     provider treats `!!account.api_key` as console mode).
+			//   - vertex-ai and bedrock authenticate with ambient cloud
+			//     credentials and carry no secret; their dedicated handlers
+			//     store empty tokens.
+			// vertex-ai and bedrock authenticate with ambient cloud credentials
+			// and carry no secret. They must be excluded BEFORE usesApiKey:
+			// usesApiKey is `!supportsOAuth`, and both declare no OAuth, so it
+			// would otherwise demand an apiKey these providers never use.
+			const needsNoSecret =
+				provider === PROVIDER_NAMES.VERTEX_AI ||
+				provider === PROVIDER_NAMES.BEDROCK;
+			const usesKey = !needsNoSecret && usesApiKey(provider);
+			let apiKey: string | undefined;
+			let accessToken: string | undefined;
+			let refreshToken: string | undefined;
+
+			if (usesKey) {
+				apiKey = validateString(body.apiKey, "apiKey", {
+					required: true,
+					minLength: 1,
+				});
+			} else if (!needsNoSecret) {
+				// OAuth providers: a pasted token pair.
+				accessToken = validateString(body.accessToken, "accessToken", {
+					required: true,
+					minLength: 1,
+				});
+				refreshToken = validateString(body.refreshToken, "refreshToken", {
+					required: true,
+					minLength: 1,
+				});
+			}
 
 			// Validate priority
 			const priority =
@@ -1042,15 +1106,19 @@ export function createAccountAddHandler(
 
 				await dbOps.getAdapter().run(
 					`INSERT INTO accounts (
-						id, name, provider, refresh_token, access_token,
-						created_at, request_count, total_requests, priority, custom_endpoint
-					) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+						id, name, provider, api_key, refresh_token, access_token,
+						expires_at, created_at, request_count, total_requests, priority, custom_endpoint
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
 					[
 						accountId,
 						name,
 						provider,
-						refreshToken,
-						accessToken,
+						apiKey ?? null,
+						refreshToken ?? null,
+						accessToken ?? null,
+						// Key-based accounts are static: the same "never expires"
+						// sentinel every dedicated key handler writes.
+						usesKey ? now + 365 * 24 * 60 * 60 * 1000 : null,
 						now,
 						priority,
 						customEndpoint || null,
