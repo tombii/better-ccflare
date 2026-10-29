@@ -738,6 +738,65 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 		expect(result.usage?.output_tokens).toBe(5);
 	});
 
+	it("subtracts cached tokens from input_tokens and reports them separately", () => {
+		// Same live case as the streaming test (request 280cee17): prompt_tokens
+		// is cache-inclusive upstream, so Anthropic's additive input_tokens must
+		// exclude the cached subset or the proxy counts the cache twice.
+		const result = convertOpenAIResponseToAnthropic({
+			id: "chatcmpl-1",
+			model: "deepseek-v4.1-flash",
+			choices: [
+				{
+					index: 0,
+					message: { role: "assistant", content: "Hi" },
+					finish_reason: "stop",
+				},
+			],
+			usage: {
+				prompt_tokens: 33730,
+				completion_tokens: 61,
+				total_tokens: 33791,
+				prompt_tokens_details: { cached_tokens: 33536 },
+			},
+		});
+
+		expect(result.usage).toEqual({
+			input_tokens: 194,
+			output_tokens: 61,
+			cache_read_input_tokens: 33536,
+			cache_creation_input_tokens: 0,
+		});
+	});
+
+	it("clamps cached tokens that exceed the reported prompt tokens", () => {
+		const result = convertOpenAIResponseToAnthropic({
+			id: "chatcmpl-2",
+			model: "m",
+			choices: [
+				{
+					index: 0,
+					message: { role: "assistant", content: "Hi" },
+					finish_reason: "stop",
+				},
+			],
+			usage: {
+				prompt_tokens: 10,
+				completion_tokens: 2,
+				prompt_tokens_details: { cached_tokens: 50 },
+			},
+		});
+
+		expect(result.usage?.input_tokens).toBe(0);
+		expect(result.usage?.cache_read_input_tokens).toBe(10);
+	});
+
+	it("reports zero cache tokens when the provider sends no details", () => {
+		const result = convertOpenAIResponseToAnthropic(openaiTextResponse());
+		expect(result.usage?.input_tokens).toBe(10);
+		expect(result.usage?.cache_read_input_tokens).toBe(0);
+		expect(result.usage?.cache_creation_input_tokens).toBe(0);
+	});
+
 	it("passes through the response id", () => {
 		const result = convertOpenAIResponseToAnthropic(
 			openaiTextResponse({ id: "chatcmpl-xyz" }),

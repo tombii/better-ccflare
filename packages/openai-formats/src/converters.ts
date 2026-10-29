@@ -370,6 +370,22 @@ export function convertOpenAIResponseToAnthropic(
 		});
 	}
 
+	// prompt_tokens is cache-inclusive upstream; Anthropic's input_tokens is
+	// additive and must exclude the cached subset, otherwise the proxy's usage
+	// collector adds input_tokens and cache_read_input_tokens together and
+	// records the cached prompt twice. Same normalization as the streaming
+	// message_delta in stream.ts.
+	const promptTokens = openaiData.usage?.prompt_tokens || 0;
+	const cachedTokens = Math.max(
+		0,
+		Math.min(
+			typeof openaiData.usage?.prompt_tokens_details?.cached_tokens === "number"
+				? openaiData.usage.prompt_tokens_details.cached_tokens
+				: 0,
+			promptTokens,
+		),
+	);
+
 	return {
 		id: openaiData.id || `msg_${Date.now()}`,
 		type: "message",
@@ -379,8 +395,10 @@ export function convertOpenAIResponseToAnthropic(
 		stop_reason: mapOpenAIFinishReason(choice.finish_reason),
 		stop_sequence: undefined,
 		usage: {
-			input_tokens: openaiData.usage?.prompt_tokens || 0,
+			input_tokens: promptTokens - cachedTokens,
 			output_tokens: openaiData.usage?.completion_tokens || 0,
+			cache_read_input_tokens: cachedTokens,
+			cache_creation_input_tokens: 0,
 		},
 	};
 }
