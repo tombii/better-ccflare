@@ -168,6 +168,12 @@ export interface RequestData {
 		cacheCreationInputTokens?: number;
 		outputTokens?: number;
 		tokensPerSecond?: number;
+		/**
+		 * The backend the provider's own response body names as having served
+		 * the request (e.g. OpenRouter body `provider`). Absent for providers
+		 * that do not state it; persisted through `updateRequestUsage`.
+		 */
+		providerServed?: string;
 	};
 }
 
@@ -204,9 +210,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				stream_terminal_state, client_session_id,
 				gateway_hint_request_class, gateway_hint_agent_type,
 				gateway_hint_prev_tool_durations, gateway_hint_compaction,
-				gateway_hint_context_compacted
+				gateway_hint_context_compacted, provider_served
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET
 				timestamp = EXCLUDED.timestamp,
 				method = EXCLUDED.method,
@@ -264,7 +270,11 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				gateway_hint_agent_type = COALESCE(EXCLUDED.gateway_hint_agent_type, requests.gateway_hint_agent_type),
 				gateway_hint_prev_tool_durations = COALESCE(EXCLUDED.gateway_hint_prev_tool_durations, requests.gateway_hint_prev_tool_durations),
 				gateway_hint_compaction = COALESCE(EXCLUDED.gateway_hint_compaction, requests.gateway_hint_compaction),
-				gateway_hint_context_compacted = COALESCE(EXCLUDED.gateway_hint_context_compacted, requests.gateway_hint_context_compacted)
+				gateway_hint_context_compacted = COALESCE(EXCLUDED.gateway_hint_context_compacted, requests.gateway_hint_context_compacted),
+				-- Preserve-first like the columns above: provider_served is
+				-- recorded after the fact by updateRequestUsage, and a re-save
+				-- without it must not blank it out.
+				provider_served = COALESCE(EXCLUDED.provider_served, requests.provider_served)
 		`,
 			[
 				data.id,
@@ -304,6 +314,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				data.gatewayHintPrevToolDurations || null,
 				data.gatewayHintCompaction || null,
 				data.gatewayHintContextCompacted || null,
+				usage?.providerServed || null,
 			],
 		);
 	}
@@ -327,7 +338,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				cache_read_input_tokens = COALESCE(?, cache_read_input_tokens),
 				cache_creation_input_tokens = COALESCE(?, cache_creation_input_tokens),
 				output_tokens = COALESCE(?, output_tokens),
-				output_tokens_per_second = COALESCE(?, output_tokens_per_second)
+				output_tokens_per_second = COALESCE(?, output_tokens_per_second),
+				provider_served = COALESCE(?, provider_served)
 			WHERE id = ?
 		`,
 			[
@@ -341,6 +353,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				usage.cacheCreationInputTokens || null,
 				usage.outputTokens || null,
 				usage.tokensPerSecond || null,
+				usage.providerServed || null,
 				requestId,
 			],
 		);

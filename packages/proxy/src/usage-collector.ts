@@ -5,6 +5,7 @@ import {
 } from "@better-ccflare/core";
 import { AsyncDbWriter, DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
+import { servedProviderFromBody } from "@better-ccflare/providers";
 import {
 	type AgentAttributionSource,
 	NO_ACCOUNT_ID,
@@ -48,6 +49,8 @@ interface RequestState {
 		totalTokens?: number;
 		costUsd?: number;
 		tokensPerSecond?: number;
+		/** Backend named by the provider's own response body (non-stream only). */
+		providerServed?: string;
 	};
 	lastActivity: number;
 	createdAt: number; // Capacity eviction ordering
@@ -181,6 +184,13 @@ function extractUsageFromJson(
 	state: RequestState,
 ): void {
 	if (!json) return;
+
+	// The serving backend comes from the same already-parsed body, at zero
+	// extra cost. Only providers that state it (OpenRouter `provider`) yield a
+	// value; this runs for whole non-stream JSON bodies only, never per SSE
+	// frame, and `message_start` carries no such field.
+	state.usage.providerServed =
+		servedProviderFromBody(state.startMessage.providerName, json) ?? undefined;
 
 	const usageObj = json.usage;
 	if (!usageObj) return;
@@ -896,6 +906,7 @@ export class UsageCollector {
 								cacheReadInputTokens: state.usage.cacheReadInputTokens,
 								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
 								tokensPerSecond: state.usage.tokensPerSecond,
+								providerServed: state.usage.providerServed,
 							}
 						: undefined,
 					state.agentUsed,
@@ -990,6 +1001,7 @@ export class UsageCollector {
 			gatewayHintCompaction: state.gatewayHint.compaction ?? undefined,
 			gatewayHintContextCompacted:
 				state.gatewayHint.contextCompacted ?? undefined,
+			providerServed: state.usage.providerServed,
 			// Same value handed to saveRequest above, so a dashboard does not have
 			// to reload before a request shows its terminal state. Note this is
 			// the value as REPORTED, not as persisted: the save is an

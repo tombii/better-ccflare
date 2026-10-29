@@ -6,6 +6,8 @@ import {
 	type Provider,
 	parseCodexUsageHeaders,
 	pickCodexRolloverSlot,
+	servedProviderBodyField,
+	servedProviderFromBody,
 	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -255,6 +257,13 @@ export function updateAccountMetadata(
 				try {
 					usageClone = response.clone();
 					const usageInfo = await extractUsageInfo(usageClone);
+					// The serving backend is named only by whole JSON bodies (OpenRouter
+					// `provider`). Read it from a fresh clone here — nothing new is
+					// buffered, and only providers that state it pay for the clone.
+					const providerServed =
+						usageInfo && servedProviderBodyField(ctx.provider.name)
+							? await readServedProvider(usageClone, ctx.provider.name)
+							: null;
 					if (usageInfo) {
 						log.debug(
 							`Extracted usage info for account ${account.name}: ${JSON.stringify(usageInfo)}`,
@@ -266,6 +275,25 @@ export function updateAccountMetadata(
 							);
 						} catch (error) {
 							log.warn(`Failed to save usage for request ${requestId}:`, error);
+						}
+					}
+					if (providerServed) {
+						// Written on its own (COALESCE) because the request payload was
+						// already serialized when the body ended, so it cannot ride
+						// there — and it must land even if usage extraction found
+						// nothing.
+						try {
+							await ctx.asyncWriter.enqueue(() =>
+								ctx.dbOps.updateRequestProviderServed(
+									requestId,
+									providerServed,
+								),
+							);
+						} catch (error) {
+							log.warn(
+								`Failed to save provider_served for request ${requestId}:`,
+								error,
+							);
 						}
 					}
 				} catch (error) {
@@ -301,6 +329,26 @@ export function updateAccountMetadata(
 				}
 			})();
 		}
+	}
+}
+
+/**
+ * Read the provider-named serving backend from the (already-consumed) usage
+ * clone. Runs only for providers that name a backend (OpenRouter), and only
+ * when the response is whole JSON; a stream yields null — its `message_start`
+ * frame carries no such field, and finding it would mean buffering.
+ */
+async function readServedProvider(
+	usageClone: Response | null,
+	providerName: string,
+): Promise<string | null> {
+	if (!usageClone) return null;
+	try {
+		const contentType = usageClone.headers.get("content-type") ?? "";
+		if (!contentType.includes("application/json")) return null;
+		return servedProviderFromBody(providerName, await usageClone.json());
+	} catch {
+		return null;
 	}
 }
 

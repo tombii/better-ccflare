@@ -36,6 +36,8 @@ export * from "./types";
 export * from "./usage-fetcher";
 // Export upstream per-request id extraction (dashboard "Provider request ID")
 export * from "./utils/provider-request-id";
+// Export provider-named serving backend extraction (dashboard "Served by")
+export * from "./utils/provider-serving";
 // Export shared request-body helper (Bun 1.3.x clone().json() leak, #382)
 export * from "./utils/request-json";
 // Export shared stream-drain helpers
