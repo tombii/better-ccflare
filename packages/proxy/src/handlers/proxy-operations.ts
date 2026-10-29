@@ -910,6 +910,48 @@ function thinkingTypeLabel(thinking: unknown): string {
 }
 
 /**
+ * Cap on a buffered terminal-rejection body. CodeBuddy's gateway rejections
+ * are small JSON envelopes; anything larger is not one.
+ */
+const MAX_TERMINAL_REJECTION_BYTES = 64 * 1024;
+
+/**
+ * Read a response body into a string, giving up (and cancelling the source)
+ * as soon as it exceeds `maxBytes`. Returns null when the body is too large or
+ * unreadable, so the caller can fall back to discarding.
+ */
+async function readBoundedBody(
+	body: ReadableStream<Uint8Array> | null,
+	maxBytes: number,
+): Promise<string | null> {
+	if (!body) return "";
+	const reader = body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > maxBytes) {
+				await reader.cancel().catch(() => {});
+				return null;
+			}
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	const merged = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		merged.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return new TextDecoder().decode(merged);
+}
+
+/**
  * Compact, PII-free description of a request body, for diagnosing gateway
  * rejections whose payloads are never stored. Returns a fixed string on any
  * parse failure so the log line always renders. Every value is either a
@@ -1966,31 +2008,47 @@ export async function proxyWithAccount(
 			if (terminal) {
 				// Nothing left to fail over to in this attempt's own view, but the
 				// caller may still have other accounts: hand it a replay instead
-				// of discarding the explanation. The body is read exactly once —
-				// by whoever finally calls the capture — so a replay that is
-				// never invoked leaves nothing half-consumed on the response
-				// object (it is dropped with the attempt).
-				const captured = response;
-				const capturedModel = effectiveBodyContext.getModel();
-				onTerminalRejection?.(() => {
-					const terminalHeaders = new Headers(captured.headers);
-					terminalHeaders.set("x-better-ccflare-request-id", requestMeta.id);
-					terminalHeaders.set(
-						"x-better-ccflare-request-path",
-						requestMeta.path,
+				// of discarding the explanation.
+				//
+				// The body is read NOW, bounded, rather than left on the
+				// response for the replay to consume later (#273). The caller
+				// may abandon the replay without ever invoking it — for example
+				// handleProxyRequest throws its OAuth-expiry error before
+				// reaching the replay — and an unread native body in that case
+				// is exactly the leak class cancelDiscardedResponseBody exists
+				// for. A gateway rejection is a small JSON envelope, so an
+				// over-cap body is not a real rejection: it is discarded and
+				// treated as an ordinary failover instead of being buffered.
+				let terminalBody: string | null = null;
+				try {
+					terminalBody = await readBoundedBody(
+						response.body,
+						MAX_TERMINAL_REJECTION_BYTES,
 					);
-					return provider.processResponse(
-						new Response(captured.body, {
-							status: captured.status,
-							statusText: captured.statusText,
-							headers: terminalHeaders,
+				} catch {
+					terminalBody = null;
+				}
+				if (terminalBody === null) {
+					cancelDiscardedResponseBody(response);
+					return null;
+				}
+				const capturedStatus = response.status;
+				const capturedStatusText = response.statusText;
+				const capturedHeaders = new Headers(response.headers);
+				const capturedModel = effectiveBodyContext.getModel();
+				onTerminalRejection?.(() =>
+					provider.processResponse(
+						new Response(terminalBody, {
+							status: capturedStatus,
+							statusText: capturedStatusText,
+							headers: capturedHeaders,
 						}),
 						account,
 						req.headers,
 						drainAbortController,
 						{ requestModel: capturedModel },
-					);
-				});
+					),
+				);
 				return null;
 			}
 			cancelDiscardedResponseBody(response);

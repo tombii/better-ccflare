@@ -1066,6 +1066,11 @@ async function handleProxyRequest(
 	}
 
 	if (terminalRejection !== undefined) {
+		// The replay bypasses forwardToClient, the path that normally lets
+		// usage-collector's onSummary delete this request's staged body. Drop it
+		// here, or repeated all-candidates-rejected failures would sit in the
+		// 64 MiB staging allowance and evict bodies of active requests.
+		cacheBodyStore.discardStaged(requestMeta.id);
 		const rejectionResponse = await terminalRejection();
 		if (rejectionResponse) return rejectionResponse;
 	}

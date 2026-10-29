@@ -1370,6 +1370,9 @@ describe("proxyWithAccount — CodeBuddy 11128 terminal rejection", () => {
 		const captures: Array<() => Promise<Response | null>> = [];
 		const bodyBuffer = makeRequestBody();
 		const req = makeRequest(bodyBuffer);
+		// The upstream body is consumed eagerly (bounded) so abandoning the
+		// replay cannot leak the native body (#273); the replay must therefore
+		// be invokable any number of times.
 		const result = await proxyWithAccount(
 			req,
 			new URL("https://proxy.local/v1/messages"),
@@ -1427,6 +1430,70 @@ describe("proxyWithAccount — CodeBuddy 11128 terminal rejection", () => {
 			undefined,
 			undefined,
 			false, // another account may still serve this request
+			(capture) => {
+				captures.push(capture);
+			},
+		);
+
+		expect(result).toBeNull();
+		expect(captures).toHaveLength(0);
+	});
+});
+
+describe("proxyWithAccount — CodeBuddy 11128 oversized body", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it("discards instead of buffering an oversized terminal rejection", async () => {
+		// A real gateway rejection is a small JSON envelope. Anything past the
+		// cap is not one, so it must fall back to ordinary failover rather than
+		// being held in memory for a replay.
+		const huge = JSON.stringify({
+			code: 11128,
+			msg: "Illegal API invocation from an unapproved channel",
+			padding: "x".repeat(80 * 1024),
+		});
+		globalThis.fetch = mock(
+			async () =>
+				new Response(huge, {
+					status: 400,
+					headers: { "Content-Type": "application/json" },
+				}),
+		);
+
+		const captures: Array<() => Promise<Response | null>> = [];
+		const bodyBuffer = makeRequestBody();
+		const result = await proxyWithAccount(
+			makeRequest(bodyBuffer),
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				id: "acc-cb",
+				name: "codebuddy-test",
+				provider: "codebuddy",
+				api_key: null,
+				access_token: "tok",
+				refresh_token: "refresh",
+				expires_at: Date.now() + 24 * 60 * 60 * 1000,
+				custom_endpoint: "https://codebuddy.example.com",
+				model_mappings: null,
+			}),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			true,
 			(capture) => {
 				captures.push(capture);
 			},
