@@ -1,4 +1,66 @@
+import type { ModelRouting } from "@better-ccflare/core";
+
 export type RequestJsonBody = Record<string, unknown>;
+
+/** Stable comparison that cannot throw on values JSON cannot serialise. */
+function routingSignature(body: RequestJsonBody): string | null {
+	try {
+		return JSON.stringify({ model: body.model, provider: body.provider });
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Set the fallback model AND its provider routing on a parsed body. Routing is
+ * per model-list entry: the entry's routing replaces whatever `provider` the
+ * body carried (the previous entry's pin), and when the entry has none the
+ * field is removed rather than left pointing at the old model's provider —
+ * unless `inherit` supplies the slot's own configured pin, which an entry
+ * without a suffix keeps (the slot pin is the operator's default for it).
+ * @returns true when the body was modified
+ */
+export function applyModelAndRouting(
+	body: RequestJsonBody,
+	model: string,
+	routing: ModelRouting | null,
+	inherit: ModelRouting | null = null,
+): boolean {
+	const before = routingSignature(body);
+	if (model) body.model = model;
+	const effective = routing ?? inherit;
+	if (effective) body.provider = effective;
+	else delete body.provider;
+	const after = routingSignature(body);
+	// A serialisation we cannot compare (BigInt, cycles) is treated as
+	// "changed": sending the patched body is correct, skipping it is not.
+	return before === null || after === null || before !== after;
+}
+
+/**
+ * ArrayBuffer counterpart of applyModelAndRouting for RequestBodyContext.
+ * Returns the SAME context when nothing changed, so a fallback step does not
+ * re-serialise an untouched body. Never throws: an unparsable body yields null
+ * and the caller keeps the body it already had.
+ */
+export function patchModelAndRouting(
+	context: RequestBodyContext,
+	model: string,
+	routing: ModelRouting | null,
+	inherit: ModelRouting | null = null,
+): RequestBodyContext | null {
+	try {
+		const body = context.getParsedJson();
+		if (!body) return null;
+		const patched = { ...body };
+		if (!applyModelAndRouting(patched, model, routing, inherit)) {
+			return context;
+		}
+		return RequestBodyContext.fromParsed(context.getBuffer(), patched);
+	} catch {
+		return null;
+	}
+}
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();

@@ -63,10 +63,19 @@ export {
 	parseModelFallbacks,
 	parseModelMappings,
 	providerAcceptsClientModel,
+	providerSupportsProviderRouting,
 	validateAndSanitizeModelFallbacks,
 	validateAndSanitizeModelMappings,
 	weeklyScopedWindowKey,
 } from "./model-mappings";
+export {
+	formatModelRouting,
+	type ModelRouting,
+	sanitizeModelRouting,
+	splitModelRouting,
+	splitRoutingAwareList,
+	stripModelRouting,
+} from "./model-routing";
 export {
 	BUNDLED_MODELS_AS_OF,
 	CLAUDE_MODEL_IDS,

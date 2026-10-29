@@ -22,6 +22,13 @@ export interface AnthropicCompatibleConfig {
 	modelMappings?: Record<string, string>; // Model name mappings
 	supportsStreaming?: boolean; // Whether this provider supports streaming
 	defaultModel?: string; // Default model to use
+	/**
+	 * Whether the upstream accepts a `provider` routing object. Leave unset for
+	 * providers whose capability is not known: a routing suffix is then either
+	 * left in the body model id (a no-op for upstreams) or applied by an
+	 * account request transformer that knows better.
+	 */
+	supportsProviderRouting?: boolean;
 }
 
 // Default configuration
@@ -171,19 +178,36 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		}
 
 		// Use the shared utility for model mapping
-		return transformRequestBodyModel(request, account, (model, acc) => {
-			if (acc) {
-				// Use core mapModelName which handles arrays, fallbacks, env overrides, and defaults
-				return mapModelName(model, acc);
-			}
+		return transformRequestBodyModel(
+			request,
+			account,
+			(model, acc) => {
+				if (acc) {
+					// Use core mapModelName which handles arrays, fallbacks, env overrides, and defaults
+					return mapModelName(model, acc);
+				}
 
-			// Fall back to static config mappings for backward compatibility
-			if (this.config.modelMappings?.[model]) {
-				return this.config.modelMappings[model];
-			}
+				// Fall back to static config mappings for backward compatibility
+				if (this.config.modelMappings?.[model]) {
+					return this.config.modelMappings[model];
+				}
 
-			return model;
-		});
+				return model;
+			},
+			{
+				supportsProviderRouting: () => this.supportsProviderRoutingFor(account),
+			},
+		);
+	}
+
+	/**
+	 * Whether the upstream this ACCOUNT actually talks to accepts a `provider`
+	 * routing object. The config flag is the adapter's static capability; a
+	 * subclass overrides this when the target host decides it (NanoGPT with a
+	 * custom endpoint is no longer NanoGPT).
+	 */
+	supportsProviderRoutingFor(_account?: Account): boolean {
+		return this.config.supportsProviderRouting === true;
 	}
 
 	parseRateLimit(response: Response): RateLimitInfo {

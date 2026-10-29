@@ -3,6 +3,7 @@ import {
 	LATEST_HAIKU_MODEL,
 	LATEST_OPUS_MODEL,
 	LATEST_SONNET_MODEL,
+	splitRoutingAwareList,
 } from "@better-ccflare/core";
 import React, { useState } from "react";
 import type { Account } from "../../api";
@@ -33,13 +34,16 @@ function formatMappingValue(value: string | string[]): string {
 	return Array.isArray(value) ? value.join(", ") : value || "";
 }
 
-function parseMappingValue(value: string): string | string[] | null {
+/**
+ * Exported for tests: this is what gets SAVED, so a JSON routing suffix must
+ * survive it intact (`{"only":["a","b"]}` is one element, not three).
+ */
+export function parseMappingValue(value: string): string | string[] | null {
 	const trimmed = value.trim();
 	if (!trimmed) return null;
-	const parts = trimmed
-		.split(",")
-		.map((s) => s.trim())
-		.filter(Boolean);
+	// Routing-aware: a JSON routing suffix may itself contain commas. A plain
+	// split(",") tore `{"only":["a","b"]}` into fragments and SAVED the mess.
+	const parts = splitRoutingAwareList(trimmed);
 	return parts.length === 1 ? parts[0] : parts;
 }
 

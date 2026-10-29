@@ -7,7 +7,10 @@ import {
 	getServerErrorRetryEnabled,
 	isUsageExhausted,
 	logError,
+	type ModelRouting,
 	ProviderError,
+	providerSupportsProviderRouting,
+	splitModelRouting,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import { withSanitizedProxyHeaders } from "@better-ccflare/http-common";
@@ -33,7 +36,12 @@ import type {
 import { cacheBodyStore } from "../cache-body-store";
 import { ensureCodexModelDefaults } from "../codex-model-catalog";
 import { extractGatewayHintHeadersFromRequest } from "../gateway-hint-headers";
-import { RequestBodyContext, readOutgoingBody } from "../request-body-context";
+import {
+	applyModelAndRouting,
+	patchModelAndRouting,
+	RequestBodyContext,
+	readOutgoingBody,
+} from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
 import { applyAccountRequestTransformer } from "./account-request-transformer";
@@ -1113,8 +1121,34 @@ export async function proxyWithAccount(
 			requestBodyContext ?? new RequestBodyContext(requestBodyBuffer);
 		let effectiveBodyContext = baseBodyContext;
 		let effectiveBodyBuffer = baseBodyContext.getBuffer();
+		// The slot's routing pin, when it applied. It is the account-level
+		// default for this slot's model: a model-list fallback entry WITHOUT its
+		// own suffix inherits it (an entry with a suffix overrides it for that
+		// entry). Without this, the fallback loop would delete the operator's
+		// pin — or worse, an `ignore` pin would be violated.
+		let slotRouting: ModelRouting | null = null;
 		if (modelOverride && effectiveBodyBuffer) {
-			const overriddenContext = baseBodyContext.withPatchedModel(modelOverride);
+			// A slot model may carry a provider-routing suffix. The model goes
+			// upstream stripped; the routing becomes body.provider only for a
+			// provider that accepts it (the same rule providers'
+			// transformRequestBodyModel applies). Leaving it in the model id would
+			// hand a provider that does not understand routing a garbage name.
+			const overrideSplit = splitModelRouting(modelOverride);
+			const overriddenContext = baseBodyContext.withPatchedModel(
+				overrideSplit.model,
+			);
+			if (overriddenContext && overrideSplit.routing) {
+				if (providerSupportsProviderRouting(account.provider)) {
+					overriddenContext.mutateParsedJson((body) => {
+						body.provider = overrideSplit.routing;
+					});
+					slotRouting = overrideSplit.routing ?? null;
+				} else {
+					log.debug(
+						`Combo model override for account ${account.name} carries provider routing, but provider "${account.provider}" does not support it; routing ignored`,
+					);
+				}
+			}
 			if (overriddenContext) {
 				effectiveBodyContext = overriddenContext;
 				effectiveBodyBuffer = overriddenContext.getBuffer();
@@ -2265,8 +2299,21 @@ export async function proxyWithAccount(
 					// mapModelName internally which remaps non-Claude names back to the primary
 					// model (no family match → sonnet fallback). We always want nextModel to
 					// reach the upstream provider verbatim.
-					const patchedContext =
-						effectiveBodyContext.withPatchedModel(nextModel);
+					//
+					// Routing is PER LIST ENTRY: an entry may carry a ` {...}` suffix
+					// pinning upstream providers for THAT model. The model is sent
+					// stripped, and body.provider becomes this entry's routing — or is
+					// removed when the entry has none. Leaving the previous entry's
+					// pin in place would send the new model to the old model's
+					// provider.
+					const nextSplit = splitModelRouting(nextModel);
+					const nextBareModel = nextSplit.model;
+					const patchedContext = patchModelAndRouting(
+						effectiveBodyContext,
+						nextBareModel,
+						nextSplit.routing,
+						slotRouting,
+					);
 					const patchedBody = patchedContext?.getBuffer() ?? null;
 					if (!patchedBody) {
 						log.warn("Failed to patch request body for model retry");
@@ -2305,8 +2352,14 @@ export async function proxyWithAccount(
 					if (retryTransformedBodyText !== undefined) {
 						try {
 							const transformedBody = JSON.parse(retryTransformedBodyText);
-							if (transformedBody.model !== nextModel) {
-								transformedBody.model = nextModel;
+							if (
+								applyModelAndRouting(
+									transformedBody,
+									nextBareModel,
+									nextSplit.routing,
+									slotRouting,
+								)
+							) {
 								const repatchedBodyText = JSON.stringify(transformedBody);
 								const repatchedHeaders = new Headers(
 									retryTransformedRequest.headers,
@@ -2339,8 +2392,8 @@ export async function proxyWithAccount(
 						// have.
 						//
 						// `model` is attribution-only in this branch, and deliberately
-						// still `nextModel`: `rawResponse` above came from
-						// `retryTransformedRequest`, so `nextModel` is the model that
+						// still `nextBareModel`: `rawResponse` above came from
+						// `retryTransformedRequest`, so `nextBareModel` is the model that
 						// actually produced the response `processResponse` is about to
 						// read `requestModel` for. Recording it unconditionally is also
 						// what the pre-descriptor `responseModelFallback = nextModel`
@@ -2351,13 +2404,13 @@ export async function proxyWithAccount(
 						adoptOutgoingRequest(
 							outgoing.request,
 							outgoing.bodyText,
-							nextModel,
+							nextBareModel,
 						);
 					} else {
 						adoptOutgoingRequest(
 							retryTransformedRequest,
 							retryTransformedBodyText,
-							nextModel,
+							nextBareModel,
 						);
 					}
 

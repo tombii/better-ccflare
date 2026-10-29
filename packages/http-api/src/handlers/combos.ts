@@ -1,6 +1,6 @@
 import { providerAcceptsClientModel } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
-import { BadRequest, NotFound } from "@better-ccflare/errors";
+import { BadRequest, Conflict, NotFound } from "@better-ccflare/errors";
 import type {
 	ComboFamily,
 	ComboFamilyAssignment,
@@ -24,6 +24,29 @@ import { errorResponse } from "../utils/http-error";
 function allowsClientModel(provider: string | null | undefined): boolean {
 	return providerAcceptsClientModel(provider);
 }
+
+/**
+ * combo_slots is UNIQUE(combo_id, account_id, model). Two slots for the same
+ * account may differ only by their routing suffix (`m {"only":["a"]}` vs
+ * `m {"only":["b"]}`) — that is intended — but re-pinning one onto an existing
+ * triple is a client mistake and must read as one, not as a 500 carrying the
+ * raw SQL text.
+ *
+ * SQLite reports the violation as an Error whose message contains
+ * "UNIQUE constraint failed:"; PostgreSQL (Bun.SQL) reports SQLSTATE 23505 on
+ * `.code` with no such message, so both are checked (same rule as
+ * handlers/oauth.ts).
+ */
+const PG_UNIQUE_VIOLATION = "23505";
+
+function isUniqueConstraintError(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	if (error.message.includes("UNIQUE constraint failed")) return true;
+	return (error as { code?: string }).code === PG_UNIQUE_VIOLATION;
+}
+
+const DUPLICATE_SLOT_MESSAGE =
+	"A slot for this account and model already exists in this combo. Slots that differ only by a provider-routing suffix are distinct; change the routing or the model to make this one unique.";
 
 /**
  * GET /api/combos — List all combos with slot counts (lightweight)
@@ -245,12 +268,20 @@ export function createSlotAddHandler(dbOps: DatabaseOperations) {
 
 			const existingSlots = await dbOps.getComboSlots(comboId);
 			const nextPriority = existingSlots.length;
-			const newSlot = await dbOps.addComboSlot(
-				comboId,
-				account_id,
-				slotModel,
-				nextPriority,
-			);
+			let newSlot: Awaited<ReturnType<typeof dbOps.addComboSlot>>;
+			try {
+				newSlot = await dbOps.addComboSlot(
+					comboId,
+					account_id,
+					slotModel,
+					nextPriority,
+				);
+			} catch (error) {
+				if (isUniqueConstraintError(error)) {
+					return errorResponse(Conflict(DUPLICATE_SLOT_MESSAGE));
+				}
+				throw error;
+			}
 
 			return new Response(JSON.stringify({ success: true, data: newSlot }), {
 				status: 201,
@@ -319,7 +350,15 @@ export function createSlotUpdateHandler(dbOps: DatabaseOperations) {
 				fields.enabled = enabled;
 			}
 
-			const updatedSlot = await dbOps.updateComboSlot(slotId, fields);
+			let updatedSlot: Awaited<ReturnType<typeof dbOps.updateComboSlot>>;
+			try {
+				updatedSlot = await dbOps.updateComboSlot(slotId, fields);
+			} catch (error) {
+				if (isUniqueConstraintError(error)) {
+					return errorResponse(Conflict(DUPLICATE_SLOT_MESSAGE));
+				}
+				throw error;
+			}
 
 			return new Response(
 				JSON.stringify({ success: true, data: updatedSlot }),

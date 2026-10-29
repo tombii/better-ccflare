@@ -17,6 +17,8 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 			authHeader: "authorization",
 			authType: "bearer",
 			supportsStreaming: true,
+			// OpenRouter honours the `provider` routing object.
+			supportsProviderRouting: true,
 		});
 	}
 

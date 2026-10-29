@@ -1,3 +1,4 @@
+import { splitRoutingAwareList, stripModelRouting } from "@better-ccflare/core";
 import { api } from "../api";
 
 /**
@@ -113,19 +114,25 @@ export async function fetchProviderModels(
 	};
 }
 
-/** Mapping fields accept a comma-separated list (rotation on 429). */
+/**
+ * Mapping fields accept a comma-separated list (rotation on 429).
+ *
+ * A list element may carry an inference-provider routing suffix, which is a
+ * JSON object that itself can contain commas (`model {"only":["a","b"]}`), so
+ * the split happens at brace depth 0 only (core `splitRoutingAwareList`).
+ */
 export function parseModelList(value: string): string[] {
-	return value
-		.split(",")
-		.map((part) => part.trim())
-		.filter(Boolean);
+	return splitRoutingAwareList(value);
 }
 
 export function formatModelList(models: string[]): string {
 	return models.join(", ");
 }
 
-/** First model in the list — the one the proxy tries before the others. */
+/**
+ * First model in the list — the one the proxy tries before the others.
+ * The routing suffix is stripped: callers use the result as a model name.
+ */
 export function firstModelInList(value: string): string {
-	return parseModelList(value)[0] ?? "";
+	return stripModelRouting(parseModelList(value)[0] ?? "");
 }
