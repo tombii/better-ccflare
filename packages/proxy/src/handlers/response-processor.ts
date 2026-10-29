@@ -17,6 +17,10 @@ import {
 	earliestCodexResetMs,
 	recordCodexUsageSnapshot,
 } from "../codex-usage-history";
+import {
+	recordDiscoveredProviderServed,
+	tryGetUsageCollector,
+} from "../usage-collector";
 import { drainBody } from "./discard-body-cancel";
 import { isInternalProbe, type ProxyContext } from "./proxy-types";
 import {
@@ -278,21 +282,27 @@ export function updateAccountMetadata(
 						}
 					}
 					if (providerServed) {
-						// Written on its own (COALESCE) because the request payload was
-						// already serialized when the body ended, so it cannot ride
-						// there — and it must land even if usage extraction found
-						// nothing.
-						try {
-							await ctx.asyncWriter.enqueue(() =>
-								ctx.dbOps.updateRequestProviderServed(
-									requestId,
-									providerServed,
-								),
-							);
-						} catch (error) {
+						// Hand the label to the collector the response handler feeds
+						// (see recordDiscoveredProviderServed): seeding its per-request
+						// state means the row handleEnd INSERTs already carries it, so
+						// the label no longer depends on this UPDATE winning a race
+						// against that INSERT on a slow client — and a body the
+						// collector could not re-parse (over its capture cap) still
+						// records it. Only when no collector state exists does this
+						// fall back to the standalone (COALESCE) UPDATE.
+						const handled = await recordDiscoveredProviderServed(
+							tryGetUsageCollector(),
+							requestId,
+							providerServed,
+							async (id, served) => {
+								await ctx.asyncWriter.enqueue(() =>
+									ctx.dbOps.updateRequestProviderServed(id, served),
+								);
+							},
+						);
+						if (!handled) {
 							log.warn(
-								`Failed to save provider_served for request ${requestId}:`,
-								error,
+								`Failed to save provider_served for request ${requestId}`,
 							);
 						}
 					}

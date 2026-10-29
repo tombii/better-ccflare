@@ -83,16 +83,25 @@ function slugify(value: string): string {
  * Drop keys that carry no decision, so "any provider" really means a bare
  * model string. `only`/`ignore` as empty arrays are what the UI produces
  * mid-edit (chosen a mode, typed nothing yet) — they must not be stored.
+ *
+ * Everything else is passed through UNTOUCHED: the panel edits only
+ * `only`/`ignore`/`sort`/`allow_fallbacks`, and a hand-written (or
+ * future-UI) suffix can also carry `order`, `max_price`, `data_collection`,
+ * `require_parameters`, `quantizations`. Rebuilding the object from the
+ * panel's fields alone would silently erase those on every provider-list
+ * edit, so start from the incoming routing and only change what we own.
  */
 function pruneRouting(routing: ModelRouting | null): ModelRouting | null {
 	if (!routing) return null;
-	const next: ModelRouting = {};
+	const next: ModelRouting = { ...routing };
+	// `only` and `ignore` are mutually exclusive: whichever mode is active
+	// wins and the other is removed. `only` wins, as it did before.
+	delete next.only;
+	delete next.ignore;
 	if (routing.only?.length) next.only = routing.only;
 	else if (routing.ignore?.length) next.ignore = routing.ignore;
-	if (routing.order?.length) next.order = routing.order;
-	if (routing.sort) next.sort = routing.sort;
-	if (routing.allow_fallbacks !== undefined)
-		next.allow_fallbacks = routing.allow_fallbacks;
+	if (!routing.sort) delete next.sort;
+	if (routing.allow_fallbacks === undefined) delete next.allow_fallbacks;
 	return Object.keys(next).length > 0 ? next : null;
 }
 
@@ -136,6 +145,20 @@ export function addRoutingSlug(
 	for (const slug of added) if (!merged.includes(slug)) merged.push(slug);
 	if (merged.length === existing.length) return current;
 	return pruneRouting({ ...(current ?? {}), [key]: merged });
+}
+
+/**
+ * Next routing after committing the whole draft. Always ONE call: the draft
+ * can hold several slugs ("deepseek, novita"), and adding them one at a time
+ * would each rebuild from the same pre-commit `routing` value, discarding
+ * every slug but the last. Returns `current` when nothing new was added.
+ */
+export function commitRoutingDraft(
+	current: ModelRouting | null,
+	mode: RoutingMode,
+	draft: string,
+): ModelRouting | null {
+	return addRoutingSlug(current, mode, draft);
 }
 
 export function ModelRoutingPanel({
@@ -302,7 +325,7 @@ export function ModelRoutingPanel({
 								onKeyDown={handleDraftKey}
 								onBlur={() => {
 									if (draft.trim()) {
-										for (const part of draft.split(",")) addSlug(part);
+										addSlug(draft);
 										setDraft("");
 									}
 								}}

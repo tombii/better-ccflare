@@ -217,30 +217,49 @@ describe("POST /api/accounts with a generic provider", () => {
 		expect(row.expires_at).toBeNull();
 	});
 
-	it("accepts vertex-ai with no secret and stores every token column null", async () => {
+	// vertex-ai and bedrock authenticate with ambient cloud credentials, but
+	// they also need connection settings (vertex: project/region JSON; bedrock:
+	// profile/region) that only their dedicated endpoints collect. Accepting a
+	// bare {name, provider} here would create an account that fails every
+	// request, so both are rejected with a pointer to the right route.
+	it("rejects vertex-ai with no secret and names the dedicated route", async () => {
 		const res = await handler(
 			makeRequest({ name: "vertex-generic", provider: "vertex-ai" }),
 		);
-		expect(res.status).toBe(200);
-		if (res.status === 400) {
-			// Behaviour divergence: `usesApiKey()` is defined as
-			// `!supportsOAuth()`, which is true for vertex-ai and bedrock, so
-			// the handler never reaches its vertex-ai/bedrock "no secret" branch
-			// and demands apiKey for them. The case above is the intended
-			// behaviour; report the actual error so the failure is diagnostic.
-			throw new Error(
-				`vertex-ai rejected: ${JSON.stringify(await res.clone().json())}`,
-			);
-		}
+		expect(res.status).toBe(400);
+		const payload = (await res.json()) as { error: string };
+		expect(payload.error).toContain("vertex-ai");
+		expect(payload.error).toContain("POST /api/accounts/vertex-ai");
 
-		const row = getStoredAccount("vertex-generic");
-		expect(row).not.toBeNull();
-		if (!row) return;
-		expect(row.provider).toBe("vertex-ai");
-		expect(row.api_key).toBeNull();
-		expect(row.access_token).toBeNull();
-		expect(row.refresh_token).toBeNull();
-		expect(row.expires_at).toBeNull();
+		expect(getStoredAccount("vertex-generic")).toBeNull();
+		expect(countAccounts()).toBe(0);
+	});
+
+	it("rejects bedrock with no secret and names the dedicated route", async () => {
+		const res = await handler(
+			makeRequest({ name: "bedrock-generic", provider: "bedrock" }),
+		);
+		expect(res.status).toBe(400);
+		const payload = (await res.json()) as { error: string };
+		expect(payload.error).toContain("bedrock");
+		expect(payload.error).toContain("POST /api/accounts/bedrock");
+
+		expect(getStoredAccount("bedrock-generic")).toBeNull();
+		expect(countAccounts()).toBe(0);
+	});
+
+	it("rejects vertex-ai even when connection-shaped fields are sent", async () => {
+		// The generic endpoint's customEndpoint is a URL; vertex-ai's settings
+		// are JSON, so nothing it accepts can make such an account work.
+		const res = await handler(
+			makeRequest({
+				name: "vertex-shaped",
+				provider: "vertex-ai",
+				customEndpoint: "https://us-central1-aiplatform.googleapis.com",
+			}),
+		);
+		expect(res.status).toBe(400);
+		expect(getStoredAccount("vertex-shaped")).toBeNull();
 	});
 });
 

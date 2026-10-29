@@ -9,7 +9,6 @@ import {
 	logError,
 	type ModelRouting,
 	ProviderError,
-	providerSupportsProviderRouting,
 	splitModelRouting,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
@@ -37,10 +36,12 @@ import { cacheBodyStore } from "../cache-body-store";
 import { ensureCodexModelDefaults } from "../codex-model-catalog";
 import { extractGatewayHintHeadersFromRequest } from "../gateway-hint-headers";
 import {
+	accountSupportsProviderRouting,
 	applyModelAndRouting,
 	patchModelAndRouting,
 	RequestBodyContext,
 	readOutgoingBody,
+	resolveSlotRouting,
 } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
@@ -1127,6 +1128,20 @@ export async function proxyWithAccount(
 		// entry). Without this, the fallback loop would delete the operator's
 		// pin — or worse, an `ignore` pin would be violated.
 		let slotRouting: ModelRouting | null = null;
+		// Capability of the upstream THIS account actually talks to, from the
+		// provider instance that will serve (and transform) the request — a
+		// host-aware adapter (NanoGPT on a custom endpoint) answers per account,
+		// and the provider-name list alone would wrongly let routing through.
+		const provider = getProvider(account.provider) || ctx.provider;
+		const supportsProviderRoutingFor =
+			provider.supportsProviderRoutingFor?.bind(provider);
+		const accountSupportsRouting = () =>
+			accountSupportsProviderRouting(
+				account,
+				supportsProviderRoutingFor
+					? () => supportsProviderRoutingFor(account)
+					: undefined,
+			);
 		if (modelOverride && effectiveBodyBuffer) {
 			// A slot model may carry a provider-routing suffix. The model goes
 			// upstream stripped; the routing becomes body.provider only for a
@@ -1138,11 +1153,16 @@ export async function proxyWithAccount(
 				overrideSplit.model,
 			);
 			if (overriddenContext && overrideSplit.routing) {
-				if (providerSupportsProviderRouting(account.provider)) {
+				const accepted = resolveSlotRouting(
+					account,
+					overrideSplit.routing,
+					accountSupportsRouting,
+				);
+				if (accepted) {
 					overriddenContext.mutateParsedJson((body) => {
-						body.provider = overrideSplit.routing;
+						body.provider = accepted;
 					});
-					slotRouting = overrideSplit.routing ?? null;
+					slotRouting = accepted;
 				} else {
 					log.debug(
 						`Combo model override for account ${account.name} carries provider routing, but provider "${account.provider}" does not support it; routing ignored`,
@@ -1192,8 +1212,6 @@ export async function proxyWithAccount(
 			);
 		}
 
-		// Get the provider for this account
-		const provider = getProvider(account.provider) || ctx.provider;
 		const transformRequestForAccount = async (
 			request: Request,
 		): Promise<Request> => {
@@ -2313,6 +2331,7 @@ export async function proxyWithAccount(
 						nextBareModel,
 						nextSplit.routing,
 						slotRouting,
+						accountSupportsRouting,
 					);
 					const patchedBody = patchedContext?.getBuffer() ?? null;
 					if (!patchedBody) {
@@ -2358,6 +2377,7 @@ export async function proxyWithAccount(
 									nextBareModel,
 									nextSplit.routing,
 									slotRouting,
+									accountSupportsRouting,
 								)
 							) {
 								const repatchedBodyText = JSON.stringify(transformedBody);

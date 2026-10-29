@@ -5,7 +5,10 @@ import {
 } from "@better-ccflare/core";
 import { AsyncDbWriter, DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
-import { servedProviderFromBody } from "@better-ccflare/providers";
+import {
+	servedProviderBodyField,
+	servedProviderFromBody,
+} from "@better-ccflare/providers";
 import {
 	type AgentAttributionSource,
 	NO_ACCOUNT_ID,
@@ -164,7 +167,13 @@ function processSSELine(line: string, state: RequestState): void {
 	} else if (
 		parsed.data &&
 		state.currentEvent &&
-		shouldParseSSEData(parsed.data, state.currentEvent)
+		(shouldParseSSEData(parsed.data, state.currentEvent) ||
+			// A provider that names its serving backend may do so on a frame the
+			// usage gate would skip (message_delta carries `provider` alongside
+			// its usage, but a final frame that only carries the label is just as
+			// valid). One substring check, and only for those providers.
+			(servedProviderBodyField(state.startMessage.providerName) !== null &&
+				parsed.data.includes('"provider"')))
 	) {
 		extractUsageFromData(parsed.data, state.currentEvent, state);
 	}
@@ -219,6 +228,16 @@ function extractUsageFromData(
 ): void {
 	try {
 		const parsed = JSON.parse(data);
+
+		// The serving backend (OpenRouter `provider`) is named on the terminal
+		// frame of a stream. Read it before the usage branches below — one of
+		// them returns early on its own usage block, and it must be recorded
+		// even on a stream too long for the collector to re-parse at the end.
+		const served = servedProviderFromBody(
+			state.startMessage.providerName,
+			parsed,
+		);
+		if (served) state.usage.providerServed = served;
 
 		// Handle message_start - check both parsed.type and eventType
 		// (Some providers put type in event line, Anthropic puts it in JSON)
@@ -679,6 +698,25 @@ export class UsageCollector {
 			await Promise.allSettled([...this.pendingHandleEnds]);
 		}
 		await this.asyncWriter.dispose();
+	}
+
+	/**
+	 * Seed the serving backend discovered outside the collector (the response
+	 * processor reads it from the provider's body as soon as the response
+	 * arrives). Seeding the state means the row `handleEnd` INSERTs already
+	 * carries it — the label no longer depends on a later UPDATE racing that
+	 * INSERT — and a body over the capture cap, which the collector cannot
+	 * re-parse at the end, still records it.
+	 *
+	 * Returns false when the collector holds no state for `requestId` (it
+	 * never started it, or already finalised it); the caller then writes the
+	 * row itself.
+	 */
+	setProviderServed(requestId: string, providerServed: string): boolean {
+		const state = this.requests.get(requestId);
+		if (!state) return false;
+		state.usage.providerServed = providerServed;
+		return true;
 	}
 
 	getHealth(): UsageCollectorHealth {
@@ -1375,4 +1413,32 @@ export function getUsageCollector(): UsageCollector {
  */
 export function tryGetUsageCollector(): UsageCollector | null {
 	return _usageCollector;
+}
+
+/**
+ * Record the serving backend the response processor discovered, through the
+ * same collector the response handler feeds with start/chunk/end.
+ *
+ * Prefers seeding the collector state (see UsageCollector.setProviderServed):
+ * the label is then part of the row `handleEnd` INSERTs, independent of the
+ * order in which the two background jobs finish. When the collector holds no
+ * state for the request — it already finalised it, or there is none — the row
+ * is written via `write` (updateRequestProviderServed) as the fallback only.
+ *
+ * Returns true when the value was dealt with, false when the fallback write
+ * failed (the collector never throws).
+ */
+export async function recordDiscoveredProviderServed(
+	collector: UsageCollector | null,
+	requestId: string,
+	providerServed: string,
+	write: (requestId: string, providerServed: string) => Promise<void>,
+): Promise<boolean> {
+	if (collector?.setProviderServed(requestId, providerServed)) return true;
+	try {
+		await write(requestId, providerServed);
+		return true;
+	} catch {
+		return false;
+	}
 }

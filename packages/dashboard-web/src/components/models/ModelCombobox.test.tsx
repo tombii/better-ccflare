@@ -22,6 +22,7 @@ import {
 import {
 	addRoutingSlug,
 	applyRoutingMode,
+	commitRoutingDraft,
 	ModelRoutingPanel,
 	type ModelRoutingPanelProps,
 	type RoutingMode,
@@ -188,6 +189,57 @@ describe("routing write-through", () => {
 		expect(edit(BARE, "ignore", ["novita"])).toBe(
 			`${BARE} {"ignore":["novita"]}`,
 		);
+	});
+
+	it("commits a comma-separated draft as one edit that keeps every slug", () => {
+		// The slug input calls commitRoutingDraft once on blur/Enter, so a
+		// pasted "deepseek, novita" must survive as two slugs. (Calling
+		// addRoutingSlug per part against the stale closure keeps only the
+		// last one.)
+		for (const mode of ["only", "ignore"] as const) {
+			const key = mode === "only" ? "only" : "ignore";
+			expect(
+				commitRoutingDraft(
+					applyRoutingMode(null, mode),
+					mode,
+					"deepseek, novita",
+				),
+			).toEqual({ [key]: ["deepseek", "novita"] });
+		}
+		expect(
+			commitRoutingDraft({ only: ["cloudflare"] }, "only", "deepseek, novita"),
+		).toEqual({ only: ["cloudflare", "deepseek", "novita"] });
+		// Nothing to add: the caller gets its own routing back, untouched.
+		const pinned = { only: ["deepseek"] } as const;
+		expect(commitRoutingDraft({ ...pinned }, "only", "  ")).toEqual(pinned);
+	});
+
+	it("keeps fields the panel does not edit when a slug is added", () => {
+		// A hand-written suffix (or a future UI) can carry OpenRouter options
+		// the panel has no control for. Editing the provider list must not
+		// silently erase them.
+		const routing = {
+			only: ["a"],
+			max_price: { prompt: 0.5 },
+			data_collection: "deny" as const,
+			quantizations: ["fp8"],
+		};
+		expect(addRoutingSlug(routing, "only", "b")).toEqual({
+			only: ["a", "b"],
+			max_price: { prompt: 0.5 },
+			data_collection: "deny",
+			quantizations: ["fp8"],
+		});
+		expect(commitRoutingDraft(routing, "only", "b")).toEqual({
+			only: ["a", "b"],
+			max_price: { prompt: 0.5 },
+			data_collection: "deny",
+			quantizations: ["fp8"],
+		});
+		// `order` has no control in the panel either: pass it through too.
+		expect(
+			addRoutingSlug({ order: ["a", "b"], only: ["a"] }, "only", "c"),
+		).toEqual({ order: ["a", "b"], only: ["a", "c"] });
 	});
 
 	it("normalises and de-duplicates slugs", () => {

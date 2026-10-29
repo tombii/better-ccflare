@@ -940,6 +940,19 @@ async function assertAccountNameAvailable(
  */
 const PG_UNIQUE_VIOLATION = "23505";
 
+/**
+ * Providers the generic POST /api/accounts endpoint must NOT create, mapped to
+ * the dedicated route that can. Both authenticate with ambient cloud
+ * credentials (no secret to paste) but still need connection settings the
+ * generic body has no place for — vertex-ai: project/region held as JSON;
+ * bedrock: profile/region. Accepting a bare `{name, provider}` here succeeds
+ * and then fails every request, so it is rejected with the route to use.
+ */
+const DEDICATED_ONLY_PROVIDERS: Record<string, string | undefined> = {
+	[PROVIDER_NAMES.VERTEX_AI]: "vertex-ai",
+	[PROVIDER_NAMES.BEDROCK]: "bedrock",
+};
+
 function isUniqueConstraintError(error: unknown): boolean {
 	if (!(error instanceof Error)) return false;
 	if (error.message.includes("UNIQUE constraint failed")) return true;
@@ -1024,17 +1037,22 @@ export function createAccountAddHandler(
 			//     of these: it reports no OAuth, takes an Anthropic API key
 			//     (the CLI's console mode stores it in api_key, and the
 			//     provider treats `!!account.api_key` as console mode).
-			//   - vertex-ai and bedrock authenticate with ambient cloud
-			//     credentials and carry no secret; their dedicated handlers
-			//     store empty tokens.
-			// vertex-ai and bedrock authenticate with ambient cloud credentials
-			// and carry no secret. They must be excluded BEFORE usesApiKey:
-			// usesApiKey is `!supportsOAuth`, and both declare no OAuth, so it
-			// would otherwise demand an apiKey these providers never use.
-			const needsNoSecret =
-				provider === PROVIDER_NAMES.VERTEX_AI ||
-				provider === PROVIDER_NAMES.BEDROCK;
-			const usesKey = !needsNoSecret && usesApiKey(provider);
+			//   - vertex-ai and bedrock do NOT belong here at all: they need
+			//     connection settings (vertex: project/region as JSON settings;
+			//     bedrock: profile/region) that only their dedicated handlers
+			//     collect, and this endpoint's customEndpoint is a URL that
+			//     cannot carry vertex's JSON. A bare `{name, provider}` would
+			//     otherwise succeed and then fail every request, so point the
+			//     caller at the route that can build a working account.
+			const dedicatedRoute = DEDICATED_ONLY_PROVIDERS[provider];
+			if (dedicatedRoute) {
+				return errorResponse(
+					BadRequest(
+						`provider "${provider}" needs connection settings this endpoint does not collect; use POST /api/accounts/${dedicatedRoute}`,
+					),
+				);
+			}
+			const usesKey = usesApiKey(provider);
 			let apiKey: string | undefined;
 			let accessToken: string | undefined;
 			let refreshToken: string | undefined;
@@ -1044,7 +1062,7 @@ export function createAccountAddHandler(
 					required: true,
 					minLength: 1,
 				});
-			} else if (!needsNoSecret) {
+			} else {
 				// OAuth providers: a pasted token pair.
 				accessToken = validateString(body.accessToken, "accessToken", {
 					required: true,
