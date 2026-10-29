@@ -1095,6 +1095,8 @@ export class UsageCollector {
 				project: state.project ?? undefined,
 				projectAttributionSource: state.projectAttributionSource ?? undefined,
 				agentAttributionSource: state.agentAttributionSource ?? undefined,
+				// Only for providers that expose one — other payloads unchanged.
+				providerRequestId: startMessage.providerRequestId ?? undefined,
 			},
 		});
 		responseBody = null;

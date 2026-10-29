@@ -4,6 +4,7 @@ import {
 	withSanitizedProxyHeaders,
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
+import { providerRequestIdFromHeaders } from "@better-ccflare/providers";
 import type {
 	Account,
 	AgentAttributionSource,
@@ -179,6 +180,10 @@ export async function forwardToClient(
 
 	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 	const shouldStorePayloads = ctx.config.getStorePayloads?.() ?? true;
+	const providerRequestId = providerRequestIdFromHeaders(
+		ctx.provider.name,
+		response.headers,
+	);
 
 	// Filter out:
 	//   - count_tokens requests on providers that synthesize or proxy advisory
@@ -224,6 +229,7 @@ export async function forwardToClient(
 			responseStatus: response.status,
 			responseHeaders: responseHeadersObj,
 			isStream,
+			providerRequestId,
 			providerName: ctx.provider.name,
 			accountBillingType: account?.billing_type ?? null,
 			accountAutoPauseOnOverageEnabled: account?.auto_pause_on_overage_enabled

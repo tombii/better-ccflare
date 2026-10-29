@@ -288,6 +288,14 @@ export interface RequestPayload {
 		// the "Rate Limited" badge from a summary-only payload (no body
 		// hydration required).
 		rateLimited?: boolean;
+		/**
+		 * The upstream provider's own per-request id (e.g. NanoGPT
+		 * `x-request-id`), when it exposes one. Lets an operator look the
+		 * request up in the provider's web UI logs. Deliberately says nothing
+		 * about which backend/provider served the request. Absent for every
+		 * provider with no known id header.
+		 */
+		providerRequestId?: string;
 	};
 }
 

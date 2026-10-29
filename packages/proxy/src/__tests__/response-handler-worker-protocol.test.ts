@@ -111,6 +111,66 @@ describe("forwardToClient usage-collector protocol", () => {
 		).toBe(upstream);
 	});
 
+	it("carries the upstream provider request id in StartMessage for nanogpt", async () => {
+		const { starts } = createMockCollector();
+		const ctx = createCtx();
+		(ctx as unknown as { provider: { name: string } }).provider.name =
+			"nanogpt";
+
+		await forwardToClient(
+			{
+				requestId: "req-provider-id",
+				method: "POST",
+				path: "/v1/messages",
+				account: null,
+				requestHeaders: new Headers({ "content-type": "application/json" }),
+				requestBody: null,
+				response: new Response("{}", {
+					status: 200,
+					headers: {
+						"content-type": "application/json",
+						"x-request-id": "req_xyz789",
+					},
+				}),
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+			},
+			ctx,
+		);
+
+		expect(starts[0].providerRequestId).toBe("req_xyz789");
+	});
+
+	it("leaves providerRequestId null for providers without one", async () => {
+		const { starts } = createMockCollector();
+		const ctx = createCtx();
+
+		await forwardToClient(
+			{
+				requestId: "req-no-provider-id",
+				method: "POST",
+				path: "/v1/messages",
+				account: null,
+				requestHeaders: new Headers({ "content-type": "application/json" }),
+				requestBody: null,
+				response: new Response("{}", {
+					status: 200,
+					headers: {
+						"content-type": "application/json",
+						"x-request-id": "req_xyz789",
+					},
+				}),
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+			},
+			ctx,
+		);
+
+		expect(starts[0].providerRequestId).toBeNull();
+	});
+
 	it("calls handleStart with messageId", async () => {
 		const { starts } = createMockCollector();
 		const ctx = createCtx();
