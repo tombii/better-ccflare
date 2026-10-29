@@ -31,6 +31,7 @@ export {
 	isCodeBuddyDesensitizeEnabled,
 	isCodeBuddyModerationBlock,
 	pollCodeBuddyAuth,
+	readCodeBuddyGatewayRejection,
 	refreshCodeBuddyToken,
 	resolveCodeBuddyEndpoint,
 	SENSITIVE_TERMS,

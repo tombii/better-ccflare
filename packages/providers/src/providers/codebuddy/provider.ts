@@ -252,18 +252,25 @@ function normalizeToolChoice(record: Record<string, unknown>): void {
  * CodeBuddy-specific problems, so every other account in the rotation can
  * still serve the request and the proxy fails over on any 11128.
  */
+export async function readCodeBuddyGatewayRejection(
+	response: Response,
+): Promise<{ code: number; msg: string } | null> {
+	if (response.status !== 400) return null;
+	try {
+		const contentType = response.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return null;
+		const json = await response.clone().json();
+		if (json?.code !== 11128 || typeof json?.msg !== "string") return null;
+		return { code: 11128, msg: json.msg };
+	} catch {
+		return null;
+	}
+}
+
 export async function isCodeBuddyChannelRejection(
 	response: Response,
 ): Promise<boolean> {
-	if (response.status !== 400) return false;
-	try {
-		const contentType = response.headers.get("content-type");
-		if (!contentType?.includes("application/json")) return false;
-		const json = await response.clone().json();
-		return json?.code === 11128 && typeof json?.msg === "string";
-	} catch {
-		return false;
-	}
+	return (await readCodeBuddyGatewayRejection(response)) !== null;
 }
 
 export class CodeBuddyProvider extends OpenAICompatibleProvider {
@@ -484,6 +491,33 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 			record.reasoning_summary = "auto";
 		}
 		record.store = false;
+
+		// Since 2.174.0 the official CLI attaches harness metadata to every
+		// built-in-model request, and the 11128 channel verification that
+		// started 2026-10-29 rejects exactly the real-workload requests that
+		// lack it while letting small background calls through. Wire shape,
+		// learned live (2026-10-29) from the gateway's own 11101 unmarshal
+		// errors: `extra_vars` is Go's map[string]string — an object envelope
+		// whose values must be strings. The CLI therefore stringifies the
+		// harnessMetadata object into that single string value. Its
+		// buildHarnessMetadata emits schemaVersion 1, the client version, and
+		// `agent.depth` 0 for a main-conversation first call; stepIndex and
+		// previous are omitted there, and ccflare gives every request a fresh
+		// X-Conversation-ID, so from the gateway's view each request is step 0
+		// of its conversation.
+		const existingExtraVars = record.extra_vars;
+		record.extra_vars = {
+			...(existingExtraVars &&
+			typeof existingExtraVars === "object" &&
+			!Array.isArray(existingExtraVars)
+				? (existingExtraVars as Record<string, string>)
+				: {}),
+			harnessMetadata: JSON.stringify({
+				schemaVersion: 1,
+				harnessVersion: CODEBUDDY_CLI_VERSION,
+				agent: { depth: 0 },
+			}),
+		};
 
 		// CodeBuddy's gateway is stream-only in practice: the official CLI always
 		// sends stream: true, and a non-streaming request is not a supported

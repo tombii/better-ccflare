@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { isCodeBuddyChannelRejection } from "../provider";
+import {
+	isCodeBuddyChannelRejection,
+	readCodeBuddyGatewayRejection,
+} from "../provider";
 
 function jsonResponse(body: unknown, status = 400) {
 	return new Response(JSON.stringify(body), {
@@ -54,5 +57,28 @@ describe("isCodeBuddyChannelRejection", () => {
 		await isCodeBuddyChannelRejection(response);
 		// The predicate clones internally; the original must stay unconsumed.
 		expect(await response.text()).toContain("11128");
+	});
+});
+
+describe("readCodeBuddyGatewayRejection", () => {
+	it("returns the upstream message so the journal can distinguish causes", async () => {
+		const rejection = await readCodeBuddyGatewayRejection(
+			jsonResponse({
+				code: 11128,
+				msg: "Illegal API invocation from an unapproved channel",
+			}),
+		);
+		expect(rejection).toEqual({
+			code: 11128,
+			msg: "Illegal API invocation from an unapproved channel",
+		});
+	});
+
+	it("returns null for non-matching bodies", async () => {
+		expect(
+			await readCodeBuddyGatewayRejection(
+				jsonResponse({ code: 11101, msg: "x" }),
+			),
+		).toBeNull();
 	});
 });

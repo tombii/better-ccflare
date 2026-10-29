@@ -391,6 +391,38 @@ describe("CodeBuddyProvider", () => {
 			expect(body.store).toBe(false);
 		});
 
+		it("attaches harnessMetadata as a JSON-string extra_vars envelope", async () => {
+			const transformed = await provider.transformRequestBody(
+				anthropicRequest(),
+				makeAccount(),
+			);
+			const body = (await transformed.json()) as {
+				extra_vars?: unknown;
+			};
+
+			// The gateway's Go type is `extra_vars map[string]string` — a
+			// nested object value or a string envelope both fail to unmarshal
+			// with 11101 (observed live 2026-10-29). The CLI stringifies the
+			// harnessMetadata object into that single string value.
+			const envelope = body.extra_vars as {
+				harnessMetadata?: unknown;
+			};
+			expect(envelope && typeof envelope).toBe("object");
+			expect(typeof envelope.harnessMetadata).toBe("string");
+			const meta = JSON.parse(envelope.harnessMetadata as string) as {
+				schemaVersion: unknown;
+				harnessVersion: unknown;
+				agent: { depth: unknown };
+				stepIndex?: unknown;
+			};
+			expect(meta.schemaVersion).toBe(1);
+			expect(meta.harnessVersion).toBe(CODEBUDDY_CLI_VERSION);
+			expect(meta.agent).toEqual({ depth: 0 });
+			// The CLI omits stepIndex on a conversation's first call, and
+			// ccflare always starts a fresh conversation id per request.
+			expect(meta.stepIndex).toBeUndefined();
+		});
+
 		it("prepends a fallback system message when the client sends none", async () => {
 			const transformed = await provider.transformRequestBody(
 				anthropicRequest(),

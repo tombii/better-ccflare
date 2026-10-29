@@ -20,8 +20,8 @@ import {
 	isAnthropicExtraUsageExhausted,
 	isAnthropicOrgPermissionDenied,
 	isAnthropicOutOfCredits,
-	isCodeBuddyChannelRejection,
 	type Provider,
+	readCodeBuddyGatewayRejection,
 	recoverCodexMessagesContinuation,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -893,6 +893,35 @@ export async function proxyUnauthenticated(
  * @param ctx - The proxy context
  * @returns Promise resolving to response or null if failed
  */
+/**
+ * Compact, PII-free description of a request body, for diagnosing gateway
+ * rejections whose payloads are never stored. Returns a fixed string on any
+ * parse failure so the log line always renders.
+ */
+function requestShapeFingerprint(buffer: ArrayBuffer | null): string {
+	if (!buffer) return "no-body";
+	try {
+		const body = JSON.parse(new TextDecoder().decode(buffer)) as {
+			stream?: unknown;
+			messages?: unknown;
+			tools?: unknown;
+			system?: unknown;
+			thinking?: { type?: unknown };
+			metadata?: unknown;
+		};
+		const messages = Array.isArray(body.messages) ? body.messages.length : 0;
+		const tools = Array.isArray(body.tools) ? body.tools.length : 0;
+		const systemBlocks = Array.isArray(body.system)
+			? body.system.length
+			: typeof body.system === "string"
+				? 1
+				: 0;
+		return `stream=${body.stream === true} msgs=${messages} tools=${tools} system_blocks=${systemBlocks} thinking=${String(body.thinking?.type ?? "none")} metadata=${body.metadata !== undefined}`;
+	} catch {
+		return "unparseable";
+	}
+}
+
 export async function proxyWithAccount(
 	req: Request,
 	url: URL,
@@ -1844,64 +1873,70 @@ export async function proxyWithAccount(
 		const classifyCodeBuddyChannelRejection = async (
 			response: Response,
 		): Promise<UpstreamErrorClassification> => {
-			if (
-				provider.name === "codebuddy" &&
-				response.status === 400 &&
-				// Predicate clones internally only after the content-type gate
-				// (issue #356); pass the response un-cloned.
-				(await isCodeBuddyChannelRejection(response))
-			) {
-				let requestedModel: string | null = null;
-				if (effectiveBodyBuffer)
-					requestedModel = effectiveBodyContext.getModel();
-				log.warn(
-					`Account ${account.name} codebuddy_gateway_rejection (400 code 11128${requestedModel ? `, model=${requestedModel}` : ""}) — CodeBuddy channel verification rejected the request; failing over to next account`,
+			if (provider.name !== "codebuddy" || response.status !== 400)
+				return NOT_CLASSIFIED;
+			// The reader clones internally only after the content-type gate
+			// (issue #356); pass the response un-cloned.
+			const rejection = await readCodeBuddyGatewayRejection(response);
+			if (rejection === null) return NOT_CLASSIFIED;
+			let requestedModel: string | null = null;
+			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
+			// The gateway reuses 11128 for channel verification AND for
+			// request-shape rejections, so the upstream msg is the only way
+			// to tell a client-identity block from a malformed request in
+			// the journal. Keep it in the log, not the audit row, so the
+			// dashboard's error grouping stays stable. The shape fingerprint
+			// answers the follow-up no payload can (rejected attempts store
+			// none): which client requests does the gateway accept?
+			log.warn(
+				`codebuddy_gateway_rejection shape: ${requestShapeFingerprint(effectiveBodyBuffer)}`,
+			);
+			log.warn(
+				`Account ${account.name} codebuddy_gateway_rejection (400 code ${rejection.code}${requestedModel ? `, model=${requestedModel}` : ""}) — ${rejection.msg}; failing over to next account`,
+			);
+			// The audit row stays real-traffic-only, same rationale as the
+			// org_permission_denied path: a synthetic probe's rejection was
+			// never a client-visible request.
+			if (!isSyntheticInternal) {
+				const responseTime = Date.now() - requestMeta.timestamp;
+				const modelRewrite = isModelRewrite(
+					requestMeta.originalModel,
+					requestMeta.appliedModel,
 				);
-				// The audit row stays real-traffic-only, same rationale as the
-				// org_permission_denied path: a synthetic probe's rejection was
-				// never a client-visible request.
-				if (!isSyntheticInternal) {
-					const responseTime = Date.now() - requestMeta.timestamp;
-					const modelRewrite = isModelRewrite(
-						requestMeta.originalModel,
-						requestMeta.appliedModel,
-					);
-					ctx.asyncWriter.enqueue(() =>
-						ctx.dbOps.saveRequest(
-							crypto.randomUUID(),
-							req.method,
-							url.pathname,
-							account.id,
-							400,
-							false,
-							"codebuddy_gateway_rejection",
-							responseTime,
-							failoverAttempts,
-							requestedModel ? { model: requestedModel } : undefined,
-							requestMeta.agentUsed ?? undefined,
-							apiKeyId ?? undefined,
-							apiKeyName ?? undefined,
-							requestMeta.project ?? null,
-							undefined,
-							requestMeta.comboName ?? null,
-							modelRewrite ? (requestMeta.originalModel ?? null) : null,
-							modelRewrite ? (requestMeta.appliedModel ?? null) : null,
-							requestMeta.projectAttributionSource ?? null,
-							requestMeta.agentAttributionSource ?? null,
-							null,
-							requestMeta.clientSessionId ?? null,
-							gatewayHint.requestClass,
-							gatewayHint.agentType,
-							gatewayHint.prevToolDurations,
-							gatewayHint.compaction,
-							gatewayHint.contextCompacted,
-						),
-					);
-				}
-				cancelDiscardedResponseBody(response);
-				return null;
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.saveRequest(
+						crypto.randomUUID(),
+						req.method,
+						url.pathname,
+						account.id,
+						400,
+						false,
+						"codebuddy_gateway_rejection",
+						responseTime,
+						failoverAttempts,
+						requestedModel ? { model: requestedModel } : undefined,
+						requestMeta.agentUsed ?? undefined,
+						apiKeyId ?? undefined,
+						apiKeyName ?? undefined,
+						requestMeta.project ?? null,
+						undefined,
+						requestMeta.comboName ?? null,
+						modelRewrite ? (requestMeta.originalModel ?? null) : null,
+						modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+						requestMeta.projectAttributionSource ?? null,
+						requestMeta.agentAttributionSource ?? null,
+						null,
+						requestMeta.clientSessionId ?? null,
+						gatewayHint.requestClass,
+						gatewayHint.agentType,
+						gatewayHint.prevToolDurations,
+						gatewayHint.compaction,
+						gatewayHint.contextCompacted,
+					),
+				);
 			}
-			return NOT_CLASSIFIED;
+			cancelDiscardedResponseBody(response);
+			return null;
 		};
 
 		const codeBuddyRejectionOutcome =
