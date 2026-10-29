@@ -1516,15 +1516,9 @@ describe("proxyWithAccount — CodeBuddy 11128 oversized body", () => {
 });
 
 describe("systemSuspectScan", () => {
-	function buffer(text: string): ArrayBuffer {
-		return new TextEncoder().encode(text).buffer as ArrayBuffer;
-	}
-
 	it("reports fixed identity terms by count", () => {
 		const scan = systemSuspectScan(
-			buffer(
-				"You are Claude Code, Anthropic's official CLI for Claude. Claude Code again.",
-			),
+			"You are Claude Code, Anthropic's official CLI for Claude. Claude Code again.",
 		);
 		expect(scan).toContain("official CLI for Claude=1");
 		expect(scan).toContain("Claude Code=2");
@@ -1532,19 +1526,89 @@ describe("systemSuspectScan", () => {
 	});
 
 	it("reports none when no known term is present", () => {
-		expect(
-			systemSuspectScan(buffer("You are a helpful coding assistant.")),
-		).toBe("none");
+		expect(systemSuspectScan("You are a helpful coding assistant.")).toBe(
+			"none",
+		);
 	});
 
 	it("never echoes raw request text", () => {
 		const secret = "SENTINEL-do-not-log\n[FAKE LOG LINE]";
-		const scan = systemSuspectScan(buffer(secret));
+		const scan = systemSuspectScan(secret);
 		expect(scan).not.toContain("SENTINEL");
 		expect(scan).not.toContain("FAKE LOG LINE");
 	});
 
 	it("handles a missing body", () => {
-		expect(systemSuspectScan(null)).toBe("no-body");
+		expect(systemSuspectScan(undefined)).toBe("no-body");
+	});
+});
+
+describe("CodeBuddy rejection diagnostics — scan the transformed body", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it("does not report identity text CodeBuddy already stripped", async () => {
+		// Greptile P1 on #515: scanning the CLIENT body listed terms the
+		// provider had already removed, pointing the investigation at text the
+		// gateway never received. The scan must read what was actually sent.
+		let sentBody = "";
+		globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+			const req = input instanceof Request ? input : new Request(String(input));
+			sentBody = await req.text();
+			return jsonResponse(
+				{
+					code: 11128,
+					msg: "Illegal API invocation from an unapproved channel",
+				},
+				400,
+			);
+		});
+
+		const bodyBuffer = new TextEncoder().encode(
+			JSON.stringify({
+				model: "claude-sonnet-4-5",
+				max_tokens: 10,
+				system:
+					"You are Claude Code, Anthropic's official CLI for Claude. You are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5. Assistant knowledge cutoff is June 2026.",
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		).buffer as ArrayBuffer;
+
+		const result = await proxyWithAccount(
+			makeRequest(bodyBuffer),
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				id: "acc-cb",
+				name: "codebuddy-test",
+				provider: "codebuddy",
+				api_key: null,
+				access_token: "tok",
+				refresh_token: "refresh",
+				expires_at: Date.now() + 24 * 60 * 60 * 1000,
+				custom_endpoint: "https://codebuddy.example.com",
+				model_mappings: null,
+			}),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+		);
+
+		expect(result).toBeNull(); // 11128 fails over
+		// The upstream really did receive the stripped body...
+		expect(sentBody).not.toContain("official CLI for Claude");
+		expect(sentBody).not.toContain("powered by the model named");
+		// ...so the diagnostic must not name those terms as suspects.
+		const scan = systemSuspectScan(sentBody);
+		expect(scan).not.toContain("official CLI for Claude");
+		expect(scan).not.toContain("powered by the model named");
 	});
 });

@@ -958,10 +958,10 @@ async function readBoundedBody(
  * number, a boolean derived from one, or drawn from a fixed vocabulary —
  * nothing client-supplied reaches the log verbatim.
  */
-function requestShapeFingerprint(buffer: ArrayBuffer | null): string {
-	if (!buffer) return "no-body";
+function requestShapeFingerprint(bodyText: string | undefined): string {
+	if (bodyText === undefined) return "no-body";
 	try {
-		const body = JSON.parse(new TextDecoder().decode(buffer)) as {
+		const body = JSON.parse(bodyText) as {
 			stream?: unknown;
 			messages?: unknown;
 			tools?: unknown;
@@ -1005,10 +1005,10 @@ const SUSPECT_IDENTITY_TERMS: readonly string[] = [
 	"Pro subscription",
 ];
 
-export function systemSuspectScan(buffer: ArrayBuffer | null): string {
-	if (!buffer) return "no-body";
+export function systemSuspectScan(bodyText: string | undefined): string {
+	if (bodyText === undefined) return "no-body";
 	try {
-		const text = new TextDecoder().decode(buffer);
+		const text = bodyText;
 		const hits: string[] = [];
 		for (const term of SUSPECT_IDENTITY_TERMS) {
 			let count = 0;
@@ -2005,7 +2005,7 @@ export async function proxyWithAccount(
 			// answers the follow-up no payload can (rejected attempts store
 			// none): which client requests does the gateway accept?
 			log.warn(
-				`codebuddy_gateway_rejection shape: ${requestShapeFingerprint(effectiveBodyBuffer)} system_suspects: ${systemSuspectScan(effectiveBodyBuffer)}`,
+				`codebuddy_gateway_rejection shape: ${requestShapeFingerprint(outgoing.bodyText)} system_suspects: ${systemSuspectScan(outgoing.bodyText)}`,
 			);
 			log.warn(
 				`Account ${account.name} codebuddy_gateway_rejection (400 code ${rejection.code}${requestedModel ? `, model=${requestedModel}` : ""}) — ${rejection.msg}; failing over to next account`,
