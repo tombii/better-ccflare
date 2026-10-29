@@ -23,6 +23,8 @@ export {
 } from "./providers/anthropic-compatible/factory";
 // Export providers
 export * from "./providers/index";
+// Export Qoder usage fetcher
+export * from "./qoder-usage-fetcher";
 // Export registry functions
 export {
 	getOAuthProvider,
@@ -58,6 +60,7 @@ import { OllamaCloudProvider } from "./providers/ollama/ollama-cloud-provider";
 import { OllamaProvider } from "./providers/ollama/provider";
 import { OpenAICompatibleProvider } from "./providers/openai/provider";
 import { OpenRouterProvider } from "./providers/openrouter/provider";
+import { QoderProvider } from "./providers/qoder/provider";
 import { QwenProvider } from "./providers/qwen/provider";
 import { VertexAIProvider } from "./providers/vertex-ai/provider";
 import { XaiProvider } from "./providers/xai/provider";
@@ -72,6 +75,7 @@ registry.registerProvider(new BedrockProvider());
 registry.registerProvider(new CodeBuddyProvider());
 registry.registerProvider(new KiloProvider());
 registry.registerProvider(new OpenRouterProvider());
+registry.registerProvider(new QoderProvider());
 registry.registerProvider(new QwenProvider());
 registry.registerProvider(new MinimaxProvider());
 registry.registerProvider(new DeepseekProvider());

@@ -2218,6 +2218,16 @@ export async function proxyWithAccount(
 				internalNativeResponses,
 			);
 		}
+		// The Qoder provider tags the request with the wire model key it actually
+		// sent (the upstream echoes "auto", and the transformed body is an
+		// encoded string, so neither the response nor `outgoing.model` can
+		// attribute it). Any non-empty value is copied.
+		const internalQoderModel = outgoing.request.headers.get(
+			"x-better-ccflare-qoder-model",
+		);
+		if (internalQoderModel) {
+			responseHeaders.set("x-better-ccflare-qoder-model", internalQoderModel);
+		}
 		// Inject the original request path so providers can identify the
 		// response type (e.g. /v1/models vs /v1/messages) in processResponse
 		// without needing the original request object.
@@ -2259,9 +2269,28 @@ export async function proxyWithAccount(
 				body: outgoing.bodyText || undefined,
 				signal: req.signal,
 			});
-			const retryRaw = isSyntheticProviderResponse(retryRequest)
-				? materializeSyntheticResponse(retryRequest)
-				: await forwardUpstream(retryRequest);
+			// Some upstreams refuse a byte-identical resend (Qoder answers code
+			// 103, "Duplicate request"), and this retry replays the request
+			// verbatim. The provider may give the resend a fresh identity — a
+			// new per-request id and a new signature — before it goes out.
+			// Providers without the hook keep today's behaviour byte for byte.
+			let refreshed = retryRequest;
+			if (provider.refreshRequestIdentity) {
+				try {
+					refreshed = await provider.refreshRequestIdentity(
+						retryRequest,
+						account,
+					);
+				} catch (error) {
+					log.warn(
+						`Account ${account.name}: could not refresh the request identity for the retry: ${String(error)}`,
+					);
+					refreshed = retryRequest;
+				}
+			}
+			const retryRaw = isSyntheticProviderResponse(refreshed)
+				? materializeSyntheticResponse(refreshed)
+				: await forwardUpstream(refreshed);
 
 			// Mirror the first response's metadata tagging: providers read
 			// stream intent / custom-tool state from these headers, and the
@@ -2278,6 +2307,12 @@ export async function proxyWithAccount(
 				if (value === "true" || value === "false") {
 					retryTaggedHeaders.set(forwarded, value);
 				}
+			}
+			const retryQoderModel = outgoing.request.headers.get(
+				"x-better-ccflare-qoder-model",
+			);
+			if (retryQoderModel) {
+				retryTaggedHeaders.set("x-better-ccflare-qoder-model", retryQoderModel);
 			}
 			retryTaggedHeaders.set("x-better-ccflare-request-path", requestMeta.path);
 			const retryTaggedRaw = new Response(retryRaw.body, {

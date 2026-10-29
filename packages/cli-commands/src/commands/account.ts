@@ -30,6 +30,11 @@ import {
 	resolveCodeBuddyEndpoint,
 } from "@better-ccflare/providers/codebuddy";
 import {
+	encodeQoderAccessToken,
+	exchangeQoderPat,
+	QODER_DEFAULT_OPENAPI_ENDPOINT,
+} from "@better-ccflare/providers/qoder";
+import {
 	initiateDeviceFlow as initiateQwenDeviceFlow,
 	pollForToken as pollQwenForToken,
 } from "@better-ccflare/providers/qwen";
@@ -64,7 +69,8 @@ export interface AddAccountOptionsWithAdapter {
 		| "xai"
 		| "ollama"
 		| "ollama-cloud"
-		| "meta";
+		| "meta"
+		| "qoder";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string | string[] };
@@ -100,7 +106,8 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "xai"
 		| "ollama"
 		| "ollama-cloud"
-		| "meta";
+		| "meta"
+		| "qoder";
 }
 
 /**
@@ -308,6 +315,83 @@ async function createKiloAccount(
 			0,
 			validatedPriority,
 			null,
+			validatedModelMappings,
+			validatedModelFallbacks,
+		],
+	);
+}
+
+/**
+ * Create a Qoder account in the database.
+ *
+ * The PAT is verified by exchanging it for a job token before anything is
+ * written, so a bad token fails here instead of on the first request. The PAT
+ * is stored as `refresh_token` (the renewable credential); the minted job token
+ * goes into `access_token` in the provider's prefixed form. Neither value is
+ * ever printed.
+ */
+async function createQoderAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	pat: string,
+	priority: number,
+	customEndpoint: string | undefined,
+	modelMappings?: ModelMapping | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
+): Promise<void> {
+	const validatedPriority = validatePriority(priority, "priority");
+	const trimmedEndpoint = customEndpoint?.trim() || null;
+	const storedEndpoint =
+		trimmedEndpoint === null ||
+		trimmedEndpoint === QODER_DEFAULT_OPENAPI_ENDPOINT
+			? null
+			: validateEndpointUrl(trimmedEndpoint, "customEndpoint");
+
+	let minted: Awaited<ReturnType<typeof exchangeQoderPat>>;
+	try {
+		minted = await exchangeQoderPat(pat, storedEndpoint ?? undefined);
+	} catch (error) {
+		// exchangeQoderPat redacts credentials from its messages, but surface a
+		// fixed message anyway so nothing upstream can leak the PAT.
+		console.error(
+			`Qoder PAT exchange failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		throw new Error(
+			"Invalid Qoder Personal Access Token: the token could not be exchanged for a job token",
+		);
+	}
+
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	let validatedModelMappings = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validated = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validated);
+	}
+	let validatedModelFallbacks = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
+
+	await dbOps.getAdapter().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"qoder",
+			null,
+			pat,
+			encodeQoderAccessToken("pat", minted.accessToken),
+			minted.expiresAt,
+			now,
+			0,
+			0,
+			validatedPriority,
+			storedEndpoint,
 			validatedModelMappings,
 			validatedModelFallbacks,
 		],
@@ -1311,6 +1395,7 @@ export async function addAccount(
 			{ label: "Codex (OpenAI OAuth)", value: "codex" },
 			{ label: "Qwen (Alibaba Cloud OAuth)", value: "qwen" },
 			{ label: "CodeBuddy (browser authentication)", value: "codebuddy" },
+			{ label: "Qoder (Personal Access Token)", value: "qoder" },
 			{ label: "xAI / Grok (Grok CLI OAuth)", value: "xai" },
 			{ label: "Vertex AI (Google Cloud)", value: "vertex-ai" },
 			{ label: "AWS Bedrock (AWS profile credentials)", value: "bedrock" },
@@ -1755,6 +1840,46 @@ export async function addAccount(
 			customEndpoint,
 			finalModelMappings,
 		);
+	} else if (mode === "qoder") {
+		// Qoder authenticates with a Personal Access Token (`pt-…`) that is
+		// exchanged for a short-lived job token. Only the PAT is stored; the
+		// provider renews the job token from it.
+		const pat = (
+			await adapter.input(
+				"\nEnter your Qoder Personal Access Token (pt-…, from qoder.com/account/integrations): ",
+			)
+		)?.trim();
+		if (!pat) {
+			throw new Error("Qoder Personal Access Token is required");
+		}
+		const priority =
+			providedPriority ??
+			(await adapter.input(
+				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+			));
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+			{
+				fable: "qfmodel",
+				opus: "qfmodel",
+				sonnet: "dfmodel",
+				haiku: "dfmodel",
+			},
+		);
+
+		await createQoderAccount(
+			dbOps,
+			name,
+			pat,
+			typeof priority === "string"
+				? parseInt(priority, 10) || 0
+				: priority || 0,
+			customEndpoint,
+			finalModelMappings,
+		);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: Qoder (Personal Access Token)");
 	} else if (mode === "xai") {
 		// Handle xAI/Grok accounts by importing local Grok CLI OAuth credentials.
 		const priority =
@@ -2782,6 +2907,114 @@ async function reauthenticateXaiAccount(
 }
 
 /**
+ * Re-authenticate a Qoder account by replacing its Personal Access Token.
+ *
+ * Qoder has no browser OAuth flow: re-auth means a new `pt-…` token. The old
+ * PAT is swapped out, a fresh job token is minted from the new one, and the
+ * reauth flag is cleared. A failed exchange changes nothing.
+ */
+async function reauthenticateQoderAccount(
+	dbOps: DatabaseOperations,
+	config: Config,
+	account: { id: string; custom_endpoint: string | null },
+	name: string,
+): Promise<{ success: boolean; message: string }> {
+	const { stdPromptAdapter } = await import("../prompts/index");
+
+	console.log(`\nRe-authenticating Qoder account '${name}'...`);
+	console.log(
+		"This will preserve all your account metadata (usage stats, priority, etc.)",
+	);
+	console.log(
+		"\nGenerate a new Personal Access Token at qoder.com/account/integrations.",
+	);
+
+	const pat = (
+		await stdPromptAdapter.input(
+			"\nEnter the new Qoder Personal Access Token: ",
+		)
+	)?.trim();
+	if (!pat) {
+		return { success: false, message: "A Personal Access Token is required" };
+	}
+
+	let minted: Awaited<ReturnType<typeof exchangeQoderPat>>;
+	try {
+		minted = await exchangeQoderPat(pat, account.custom_endpoint ?? undefined);
+	} catch (error) {
+		console.error(
+			`Qoder PAT exchange failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return {
+			success: false,
+			message:
+				"Invalid Qoder Personal Access Token: the token could not be exchanged for a job token",
+		};
+	}
+
+	try {
+		await dbOps.getAdapter().run(
+			`UPDATE accounts SET
+				refresh_token = ?,
+				access_token = ?,
+				expires_at = ?,
+				refresh_token_issued_at = ?,
+				requires_reauth = 0,
+				pause_reason = NULL
+			WHERE id = ?`,
+			[
+				pat,
+				encodeQoderAccessToken("pat", minted.accessToken),
+				minted.expiresAt,
+				Date.now(),
+				account.id,
+			],
+		);
+	} catch (dbError) {
+		return {
+			success: false,
+			message: `Database error while updating Qoder credentials: ${dbError instanceof Error ? dbError.message : String(dbError)}`,
+		};
+	}
+
+	console.log(`\nAccount '${name}' re-authenticated successfully!`);
+	console.log(
+		"All account metadata (usage stats, priority, settings) has been preserved.",
+	);
+
+	console.log("\nNotifying running servers to reload tokens...");
+	const localControlSecret = config.getLocalControlSecret();
+	for (const port of [8080, 8081]) {
+		try {
+			const response = await fetch(
+				`http://localhost:${port}/api/accounts/${account.id}/reload`,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						"x-better-ccflare-local-control-secret": localControlSecret,
+					},
+				},
+			);
+			if (response.ok) {
+				console.log(`✓ Token reload successful on port ${port}`);
+			} else {
+				console.log(
+					`✗ Server not responding on port ${port} (${response.status})`,
+				);
+			}
+		} catch {
+			console.log(`✗ No server running on port ${port}`);
+		}
+	}
+
+	return {
+		success: true,
+		message: `Account '${name}' re-authenticated successfully. All metadata preserved.`,
+	};
+}
+
+/**
  * Re-authenticate an account by name (preserves all metadata)
  * This performs soft re-authentication: only updates OAuth tokens, keeps all other data
  */
@@ -2816,11 +3049,12 @@ export async function reauthenticateAccount(
 		account.provider !== "anthropic" &&
 		account.provider !== "qwen" &&
 		account.provider !== "xai" &&
-		account.provider !== "codebuddy"
+		account.provider !== "codebuddy" &&
+		account.provider !== "qoder"
 	) {
 		return {
 			success: false,
-			message: `Account '${name}' (${account.provider}) does not support OAuth re-authentication. Only Anthropic, Qwen, xAI, and CodeBuddy accounts can be re-authenticated.`,
+			message: `Account '${name}' (${account.provider}) does not support re-authentication. Only Anthropic, Qwen, xAI, CodeBuddy, and Qoder accounts can be re-authenticated.`,
 		};
 	}
 
@@ -2835,6 +3069,10 @@ export async function reauthenticateAccount(
 
 	if (account.provider === "codebuddy") {
 		return reauthenticateCodeBuddyAccount(dbOps, config, account, name);
+	}
+
+	if (account.provider === "qoder") {
+		return reauthenticateQoderAccount(dbOps, config, account, name);
 	}
 
 	// Create OAuth flow instance

@@ -139,6 +139,7 @@ export function AccountsTab() {
 			| "alibaba-coding-plan"
 			| "codex"
 			| "codebuddy"
+			| "qoder"
 			| "qwen"
 			| "ollama";
 		priority: number;
@@ -317,6 +318,24 @@ export function AccountsTab() {
 	}) => {
 		try {
 			await api.addKiloAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddQoderAccount = async (params: {
+		name: string;
+		personalToken: string;
+		priority: number;
+		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
+	}) => {
+		try {
+			await api.addQoderAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -726,6 +745,7 @@ export function AccountsTab() {
 							onAddNanoGPTAccount={handleAddNanoGPTAccount}
 							onAddAlibabaCodingPlanAccount={handleAddAlibabaCodingPlanAccount}
 							onAddKiloAccount={handleAddKiloAccount}
+							onAddQoderAccount={handleAddQoderAccount}
 							onAddOpenRouterAccount={handleAddOpenRouterAccount}
 							onAddAnthropicCompatibleAccount={
 								handleAddAnthropicCompatibleAccount

@@ -91,6 +91,7 @@ interface ParsedArgs {
 		| "alibaba-coding-plan"
 		| "codex"
 		| "codebuddy"
+		| "qoder"
 		| "xai"
 		| "ollama"
 		| null;
@@ -559,6 +560,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "alibaba-coding-plan"
 					| "codex"
 					| "codebuddy"
+					| "qoder"
 					| "xai"
 					| "ollama"
 					| "max";
@@ -585,6 +587,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "alibaba-coding-plan"
 					| "codex"
 					| "codebuddy"
+					| "qoder"
 					| "xai"
 					| "ollama";
 				const validModes: Array<
@@ -601,6 +604,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "alibaba-coding-plan"
 					| "codex"
 					| "codebuddy"
+					| "qoder"
 					| "xai"
 					| "ollama"
 				> = [
@@ -617,6 +621,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					"alibaba-coding-plan",
 					"codex",
 					"codebuddy",
+					"qoder",
 					"xai",
 					"ollama",
 				];
@@ -895,7 +900,7 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|deepseek|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|codebuddy|xai|ollama>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|deepseek|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|codebuddy|qoder|xai|ollama>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
@@ -1082,6 +1087,9 @@ Examples:
 			);
 			console.error(
 				"  --mode codebuddy           CodeBuddy (browser authentication) provider",
+			);
+			console.error(
+				"  --mode qoder               Qoder (Personal Access Token from qoder.com/account/integrations)",
 			);
 			console.error(
 				"  --mode xai                 xAI/Grok (Grok CLI OAuth) provider",

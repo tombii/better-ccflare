@@ -39,6 +39,7 @@ export const ACCOUNT_MODES = {
 	OLLAMA: "ollama", // Ollama local provider (v0.14.0+, no API key required)
 	META: "meta", // Meta Model API provider (API key)
 	CODEBUDDY: "codebuddy", // CodeBuddy provider (external-link auth)
+	QODER: "qoder", // Qoder provider (Personal Access Token exchanged for a job token)
 } as const;
 
 export type AccountMode = (typeof ACCOUNT_MODES)[keyof typeof ACCOUNT_MODES];
@@ -82,6 +83,8 @@ export function getProviderFromMode(mode: AccountMode): ProviderName {
 			return PROVIDER_NAMES.META;
 		case ACCOUNT_MODES.CODEBUDDY:
 			return PROVIDER_NAMES.CODEBUDDY;
+		case ACCOUNT_MODES.QODER:
+			return PROVIDER_NAMES.QODER;
 		default:
 			return PROVIDER_NAMES.ANTHROPIC;
 	}

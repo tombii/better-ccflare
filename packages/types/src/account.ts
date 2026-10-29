@@ -552,7 +552,8 @@ export interface AccountListItem {
 		| "xai"
 		| "ollama"
 		| "ollama-cloud"
-		| "meta";
+		| "meta"
+		| "qoder";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
@@ -573,7 +574,8 @@ export interface AddAccountOptions {
 		| "openai-compatible"
 		| "bedrock"
 		| "openrouter"
-		| "xai";
+		| "xai"
+		| "qoder";
 	priority?: number;
 	customEndpoint?: string;
 }
