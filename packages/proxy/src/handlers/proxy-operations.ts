@@ -894,9 +894,27 @@ export async function proxyUnauthenticated(
  * @returns Promise resolving to response or null if failed
  */
 /**
+ * Thinking modes ccflare knows about. `thinking.type` is client-controlled, so
+ * the fingerprint maps it through this allow-list instead of echoing the raw
+ * value: the text logger preserves newlines verbatim, and an unconstrained
+ * string would let a caller inject fabricated log lines.
+ */
+const KNOWN_THINKING_TYPES = new Set(["adaptive", "enabled", "disabled"]);
+
+function thinkingTypeLabel(thinking: unknown): string {
+	if (thinking === undefined || thinking === null) return "none";
+	if (typeof thinking !== "object") return "unknown";
+	const type = (thinking as { type?: unknown }).type;
+	if (typeof type !== "string") return "unknown";
+	return KNOWN_THINKING_TYPES.has(type) ? type : "unknown";
+}
+
+/**
  * Compact, PII-free description of a request body, for diagnosing gateway
  * rejections whose payloads are never stored. Returns a fixed string on any
- * parse failure so the log line always renders.
+ * parse failure so the log line always renders. Every value is either a
+ * number, a boolean derived from one, or drawn from a fixed vocabulary —
+ * nothing client-supplied reaches the log verbatim.
  */
 function requestShapeFingerprint(buffer: ArrayBuffer | null): string {
 	if (!buffer) return "no-body";
@@ -906,7 +924,7 @@ function requestShapeFingerprint(buffer: ArrayBuffer | null): string {
 			messages?: unknown;
 			tools?: unknown;
 			system?: unknown;
-			thinking?: { type?: unknown };
+			thinking?: unknown;
 			metadata?: unknown;
 		};
 		const messages = Array.isArray(body.messages) ? body.messages.length : 0;
@@ -916,7 +934,7 @@ function requestShapeFingerprint(buffer: ArrayBuffer | null): string {
 			: typeof body.system === "string"
 				? 1
 				: 0;
-		return `stream=${body.stream === true} msgs=${messages} tools=${tools} system_blocks=${systemBlocks} thinking=${String(body.thinking?.type ?? "none")} metadata=${body.metadata !== undefined}`;
+		return `stream=${body.stream === true} msgs=${messages} tools=${tools} system_blocks=${systemBlocks} thinking=${thinkingTypeLabel(body.thinking)} metadata=${body.metadata !== undefined}`;
 	} catch {
 		return "unparseable";
 	}
@@ -936,6 +954,15 @@ export async function proxyWithAccount(
 	apiKeyName?: string | null,
 	requestBodyContext?: RequestBodyContext | null,
 	returnRateLimitedResponseOnExhaustion = false,
+	/**
+	 * Receives a replay of this attempt's terminal CodeBuddy gateway
+	 * rejection. The attempt itself still returns `null` so the caller keeps
+	 * failing over; the caller invokes the capture only if *every* candidate
+	 * fails, turning the generic "all accounts failed" 503 into the gateway's
+	 * own explanation. The response cannot be returned directly here because
+	 * returning it would stop failover.
+	 */
+	onTerminalRejection?: (capture: () => Promise<Response | null>) => void,
 ): Promise<Response | null> {
 	try {
 		// Extracted once for the whole call: every direct `saveRequest` audit
@@ -1872,6 +1899,7 @@ export async function proxyWithAccount(
 		// the dashboard.
 		const classifyCodeBuddyChannelRejection = async (
 			response: Response,
+			terminal: boolean,
 		): Promise<UpstreamErrorClassification> => {
 			if (provider.name !== "codebuddy" || response.status !== 400)
 				return NOT_CLASSIFIED;
@@ -1935,12 +1963,44 @@ export async function proxyWithAccount(
 					),
 				);
 			}
+			if (terminal) {
+				// Nothing left to fail over to in this attempt's own view, but the
+				// caller may still have other accounts: hand it a replay instead
+				// of discarding the explanation. The body is read exactly once —
+				// by whoever finally calls the capture — so a replay that is
+				// never invoked leaves nothing half-consumed on the response
+				// object (it is dropped with the attempt).
+				const captured = response;
+				const capturedModel = effectiveBodyContext.getModel();
+				onTerminalRejection?.(() => {
+					const terminalHeaders = new Headers(captured.headers);
+					terminalHeaders.set("x-better-ccflare-request-id", requestMeta.id);
+					terminalHeaders.set(
+						"x-better-ccflare-request-path",
+						requestMeta.path,
+					);
+					return provider.processResponse(
+						new Response(captured.body, {
+							status: captured.status,
+							statusText: captured.statusText,
+							headers: terminalHeaders,
+						}),
+						account,
+						req.headers,
+						drainAbortController,
+						{ requestModel: capturedModel },
+					);
+				});
+				return null;
+			}
 			cancelDiscardedResponseBody(response);
 			return null;
 		};
 
-		const codeBuddyRejectionOutcome =
-			await classifyCodeBuddyChannelRejection(rawResponse);
+		const codeBuddyRejectionOutcome = await classifyCodeBuddyChannelRejection(
+			rawResponse,
+			returnRateLimitedResponseOnExhaustion,
+		);
 		if (codeBuddyRejectionOutcome !== NOT_CLASSIFIED)
 			return codeBuddyRejectionOutcome;
 
@@ -1976,8 +2036,10 @@ export async function proxyWithAccount(
 			const orgDenied = await classifyOrgPermissionDenied(retried);
 			if (orgDenied !== NOT_CLASSIFIED) return orgDenied;
 
-			const codeBuddyRejected =
-				await classifyCodeBuddyChannelRejection(retried);
+			const codeBuddyRejected = await classifyCodeBuddyChannelRejection(
+				retried,
+				returnRateLimitedResponseOnExhaustion,
+			);
 			if (codeBuddyRejected !== NOT_CLASSIFIED) return codeBuddyRejected;
 
 			// Everything below lived under `isModelUnavailableError`, which is
