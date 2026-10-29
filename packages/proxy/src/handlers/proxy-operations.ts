@@ -958,10 +958,10 @@ async function readBoundedBody(
  * number, a boolean derived from one, or drawn from a fixed vocabulary —
  * nothing client-supplied reaches the log verbatim.
  */
-function requestShapeFingerprint(buffer: ArrayBuffer | null): string {
-	if (!buffer) return "no-body";
+function requestShapeFingerprint(bodyText: string | undefined): string {
+	if (bodyText === undefined) return "no-body";
 	try {
-		const body = JSON.parse(new TextDecoder().decode(buffer)) as {
+		const body = JSON.parse(bodyText) as {
 			stream?: unknown;
 			messages?: unknown;
 			tools?: unknown;
@@ -979,6 +979,52 @@ function requestShapeFingerprint(buffer: ArrayBuffer | null): string {
 		return `stream=${body.stream === true} msgs=${messages} tools=${tools} system_blocks=${systemBlocks} thinking=${thinkingTypeLabel(body.thinking)} metadata=${body.metadata !== undefined}`;
 	} catch {
 		return "unparseable";
+	}
+}
+
+/**
+ * Diagnostic aid for CodeBuddy 11128 ("Illegal API invocation from an
+ * unapproved channel"). The gateway fingerprints client-identity text, and a
+ * rejected attempt stores no payload, so a rejection is otherwise
+ * undiagnosable after the fact. This reports which FIXED, known identity
+ * terms still occur in the outgoing body — counts only, never raw request
+ * text — so the next fingerprint can be identified from the journal alone.
+ */
+const SUSPECT_IDENTITY_TERMS: readonly string[] = [
+	"official CLI for Claude",
+	"Claude Code",
+	"claude-cli",
+	"claude-",
+	"Anthropic",
+	"Claude, an AI",
+	"you are Claude",
+	"powered by the model named",
+	"knowledge cutoff",
+	"Claude Agent SDK",
+	"Model Context Protocol",
+	"Pro subscription",
+];
+
+export function systemSuspectScan(bodyText: string | undefined): string {
+	if (bodyText === undefined) return "no-body";
+	try {
+		const text = bodyText;
+		const hits: string[] = [];
+		for (const term of SUSPECT_IDENTITY_TERMS) {
+			let count = 0;
+			for (
+				let i = text.indexOf(term);
+				i !== -1;
+				i = text.indexOf(term, i + term.length)
+			) {
+				count += 1;
+			}
+			if (count > 0) hits.push(`${term}=${count}`);
+		}
+		// "claude-" covers every claude-* model id; report it once, not per id.
+		return hits.length > 0 ? hits.join(",") : "none";
+	} catch {
+		return "unreadable";
 	}
 }
 
@@ -1959,7 +2005,7 @@ export async function proxyWithAccount(
 			// answers the follow-up no payload can (rejected attempts store
 			// none): which client requests does the gateway accept?
 			log.warn(
-				`codebuddy_gateway_rejection shape: ${requestShapeFingerprint(effectiveBodyBuffer)}`,
+				`codebuddy_gateway_rejection shape: ${requestShapeFingerprint(outgoing.bodyText)} system_suspects: ${systemSuspectScan(outgoing.bodyText)}`,
 			);
 			log.warn(
 				`Account ${account.name} codebuddy_gateway_rejection (400 code ${rejection.code}${requestedModel ? `, model=${requestedModel}` : ""}) — ${rejection.msg}; failing over to next account`,

@@ -1,6 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	spyOn,
+} from "bun:test";
+import { Logger } from "@better-ccflare/logger";
 import type { Account, RequestMeta } from "@better-ccflare/types";
-import { isModelUnavailableError, proxyWithAccount } from "../proxy-operations";
+import {
+	isModelUnavailableError,
+	proxyWithAccount,
+	systemSuspectScan,
+} from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 
 // Minimal Account fixture for openai-compatible provider
@@ -1508,5 +1521,133 @@ describe("proxyWithAccount — CodeBuddy 11128 oversized body", () => {
 
 		expect(result).toBeNull();
 		expect(captures).toHaveLength(0);
+	});
+});
+
+describe("systemSuspectScan", () => {
+	it("reports fixed identity terms by count", () => {
+		const scan = systemSuspectScan(
+			"You are Claude Code, Anthropic's official CLI for Claude. Claude Code again.",
+		);
+		expect(scan).toContain("official CLI for Claude=1");
+		expect(scan).toContain("Claude Code=2");
+		expect(scan).toContain("Anthropic=1");
+	});
+
+	it("reports none when no known term is present", () => {
+		expect(systemSuspectScan("You are a helpful coding assistant.")).toBe(
+			"none",
+		);
+	});
+
+	it("never echoes raw request text", () => {
+		const secret = "SENTINEL-do-not-log\n[FAKE LOG LINE]";
+		const scan = systemSuspectScan(secret);
+		expect(scan).not.toContain("SENTINEL");
+		expect(scan).not.toContain("FAKE LOG LINE");
+	});
+
+	it("handles a missing body", () => {
+		expect(systemSuspectScan(undefined)).toBe("no-body");
+	});
+});
+
+describe("CodeBuddy rejection diagnostics — scan the transformed body", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it("logs the rejection warning from the transformed body", async () => {
+		// Greptile P1/P2 on #515: scanning the CLIENT body listed terms the
+		// provider had already removed. This asserts the WARNING ITSELF, so a
+		// regression back to the client body fails here.
+		let sentBody = "";
+		globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+			const req = input instanceof Request ? input : new Request(String(input));
+			sentBody = await req.text();
+			return jsonResponse(
+				{
+					code: 11128,
+					msg: "Illegal API invocation from an unapproved channel",
+				},
+				400,
+			);
+		});
+
+		// Console logging is silent outside debug mode, so observe the logger
+		// API itself (same approach as the account rate-limit guard test).
+		const warnings: string[] = [];
+		const warnSpy = spyOn(Logger.prototype, "warn").mockImplementation(((
+			message: string,
+		) => {
+			warnings.push(message);
+		}) as never);
+
+		const bodyBuffer = new TextEncoder().encode(
+			JSON.stringify({
+				model: "claude-sonnet-4-5",
+				max_tokens: 10,
+				system:
+					// Both stripped sentences, plus "Anthropic" as a surviving
+					// term the diagnostic must still report. Note the desensitizer
+					// zero-width-splits brand terms in system text, so any term it
+					// covers reaches the gateway inert — the scan reports the sent
+					// bytes, which is what this asserts.
+					"You are Claude Code, Anthropic's official CLI for Claude. You are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5. Assistant knowledge cutoff is June 2026. Anthropic wrote you.",
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		).buffer as ArrayBuffer;
+
+		let result: Response | null = null;
+		try {
+			result = await proxyWithAccount(
+				makeRequest(bodyBuffer),
+				new URL("https://proxy.local/v1/messages"),
+				makeAccount({
+					id: "acc-cb",
+					name: "codebuddy-test",
+					provider: "codebuddy",
+					api_key: null,
+					access_token: "tok",
+					refresh_token: "refresh",
+					expires_at: Date.now() + 24 * 60 * 60 * 1000,
+					custom_endpoint: "https://codebuddy.example.com",
+					model_mappings: null,
+				}),
+				makeRequestMeta(),
+				bodyBuffer,
+				() => undefined,
+				0,
+				makeProxyContext(),
+			);
+		} finally {
+			warnSpy.mockRestore();
+		}
+
+		expect(result).toBeNull(); // 11128 fails over
+
+		// The upstream really did receive the stripped body...
+		expect(sentBody).not.toContain("official CLI for Claude");
+		expect(sentBody).not.toContain("powered by the model named");
+
+		const suspectLine = warnings.find((w) => w.includes("system_suspects"));
+		expect(suspectLine).toBeDefined();
+		const suspects =
+			suspectLine?.split("system_suspects:")[1]?.trim().split(",") ?? [];
+
+		// ...so the warning must not name what was stripped...
+		expect(suspects).not.toContain("official CLI for Claude=1");
+		expect(suspects).not.toContain("powered by the model named=1");
+		// ...and must be derived from the sent body rather than the client's:
+		// it reported the stripped sentences only because it scanned the client
+		// body, so an empty result is the correct answer when everything was
+		// removed or desensitized before dispatch.
+		expect(suspectLine).not.toContain("official CLI for Claude");
 	});
 });
