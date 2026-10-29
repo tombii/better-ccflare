@@ -27,6 +27,7 @@ export {
 	desensitizeMessages,
 	desensitizeText,
 	fetchCodeBuddyAccount,
+	isCodeBuddyChannelRejection,
 	isCodeBuddyDesensitizeEnabled,
 	isCodeBuddyModerationBlock,
 	pollCodeBuddyAuth,

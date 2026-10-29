@@ -324,6 +324,23 @@ export function convertOpenAIResponseToAnthropic(
 	// Handle successful responses
 	const choice = openaiData.choices?.[0];
 	if (!choice) {
+		// Flat gateway rejection shape (CodeBuddy): a bare `{code, msg}`
+		// envelope with no `error` object and no `choices`. Pass the real
+		// message through - masking it as the generic invalid_response text
+		// hid the actionable cause (e.g. code 11128 "Illegal API invocation
+		// from an unapproved channel") from the client. Terminal
+		// invalid_request_error is correct here: the proxy has already
+		// exhausted failover by the time the client sees this body.
+		const gateway = openaiData as { code?: unknown; msg?: unknown };
+		if (typeof gateway.code === "number" && typeof gateway.msg === "string") {
+			return {
+				type: "error",
+				error: {
+					type: "invalid_request_error",
+					message: `Upstream gateway error ${gateway.code}: ${gateway.msg}`,
+				},
+			};
+		}
 		return {
 			type: "error",
 			error: {

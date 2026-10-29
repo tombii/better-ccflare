@@ -348,6 +348,11 @@ describe("CodeBuddyProvider", () => {
 
 			expect(headers.get("X-Agent-Intent")).toBe("craft");
 			expect(headers.get("X-Agent-Runtime")).toBe("local-agent");
+			// Sent unconditionally by the official CLI on every chat completion
+			// (AgentPurpose.Conversation / AgentType.MAIN). Omitting them left
+			// the client fingerprint incomplete relative to the real client.
+			expect(headers.get("X-Agent-Purpose")).toBe("conversation");
+			expect(headers.get("X-Agent-Type")).toBe("main");
 			expect(headers.get("X-IDE-Type")).toBe("CLI");
 			expect(headers.get("X-IDE-Name")).toBe("CLI");
 			expect(headers.get("X-IDE-Version")).toBe(CODEBUDDY_CLI_VERSION);

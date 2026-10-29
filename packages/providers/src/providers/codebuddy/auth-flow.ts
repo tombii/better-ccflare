@@ -5,7 +5,7 @@ import type { TokenRefreshResult } from "../../types";
 const log = new Logger("CodeBuddyAuthFlow");
 
 export const CODEBUDDY_DEFAULT_ENDPOINT = "https://www.codebuddy.ai";
-export const CODEBUDDY_CLI_VERSION = "2.169.0";
+export const CODEBUDDY_CLI_VERSION = "2.178.1";
 
 const CODEBUDDY_ENDPOINT_ENV = "CCFLARE_CODEBUDDY_ENDPOINT";
 const DEFAULT_POLL_TIMEOUT_MS = 300_000;
@@ -246,7 +246,8 @@ export async function pollCodeBuddyAuth(
 
 		const message =
 			payload.msg ??
-			(responseStatusText || `unexpected code ${payload.code ?? responseStatus}`);
+			(responseStatusText ||
+				`unexpected code ${payload.code ?? responseStatus}`);
 		throw new Error(`CodeBuddy authorization failed: ${message}`);
 	}
 

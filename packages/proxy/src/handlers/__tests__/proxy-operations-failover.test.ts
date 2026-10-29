@@ -1234,3 +1234,99 @@ describe("proxyWithAccount — 401 failover", () => {
 		}
 	});
 });
+
+describe("proxyWithAccount — CodeBuddy 11128 gateway rejection", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	function makeCodeBuddyAccount(): Account {
+		return makeAccount({
+			id: "acc-cb",
+			name: "codebuddy-test",
+			provider: "codebuddy",
+			api_key: null,
+			access_token: "tok",
+			refresh_token: "refresh",
+			expires_at: Date.now() + 24 * 60 * 60 * 1000,
+			custom_endpoint: "https://codebuddy.example.com",
+			model_mappings: null,
+		});
+	}
+
+	it("fails over (returns null) on 400 code 11128 channel-verification rejection", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					code: 11128,
+					msg: "Illegal API invocation from an unapproved channel",
+					requestId: "upstream-req-1",
+				},
+				400,
+			),
+		);
+
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+		const result = await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeCodeBuddyAccount(),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+		);
+
+		expect(result).toBeNull();
+	});
+
+	it("still forwards other 400 flat-code bodies to the client", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					code: 11101,
+					msg: "tool_choice must be a string",
+					requestId: "upstream-req-2",
+				},
+				400,
+			),
+		);
+
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+		let result: Response | null = null;
+		let threwUsageCollectorError = false;
+		try {
+			result = await proxyWithAccount(
+				req,
+				new URL("https://proxy.local/v1/messages"),
+				makeCodeBuddyAccount(),
+				makeRequestMeta(),
+				bodyBuffer,
+				() => undefined,
+				0,
+				makeProxyContext(),
+			);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			if (!msg.includes("UsageCollector not initialized")) throw e;
+			threwUsageCollectorError = true;
+		}
+
+		// The 400 must be forwarded (not failover): either the response object is
+		// returned, or forwardToClient threw the expected collector error.
+		if (result) {
+			expect(result.status).toBe(400);
+		} else {
+			expect(threwUsageCollectorError).toBe(true);
+		}
+	});
+});

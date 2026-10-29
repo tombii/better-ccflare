@@ -20,6 +20,7 @@ import {
 	isAnthropicExtraUsageExhausted,
 	isAnthropicOrgPermissionDenied,
 	isAnthropicOutOfCredits,
+	isCodeBuddyChannelRejection,
 	type Provider,
 	recoverCodexMessagesContinuation,
 	usageCache,
@@ -1827,6 +1828,87 @@ export async function proxyWithAccount(
 			return NOT_CLASSIFIED;
 		};
 
+		// ── codebuddy_gateway_rejection: 400 code 11128 from CodeBuddy's gateway ──
+		// The flat {code, msg} body matches none of the model-unavailable
+		// patterns below, so before this branch the 400 was forwarded to the
+		// client as terminal — a combo's remaining slots (often a different
+		// provider entirely) were never tried. Channel verification (observed
+		// live 2026-10-29: "Illegal API invocation from an unapproved channel")
+		// and first-message-shape rejections are both CodeBuddy-specific, so
+		// failing over to the next account is always the right move. No bench:
+		// the cause is upstream gateway policy that can clear on its own, and
+		// benching would hide the failure behind an ever-growing cooldown.
+		// The rejected attempt keeps its audit row (same saveRequest pattern as
+		// the org_permission_denied path) so the pattern stays diagnosable from
+		// the dashboard.
+		const classifyCodeBuddyChannelRejection = async (
+			response: Response,
+		): Promise<UpstreamErrorClassification> => {
+			if (
+				provider.name === "codebuddy" &&
+				response.status === 400 &&
+				// Predicate clones internally only after the content-type gate
+				// (issue #356); pass the response un-cloned.
+				(await isCodeBuddyChannelRejection(response))
+			) {
+				let requestedModel: string | null = null;
+				if (effectiveBodyBuffer)
+					requestedModel = effectiveBodyContext.getModel();
+				log.warn(
+					`Account ${account.name} codebuddy_gateway_rejection (400 code 11128${requestedModel ? `, model=${requestedModel}` : ""}) — CodeBuddy channel verification rejected the request; failing over to next account`,
+				);
+				// The audit row stays real-traffic-only, same rationale as the
+				// org_permission_denied path: a synthetic probe's rejection was
+				// never a client-visible request.
+				if (!isSyntheticInternal) {
+					const responseTime = Date.now() - requestMeta.timestamp;
+					const modelRewrite = isModelRewrite(
+						requestMeta.originalModel,
+						requestMeta.appliedModel,
+					);
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.saveRequest(
+							crypto.randomUUID(),
+							req.method,
+							url.pathname,
+							account.id,
+							400,
+							false,
+							"codebuddy_gateway_rejection",
+							responseTime,
+							failoverAttempts,
+							requestedModel ? { model: requestedModel } : undefined,
+							requestMeta.agentUsed ?? undefined,
+							apiKeyId ?? undefined,
+							apiKeyName ?? undefined,
+							requestMeta.project ?? null,
+							undefined,
+							requestMeta.comboName ?? null,
+							modelRewrite ? (requestMeta.originalModel ?? null) : null,
+							modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+							requestMeta.projectAttributionSource ?? null,
+							requestMeta.agentAttributionSource ?? null,
+							null,
+							requestMeta.clientSessionId ?? null,
+							gatewayHint.requestClass,
+							gatewayHint.agentType,
+							gatewayHint.prevToolDurations,
+							gatewayHint.compaction,
+							gatewayHint.contextCompacted,
+						),
+					);
+				}
+				cancelDiscardedResponseBody(response);
+				return null;
+			}
+			return NOT_CLASSIFIED;
+		};
+
+		const codeBuddyRejectionOutcome =
+			await classifyCodeBuddyChannelRejection(rawResponse);
+		if (codeBuddyRejectionOutcome !== NOT_CLASSIFIED)
+			return codeBuddyRejectionOutcome;
+
 		/**
 		 * The classification chain as a retry response has to see it: every
 		 * handler above, in the first-response order, minus the model-cycling
@@ -1858,6 +1940,10 @@ export async function proxyWithAccount(
 
 			const orgDenied = await classifyOrgPermissionDenied(retried);
 			if (orgDenied !== NOT_CLASSIFIED) return orgDenied;
+
+			const codeBuddyRejected =
+				await classifyCodeBuddyChannelRejection(retried);
+			if (codeBuddyRejected !== NOT_CLASSIFIED) return codeBuddyRejected;
 
 			// Everything below lived under `isModelUnavailableError`, which is
 			// unconditionally true for a 429 and only reachable for 404/400

@@ -240,6 +240,32 @@ function normalizeToolChoice(record: Record<string, unknown>): void {
 	delete record.tool_choice;
 }
 
+/**
+ * CodeBuddy's gateway rejection body is a flat `{code, msg, ...}` envelope —
+ * no Anthropic `error` object and no [OI] `choices`, so it matches none of
+ * the proxy's model-unavailable patterns and used to be forwarded to the
+ * client as terminal. The observed rejection (2026-10-29, live) is
+ * `400 {"code":11128,"msg":"Illegal API invocation from an unapproved
+ * channel"}` — the gateway's channel verification ("not sent from an
+ * official client"). The same code also covers first-message-shape
+ * rejections (see `ensureSystemMessageFirst`). Both meanings are
+ * CodeBuddy-specific problems, so every other account in the rotation can
+ * still serve the request and the proxy fails over on any 11128.
+ */
+export async function isCodeBuddyChannelRejection(
+	response: Response,
+): Promise<boolean> {
+	if (response.status !== 400) return false;
+	try {
+		const contentType = response.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return false;
+		const json = await response.clone().json();
+		return json?.code === 11128 && typeof json?.msg === "string";
+	} catch {
+		return false;
+	}
+}
+
 export class CodeBuddyProvider extends OpenAICompatibleProvider {
 	name = "codebuddy";
 
@@ -330,6 +356,13 @@ export class CodeBuddyProvider extends OpenAICompatibleProvider {
 
 		newHeaders.set("X-Agent-Intent", "craft");
 		newHeaders.set("X-Agent-Runtime", "local-agent");
+		// The official CLI sends both of these unconditionally on every chat
+		// completion — `conversation` is AgentPurpose.Conversation and `main`
+		// is AgentType.MAIN (subagent turns send `subagent`). Verified against
+		// the 2.178.1 bundle; ccflare omitted them, which left its client
+		// fingerprint incomplete relative to the real client.
+		newHeaders.set("X-Agent-Purpose", "conversation");
+		newHeaders.set("X-Agent-Type", "main");
 		newHeaders.set("X-IDE-Type", "CLI");
 		newHeaders.set("X-IDE-Name", "CLI");
 		newHeaders.set("X-IDE-Version", CODEBUDDY_CLI_VERSION);

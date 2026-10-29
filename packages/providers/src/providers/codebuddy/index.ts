@@ -21,4 +21,4 @@ export {
 	isCodeBuddyModerationBlock,
 	SENSITIVE_TERMS,
 } from "./desensitize";
-export { CodeBuddyProvider } from "./provider";
+export { CodeBuddyProvider, isCodeBuddyChannelRejection } from "./provider";
