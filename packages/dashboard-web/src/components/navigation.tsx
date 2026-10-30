@@ -12,6 +12,7 @@ import {
 	LogOut,
 	Menu,
 	RefreshCw,
+	Search,
 	Settings,
 	Shield,
 	Users,
@@ -50,6 +51,7 @@ const _navItems: NavItem[] = [
 	{ label: "Combos", icon: Zap, path: "/combos" },
 	{ label: "Agents", icon: Bot, path: "/agents" },
 	{ label: "API Keys", icon: Key, path: "/api-keys" },
+	{ label: "Search", icon: Search, path: "/search" },
 	{ label: "Logs", icon: FileText, path: "/logs" },
 	{ label: "Settings", icon: Settings, path: "/settings" },
 ];
@@ -93,6 +95,7 @@ export function Navigation({ onLogout }: NavigationProps = {}) {
 		baseItems.push(
 			{ label: "Agents", icon: Bot, path: "/agents" },
 			{ label: "API Keys", icon: Key, path: "/api-keys" },
+			{ label: "Search", icon: Search, path: "/search" },
 			{ label: "Logs", icon: FileText, path: "/logs" },
 			{ label: "Settings", icon: Settings, path: "/settings" },
 		);

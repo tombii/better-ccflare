@@ -10,7 +10,8 @@ import {
 import { Logger } from "@better-ccflare/logger";
 import {
 	SEARCH_PROVIDER_CATALOG,
-	type SearchProvider,
+	type SearchProviderCatalogEntry,
+	type SearchProviderId,
 	type SearchProviderInput,
 	type SearchProviderPublic,
 	type SearchProviderUpdate,
@@ -34,7 +35,6 @@ export interface SearchProviderStore {
 		patch: SearchProviderUpdate,
 	): Promise<SearchProviderPublic | null>;
 	remove(id: string): Promise<boolean>;
-	listActiveByPriority(): Promise<SearchProvider[]>;
 }
 
 /** The store rejected a create because the label is already taken. */
@@ -43,6 +43,22 @@ export class DuplicateLabelError extends Error {
 		super(`A search provider labelled '${label}' already exists`);
 		this.name = "DuplicateLabelError";
 	}
+}
+
+/**
+ * The storage layer owns the duplicate-label signal and names its error
+ * `SearchProviderLabelTakenError`; older adapter versions threw the local
+ * `DuplicateLabelError` above. Accept either so the handler does not depend
+ * on which side of the adapter boundary the throw originates from.
+ */
+function isDuplicateLabelError(error: unknown): boolean {
+	if (error instanceof DuplicateLabelError) return true;
+	if (!(error instanceof Error)) return false;
+	return (
+		error.name === "DuplicateLabelError" ||
+		error.name === "SearchProviderLabelTakenError" ||
+		(error as { code?: unknown }).code === "SEARCH_PROVIDER_LABEL_TAKEN"
+	);
 }
 
 export interface SearchProviderTestResult {
@@ -181,10 +197,10 @@ function validateFields(
 	return { ok: true, patch };
 }
 
-function catalogEntry(provider: string) {
-	return SEARCH_PROVIDER_CATALOG[
-		provider as keyof typeof SEARCH_PROVIDER_CATALOG
-	];
+function catalogEntry(
+	provider: string,
+): SearchProviderCatalogEntry | undefined {
+	return SEARCH_PROVIDER_CATALOG.find((entry) => entry.id === provider);
 }
 
 async function readJsonObject(req: Request): Promise<Record<string, unknown>> {
@@ -282,7 +298,8 @@ export function createSearchProviderHandlers(
 			}
 
 			const input: SearchProviderInput = {
-				provider,
+				// Narrowed by the catalog lookup above.
+				provider: provider as SearchProviderId,
 				label: patch.label as string,
 				apiKey: apiKey.length > 0 ? apiKey : undefined,
 				priority: patch.priority,
@@ -297,10 +314,7 @@ export function createSearchProviderHandlers(
 					headers: { "Content-Type": "application/json" },
 				});
 			} catch (error) {
-				if (
-					error instanceof DuplicateLabelError ||
-					(error instanceof Error && error.name === "DuplicateLabelError")
-				) {
+				if (isDuplicateLabelError(error)) {
 					return errorResponse(
 						Conflict(
 							`A search provider labelled '${input.label}' already exists`,
@@ -366,10 +380,7 @@ export function createSearchProviderHandlers(
 				}
 				return jsonResponse({ success: true, data: row });
 			} catch (error) {
-				if (
-					error instanceof DuplicateLabelError ||
-					(error instanceof Error && error.name === "DuplicateLabelError")
-				) {
+				if (isDuplicateLabelError(error)) {
 					return errorResponse(Conflict("label already in use"));
 				}
 				log.error("Search provider update error:", error);

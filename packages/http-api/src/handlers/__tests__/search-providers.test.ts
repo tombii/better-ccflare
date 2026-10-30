@@ -112,13 +112,11 @@ function createFakeStore(seed: Partial<SearchProvider>[] = []): {
 	return { store, rows };
 }
 
-const PROVIDER_WITHOUT_KEY = Object.entries(SEARCH_PROVIDER_CATALOG).find(
-	([, entry]) => !entry.requiresKey,
-)?.[0];
+const PROVIDER_WITHOUT_KEY = SEARCH_PROVIDER_CATALOG.find(
+	(entry) => !entry.requiresKey,
+)?.id;
 const PROVIDER_WITH_KEY =
-	Object.entries(SEARCH_PROVIDER_CATALOG).find(
-		([, entry]) => entry.requiresKey,
-	)?.[0] ?? "tavily";
+	SEARCH_PROVIDER_CATALOG.find((entry) => entry.requiresKey)?.id ?? "tavily";
 
 function jsonRequest(body: unknown, method = "POST"): Request {
 	return new Request("http://localhost/api/search-providers", {
