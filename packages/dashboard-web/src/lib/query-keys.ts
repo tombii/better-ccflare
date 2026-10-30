@@ -60,4 +60,11 @@ export const queryKeys = {
 	// settings can never share a cache entry.
 	configFlag: (path: string) =>
 		[...queryKeys.all, "config", "flag", path] as const,
+	// Web search: the configured providers, the catalog of provider kinds, and
+	// the master settings. One key each — these are small when-change lists.
+	searchProviders: () => [...queryKeys.all, "search-providers"] as const,
+	searchProviderCatalog: () =>
+		[...queryKeys.all, "search-providers", "meta"] as const,
+	webSearchSettings: () =>
+		[...queryKeys.all, "web-search", "settings"] as const,
 } as const;

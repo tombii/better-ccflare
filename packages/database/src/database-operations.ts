@@ -16,9 +16,13 @@ import type {
 	IntegrityStatus,
 	ProjectAttributionSource,
 	RateLimitReason,
+	SearchProviderInput,
+	SearchProviderPublic,
+	SearchProviderUpdate,
 	StrategyStore,
 	VacuumStatus,
 } from "@better-ccflare/types";
+import { toSearchProviderPublic } from "@better-ccflare/types";
 import {
 	BunSqlAdapter,
 	PG_CLIENT_QUERY_TIMEOUT_MS,
@@ -46,6 +50,7 @@ import {
 	type RequestData,
 	RequestRepository,
 } from "./repositories/request.repository";
+import { SearchProviderRepository } from "./repositories/search-provider.repository";
 import { StatsRepository } from "./repositories/stats.repository";
 import { StrategyRepository } from "./repositories/strategy.repository";
 import { UsageHistoryRepository } from "./repositories/usage-history.repository";
@@ -480,6 +485,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private apiKeys: ApiKeyRepository;
 	private combo: ComboRepository;
 	private usageHistory: UsageHistoryRepository;
+	private searchProviders: SearchProviderRepository;
 
 	constructor(
 		dbPath?: string,
@@ -621,6 +627,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.apiKeys = new ApiKeyRepository(this.adapter);
 		this.combo = new ComboRepository(this.adapter);
 		this.usageHistory = new UsageHistoryRepository(this.adapter);
+		this.searchProviders = new SearchProviderRepository(this.adapter);
 	}
 
 	/**
@@ -2804,5 +2811,52 @@ OAuth tokens will need to be re-authenticated.
 		family: ComboFamily,
 	): Promise<ComboWithSlots | null> {
 		return this.combo.getActiveComboForFamily(family);
+	}
+
+	// ── Search provider operations delegated to repository ────────────────────
+	// `getSearchProvider` / `listSearchProviders` return the masked
+	// (API-facing) shape; the full model, plaintext key included, is only
+	// reachable via `getSearchProviderRepository()` for proxy-side routing.
+
+	/**
+	 * Get the search provider repository for direct access. Holds plaintext
+	 * API keys — never serialise its results onto an HTTP response.
+	 */
+	getSearchProviderRepository(): SearchProviderRepository {
+		return this.searchProviders;
+	}
+
+	async createSearchProvider(
+		input: SearchProviderInput,
+	): Promise<SearchProviderPublic> {
+		const created = await this.searchProviders.create(input);
+		return toSearchProviderPublic(created);
+	}
+
+	async listSearchProviders(): Promise<SearchProviderPublic[]> {
+		return this.searchProviders.findAllPublic();
+	}
+
+	async getSearchProvider(id: string): Promise<SearchProviderPublic | null> {
+		return this.searchProviders.findByIdPublic(id);
+	}
+
+	async updateSearchProvider(
+		id: string,
+		fields: SearchProviderUpdate,
+	): Promise<SearchProviderPublic> {
+		const updated = await this.searchProviders.update(id, fields);
+		return toSearchProviderPublic(updated);
+	}
+
+	/** @returns true if a row was deleted, false if the id didn't exist. */
+	async deleteSearchProvider(id: string): Promise<boolean> {
+		return this.searchProviders.delete(id);
+	}
+
+	/** Enabled providers by priority ASC (proxy routing order). */
+	async listActiveSearchProvidersByPriority(): Promise<SearchProviderPublic[]> {
+		const providers = await this.searchProviders.listActiveByPriority();
+		return providers.map(toSearchProviderPublic);
 	}
 }

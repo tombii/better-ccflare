@@ -369,7 +369,43 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 		`CREATE INDEX IF NOT EXISTS idx_instance_heartbeats_last_heartbeat ON instance_heartbeats(last_heartbeat)`,
 	);
 
+	// Create search_providers table (see SQLite migration for rationale).
+	await createSearchProvidersTablePg(adapter);
+
 	log.info("PostgreSQL schema ensured");
+}
+
+/**
+ * Create the `search_providers` table and its indexes. Shared by
+ * `ensureSchemaPg()` (fresh DBs) and `runMigrationsPg()` (upgrades).
+ */
+async function createSearchProvidersTablePg(
+	adapter: BunSqlAdapter,
+): Promise<void> {
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS search_providers (
+			id TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			label TEXT NOT NULL,
+			api_key TEXT,
+			priority INTEGER NOT NULL DEFAULT 0,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			max_results INTEGER NOT NULL DEFAULT 10,
+			extra_config TEXT,
+			status TEXT NOT NULL DEFAULT 'unknown',
+			status_message TEXT,
+			status_checked_at BIGINT,
+			cooldown_until BIGINT,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)
+	`);
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_search_providers_priority ON search_providers(priority)`,
+	);
+	await adapter.unsafe(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_search_providers_label ON search_providers(label)`,
+	);
 }
 
 /**
@@ -1683,6 +1719,9 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	await adapter.unsafe(
 		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_ts ON usage_snapshots(timestamp)`,
 	);
+
+	// Ensure search_providers exists (for upgrades from pre-web-search installs).
+	await createSearchProvidersTablePg(adapter);
 
 	// Rename oauth_sessions.mode 'max' → 'claude-oauth'
 	try {
