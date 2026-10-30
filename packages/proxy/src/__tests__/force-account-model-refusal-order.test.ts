@@ -96,6 +96,8 @@ function makeContext(
 		} as never,
 		runtime: { port: 8080, clientId: "test" } as never,
 		config: {
+			getWebSearchEnabled: () => false,
+			getWebSearchBypassHeader: () => true,
 			getUsageThrottlingFiveHourEnabled: () => opts?.throttlingEnabled ?? false,
 			getUsageThrottlingWeeklyEnabled: () => opts?.throttlingEnabled ?? false,
 			getSystemPromptCacheTtl1h: () => false,

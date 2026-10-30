@@ -61,6 +61,7 @@ import {
 	tryGetUsageCollector,
 	type UsageCollectorHealth,
 } from "./usage-collector";
+import { maybeInterceptWebSearch } from "./web-tools/intercept";
 
 export type { ProxyContext } from "./handlers";
 
@@ -313,6 +314,22 @@ async function handleProxyRequest(
 			// If we can't parse the body, let it through and let the provider handle it
 			log.debug("Could not parse request body for validation");
 		}
+	}
+
+	// 3d. Serve `web_search` helper requests locally when a provider is configured.
+	// A null result means "not a search request" or "no provider could serve it",
+	// and the request continues upstream unchanged.
+	if (parsedBody) {
+		const webSearchResponse = await maybeInterceptWebSearch({
+			body: parsedBody,
+			pathname: url.pathname,
+			headers: req.headers,
+			config: ctx.config,
+			dbOps: ctx.dbOps,
+			signal: req.signal,
+			log,
+		});
+		if (webSearchResponse) return webSearchResponse;
 	}
 
 	// 4. Intercept and modify request for agent model preferences
