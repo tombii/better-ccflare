@@ -1,4 +1,10 @@
-import { Check, ChevronDown, Loader2 } from "lucide-react";
+import {
+	formatModelRouting,
+	type ModelRouting,
+	splitModelRouting,
+	stripModelRouting,
+} from "@better-ccflare/core";
+import { Check, ChevronDown, Loader2, SlidersHorizontal } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useProviderModels } from "../../hooks/useProviderModels";
 import {
@@ -7,7 +13,10 @@ import {
 	parseModelList,
 } from "../../lib/model-api";
 import { cn } from "../../lib/utils";
-import { providerAllowsClientModelPassthrough } from "../../utils/provider-utils";
+import {
+	providerAllowsClientModelPassthrough,
+	providerSupportsInferenceProviderRouting,
+} from "../../utils/provider-utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -17,6 +26,7 @@ import {
 	PopoverContent,
 	PopoverTrigger,
 } from "../ui/popover";
+import { ModelRoutingPanel } from "./ModelRoutingPanel";
 
 export interface ModelComboboxProps {
 	/** Provider for the target account ("anthropic", "codex", ...). Null = no list. */
@@ -113,6 +123,20 @@ function clientModelHint(
 }
 
 /**
+ * List-mode pick: toggle a model in/out of the rotating list.
+ *
+ * Matching is on the STRIPPED model, so `model-a {"only":["deepseek"]}` counts
+ * as `model-a`. A model re-added after removal comes back bare: the routing
+ * of the removed element is not restored (elements are identified by position,
+ * so which old pin to bring back would be a guess).
+ */
+export function nextListAfterPick(list: string[], modelId: string): string[] {
+	const at = list.findIndex((m) => stripModelRouting(m) === modelId);
+	if (at < 0) return [...list, modelId];
+	return list.filter((_, i) => i !== at);
+}
+
+/**
  * Model field with a provider list.
  *
  * It remains a free-text input: a new model works before it appears in the
@@ -134,9 +158,16 @@ export function ModelCombobox({
 }: ModelComboboxProps) {
 	const [open, setOpen] = useState(false);
 	const [filter, setFilter] = useState("");
+	// Index of the list element whose upstream routing is being edited. Per
+	// element, because a combo may pin two models of the SAME account to two
+	// different upstream providers.
+	const [routingIndex, setRoutingIndex] = useState(0);
+	// Inline provider-routing panel, only for providers that accept the suffix.
+	const [routingOpen, setRoutingOpen] = useState(false);
 	const query = useProviderModels(provider, accountId);
 
 	const selected = useMemo(() => parseModelList(value), [value]);
+	const canRoute = providerSupportsInferenceProviderRouting(provider);
 	const usesClientModel = value.trim().length === 0;
 	const hasProvider = Boolean(provider?.trim());
 	// Single rule in utils/provider-utils: an empty field only means something
@@ -166,26 +197,65 @@ export function ModelCombobox({
 	}, [query.data, filter]);
 
 	const isPicked = (modelId: string) =>
-		mode === "list" ? selected.includes(modelId) : value.trim() === modelId;
+		mode === "list"
+			? selected.some((m) => stripModelRouting(m) === modelId)
+			: stripModelRouting(value.trim()) === modelId;
 
 	const handlePick = (modelId: string) => {
 		if (mode === "list") {
 			// The list rotates on rate limits, so choosing toggles presence instead
 			// of deleting what is already there — and the popover stays open to build
 			// the whole list at once.
-			const next = selected.includes(modelId)
-				? selected.filter((m) => m !== modelId)
-				: [...selected, modelId];
-			onChange(formatModelList(next));
+			// Compare on the stripped model: a list element may carry a routing
+			// suffix, and toggling must match it rather than duplicate it.
+			const nextValue = formatModelList(nextListAfterPick(selected, modelId));
+			if (nextValue !== value) onChange(nextValue);
 			return;
 		}
-		onChange(modelId);
+		// Picking a model (or the same model again) keeps a routing already set
+		// on this field: re-selecting `model-a` must not silently drop its pin.
+		// The routing is only kept when the model name is unchanged.
+		const { model: current, routing } = splitModelRouting(value);
+		const next = formatModelRouting(
+			modelId,
+			routing && current.trim() === modelId ? routing : null,
+		);
+		if (next !== value) onChange(next);
 		setOpen(false);
 	};
 
 	const handleUseClientModel = () => {
 		onChange("");
 		setOpen(false);
+	};
+
+	// --- Providers routing suffix -------------------------------------------
+	// The value keeps the FULL string (`model {"only":["deepseek"]}`): it is the
+	// stored data, and the proxy reads it verbatim.
+	const asTarget = (raw: string) => {
+		const { model, routing } = splitModelRouting(raw);
+		return { stripped: model, routing };
+	};
+	// In list mode the routing is PER ELEMENT: the same combo can pin two
+	// models of the same account to different upstream providers.
+	const currentIndex = Math.min(routingIndex, Math.max(selected.length - 1, 0));
+	const routingTarget = asTarget(
+		mode === "list" ? (selected[currentIndex] ?? "") : value,
+	);
+
+	const handleRoutingChange = (next: ModelRouting | null) => {
+		// An empty element has no model to attach a routing to: only "any"
+		// (clearing) is meaningful there.
+		if (!routingTarget.stripped && next) return;
+		const formatted = formatModelRouting(routingTarget.stripped, next);
+		if (mode !== "list") {
+			onChange(formatted);
+			return;
+		}
+		const nextList = selected.map((m, i) =>
+			i === currentIndex ? formatted : m,
+		);
+		onChange(formatModelList(nextList));
 	};
 
 	const nothingListed =
@@ -206,8 +276,33 @@ export function ModelCombobox({
 						disabled={disabled}
 						autoComplete="off"
 						spellCheck={false}
-						className={cn("pr-9 font-mono text-xs", inputClassName)}
+						className={cn(
+							canRoute ? "pr-16 font-mono text-xs" : "pr-9 font-mono text-xs",
+							inputClassName,
+						)}
 					/>
+					{canRoute && (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							disabled={disabled}
+							aria-label="Edit upstream provider routing"
+							aria-expanded={routingOpen}
+							title="Pin or exclude upstream inference providers"
+							onClick={() => setRoutingOpen((v) => !v)}
+							className={cn(
+								"absolute top-0 h-full px-2",
+								"right-8",
+								routingOpen
+									? "text-primary hover:bg-transparent hover:text-primary"
+									: "text-muted-foreground hover:bg-transparent hover:text-foreground",
+								routingTarget.routing && !routingOpen && "text-primary",
+							)}
+						>
+							<SlidersHorizontal className="h-3.5 w-3.5" />
+						</Button>
+					)}
 					<PopoverTrigger asChild>
 						<Button
 							type="button"
@@ -221,6 +316,30 @@ export function ModelCombobox({
 							<ChevronDown className="h-4 w-4" />
 						</Button>
 					</PopoverTrigger>
+					{routingOpen && canRoute && (
+						<ModelRoutingPanel
+							provider={provider}
+							routing={routingTarget.routing}
+							onChange={handleRoutingChange}
+							segments={
+								mode === "list"
+									? {
+											labels: selected.map((m) => {
+												const stripped = stripModelRouting(m);
+												return stripped || "(empty)";
+											}),
+											index: currentIndex,
+											onSelect: setRoutingIndex,
+										}
+									: undefined
+							}
+							emptyHint={
+								mode === "list" && selected.length === 0
+									? "Add a model to the list first: routing is set per model."
+									: null
+							}
+						/>
+					)}
 				</div>
 			</PopoverAnchor>
 			<PopoverContent

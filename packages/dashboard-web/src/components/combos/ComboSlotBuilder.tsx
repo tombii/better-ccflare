@@ -1,3 +1,4 @@
+import { splitModelRouting } from "@better-ccflare/core";
 import type { ComboSlot, ComboWithSlots } from "@better-ccflare/types";
 import {
 	closestCenter,
@@ -24,6 +25,7 @@ import {
 } from "../../hooks/queries";
 import { providerAllowsClientModelPassthrough } from "../../utils/provider-utils";
 import { ModelCombobox } from "../models/ModelCombobox";
+import { summarizeRouting } from "../models/ModelRoutingPanel";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -35,6 +37,41 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "../ui/select";
+
+/**
+ * Model of one slot, compact: the routing suffix is shown as a short summary
+ * (the full JSON lives in the tooltip) and the model name is what the row
+ * displays, so two slots on the same account with different pinned upstream
+ * providers are distinguishable at a glance.
+ */
+function SlotModelLabel({ model }: { model?: string | null }) {
+	if (!model?.trim()) {
+		return (
+			<span className="shrink-0 font-mono text-xs italic text-muted-foreground">
+				client model
+			</span>
+		);
+	}
+	const { model: stripped, routing } = splitModelRouting(model);
+	return (
+		<span
+			className="flex min-w-0 max-w-[45%] flex-col items-end"
+			title={routing ? model : undefined}
+		>
+			<span className="max-w-full truncate font-mono text-xs text-muted-foreground">
+				{stripped}
+			</span>
+			{routing && (
+				<Badge
+					variant="outline"
+					className="max-w-full truncate px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+				>
+					{summarizeRouting(routing)}
+				</Badge>
+			)}
+		</span>
+	);
+}
 
 interface SortableSlotRowProps {
 	slot: ComboSlot;
@@ -94,13 +131,7 @@ function SortableSlotRow({
 				<span className="truncate text-sm font-medium">{accountName}</span>
 			</div>
 
-			<span className="shrink-0 font-mono text-xs text-muted-foreground">
-				{slot.model?.trim() ? (
-					slot.model
-				) : (
-					<span className="italic">client model</span>
-				)}
-			</span>
+			<SlotModelLabel model={slot.model} />
 
 			<Button
 				variant="ghost"

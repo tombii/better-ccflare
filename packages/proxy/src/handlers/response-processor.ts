@@ -6,6 +6,8 @@ import {
 	type Provider,
 	parseCodexUsageHeaders,
 	pickCodexRolloverSlot,
+	servedProviderBodyField,
+	servedProviderFromBody,
 	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -15,6 +17,10 @@ import {
 	earliestCodexResetMs,
 	recordCodexUsageSnapshot,
 } from "../codex-usage-history";
+import {
+	recordDiscoveredProviderServed,
+	tryGetUsageCollector,
+} from "../usage-collector";
 import { drainBody } from "./discard-body-cancel";
 import { isInternalProbe, type ProxyContext } from "./proxy-types";
 import {
@@ -255,6 +261,13 @@ export function updateAccountMetadata(
 				try {
 					usageClone = response.clone();
 					const usageInfo = await extractUsageInfo(usageClone);
+					// The serving backend is named only by whole JSON bodies (OpenRouter
+					// `provider`). Read it from a fresh clone here — nothing new is
+					// buffered, and only providers that state it pay for the clone.
+					const providerServed =
+						usageInfo && servedProviderBodyField(ctx.provider.name)
+							? await readServedProvider(usageClone, ctx.provider.name)
+							: null;
 					if (usageInfo) {
 						log.debug(
 							`Extracted usage info for account ${account.name}: ${JSON.stringify(usageInfo)}`,
@@ -266,6 +279,31 @@ export function updateAccountMetadata(
 							);
 						} catch (error) {
 							log.warn(`Failed to save usage for request ${requestId}:`, error);
+						}
+					}
+					if (providerServed) {
+						// Hand the label to the collector the response handler feeds
+						// (see recordDiscoveredProviderServed): seeding its per-request
+						// state means the row handleEnd INSERTs already carries it, so
+						// the label no longer depends on this UPDATE winning a race
+						// against that INSERT on a slow client — and a body the
+						// collector could not re-parse (over its capture cap) still
+						// records it. Only when no collector state exists does this
+						// fall back to the standalone (COALESCE) UPDATE.
+						const handled = await recordDiscoveredProviderServed(
+							tryGetUsageCollector(),
+							requestId,
+							providerServed,
+							async (id, served) => {
+								await ctx.asyncWriter.enqueue(() =>
+									ctx.dbOps.updateRequestProviderServed(id, served),
+								);
+							},
+						);
+						if (!handled) {
+							log.warn(
+								`Failed to save provider_served for request ${requestId}`,
+							);
 						}
 					}
 				} catch (error) {
@@ -301,6 +339,26 @@ export function updateAccountMetadata(
 				}
 			})();
 		}
+	}
+}
+
+/**
+ * Read the provider-named serving backend from the (already-consumed) usage
+ * clone. Runs only for providers that name a backend (OpenRouter), and only
+ * when the response is whole JSON; a stream yields null — its `message_start`
+ * frame carries no such field, and finding it would mean buffering.
+ */
+async function readServedProvider(
+	usageClone: Response | null,
+	providerName: string,
+): Promise<string | null> {
+	if (!usageClone) return null;
+	try {
+		const contentType = usageClone.headers.get("content-type") ?? "";
+		if (!contentType.includes("application/json")) return null;
+		return servedProviderFromBody(providerName, await usageClone.json());
+	} catch {
+		return null;
 	}
 }
 

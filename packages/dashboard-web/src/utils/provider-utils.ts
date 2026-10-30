@@ -1,6 +1,7 @@
 /**
  * Utility functions for provider-specific logic in the web UI
  */
+import { providerSupportsProviderRouting } from "@better-ccflare/core";
 import {
 	getDefaultEndpoint,
 	isKnownProvider,
@@ -51,6 +52,20 @@ export function providerAllowsClientModelPassthrough(
 	provider?: string | null,
 ): boolean {
 	return PASSTHROUGH_PROVIDERS.includes((provider ?? "").trim());
+}
+
+/**
+ * True when the model field of this provider accepts the inference-provider
+ * routing suffix (`model {"only":["deepseek"]}` -> body `provider` object).
+ *
+ * Separate from `providerAllowsClientModelPassthrough`: that one is about an
+ * EMPTY field, this one about a provider routing object. The list of
+ * providers lives in core, so the dashboard and the proxy cannot drift.
+ */
+export function providerSupportsInferenceProviderRouting(
+	provider?: string | null,
+): boolean {
+	return providerSupportsProviderRouting(provider);
 }
 
 /**

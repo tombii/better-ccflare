@@ -1,4 +1,113 @@
+import {
+	type ModelRouting,
+	providerSupportsProviderRouting,
+} from "@better-ccflare/core";
+import type { Account } from "@better-ccflare/types";
+
 export type RequestJsonBody = Record<string, unknown>;
+
+/**
+ * Whether the request being served by this ACCOUNT accepts an upstream
+ * `provider` routing object.
+ *
+ * The provider instance is consulted first: a host-aware adapter (NanoGPT on a
+ * third-party custom endpoint) answers per account, and the provider-name list
+ * alone would wrongly say yes. The name check is the fallback only when no
+ * instance is reachable.
+ */
+export type RoutingCapability = () => boolean;
+
+export function accountSupportsProviderRouting(
+	account: Account,
+	capability?: RoutingCapability,
+): boolean {
+	if (capability) return capability();
+	return providerSupportsProviderRouting(account.provider);
+}
+
+/**
+ * The slot (combo override) pin that survives to the outgoing body: the pin
+ * itself when this account's upstream accepts routing, null otherwise. A null
+ * answer means the override must neither set body.provider nor hand the pin to
+ * unpinned fallback entries (they would re-introduce it).
+ */
+export function resolveSlotRouting(
+	account: Account,
+	routing?: ModelRouting | null,
+	capability?: RoutingCapability,
+): ModelRouting | null {
+	if (!routing) return null;
+	return accountSupportsProviderRouting(account, capability) ? routing : null;
+}
+
+/** Stable comparison that cannot throw on values JSON cannot serialise. */
+function routingSignature(body: RequestJsonBody): string | null {
+	try {
+		return JSON.stringify({ model: body.model, provider: body.provider });
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Set the fallback model AND its provider routing on a parsed body. Routing is
+ * per model-list entry: the entry's routing replaces whatever `provider` the
+ * body carried (the previous entry's pin), and when the entry has none the
+ * field is removed rather than left pointing at the old model's provider —
+ * unless `inherit` supplies the slot's own configured pin, which an entry
+ * without a suffix keeps (the slot pin is the operator's default for it).
+ *
+ * `supportsRouting`, when given, decides whether this account's upstream
+ * accepts `provider`; when it answers false the field is removed rather than
+ * set (or written back after the provider transform stripped it).
+ * @returns true when the body was modified
+ */
+export function applyModelAndRouting(
+	body: RequestJsonBody,
+	model: string,
+	routing: ModelRouting | null,
+	inherit: ModelRouting | null = null,
+	supportsRouting?: RoutingCapability,
+): boolean {
+	const before = routingSignature(body);
+	if (model) body.model = model;
+	const effective =
+		supportsRouting && !supportsRouting() ? null : (routing ?? inherit);
+	if (effective) body.provider = effective;
+	else delete body.provider;
+	const after = routingSignature(body);
+	// A serialisation we cannot compare (BigInt, cycles) is treated as
+	// "changed": sending the patched body is correct, skipping it is not.
+	return before === null || after === null || before !== after;
+}
+
+/**
+ * ArrayBuffer counterpart of applyModelAndRouting for RequestBodyContext.
+ * Returns the SAME context when nothing changed, so a fallback step does not
+ * re-serialise an untouched body. Never throws: an unparsable body yields null
+ * and the caller keeps the body it already had.
+ */
+export function patchModelAndRouting(
+	context: RequestBodyContext,
+	model: string,
+	routing: ModelRouting | null,
+	inherit: ModelRouting | null = null,
+	supportsRouting?: RoutingCapability,
+): RequestBodyContext | null {
+	try {
+		const body = context.getParsedJson();
+		if (!body) return null;
+		const patched = { ...body };
+		if (
+			!applyModelAndRouting(patched, model, routing, inherit, supportsRouting)
+		) {
+			return context;
+		}
+		return RequestBodyContext.fromParsed(context.getBuffer(), patched);
+	} catch {
+		return null;
+	}
+}
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();

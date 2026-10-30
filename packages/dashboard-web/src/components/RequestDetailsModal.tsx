@@ -271,6 +271,42 @@ export function RequestDetailsModal({
 					>
 						{effective.response ? (
 							<>
+								{summary?.providerServed && (
+									<div className="flex items-center justify-between gap-4">
+										<div className="min-w-0">
+											<h3 className="font-semibold">
+												Served by: {summary.providerServed}
+											</h3>
+											<p className="text-sm text-muted-foreground">
+												Named by the provider&apos;s own response.
+											</p>
+										</div>
+									</div>
+								)}
+
+								{effective.meta?.providerRequestId && (
+									<div className="flex items-center justify-between gap-4">
+										<div className="min-w-0">
+											<h3 className="font-semibold">Provider request ID</h3>
+											<p className="text-sm text-muted-foreground">
+												Look this up in the provider&apos;s web UI logs.
+											</p>
+										</div>
+										<div className="flex items-center gap-2 shrink-0">
+											<code className="font-mono text-sm break-all">
+												{effective.meta.providerRequestId}
+											</code>
+											<CopyButton
+												variant="ghost"
+												size="sm"
+												getValue={() => effective.meta?.providerRequestId ?? ""}
+											>
+												Copy
+											</CopyButton>
+										</div>
+									</div>
+								)}
+
 								<div>
 									<div className="flex items-center justify-between mb-2">
 										<h3 className="font-semibold">Headers</h3>

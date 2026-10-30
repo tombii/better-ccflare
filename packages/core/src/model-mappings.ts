@@ -1,6 +1,7 @@
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { isForceAccountModelEnabled } from "./force-account-model";
+import { stripModelRouting } from "./model-routing";
 import { safeJsonParse, validateModelMappings } from "./validation";
 
 const log = new Logger("ModelMappings");
@@ -271,18 +272,47 @@ export function providerAcceptsClientModel(
 }
 
 /**
+ * Providers whose upstream accepts a `provider` routing object in the body.
+ *
+ * The routing suffix on a model string (`model {"only":[...]}`) is only
+ * meaningful to these; everywhere else it is stripped and dropped. Kept next to
+ * providerAcceptsClientModel for the same reason: one answer, one place, so the
+ * parser and the request rewriter cannot drift.
+ */
+const PROVIDERS_SUPPORTING_PROVIDER_ROUTING = new Set([
+	"openrouter",
+	"nanogpt",
+]);
+
+/** Whether this provider understands a `provider` routing object. */
+export function providerSupportsProviderRouting(
+	provider: string | null | undefined,
+): boolean {
+	return PROVIDERS_SUPPORTING_PROVIDER_ROUTING.has(
+		(provider ?? "").trim().toLowerCase(),
+	);
+}
+
+/**
  * Map Anthropic model name to provider-specific model name (first in list).
  * Optimized for known model patterns with direct matching (O(1) vs O(n log n))
  */
 export function mapModelName(anthropicModel: string, account: Account): string {
+	// A provider routing suffix (`model {"only":[...]}`) is never part of a
+	// mapping key. Strip it so a suffixed name coming from a combo slot still
+	// resolves, instead of silently falling through to a family default. The
+	// returned mapping value keeps any suffix it has: the request rewriter
+	// (providers' transformRequestBodyModel) reads it back out.
+	const lookupModel = stripModelRouting(anthropicModel);
+
 	// With "force account model" on, no mapping may rename the request: the
 	// operator asked for this model by name, and an account that cannot serve
 	// it was already excluded during selection. Guarding the single place every
 	// provider funnels through is what makes that promise hold for all of them.
-	if (isForceAccountModelEnabled()) return anthropicModel;
+	if (isForceAccountModelEnabled()) return lookupModel;
 
-	const list = getModelList(anthropicModel, account);
-	if (!list) return anthropicModel;
+	const list = getModelList(lookupModel, account);
+	if (!list) return lookupModel;
 
 	const mapped = list[0];
 
@@ -291,7 +321,7 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 		process.env.DEBUG === "true" ||
 		process.env.NODE_ENV === "development"
 	) {
-		log.info(`Model mapping: ${anthropicModel} -> ${mapped}`);
+		log.info(`Model mapping: ${lookupModel} -> ${mapped}`);
 	}
 
 	return mapped;

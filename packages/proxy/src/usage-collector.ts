@@ -6,6 +6,10 @@ import {
 import { AsyncDbWriter, DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import {
+	servedProviderBodyField,
+	servedProviderFromBody,
+} from "@better-ccflare/providers";
+import {
 	type AgentAttributionSource,
 	NO_ACCOUNT_ID,
 	type ProjectAttributionSource,
@@ -48,6 +52,8 @@ interface RequestState {
 		totalTokens?: number;
 		costUsd?: number;
 		tokensPerSecond?: number;
+		/** Backend named by the provider's own response body (non-stream only). */
+		providerServed?: string;
 	};
 	lastActivity: number;
 	createdAt: number; // Capacity eviction ordering
@@ -161,7 +167,13 @@ function processSSELine(line: string, state: RequestState): void {
 	} else if (
 		parsed.data &&
 		state.currentEvent &&
-		shouldParseSSEData(parsed.data, state.currentEvent)
+		(shouldParseSSEData(parsed.data, state.currentEvent) ||
+			// A provider that names its serving backend may do so on a frame the
+			// usage gate would skip (message_delta carries `provider` alongside
+			// its usage, but a final frame that only carries the label is just as
+			// valid). One substring check, and only for those providers.
+			(servedProviderBodyField(state.startMessage.providerName) !== null &&
+				parsed.data.includes('"provider"')))
 	) {
 		extractUsageFromData(parsed.data, state.currentEvent, state);
 	}
@@ -181,6 +193,13 @@ function extractUsageFromJson(
 	state: RequestState,
 ): void {
 	if (!json) return;
+
+	// The serving backend comes from the same already-parsed body, at zero
+	// extra cost. Only providers that state it (OpenRouter `provider`) yield a
+	// value; this runs for whole non-stream JSON bodies only, never per SSE
+	// frame, and `message_start` carries no such field.
+	state.usage.providerServed =
+		servedProviderFromBody(state.startMessage.providerName, json) ?? undefined;
 
 	const usageObj = json.usage;
 	if (!usageObj) return;
@@ -209,6 +228,16 @@ function extractUsageFromData(
 ): void {
 	try {
 		const parsed = JSON.parse(data);
+
+		// The serving backend (OpenRouter `provider`) is named on the terminal
+		// frame of a stream. Read it before the usage branches below — one of
+		// them returns early on its own usage block, and it must be recorded
+		// even on a stream too long for the collector to re-parse at the end.
+		const served = servedProviderFromBody(
+			state.startMessage.providerName,
+			parsed,
+		);
+		if (served) state.usage.providerServed = served;
 
 		// Handle message_start - check both parsed.type and eventType
 		// (Some providers put type in event line, Anthropic puts it in JSON)
@@ -671,6 +700,25 @@ export class UsageCollector {
 		await this.asyncWriter.dispose();
 	}
 
+	/**
+	 * Seed the serving backend discovered outside the collector (the response
+	 * processor reads it from the provider's body as soon as the response
+	 * arrives). Seeding the state means the row `handleEnd` INSERTs already
+	 * carries it — the label no longer depends on a later UPDATE racing that
+	 * INSERT — and a body over the capture cap, which the collector cannot
+	 * re-parse at the end, still records it.
+	 *
+	 * Returns false when the collector holds no state for `requestId` (it
+	 * never started it, or already finalised it); the caller then writes the
+	 * row itself.
+	 */
+	setProviderServed(requestId: string, providerServed: string): boolean {
+		const state = this.requests.get(requestId);
+		if (!state) return false;
+		state.usage.providerServed = providerServed;
+		return true;
+	}
+
 	getHealth(): UsageCollectorHealth {
 		return { state: "ready" };
 	}
@@ -896,6 +944,7 @@ export class UsageCollector {
 								cacheReadInputTokens: state.usage.cacheReadInputTokens,
 								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
 								tokensPerSecond: state.usage.tokensPerSecond,
+								providerServed: state.usage.providerServed,
 							}
 						: undefined,
 					state.agentUsed,
@@ -990,6 +1039,7 @@ export class UsageCollector {
 			gatewayHintCompaction: state.gatewayHint.compaction ?? undefined,
 			gatewayHintContextCompacted:
 				state.gatewayHint.contextCompacted ?? undefined,
+			providerServed: state.usage.providerServed,
 			// Same value handed to saveRequest above, so a dashboard does not have
 			// to reload before a request shows its terminal state. Note this is
 			// the value as REPORTED, not as persisted: the save is an
@@ -1095,6 +1145,8 @@ export class UsageCollector {
 				project: state.project ?? undefined,
 				projectAttributionSource: state.projectAttributionSource ?? undefined,
 				agentAttributionSource: state.agentAttributionSource ?? undefined,
+				// Only for providers that expose one — other payloads unchanged.
+				providerRequestId: startMessage.providerRequestId ?? undefined,
 			},
 		});
 		responseBody = null;
@@ -1361,4 +1413,32 @@ export function getUsageCollector(): UsageCollector {
  */
 export function tryGetUsageCollector(): UsageCollector | null {
 	return _usageCollector;
+}
+
+/**
+ * Record the serving backend the response processor discovered, through the
+ * same collector the response handler feeds with start/chunk/end.
+ *
+ * Prefers seeding the collector state (see UsageCollector.setProviderServed):
+ * the label is then part of the row `handleEnd` INSERTs, independent of the
+ * order in which the two background jobs finish. When the collector holds no
+ * state for the request — it already finalised it, or there is none — the row
+ * is written via `write` (updateRequestProviderServed) as the fallback only.
+ *
+ * Returns true when the value was dealt with, false when the fallback write
+ * failed (the collector never throws).
+ */
+export async function recordDiscoveredProviderServed(
+	collector: UsageCollector | null,
+	requestId: string,
+	providerServed: string,
+	write: (requestId: string, providerServed: string) => Promise<void>,
+): Promise<boolean> {
+	if (collector?.setProviderServed(requestId, providerServed)) return true;
+	try {
+		await write(requestId, providerServed);
+		return true;
+	} catch {
+		return false;
+	}
 }

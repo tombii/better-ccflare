@@ -82,6 +82,7 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			gateway_hint_prev_tool_durations: string | null;
 			gateway_hint_compaction: string | null;
 			gateway_hint_context_compacted: string | null;
+			provider_served: string | null;
 		}>(
 			`
 			SELECT r.*, a.name as account_name
@@ -143,14 +144,16 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			// See the matching field on `Request`/`RequestRow` in
 			// @better-ccflare/types/request — pure observability metadata, absent
 			// for every client that doesn't opt in.
-			gatewayHintRequestClass:
-				request.gateway_hint_request_class || undefined,
+			gatewayHintRequestClass: request.gateway_hint_request_class || undefined,
 			gatewayHintAgentType: request.gateway_hint_agent_type || undefined,
 			gatewayHintPrevToolDurations:
 				request.gateway_hint_prev_tool_durations || undefined,
 			gatewayHintCompaction: request.gateway_hint_compaction || undefined,
 			gatewayHintContextCompacted:
 				request.gateway_hint_context_compacted || undefined,
+			// The backend the provider's own response body named — a fact from
+			// the upstream response, absent when the provider does not say.
+			providerServed: request.provider_served || undefined,
 		}));
 
 		return jsonResponse(response);

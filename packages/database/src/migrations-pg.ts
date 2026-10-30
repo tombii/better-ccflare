@@ -152,7 +152,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			gateway_hint_agent_type TEXT,
 			gateway_hint_prev_tool_durations TEXT,
 			gateway_hint_compaction TEXT,
-			gateway_hint_context_compacted TEXT
+			gateway_hint_context_compacted TEXT,
+			provider_served TEXT
 		)
 	`);
 
@@ -1382,6 +1383,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			column: "gateway_hint_context_compacted",
 			definition:
 				"ALTER TABLE requests ADD COLUMN gateway_hint_context_compacted TEXT",
+		},
+		{
+			table: "requests",
+			column: "provider_served",
+			definition: "ALTER TABLE requests ADD COLUMN provider_served TEXT",
 		},
 		{
 			table: "request_payloads",

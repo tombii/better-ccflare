@@ -1336,6 +1336,26 @@ OAuth tokens will need to be re-authenticated.
 
 	// Request operations delegated to repository
 
+	/**
+	 * Persist the serving backend (`provider_served`) the provider's own
+	 * response body names. Written on its own, after the row exists, because
+	 * the usage extractor reads it after the body has been consumed — see
+	 * packages/proxy/src/handlers/response-processor.ts.
+	 */
+	async updateRequestProviderServed(
+		requestId: string,
+		providerServed: string,
+	): Promise<void> {
+		await withDatabaseRetry(
+			() =>
+				this.requests.updateUsage(requestId, {
+					providerServed,
+				}),
+			this.retryConfig,
+			"updateRequestProviderServed",
+		);
+	}
+
 	async saveRequest(
 		id: string,
 		method: string,

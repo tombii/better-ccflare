@@ -101,6 +101,14 @@ export interface Provider {
 	transformRequestBody?(request: Request, account?: Account): Promise<Request>;
 
 	/**
+	 * Whether the upstream THIS account talks to accepts an OpenRouter-style
+	 * `provider` routing object. Optional: when absent the proxy falls back to
+	 * the core provider-name list. Implement it when the target host decides
+	 * (e.g. NanoGPT on a third-party custom endpoint is not NanoGPT).
+	 */
+	supportsProviderRoutingFor?(account?: Account): boolean;
+
+	/**
 	 * Extract tier information from response if available
 	 */
 	extractTierInfo?(response: Response): Promise<number | null>;

@@ -211,7 +211,8 @@ export function ensureSchema(db: Database): void {
 			gateway_hint_agent_type TEXT,
 			gateway_hint_prev_tool_durations TEXT,
 			gateway_hint_compaction TEXT,
-			gateway_hint_context_compacted TEXT
+			gateway_hint_context_compacted TEXT,
+			provider_served TEXT
 		)
 	`);
 
@@ -1646,6 +1647,15 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"ALTER TABLE requests ADD COLUMN gateway_hint_context_compacted TEXT",
 			).run();
 			log.info("Added gateway_hint_context_compacted column to requests table");
+		}
+
+		// Add provider_served if it doesn't exist. The backend an OpenRouter
+		// response body names as having served the request (e.g. "Morph"). NULL
+		// for every provider that does not state it — most of them, and every
+		// streaming response. Written after the fact by updateRequestUsage.
+		if (!requestsColumnNames.includes("provider_served")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN provider_served TEXT").run();
+			log.info("Added provider_served column to requests table");
 		}
 
 		// Add the binary payload column to request_payloads if it doesn't exist.

@@ -148,6 +148,7 @@ export interface RequestRow {
 	gateway_hint_prev_tool_durations: string | null;
 	gateway_hint_compaction: string | null;
 	gateway_hint_context_compacted: string | null;
+	provider_served: string | null;
 }
 
 // Domain model
@@ -195,6 +196,13 @@ export interface Request {
 	gatewayHintPrevToolDurations?: string;
 	gatewayHintCompaction?: string;
 	gatewayHintContextCompacted?: string;
+	/**
+	 * The backend the provider's own response body names as having served the
+	 * request (OpenRouter body `provider`, e.g. "Morph"). A fact from the
+	 * response, never inferred; absent for providers that do not state it and
+	 * for streaming responses, whose frames carry no such field.
+	 */
+	providerServed?: string;
 }
 
 // API response type
@@ -246,6 +254,8 @@ export interface RequestResponse {
 	gatewayHintPrevToolDurations?: string;
 	gatewayHintCompaction?: string;
 	gatewayHintContextCompacted?: string;
+	/** See the matching field on `Request` above. */
+	providerServed?: string;
 }
 
 // Detailed request with payload
@@ -288,6 +298,14 @@ export interface RequestPayload {
 		// the "Rate Limited" badge from a summary-only payload (no body
 		// hydration required).
 		rateLimited?: boolean;
+		/**
+		 * The upstream provider's own per-request id (e.g. NanoGPT
+		 * `x-request-id`), when it exposes one. Lets an operator look the
+		 * request up in the provider's web UI logs. Deliberately says nothing
+		 * about which backend/provider served the request. Absent for every
+		 * provider with no known id header.
+		 */
+		providerRequestId?: string;
 	};
 }
 
@@ -352,6 +370,7 @@ export function toRequest(row: RequestRow): Request {
 		gatewayHintCompaction: row.gateway_hint_compaction || undefined,
 		gatewayHintContextCompacted:
 			row.gateway_hint_context_compacted || undefined,
+		providerServed: row.provider_served || undefined,
 	};
 }
 
@@ -395,6 +414,7 @@ export function toRequestResponse(request: Request): RequestResponse {
 		gatewayHintPrevToolDurations: request.gatewayHintPrevToolDurations,
 		gatewayHintCompaction: request.gatewayHintCompaction,
 		gatewayHintContextCompacted: request.gatewayHintContextCompacted,
+		providerServed: request.providerServed,
 	};
 }
 
