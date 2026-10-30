@@ -96,25 +96,11 @@ export const useDeleteSearchProvider = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: (id: string) => deleteSearchProvider(id),
-		onMutate: async (id: string) => {
-			await queryClient.cancelQueries({
-				queryKey: queryKeys.searchProviders(),
-			});
-			const previous = queryClient.getQueryData<SearchProviderPublic[]>(
-				queryKeys.searchProviders(),
-			);
-			queryClient.setQueryData<SearchProviderPublic[]>(
-				queryKeys.searchProviders(),
-				(prev) => prev?.filter((p) => p.id !== id),
-			);
-			return { previous };
-		},
-		onError: (_error, _id, context) => {
-			if (context?.previous) {
-				queryClient.setQueryData(queryKeys.searchProviders(), context.previous);
-			}
-		},
-		onSettled: () => {
+		// Deliberately no optimistic removal: the confirmation dialog is
+		// mounted inside the row, so dropping the row from the cache would
+		// unmount the dialog before the DELETE settles and take its error
+		// message with it. The row stays until the server confirms.
+		onSuccess: () => {
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.searchProviders(),
 			});

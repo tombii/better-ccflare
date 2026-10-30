@@ -325,6 +325,64 @@ describe("validateForm", () => {
 			}),
 		).toContain("Max results");
 	});
+
+	it("enforces the server's upper bounds", () => {
+		// The API rejects >64 label chars, >1000 priority and >50 results;
+		// the form must not submit values the server will refuse.
+		expect(
+			validateForm(
+				{ ...base, apiKey: "k", label: "a".repeat(65) },
+				catalog[0],
+				{
+					isEdit: false,
+				},
+			),
+		).toContain("at most 64");
+		expect(
+			validateForm({ ...base, apiKey: "k", priority: "1001" }, catalog[0], {
+				isEdit: false,
+			}),
+		).toContain("Priority");
+		expect(
+			validateForm({ ...base, apiKey: "k", maxResults: "51" }, catalog[0], {
+				isEdit: false,
+			}),
+		).toContain("Max results");
+	});
+
+	it("accepts the exact boundary values", () => {
+		expect(
+			validateForm(
+				{
+					...base,
+					apiKey: "k",
+					label: "a".repeat(64),
+					priority: "1000",
+					maxResults: "50",
+				},
+				catalog[0],
+				{ isEdit: false },
+			),
+		).toBeNull();
+	});
+
+	it("rejects fractions and garbage instead of silently truncating", () => {
+		expect(
+			validateForm({ ...base, apiKey: "k", priority: "12.7" }, catalog[0], {
+				isEdit: false,
+			}),
+		).toContain("Priority");
+		expect(
+			validateForm({ ...base, apiKey: "k", priority: "3abc" }, catalog[0], {
+				isEdit: false,
+			}),
+		).toContain("Priority");
+		expect(
+			validateForm({ ...base, apiKey: "k", maxResults: "5.5" }, catalog[0], {
+				isEdit: false,
+			}),
+		).toContain("Max results");
+	});
 });
 
 describe("formStateToPayload", () => {

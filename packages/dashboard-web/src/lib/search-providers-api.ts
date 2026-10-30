@@ -179,10 +179,14 @@ export async function testSearchProvider(
 	id: string,
 ): Promise<SearchProviderTestResult> {
 	try {
-		const body = await api.post<Partial<SearchProviderTestResult>>(
-			`/api/search-providers/${encodeURIComponent(id)}/test`,
-		);
-		const raw = asRecord(body);
+		const body = await api.post<{
+			data?: Partial<SearchProviderTestResult>;
+		}>(`/api/search-providers/${encodeURIComponent(id)}/test`);
+		// The handler wraps the result in the standard success envelope:
+		// `{ success: true, data: { ok, latencyMs, error? } }`. Tolerate a
+		// bare result too, so the adapter survives an envelope change.
+		const envelope = asRecord(body);
+		const raw = asRecord(envelope.data ?? envelope);
 		return {
 			ok: raw.ok === true,
 			latencyMs: asNumber(raw.latencyMs),

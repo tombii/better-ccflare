@@ -87,10 +87,15 @@ describe.skipIf(!livePgAvailable)(
 		});
 
 		it("migration created the table and both indexes in the pinned schema", async () => {
-			const table = await adapter.get<{ reg: string | null }>(
-				`SELECT to_regclass('${SCHEMA}.search_providers')::text AS reg`,
+			// Query pg_class directly: `to_regclass()` renders an unqualified
+			// name whenever the schema is on search_path, so it cannot prove
+			// which schema the table landed in.
+			const table = await adapter.get<{ relname: string }>(
+				`SELECT c.relname
+				 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+				 WHERE n.nspname = '${SCHEMA}' AND c.relname = 'search_providers'`,
 			);
-			expect(table?.reg).toBe(`${SCHEMA}.search_providers`);
+			expect(table?.relname).toBe("search_providers");
 
 			const indexes = await adapter.query<{ indexname: string }>(
 				`SELECT indexname FROM pg_indexes
@@ -190,9 +195,9 @@ describe.skipIf(!livePgAvailable)(
 				label: "pg-b",
 				apiKey: "k",
 			});
-			await expect(
-				repo.update(b.id, { label: "pg-a" }),
-			).rejects.toThrow(SearchProviderLabelTakenError);
+			await expect(repo.update(b.id, { label: "pg-a" })).rejects.toThrow(
+				SearchProviderLabelTakenError,
+			);
 		});
 
 		it("listActiveByPriority orders ASC and excludes disabled rows", async () => {

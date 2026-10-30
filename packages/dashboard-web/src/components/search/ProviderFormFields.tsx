@@ -60,6 +60,22 @@ export function formStateFromProvider(
 	};
 }
 
+// Bounds must match the server's validation in
+// packages/http-api/src/handlers/search-providers.ts — anything looser lets
+// the form submit values the API rejects.
+const LABEL_MAX_LENGTH = 64;
+const PRIORITY_MAX = 1000;
+const MAX_RESULTS_MIN = 1;
+const MAX_RESULTS_MAX = 50;
+
+/** Whole, non-negative decimal only — rejects "12.7", "3abc" and negatives. */
+function parseWholeNumber(raw: string): number | null {
+	const trimmed = raw.trim();
+	if (!/^\d+$/.test(trimmed)) return null;
+	const value = Number(trimmed);
+	return Number.isSafeInteger(value) ? value : null;
+}
+
 /** Returns an error message, or null when the form may be submitted. */
 export function validateForm(
 	form: ProviderFormState,
@@ -68,12 +84,18 @@ export function validateForm(
 ): string | null {
 	if (!form.provider) return "Choose a provider.";
 	if (!form.label.trim()) return "Give the provider a label.";
-	const priority = Number.parseInt(form.priority, 10);
-	if (!Number.isFinite(priority) || priority < 0)
-		return "Priority must be 0 or a positive whole number.";
-	const maxResults = Number.parseInt(form.maxResults, 10);
-	if (!Number.isFinite(maxResults) || maxResults <= 0)
-		return "Max results must be a positive whole number.";
+	if (form.label.trim().length > LABEL_MAX_LENGTH)
+		return `Label must be at most ${LABEL_MAX_LENGTH} characters.`;
+	const priority = parseWholeNumber(form.priority);
+	if (priority === null || priority > PRIORITY_MAX)
+		return `Priority must be a whole number between 0 and ${PRIORITY_MAX}.`;
+	const maxResults = parseWholeNumber(form.maxResults);
+	if (
+		maxResults === null ||
+		maxResults < MAX_RESULTS_MIN ||
+		maxResults > MAX_RESULTS_MAX
+	)
+		return `Max results must be a whole number between ${MAX_RESULTS_MIN} and ${MAX_RESULTS_MAX}.`;
 	// Editing: leaving the key blank keeps the stored one.
 	if (catalogEntry?.requiresKey && !options.isEdit && !form.apiKey.trim())
 		return "This provider needs an API key.";

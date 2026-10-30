@@ -513,3 +513,69 @@ describe("search provider /test", () => {
 		expect(res.status).toBe(404);
 	});
 });
+
+describe("search provider handlers — edit and create round-trips", () => {
+	it("accepts an unchanged `provider` on PATCH instead of rejecting it", async () => {
+		const { store, rows } = createFakeStore([
+			{ provider: PROVIDER_WITH_KEY, label: "Round-trip", apiKey: SECRET },
+		]);
+		const handlers = createSearchProviderHandlers(store);
+		const id = [...rows.keys()][0];
+
+		// A dashboard edit sends the whole row back, including `provider`.
+		const res = await handlers.update(
+			jsonRequest(
+				{ provider: PROVIDER_WITH_KEY, label: "Renamed", maxResults: 3 },
+				"PATCH",
+			),
+			id,
+		);
+
+		expect(res.status).toBe(200);
+		const body = await readJson(res);
+		expect(body.data.label).toBe("Renamed");
+		expect(body.data.maxResults).toBe(3);
+	});
+
+	it("still rejects an actual provider change on PATCH", async () => {
+		const otherProvider = SEARCH_PROVIDER_CATALOG.find(
+			(entry) => entry.id !== PROVIDER_WITH_KEY,
+		)?.id as string;
+		const { store, rows } = createFakeStore([
+			{ provider: PROVIDER_WITH_KEY, label: "Fixed", apiKey: SECRET },
+		]);
+		const handlers = createSearchProviderHandlers(store);
+		const id = [...rows.keys()][0];
+
+		const res = await handlers.update(
+			jsonRequest({ provider: otherProvider, label: "Fixed" }, "PATCH"),
+			id,
+		);
+		expect(res.status).toBe(400);
+	});
+
+	it("passes `enabled: false` through to create", async () => {
+		const seen: SearchProviderInput[] = [];
+		const { store } = createFakeStore();
+		const spyStore: SearchProviderStore = {
+			...store,
+			async create(input) {
+				seen.push(input);
+				return store.create(input);
+			},
+		};
+		const handlers = createSearchProviderHandlers(spyStore);
+
+		const res = await handlers.create(
+			jsonRequest({
+				provider: PROVIDER_WITH_KEY,
+				label: "Disabled from birth",
+				apiKey: "k",
+				enabled: false,
+			}),
+		);
+
+		expect(res.status).toBe(201);
+		expect(seen[0]?.enabled).toBe(false);
+	});
+});

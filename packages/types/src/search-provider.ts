@@ -160,21 +160,28 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 ];
 
 /** Raw `search_providers` row (snake_case, INTEGER booleans — match storage). */
+/**
+ * A driver-returned integer. PostgreSQL surfaces BIGINT (`int8`) columns as
+ * strings to avoid precision loss, while SQLite returns numbers — so every
+ * numeric column read into the domain model must be coerced, not trusted.
+ */
+export type DriverInteger = number | string;
+
 export interface SearchProviderRow {
 	id: string;
 	provider: string;
 	label: string;
 	api_key: string | null;
-	priority: number;
-	enabled: number; // 0 or 1
-	max_results: number;
+	priority: DriverInteger;
+	enabled: DriverInteger; // 0 or 1
+	max_results: DriverInteger;
 	extra_config: string | null; // JSON object
 	status: string;
 	status_message: string | null;
-	status_checked_at: number | null;
-	cooldown_until: number | null;
-	created_at: number;
-	updated_at: number;
+	status_checked_at: DriverInteger | null;
+	cooldown_until: DriverInteger | null;
+	created_at: DriverInteger;
+	updated_at: DriverInteger;
 }
 
 export interface SearchProviderHealthStatus {
@@ -262,6 +269,18 @@ function parseExtraConfig(raw: string | null): Record<string, unknown> {
 	}
 }
 
+/** Coerce a driver integer (number on SQLite, string on PG BIGINT). */
+function toInt(value: DriverInteger, fallback = 0): number {
+	const parsed = typeof value === "number" ? value : Number(value);
+	return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toNullableInt(value: DriverInteger | null): number | null {
+	if (value === null || value === undefined) return null;
+	const parsed = typeof value === "number" ? value : Number(value);
+	return Number.isFinite(parsed) ? parsed : null;
+}
+
 /** Row → full domain model (Row -> Domain, like `toCombo`). */
 export function toSearchProvider(row: SearchProviderRow): SearchProvider {
 	return {
@@ -269,16 +288,16 @@ export function toSearchProvider(row: SearchProviderRow): SearchProvider {
 		provider: row.provider as SearchProviderId,
 		label: row.label,
 		apiKey: row.api_key ?? null,
-		priority: row.priority,
-		enabled: row.enabled === 1,
-		maxResults: row.max_results,
+		priority: toInt(row.priority),
+		enabled: toInt(row.enabled) === 1,
+		maxResults: toInt(row.max_results),
 		extraConfig: parseExtraConfig(row.extra_config),
 		status: row.status,
 		statusMessage: row.status_message ?? null,
-		statusCheckedAt: row.status_checked_at ?? null,
-		cooldownUntil: row.cooldown_until ?? null,
-		createdAt: row.created_at,
-		updatedAt: row.updated_at,
+		statusCheckedAt: toNullableInt(row.status_checked_at),
+		cooldownUntil: toNullableInt(row.cooldown_until),
+		createdAt: toInt(row.created_at),
+		updatedAt: toInt(row.updated_at),
 	};
 }
 

@@ -303,6 +303,7 @@ export function createSearchProviderHandlers(
 				label: patch.label as string,
 				apiKey: apiKey.length > 0 ? apiKey : undefined,
 				priority: patch.priority,
+				enabled: patch.enabled,
 				maxResults: patch.maxResults,
 				extraConfig: patch.extraConfig,
 			};
@@ -357,7 +358,21 @@ export function createSearchProviderHandlers(
 					return errorResponse(NotFound(`Search provider '${id}' not found`));
 				}
 
-				const validated = validateFields(body, { creating: false });
+				// Clients round-trip the whole row on edit, so an unchanged
+				// `provider` is a no-op rather than an error. Only an actual
+				// change is rejected.
+				let patchBody = body;
+				if (body.provider !== undefined) {
+					if (body.provider !== existing.provider) {
+						return errorResponse(
+							BadRequest("provider cannot be changed after creation"),
+						);
+					}
+					const { provider: _unchanged, ...rest } = body;
+					patchBody = rest;
+				}
+
+				const validated = validateFields(patchBody, { creating: false });
 				if (!validated.ok) return validated.response;
 				const { patch } = validated;
 

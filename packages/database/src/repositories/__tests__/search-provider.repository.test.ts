@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { toSearchProvider } from "@better-ccflare/types";
 import { BunSqlAdapter } from "../../adapters/bun-sql-adapter";
 import { ensureSchema, runMigrations } from "../../migrations";
 import {
@@ -288,6 +289,63 @@ describe("SearchProviderRepository", () => {
 			expect(after?.statusCheckedAt).toBe(checkedAt);
 			expect(after?.cooldownUntil).toBe(checkedAt + 60_000);
 			expect(after?.updatedAt).toBe(created.updatedAt);
+		});
+	});
+
+	/**
+	 * PostgreSQL returns BIGINT (int8) columns as strings to avoid precision
+	 * loss, while SQLite returns numbers. Without coercion the domain model
+	 * silently carries strings where the types promise numbers — the defect
+	 * that a live-PG run caught. SQLite tests cannot reproduce it, so the row
+	 * mapper is exercised directly with driver-shaped values.
+	 */
+	describe("toSearchProvider — PostgreSQL driver shapes", () => {
+		it("coerces string BIGINT columns to numbers", () => {
+			const provider = toSearchProvider({
+				id: "sp-1",
+				provider: "tavily",
+				label: "pg",
+				api_key: "k",
+				priority: "3",
+				enabled: "1",
+				max_results: "7",
+				extra_config: '{"topic":"news"}',
+				status: "ok",
+				status_message: null,
+				status_checked_at: "1700000000000",
+				cooldown_until: null,
+				created_at: "1699999999999",
+				updated_at: "1700000000001",
+			});
+
+			expect(provider.priority).toBe(3);
+			expect(provider.enabled).toBe(true);
+			expect(provider.maxResults).toBe(7);
+			expect(provider.statusCheckedAt).toBe(1_700_000_000_000);
+			expect(provider.cooldownUntil).toBeNull();
+			expect(provider.createdAt).toBe(1_699_999_999_999);
+			expect(provider.updatedAt).toBe(1_700_000_000_001);
+		});
+
+		it("treats a string '0' enabled as disabled", () => {
+			const provider = toSearchProvider({
+				id: "sp-2",
+				provider: "tavily",
+				label: "off",
+				api_key: null,
+				priority: "0",
+				enabled: "0",
+				max_results: "10",
+				extra_config: null,
+				status: "unknown",
+				status_message: null,
+				status_checked_at: null,
+				cooldown_until: null,
+				created_at: "1",
+				updated_at: "1",
+			});
+			expect(provider.enabled).toBe(false);
+			expect(provider.extraConfig).toEqual({});
 		});
 	});
 });
