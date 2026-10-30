@@ -118,6 +118,7 @@ import {
 } from "./handlers/requests";
 import { createRequestsStreamHandler } from "./handlers/requests-stream";
 import { createRoutingObservationsHandler } from "./handlers/routing-observations";
+import { createSearchProviderHandlers } from "./handlers/search-providers";
 import { createSessionAccountHandler } from "./handlers/sessions";
 import { createStatsHandler, createStatsResetHandler } from "./handlers/stats";
 import {
@@ -133,6 +134,7 @@ import {
 import { createUsageHistoryHandler } from "./handlers/usage-history";
 import { createVersionCheckHandler } from "./handlers/version";
 import { AuthService } from "./services/auth-service";
+import { createSearchProviderStore } from "./services/search-providers";
 import type { APIContext } from "./types";
 import { errorResponse, jsonResponse } from "./utils/http-error";
 
@@ -149,6 +151,10 @@ export class APIRouter {
 	private qwenStatusHandler: (sessionId: string) => Response;
 	private codexStatusHandler: (sessionId: string) => Response;
 	private codebuddyStatusHandler: (sessionId: string) => Response;
+	// Assigned in registerHandlers(), which the constructor always runs first.
+	private searchProviderHandlers!: ReturnType<
+		typeof createSearchProviderHandlers
+	>;
 
 	constructor(context: APIContext) {
 		this.context = context;
@@ -276,6 +282,12 @@ export class APIRouter {
 		const apiKeysListHandler = createApiKeysListHandler(dbOps);
 		const apiKeysGenerateHandler = createApiKeysGenerateHandler(dbOps);
 		const apiKeysStatsHandler = createApiKeysStatsHandler(dbOps);
+
+		// Web-search provider handlers (store adapted from dbOps)
+		const searchProviderHandlers = createSearchProviderHandlers(
+			createSearchProviderStore(dbOps),
+		);
+		this.searchProviderHandlers = searchProviderHandlers;
 
 		// Register routes
 		this.handlers.set("GET:/health", (_req, url) => healthHandler(url));
@@ -557,6 +569,26 @@ export class APIRouter {
 		this.handlers.set("POST:/api/models/refresh", () => modelsRefreshHandler());
 		this.handlers.set("POST:/api/models/preview", (req) =>
 			modelsPreviewHandler(req),
+		);
+
+		// Web-search settings routes (flags live in the config handlers)
+		this.handlers.set("GET:/api/web-search/settings", () =>
+			configHandlers.getWebSearchSettings(),
+		);
+		this.handlers.set("PATCH:/api/web-search/settings", (req) =>
+			configHandlers.setWebSearchSettings(req),
+		);
+
+		// Search provider routes. /meta is a static route registered before
+		// the dynamic /:id block later in handleRequest so it is never treated as an id.
+		this.handlers.set("GET:/api/search-providers", () =>
+			searchProviderHandlers.list(),
+		);
+		this.handlers.set("POST:/api/search-providers", (req) =>
+			searchProviderHandlers.create(req),
+		);
+		this.handlers.set("GET:/api/search-providers/meta", () =>
+			searchProviderHandlers.meta(),
 		);
 	}
 
@@ -975,6 +1007,45 @@ export class APIRouter {
 			if (alertId) {
 				const alertAckHandler = createAlertAcknowledgeHandler(this.context);
 				return await this.wrapHandler(() => alertAckHandler(alertId))(req, url);
+			}
+		}
+
+		// Check for dynamic search provider endpoints (/api/search-providers/:id)
+		if (path.startsWith("/api/search-providers/")) {
+			const parts = path.split("/");
+			const searchProviderId = decodeURIComponent(parts[3] ?? "");
+
+			// POST /api/search-providers/:id/test
+			if (parts.length === 5 && parts[4] === "test" && method === "POST") {
+				return await this.wrapHandler(() =>
+					this.searchProviderHandlers.test(searchProviderId),
+				)(req, url);
+			}
+
+			// POST /api/search-providers/:id/reorder
+			if (parts.length === 5 && parts[4] === "reorder" && method === "POST") {
+				return await this.wrapHandler((req) =>
+					this.searchProviderHandlers.reorder(req, searchProviderId),
+				)(req, url);
+			}
+
+			// GET/PATCH/DELETE /api/search-providers/:id
+			if (parts.length === 4) {
+				if (method === "GET") {
+					return await this.wrapHandler(() =>
+						this.searchProviderHandlers.get(searchProviderId),
+					)(req, url);
+				}
+				if (method === "PATCH") {
+					return await this.wrapHandler((req) =>
+						this.searchProviderHandlers.update(req, searchProviderId),
+					)(req, url);
+				}
+				if (method === "DELETE") {
+					return await this.wrapHandler(() =>
+						this.searchProviderHandlers.remove(searchProviderId),
+					)(req, url);
+				}
 			}
 		}
 
