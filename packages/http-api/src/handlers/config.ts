@@ -509,6 +509,72 @@ export function createConfigHandlers(
 			});
 		},
 
+		getWebSearchSettings: (): Response => {
+			return jsonResponse({
+				success: true,
+				data: {
+					enabled: config.getWebSearchEnabled(),
+					maxResultChars: config.getWebSearchMaxResultChars(),
+					bypassHeader: config.getWebSearchBypassHeader(),
+				},
+			});
+		},
+
+		setWebSearchSettings: async (req: Request): Promise<Response> => {
+			let body: unknown;
+			try {
+				body = await req.json();
+			} catch {
+				return errorResponse(BadRequest("Request body must be a JSON object"));
+			}
+			if (!body || typeof body !== "object" || Array.isArray(body)) {
+				return errorResponse(BadRequest("Request body must be a JSON object"));
+			}
+			const patch = body as Record<string, unknown>;
+
+			const hasEnabled = patch.enabled !== undefined;
+			const hasMaxChars = patch.maxResultChars !== undefined;
+			const hasBypass = patch.bypassHeader !== undefined;
+			if (!hasEnabled && !hasMaxChars && !hasBypass) {
+				return errorResponse(
+					BadRequest(
+						"Provide at least one of: enabled, maxResultChars, bypassHeader",
+					),
+				);
+			}
+			if (hasEnabled && typeof patch.enabled !== "boolean") {
+				return errorResponse(BadRequest("enabled must be a boolean"));
+			}
+			if (hasBypass && typeof patch.bypassHeader !== "boolean") {
+				return errorResponse(BadRequest("bypassHeader must be a boolean"));
+			}
+			if (
+				hasMaxChars &&
+				(typeof patch.maxResultChars !== "number" ||
+					!Number.isInteger(patch.maxResultChars) ||
+					patch.maxResultChars < 1)
+			) {
+				return errorResponse(
+					BadRequest("maxResultChars must be a positive integer"),
+				);
+			}
+
+			if (hasEnabled) config.setWebSearchEnabled(patch.enabled as boolean);
+			if (hasMaxChars)
+				config.setWebSearchMaxResultChars(patch.maxResultChars as number);
+			if (hasBypass)
+				config.setWebSearchBypassHeader(patch.bypassHeader as boolean);
+
+			return jsonResponse({
+				success: true,
+				data: {
+					enabled: config.getWebSearchEnabled(),
+					maxResultChars: config.getWebSearchMaxResultChars(),
+					bypassHeader: config.getWebSearchBypassHeader(),
+				},
+			});
+		},
+
 		setComboSessionFallback: async (req: Request): Promise<Response> => {
 			const body = await req.json();
 			if (typeof body.enabled !== "boolean") {

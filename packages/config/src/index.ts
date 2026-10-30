@@ -134,6 +134,9 @@ export interface ConfigData {
 	combo_session_fallback?: boolean;
 	force_account_model?: boolean;
 	use_extra_usage?: boolean;
+	web_search_enabled?: boolean;
+	web_search_max_result_chars?: number;
+	web_search_bypass_header?: boolean;
 	provider_model_default_overrides?: ProviderModelDefaultOverrides;
 	agent_frontmatter_model_fallback?: boolean;
 	model_catalog_oauth_refresh_enabled?: boolean;
@@ -1045,6 +1048,56 @@ export class Config extends EventEmitter {
 		return `use extra usage ${value ? "enabled" : "disabled"}: adopted from CCFLARE_USE_EXTRA_USAGE, which only seeds the setting — change it in Settings → Advanced`;
 	}
 
+	/**
+	 * Master switch for the server-side web-search tool. Off by default: the
+	 * proxy only filters search backends into requests once someone has
+	 * deliberately configured providers and turned the feature on.
+	 */
+	getWebSearchEnabled(): boolean {
+		return this.resolveFlag(this.data.web_search_enabled, false).value;
+	}
+
+	/** "file" once anyone has set it, "default" while nobody has. */
+	getWebSearchEnabledSource(): "file" | "default" {
+		return this.resolveFlag(this.data.web_search_enabled, false).source;
+	}
+
+	setWebSearchEnabled(value: boolean): void {
+		this.set("web_search_enabled", value);
+	}
+
+	/** Maximum characters of search results injected back into a request. */
+	getWebSearchMaxResultChars(): number {
+		const fromFile = this.data.web_search_max_result_chars;
+		if (typeof fromFile === "number" && Number.isFinite(fromFile))
+			return this.clamp(Math.floor(fromFile), 500, 100000);
+		return 4000;
+	}
+
+	setWebSearchMaxResultChars(chars: number): void {
+		this.set(
+			"web_search_max_result_chars",
+			this.clamp(Math.floor(chars), 500, 100000),
+		);
+	}
+
+	/**
+	 * Whether clients may bypass search filtering with a request header.
+	 * On by default so callers that want raw search tools keep them.
+	 */
+	getWebSearchBypassHeader(): boolean {
+		return this.resolveFlag(this.data.web_search_bypass_header, true).value;
+	}
+
+	/** "file" once anyone has set it, "default" while nobody has. */
+	getWebSearchBypassHeaderSource(): "file" | "default" {
+		return this.resolveFlag(this.data.web_search_bypass_header, true).source;
+	}
+
+	setWebSearchBypassHeader(value: boolean): void {
+		this.set("web_search_bypass_header", value);
+	}
+
 	getProviderModelDefaultOverrides(): ProviderModelDefaultOverrides {
 		const raw = this.data.provider_model_default_overrides;
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -1285,6 +1338,9 @@ export class Config extends EventEmitter {
 			combos_enabled: this.getCombosEnabled(),
 			combo_session_fallback: this.getComboSessionFallback(),
 			force_account_model: this.getForceAccountModel(),
+			web_search_enabled: this.getWebSearchEnabled(),
+			web_search_max_result_chars: this.getWebSearchMaxResultChars(),
+			web_search_bypass_header: this.getWebSearchBypassHeader(),
 			agent_frontmatter_model_fallback: this.getAgentFrontmatterModelFallback(),
 			model_catalog_oauth_refresh_enabled:
 				this.getModelCatalogOAuthRefreshEnabled(),
