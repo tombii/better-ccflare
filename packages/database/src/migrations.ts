@@ -457,6 +457,43 @@ export function ensureSchema(db: Database): void {
 	db.run(
 		`CREATE INDEX IF NOT EXISTS idx_instance_heartbeats_last_heartbeat ON instance_heartbeats(last_heartbeat)`,
 	);
+
+	// Create search_providers table: third-party web-search APIs (Tavily, ...)
+	// routed to by the proxy. `api_key` is stored plaintext like accounts'
+	// keys but never leaves the server — the API only ever sees a mask.
+	// `status` / `cooldown_until` hold the last health probe result.
+	createSearchProvidersTable(db);
+}
+
+/**
+ * Shared DDL for the `search_providers` table and its indexes. Called from
+ * both `ensureSchema()` (fresh DBs) and `runMigrations()` (upgrades).
+ */
+function createSearchProvidersTable(db: Database): void {
+	db.run(`
+		CREATE TABLE IF NOT EXISTS search_providers (
+			id TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			label TEXT NOT NULL,
+			api_key TEXT,
+			priority INTEGER NOT NULL DEFAULT 0,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			max_results INTEGER NOT NULL DEFAULT 10,
+			extra_config TEXT,
+			status TEXT NOT NULL DEFAULT 'unknown',
+			status_message TEXT,
+			status_checked_at INTEGER,
+			cooldown_until INTEGER,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_search_providers_priority ON search_providers(priority)`,
+	);
+	db.run(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_search_providers_label ON search_providers(label)`,
+	);
 }
 
 /**
@@ -1711,6 +1748,11 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			).run();
 			log.info("Created index on api_keys role column");
 		}
+
+		// Ensure search_providers exists (for upgrades from pre-web-search
+		// installs). Idempotent, so fresh DBs — where ensureSchema() already
+		// created it — pay nothing.
+		createSearchProvidersTable(db);
 
 		// Add performance indexes
 		addPerformanceIndexes(db);
