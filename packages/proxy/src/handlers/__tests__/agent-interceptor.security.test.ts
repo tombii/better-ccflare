@@ -74,7 +74,16 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 		tmpWorkspacesDir = mkdtempSync(join(tmpdir(), "ccflare-sec-ws-"));
 		tmpWorkspacesFile = join(tmpWorkspacesDir, "workspaces.json");
 		agentRegistry.setWorkspacePersistenceForTests(
-			new WorkspacePersistence({ workspacesFile: tmpWorkspacesFile }),
+			new WorkspacePersistence({
+				workspacesFile: tmpWorkspacesFile,
+				// Isolate the legacy-migration source too: with only
+				// `workspacesFile` overridden, `migrateFromLegacy()` copies the
+				// developer's real `~/.ccflare/workspaces.json` into the tmp
+				// file. On this machine that file lists `process.cwd()`, so the
+				// registry starts pre-populated and the "DOES extract" count
+				// assertion below depends on machine state.
+				legacyWorkspacesFile: join(tmpWorkspacesDir, "legacy-workspaces.json"),
+			}),
 		);
 
 		// Enable workspace auto-discovery for this suite so the existing
@@ -389,6 +398,13 @@ Check /home/tom/git_repos/better-ccflare/.claude/agents for custom agents.
 
 		test("DOES extract agent directories when flag is set", async () => {
 			process.env[AUTODISCOVER_ENV] = "true";
+
+			// Start from a known-empty registry. Earlier tests in this file run
+			// with auto-discovery enabled and already reference cwd (e.g. the
+			// "preserve functionality" case), and `registerWorkspace()` dedupes
+			// by path — so without this reset the count-delta assertion below
+			// passes or fails depending on test order rather than on the gate.
+			await agentRegistry.clearWorkspaces();
 
 			const prompt = `Contents of ${existingWorkspace}/CLAUDE.md`;
 			const before = workspacesCount();
