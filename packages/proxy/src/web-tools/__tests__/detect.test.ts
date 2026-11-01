@@ -175,7 +175,6 @@ describe("detectWebSearchRequest", () => {
 			{ type: "tool", name: "web_search" },
 			{ type: "auto" },
 			{ type: "any" },
-			{ type: "none" },
 		]) {
 			expect(
 				detectWebSearchRequest(
@@ -184,6 +183,36 @@ describe("detectWebSearchRequest", () => {
 				),
 			).not.toBeNull();
 		}
+	});
+
+	test("tool_choice 'none' forbids tool use and is never a helper", () => {
+		// `none` means the caller asked for text only; answering with raw
+		// search results would be the wrong response entirely.
+		expect(
+			detectWebSearchRequest(
+				helperBody({ tool_choice: { type: "none" } }),
+				OPTIONS,
+			),
+		).toBeNull();
+	});
+
+	test("a prompt without Claude Code's helper prefix is not intercepted", () => {
+		// The helper request's sole user turn always carries the prefix. An
+		// ordinary request that happens to declare only a web_search tool must
+		// get the model's answer, not raw results.
+		expect(
+			detectWebSearchRequest(
+				helperBody({
+					messages: [
+						{
+							role: "user",
+							content: "Compare these products and recommend one",
+						},
+					],
+				}),
+				OPTIONS,
+			),
+		).toBeNull();
 	});
 
 	test("allowed_domains together with blocked_domains is rejected", () => {

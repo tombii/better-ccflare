@@ -454,4 +454,32 @@ describe("runWebSearchChain — request pass-through", () => {
 		expect(sentBody?.topic).toBe("news");
 		expect(sentBody?.include_raw_content).toBe(true);
 	});
+
+	it("does not wait for a slow health write before returning results", async () => {
+		// A BUSY SQLite adapter can retry a write for minutes. Health is
+		// dashboard-only state, so a search must not block on it.
+		const providers = [makeProvider({ id: "a", label: "A", apiKey: "key-a" })];
+		let releaseWrite!: () => void;
+		const writeGate = new Promise<void>((resolve) => {
+			releaseWrite = resolve;
+		});
+		const repo = {
+			listActiveByPriority: async () => providers,
+			updateHealth: async () => {
+				await writeGate;
+			},
+		};
+		globalThis.fetch = (async () => results("https://example.com/1")) as never;
+
+		const started = Date.now();
+		const outcome = await runWebSearchChain(
+			{ dbOps: { getSearchProviderRepository: () => repo } as never },
+			searchRequest,
+		);
+		const elapsed = Date.now() - started;
+
+		expect(outcome?.hits.length).toBeGreaterThan(0);
+		expect(elapsed).toBeLessThan(1000);
+		releaseWrite();
+	});
 });

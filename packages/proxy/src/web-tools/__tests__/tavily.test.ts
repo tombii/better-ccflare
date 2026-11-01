@@ -131,16 +131,32 @@ describe("tavily adapter — request shape", () => {
 
 	it("clamps max_results to Tavily's 0–20 range", async () => {
 		stubFetch(() => jsonResponse({ results: [] }));
+		// A high configured cap so the caller's request value is what gets
+		// clamped; the provider's own cap is tested separately below.
+		const roomy = { ...baseConfig, maxResults: 50 };
 
-		await adapter.search(request({ maxResults: 50 }), baseConfig);
-		await adapter.search(request({ maxResults: -3 }), baseConfig);
-		await adapter.search(request({ maxResults: 0 }), baseConfig);
-		await adapter.search(request({ maxResults: Number.NaN }), baseConfig);
+		await adapter.search(request({ maxResults: 50 }), roomy);
+		await adapter.search(request({ maxResults: -3 }), roomy);
+		await adapter.search(request({ maxResults: 0 }), roomy);
+		await adapter.search(request({ maxResults: Number.NaN }), roomy);
 
 		expect(bodyOf(calls[0]).max_results).toBe(20);
 		expect(bodyOf(calls[1]).max_results).toBe(0);
 		expect(bodyOf(calls[2]).max_results).toBe(0);
 		expect(bodyOf(calls[3]).max_results).toBe(10);
+	});
+
+	it("the provider's configured maxResults caps the search", async () => {
+		stubFetch(() => jsonResponse({ results: [] }));
+		const capped = { ...baseConfig, maxResults: 3 };
+
+		// Operator set "Max 3 results" — requesting more must not widen it,
+		// and requesting fewer still narrows it.
+		await adapter.search(request({ maxResults: 10 }), capped);
+		await adapter.search(request({ maxResults: 1 }), capped);
+
+		expect(bodyOf(calls[0]).max_results).toBe(3);
+		expect(bodyOf(calls[1]).max_results).toBe(1);
 	});
 
 	it("forwards topic only when configured to a supported value", async () => {
@@ -232,8 +248,18 @@ describe("tavily adapter — response mapping", () => {
 		]);
 	});
 
-	it("treats a malformed payload as no results", async () => {
+	it("throws on a payload without a results array instead of faking success", async () => {
+		// Returning [] here would mark the provider healthy, stop the fallback
+		// chain and tell the model "no results" — masking a broken response.
 		stubFetch(() => jsonResponse({ unexpected: true }));
+
+		await expect(adapter.search(request(), baseConfig)).rejects.toThrow(
+			/results array/,
+		);
+	});
+
+	it("keeps an explicit empty results array as a valid empty search", async () => {
+		stubFetch(() => jsonResponse({ results: [] }));
 
 		expect(await adapter.search(request(), baseConfig)).toEqual([]);
 	});

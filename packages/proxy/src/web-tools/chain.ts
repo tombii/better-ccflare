@@ -105,7 +105,14 @@ function cooldownUntilFor(error: unknown, now: number): number | null {
  * Write health without ever letting the write fail the search. Health is
  * best-effort telemetry; the search result matters more.
  */
-async function recordHealth(
+/**
+ * Health is display-only state for the dashboard. A write must never sit on
+ * the search's critical path: the SQLite adapter retries a BUSY write for up
+ * to ten minutes, which would hold a completed search (or block the fallback
+ * to the next provider) long past the chain deadline. The write is fired in
+ * the background and its failure is only logged.
+ */
+function recordHealth(
 	repo: SearchProviderRepository,
 	id: string,
 	health: {
@@ -114,14 +121,12 @@ async function recordHealth(
 		cooldownUntil: number | null;
 	},
 	log: WebToolChainDeps["log"],
-): Promise<void> {
-	try {
-		await repo.updateHealth(id, health);
-	} catch (error) {
+): void {
+	void repo.updateHealth(id, health).catch((error: unknown) => {
 		log?.warn(
 			`web-search: failed to record health for provider ${id}: ${errorMessage(error)}`,
 		);
-	}
+	});
 }
 
 /** Whether the catalog says this provider cannot work without a key. */
@@ -190,7 +195,7 @@ export async function runWebSearchChain(
 				},
 			);
 
-			await recordHealth(
+			recordHealth(
 				repo,
 				provider.id,
 				{ status: "ok", statusMessage: null, cooldownUntil: null },
@@ -212,7 +217,7 @@ export async function runWebSearchChain(
 				`web-search: provider ${provider.provider} (${provider.label}) failed: ${message}`,
 			);
 
-			await recordHealth(
+			recordHealth(
 				repo,
 				provider.id,
 				{ status: "error", statusMessage: message, cooldownUntil },

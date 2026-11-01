@@ -79,13 +79,25 @@ function topicFrom(
 	return topic === "general" || topic === "news" ? topic : undefined;
 }
 
+/**
+ * The operator's per-provider `maxResults` is the binding limit: it is set in
+ * the dashboard precisely to cap what one search may pull back. The caller's
+ * requested count only narrows it further, never widens it.
+ */
+function effectiveMaxResults(
+	request: WebToolSearchRequest,
+	config: WebToolAdapterConfig,
+): number {
+	return clampMaxResults(Math.min(request.maxResults, config.maxResults));
+}
+
 function buildSearchBody(
 	request: WebToolSearchRequest,
 	config: WebToolAdapterConfig,
 ): TavilySearchBody {
 	const body: TavilySearchBody = {
 		query: request.query,
-		max_results: clampMaxResults(request.maxResults),
+		max_results: effectiveMaxResults(request, config),
 		search_depth: "basic",
 	};
 
@@ -196,7 +208,16 @@ async function postSearch(
 
 /** Map Tavily's `results` array onto the normalised hit shape. */
 function toHits(data: unknown, maxResults: number): WebToolSearchHit[] {
-	if (!isRecord(data) || !Array.isArray(data.results)) return [];
+	// A missing `results` array is a broken response, not an empty search.
+	// Returning [] would mark the provider healthy, stop the fallback chain
+	// and show the model "no results" — masking the fault. `{results: []}` is
+	// the provider's way of saying "nothing found" and stays valid.
+	if (!isRecord(data) || !Array.isArray(data.results)) {
+		throw new TavilySearchError(
+			502,
+			"Tavily response is missing the results array",
+		);
+	}
 
 	const hits: WebToolSearchHit[] = [];
 	for (const entry of data.results) {
@@ -249,7 +270,7 @@ export function createTavilyAdapter(): WebToolSearchAdapter {
 				config.apiKey,
 				request.signal,
 			);
-			return toHits(data, request.maxResults);
+			return toHits(data, effectiveMaxResults(request, config));
 		},
 
 		async test(

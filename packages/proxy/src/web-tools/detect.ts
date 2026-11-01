@@ -18,9 +18,15 @@ const DEFAULT_MAX_USES = 8;
  * Claude Code wraps the query in this sentence. The version string and the
  * surrounding whitespace move between releases, so tolerate both, as well as
  * an ASCII or full-width colon.
+ *
+ * REQUIRING this prefix is a safety property, not a formatting convenience:
+ * the prompt itself only carries the prefix, so an ordinary request that
+ * happens to hold nothing but a `web_search` tool (a raw-API caller, a
+ * subagent turn) would otherwise be swallowed and answered with raw results
+ * instead of the text the caller asked for.
  */
 const QUERY_PREFIX =
-	/^\s*perform\s+a\s+web\s+search\s+for\s+the\s+query\s*[:：]?\s*/i;
+	/^\s*perform\s+a\s+web\s+search\s+for\s+the\s+query\s*[:：]\s*/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -38,7 +44,10 @@ function toStringList(value: unknown): string[] {
  * helper shape; `{type:"tool", name}` does.
  */
 function forcesOtherTool(toolChoice: unknown): boolean {
-	if (!isRecord(toolChoice) || toolChoice.type !== "tool") return false;
+	if (!isRecord(toolChoice)) return false;
+	// `none` means the caller explicitly forbade tool use: never a helper.
+	if (toolChoice.type === "none") return true;
+	if (toolChoice.type !== "tool") return false;
 	return toolChoice.name !== "web_search";
 }
 
@@ -117,6 +126,8 @@ export function detectWebSearchRequest(
 	const rawQuery = extractLastUserText(messages);
 	if (rawQuery === null) return null;
 
+	// No prefix → an ordinary request, not Claude Code's helper. Fail closed.
+	if (!QUERY_PREFIX.test(rawQuery)) return null;
 	const query = rawQuery.replace(QUERY_PREFIX, "").trim();
 	if (query.length === 0) return null;
 
