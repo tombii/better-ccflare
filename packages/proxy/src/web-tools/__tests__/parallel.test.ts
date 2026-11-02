@@ -83,11 +83,14 @@ describe("parallel adapter — request shape", () => {
 		expect(call.init.signal).toBeInstanceOf(AbortSignal);
 
 		// The query travels in an ARRAY — Parallel's defining difference.
+		// No result-count field. Parallel has no such parameter and rejects
+		// `max_results` with 422 extra_forbidden (verified against the live
+		// API), so the count is trimmed locally instead.
 		expect(bodyOf(call)).toEqual({
 			search_queries: ["hello world"],
 			mode: "basic",
-			max_results: 5,
 		});
+		expect(bodyOf(call)).not.toHaveProperty("max_results");
 	});
 
 	it("passes allowed domains under advanced_settings.source_policy", async () => {
@@ -145,31 +148,39 @@ describe("parallel adapter — request shape", () => {
 		});
 	});
 
-	it("clamps max_results to Parallel's 0–20 range", async () => {
+	it("never sends a result-count field, whatever the caller asks for", async () => {
 		stubFetch(() => jsonResponse({ results: [] }));
 		const roomy = { ...baseConfig, maxResults: 500 };
 
 		await adapter.search(request({ maxResults: 500 }), roomy);
-		await adapter.search(request({ maxResults: -3 }), roomy);
-		await adapter.search(request({ maxResults: 0 }), roomy);
 		await adapter.search(request({ maxResults: Number.NaN }), roomy);
 
-		expect(bodyOf(calls[0]).max_results).toBe(20);
-		expect(bodyOf(calls[1]).max_results).toBe(0);
-		expect(bodyOf(calls[2]).max_results).toBe(0);
-		// Non-finite falls back to Parallel's documented default.
-		expect(bodyOf(calls[3]).max_results).toBe(10);
+		for (const call of calls) {
+			expect(bodyOf(call)).not.toHaveProperty("max_results");
+			expect(bodyOf(call)).not.toHaveProperty("num_results");
+		}
 	});
 
-	it("the provider's configured maxResults caps the search", async () => {
-		stubFetch(() => jsonResponse({ results: [] }));
+	it("the provider's configured maxResults trims the returned hits", async () => {
+		stubFetch(() =>
+			jsonResponse({
+				results: Array.from({ length: 8 }, (_, i) => ({
+					title: `r${i}`,
+					url: `https://example.com/${i}`,
+					excerpts: ["x"],
+				})),
+			}),
+		);
 		const capped = { ...baseConfig, maxResults: 3 };
 
-		await adapter.search(request({ maxResults: 10 }), capped);
-		await adapter.search(request({ maxResults: 1 }), capped);
-
-		expect(bodyOf(calls[0]).max_results).toBe(3);
-		expect(bodyOf(calls[1]).max_results).toBe(1);
+		// The provider returns 8; the operator's cap binds regardless of what
+		// the caller asks for.
+		expect(
+			await adapter.search(request({ maxResults: 10 }), capped),
+		).toHaveLength(3);
+		expect(
+			await adapter.search(request({ maxResults: 1 }), capped),
+		).toHaveLength(1);
 	});
 
 	it("forwards mode only when configured to a supported value", async () => {
@@ -387,7 +398,6 @@ describe("parallel adapter — test()", () => {
 		expect(bodyOf(calls[0])).toEqual({
 			search_queries: ["better-ccflare connectivity test"],
 			mode: "basic",
-			max_results: 1,
 		});
 	});
 

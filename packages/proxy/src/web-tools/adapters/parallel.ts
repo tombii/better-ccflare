@@ -21,10 +21,18 @@ import type {
 
 export const PARALLEL_SEARCH_URL = "https://api.parallel.ai/v1/search";
 
-/** Parallel's documented default for `max_results`. */
-const PARALLEL_DEFAULT_MAX_RESULTS = 10;
-/** Upper bound accepted by Parallel's search endpoint. */
-const PARALLEL_MAX_RESULTS_LIMIT = 20;
+/**
+ * Parallel returns 10 results when the request carries no limit, and its
+ * search endpoint has NO result-count parameter — `max_results` and
+ * `num_results` are both rejected with HTTP 422 `extra_forbidden` (verified
+ * against the live API, 2026-11-02). Results are therefore trimmed locally.
+ */
+const PARALLEL_DEFAULT_RESULTS = 10;
+/**
+ * Local trim cap. Not a provider limit — Parallel returns 10 by default and
+ * the caller may keep fewer.
+ */
+const MAX_RESULTS_LIMIT = 50;
 const SEARCH_TIMEOUT_MS = 10_000;
 /** Error bodies are truncated to this many characters before being surfaced. */
 const ERROR_BODY_EXCERPT_CHARS = 200;
@@ -57,7 +65,6 @@ interface ParallelSearchBody {
 	search_queries: string[];
 	objective?: string;
 	mode: ParallelMode;
-	max_results: number;
 	advanced_settings?: {
 		source_policy: {
 			include_domains?: string[];
@@ -75,11 +82,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * same floor as `tavily.ts`). A non-finite value falls back to Parallel's
  * documented default rather than producing `NaN` in the JSON body.
  */
-function clampMaxResults(value: number): number {
+function clampResults(value: number): number {
 	const requested = Number.isFinite(value)
 		? Math.trunc(value)
-		: PARALLEL_DEFAULT_MAX_RESULTS;
-	return Math.min(PARALLEL_MAX_RESULTS_LIMIT, Math.max(0, requested));
+		: PARALLEL_DEFAULT_RESULTS;
+	return Math.min(MAX_RESULTS_LIMIT, Math.max(0, requested));
 }
 
 /**
@@ -111,7 +118,7 @@ function effectiveMaxResults(
 	request: WebToolSearchRequest,
 	config: WebToolAdapterConfig,
 ): number {
-	return clampMaxResults(Math.min(request.maxResults, config.maxResults));
+	return clampResults(Math.min(request.maxResults, config.maxResults));
 }
 
 function buildSourcePolicy(
@@ -139,7 +146,6 @@ function buildSearchBody(
 	const body: ParallelSearchBody = {
 		search_queries: [request.query],
 		mode: modeFrom(config),
-		max_results: effectiveMaxResults(request, config),
 	};
 
 	const objective = objectiveFrom(config);
@@ -156,7 +162,6 @@ function buildTestBody(config: WebToolAdapterConfig): ParallelSearchBody {
 	return {
 		search_queries: [TEST_QUERY],
 		mode: modeFrom(config),
-		max_results: 1,
 	};
 }
 
@@ -266,7 +271,7 @@ function toHits(data: unknown, maxResults: number): WebToolSearchHit[] {
 		hits.push(hit);
 	}
 
-	return hits.slice(0, clampMaxResults(maxResults));
+	return hits.slice(0, clampResults(maxResults));
 }
 
 function errorMessage(error: unknown): string {
