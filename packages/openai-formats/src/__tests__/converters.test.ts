@@ -860,6 +860,64 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 		const content = result.content ?? [];
 		expect(content.some((c) => c.type === "thinking")).toBe(false);
 	});
+
+	it("maps an array-shaped message.content with thinking + text blocks (e.g. Mistral/GLM)", () => {
+		const result = convertOpenAIResponseToAnthropic(
+			openaiTextResponse({
+				choices: [
+					{
+						index: 0,
+						message: {
+							role: "assistant",
+							content: [
+								{
+									type: "thinking",
+									thinking: [
+										{ type: "text", text: "Think " },
+										{ type: "text", text: "hard." },
+									],
+									closed: true,
+								},
+								{ type: "text", text: "OK" },
+							] as unknown as string,
+						},
+						finish_reason: "stop",
+					},
+				],
+			}),
+		);
+		expect(result.content).toEqual([
+			{ type: "thinking", thinking: "Think hard." },
+			{ type: "text", text: "OK" },
+		]);
+	});
+
+	it("maps a thinking-only array content and omits the empty text block", () => {
+		const result = convertOpenAIResponseToAnthropic(
+			openaiTextResponse({
+				choices: [
+					{
+						index: 0,
+						message: {
+							role: "assistant",
+							content: [
+								{ type: "thinking", thinking: "Only thought", closed: true },
+							] as unknown as string,
+						},
+						finish_reason: "stop",
+					},
+				],
+			}),
+		);
+		expect(result.content).toEqual([
+			{ type: "thinking", thinking: "Only thought" },
+		]);
+	});
+
+	it("still maps string content to a single text block (regression)", () => {
+		const result = convertOpenAIResponseToAnthropic(openaiTextResponse());
+		expect(result.content).toEqual([{ type: "text", text: "Hello back!" }]);
+	});
 });
 
 describe("convertOpenAIResponseToAnthropic — error cases", () => {

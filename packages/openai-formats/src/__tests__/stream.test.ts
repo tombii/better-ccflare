@@ -1346,6 +1346,160 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 	});
 });
 
+// ── transformStreamingResponse — array-shaped delta.content ──────────────────
+// Some OpenAI-compatible gateways (Mistral serving zai-glm-5-3-flash) stream
+// `delta.content` as an array of content blocks instead of a string.
+
+describe("transformStreamingResponse — delta.content as an array of blocks", () => {
+	function chunk(delta: unknown, finishReason: string | null = null) {
+		return JSON.stringify({
+			id: "c1",
+			model: "zai-glm-5-3-flash",
+			choices: [{ index: 0, delta, finish_reason: finishReason }],
+		});
+	}
+
+	function thinkingBlock(thinking: unknown) {
+		return { type: "thinking", thinking, closed: true };
+	}
+
+	it("maps streamed thinking blocks to a thinking block then text from the mixed final chunk", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ role: "assistant", content: [] }),
+			chunk({
+				index: 0,
+				content: [thinkingBlock([{ type: "text", text: "The" }])],
+			}),
+			chunk({
+				index: 0,
+				content: [thinkingBlock([{ type: "text", text: " answer" }])],
+			}),
+			chunk({
+				index: 0,
+				content: [
+					thinkingBlock([{ type: "text", text: 'I\'ll respond with "OK".' }]),
+					{ type: "text", text: "OK" },
+				],
+			}),
+			chunk({ content: "" }, "stop"),
+			"[DONE]",
+		]);
+		const raw = await readStream(transformStreamingResponse(upstream).body);
+		const events = parseSSEEvents(raw);
+
+		const starts = events
+			.filter((e) => e.event === "content_block_start")
+			.map(parseEventData);
+		expect(starts.map((s) => s.content_block.type)).toEqual([
+			"thinking",
+			"text",
+		]);
+		expect(starts.map((s) => s.index)).toEqual([0, 1]);
+
+		const deltas = events
+			.filter((e) => e.event === "content_block_delta")
+			.map(parseEventData);
+		const thinkingDeltas = deltas.filter(
+			(d) => d.delta.type === "thinking_delta",
+		);
+		expect(thinkingDeltas.map((d) => d.delta.thinking)).toEqual([
+			"The",
+			" answer",
+			'I\'ll respond with "OK".',
+		]);
+		expect(thinkingDeltas.every((d) => d.index === 0)).toBe(true);
+
+		const textDeltas = deltas.filter((d) => d.delta.type === "text_delta");
+		expect(textDeltas).toEqual([
+			{
+				type: "content_block_delta",
+				index: 1,
+				delta: { type: "text_delta", text: "OK" },
+			},
+		]);
+
+		// thinking block closed before text block opens
+		const thinkingStopIdx = events.findIndex(
+			(e) => e.event === "content_block_stop" && parseEventData(e).index === 0,
+		);
+		const textStartIdx = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				parseEventData(e).content_block.type === "text",
+		);
+		expect(thinkingStopIdx).toBeGreaterThanOrEqual(0);
+		expect(thinkingStopIdx).toBeLessThan(textStartIdx);
+
+		const stops = events.filter((e) => e.event === "content_block_stop");
+		expect(stops.map((e) => parseEventData(e).index)).toEqual([0, 1]);
+
+		// usage is still read off the final chunk even with content: ""
+		const messageDelta = events
+			.map(parseEventData)
+			.find((d) => d.type === "message_delta");
+		expect(messageDelta.delta.stop_reason).toBe("end_turn");
+	});
+
+	it("accepts a string-valued thinking field inside a thinking block", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ content: [thinkingBlock("Plain thought")] }),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const thinkingDelta = events
+			.map(parseEventData)
+			.find((d) => d.delta?.type === "thinking_delta");
+		expect(thinkingDelta.delta.thinking).toBe("Plain thought");
+	});
+
+	it("opens a text block for a single text block array", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ content: [{ type: "text", text: "Hello" }] }),
+			chunk({ content: [{ type: "text", text: " world" }] }),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const textDeltas = events
+			.map(parseEventData)
+			.filter((d) => d.delta?.type === "text_delta");
+		expect(textDeltas.map((d) => d.delta.text)).toEqual(["Hello", " world"]);
+		expect(textDeltas.every((d) => d.index === 0)).toBe(true);
+	});
+
+	it("does not open a block for content: []", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ role: "assistant", content: [] }),
+			chunk({ content: "" }, "stop"),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		expect(
+			events.filter((e) => e.event === "content_block_start"),
+		).toHaveLength(0);
+	});
+
+	it("still handles plain string content (regression)", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ role: "assistant", content: "OK" }),
+			chunk({ content: "" }, "stop"),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const textDeltas = events
+			.map(parseEventData)
+			.filter((d) => d.delta?.type === "text_delta");
+		expect(textDeltas.map((d) => d.delta.text)).toEqual(["OK"]);
+	});
+});
+
 // ── transformStreamingResponse — model extraction ────────────────────────────
 
 describe("transformStreamingResponse — model extraction", () => {

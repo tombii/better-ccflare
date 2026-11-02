@@ -1,4 +1,5 @@
 import { Logger } from "@better-ccflare/logger";
+import { normalizeOpenAIContent } from "./content";
 import type { TransformStreamContext } from "./types";
 import { repairTruncatedToolJson } from "./utils";
 
@@ -512,7 +513,14 @@ export function transformStreamingResponse(
 								const reasoningText =
 									delta?.reasoning_content ||
 									(delta as { reasoning?: unknown } | undefined)?.reasoning;
-								if (typeof reasoningText === "string" && reasoningText) {
+								// Some gateways (Mistral/GLM) stream `content` as an array of
+								// blocks; reasoning_content wins when both carry thinking.
+								const normalized = normalizeOpenAIContent(delta?.content);
+								const thinkingText =
+									typeof reasoningText === "string" && reasoningText
+										? reasoningText
+										: normalized.thinking;
+								if (thinkingText) {
 									// DeepSeek/reasoning providers emit reasoning_content before text.
 									// Map to Anthropic thinking block using monotonic nextBlockIndex.
 									if (!context.hasSentThinkingBlockStart) {
@@ -558,7 +566,7 @@ export function transformStreamingResponse(
 										index: context.thinkingBlockIndex,
 										delta: {
 											type: "thinking_delta",
-											thinking: reasoningText,
+											thinking: thinkingText,
 										},
 									};
 									controller.enqueue(
@@ -570,7 +578,7 @@ export function transformStreamingResponse(
 										),
 									);
 								}
-								if (delta?.content) {
+								if (normalized.hasContent) {
 									// Send content_block_start on first content.
 									// Use the monotonic nextBlockIndex so the text block index
 									// never collides with any tool_use blocks.
@@ -622,7 +630,7 @@ export function transformStreamingResponse(
 										index: context.textBlockIndex,
 										delta: {
 											type: "text_delta",
-											text: delta.content,
+											text: normalized.text,
 										},
 									};
 									controller.enqueue(
