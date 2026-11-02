@@ -33,7 +33,29 @@ export interface ProxyContext {
 	refreshInFlight: Map<string, Promise<string>>;
 	asyncWriter: AsyncDbWriter;
 	internalProbeSecret?: string;
+	/**
+	 * Override for the response-forwarding step, defaulting to the real
+	 * `forwardToClient`.
+	 *
+	 * Exists because that function is a module-level static import: a test that
+	 * stubs it with `mock.module` cannot affect `proxy-operations`, which binds
+	 * at module-evaluation time. Tests therefore pass their own implementation
+	 * here rather than relying on a global rewrite, which made the 5xx tests
+	 * pass or fail depending on which other test file ran first.
+	 *
+	 * Production never sets it — `proxyContext` is built once at startup, so
+	 * this costs one optional property read per forwarded response and
+	 * allocates nothing.
+	 */
+	forwardToClient?: ForwardToClient;
 }
+
+/**
+ * The forwarding seam's signature, taken structurally from the real
+ * implementation so the two can never drift.
+ */
+export type ForwardToClient =
+	typeof import("../response-handler").forwardToClient;
 
 /** Error messages used throughout the proxy module */
 export const ERROR_MESSAGES = {
