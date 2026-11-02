@@ -12,6 +12,9 @@ export type {
 	SearchProviderInput as CreateSearchProviderInput,
 	SearchProviderPublic,
 	SearchProviderUpdate as UpdateSearchProviderInput,
+	WebToolCall,
+	WebToolCallStatus,
+	WebToolCallSummary,
 } from "@better-ccflare/types";
 
 export type SearchProviderStatus = SearchProviderPublic["status"];

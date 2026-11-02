@@ -67,4 +67,10 @@ export const queryKeys = {
 		[...queryKeys.all, "search-providers", "meta"] as const,
 	webSearchSettings: () =>
 		[...queryKeys.all, "web-search", "settings"] as const,
+	// Web tool call traces: the newest-first list (per filter set) and the
+	// 24h summary strip. Both are history, not settings, so they refresh.
+	webToolCalls: (filters?: { status?: string }) =>
+		[...queryKeys.all, "web-tool-calls", { ...filters }] as const,
+	webToolCallSummary: (hours?: number) =>
+		[...queryKeys.all, "web-tool-calls", "summary", { hours }] as const,
 } as const;

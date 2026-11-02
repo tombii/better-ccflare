@@ -9,13 +9,15 @@ import type { SearchProviderPublic } from "../../lib/search-provider-types";
 import { Button } from "../ui/button";
 import { Separator } from "../ui/separator";
 import { ProviderDialog } from "./ProviderDialog";
+import { RecentSearchesSection } from "./RecentSearchesSection";
 import { SearchProviderRow } from "./SearchProviderRow";
 import { WebSearchSettingsCard } from "./WebSearchSettingsCard";
 
 /**
  * The /search page: the master web-search settings on top, the list of
- * configured providers below. Without at least one enabled provider the
- * master toggle has nothing to route to, and the empty state says so.
+ * configured providers below, and the trace of recent intercepted searches
+ * at the bottom. Without at least one enabled provider the master toggle has
+ * nothing to route to, and the empty state says so.
  */
 export function SearchTab() {
 	const providersQuery = useSearchProviders();
@@ -92,6 +94,10 @@ export function SearchTab() {
 					</div>
 				)}
 			</div>
+
+			<Separator />
+
+			<RecentSearchesSection />
 
 			{isAddOpen && (
 				<ProviderDialog isOpen onClose={() => setIsAddOpen(false)} />

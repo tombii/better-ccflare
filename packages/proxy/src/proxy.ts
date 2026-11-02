@@ -327,6 +327,9 @@ async function handleProxyRequest(
 			config: ctx.config,
 			dbOps: ctx.dbOps,
 			signal: req.signal,
+			// No account is selected yet on this path, so accountId stays null
+			// for every trace recorded here.
+			project,
 			log,
 		});
 		if (webSearchResponse) return webSearchResponse;
