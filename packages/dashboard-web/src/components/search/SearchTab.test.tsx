@@ -12,6 +12,8 @@ import type {
 	SearchProviderPublic,
 	SearchProviderTestResult,
 	WebSearchSettings,
+	WebToolCall,
+	WebToolCallSummary,
 } from "../../lib/search-provider-types";
 
 const RAW_KEY = "sk-live-SUPERSECRET-abcdefghijkl";
@@ -27,6 +29,10 @@ type MockState = {
 	testPending: boolean;
 	updatePending: boolean;
 	lastMutationError: Error | null;
+	traces: WebToolCall[] | undefined;
+	tracesLoading: boolean;
+	tracesError: Error | null;
+	summary: WebToolCallSummary[] | undefined;
 	testCalls: string[];
 	updateCalls: { id: string; patch: unknown }[];
 };
@@ -42,6 +48,10 @@ const state: MockState = {
 	testPending: false,
 	updatePending: false,
 	lastMutationError: null,
+	traces: [],
+	tracesLoading: false,
+	tracesError: null,
+	summary: [],
 	testCalls: [],
 	updateCalls: [],
 };
@@ -83,6 +93,20 @@ mock.module("../../hooks/useSearchProviders", () => ({
 	}),
 }));
 
+mock.module("../../hooks/useWebToolCalls", () => ({
+	useWebToolCalls: () => ({
+		...query(state.traces, state.tracesLoading, state.tracesError),
+		isFetching: false,
+		refetch: () => {},
+	}),
+	useWebToolCallSummary: () => ({
+		...query(state.summary, false, null),
+		isFetching: false,
+		refetch: () => {},
+	}),
+	WEB_TOOL_CALL_SUMMARY_HOURS: 24,
+}));
+
 mock.module("../../hooks/useWebSearchSettings", () => ({
 	useWebSearchSettings: () =>
 		query(state.settings, state.settingsLoading, null),
@@ -96,6 +120,7 @@ import {
 	ProviderFormFields,
 	validateForm,
 } from "./ProviderFormFields";
+import { summarizeTraces, truncateQuery } from "./recent-searches-utils";
 import { SearchProviderRow } from "./SearchProviderRow";
 import { SearchTab } from "./SearchTab";
 
@@ -157,6 +182,10 @@ beforeEach(() => {
 	state.testPending = false;
 	state.updatePending = false;
 	state.lastMutationError = null;
+	state.traces = [];
+	state.tracesLoading = false;
+	state.tracesError = null;
+	state.summary = [];
 	state.testCalls = [];
 	state.updateCalls = [];
 });
@@ -406,5 +435,170 @@ describe("formStateToPayload", () => {
 			maxResults: 10,
 			extraConfig: null,
 		});
+	});
+});
+
+function trace(overrides: Partial<WebToolCall> = {}): WebToolCall {
+	return {
+		id: "t1",
+		timestamp: Date.now() - 5_000,
+		tool: "web_search",
+		providerId: "row-1",
+		providerKind: "tavily",
+		accountId: null,
+		project: "/repo/a",
+		queryText: "how do bun test mocks work",
+		queryChars: 26,
+		resultCount: 3,
+		latencyMs: 120,
+		status: "ok",
+		errorCode: null,
+		estimatedCostUsd: null,
+		...overrides,
+	};
+}
+
+describe("RecentSearchesSection", () => {
+	it("renders the summary strip with one tile per status", () => {
+		state.summary = [
+			{
+				providerKind: "tavily",
+				status: "ok",
+				callCount: 4,
+				totalLatencyMs: 400,
+				avgLatencyMs: 100,
+				totalResults: 12,
+			},
+			{
+				providerKind: "tavily",
+				status: "fallthrough",
+				callCount: 2,
+				totalLatencyMs: 200,
+				avgLatencyMs: 100,
+				totalResults: 0,
+			},
+		];
+		const html = renderToStaticMarkup(<SearchTab />);
+		const summary =
+			html.split('data-testid="recent-searches-summary"')[1] ?? "";
+		expect(summary).toContain("Served");
+		expect(summary).toContain("Errors");
+		expect(summary).toContain("Fell through");
+		expect(summary).toContain("Avg latency");
+		expect(summary).toContain("Results");
+		// 6 searches at 100ms average overall, 12 results total.
+		expect(summary).toContain("100ms");
+		expect(summary).toContain(">12<");
+	});
+
+	it("renders each status with a distinct badge", () => {
+		state.traces = [
+			trace({ id: "a", status: "ok" }),
+			trace({ id: "b", status: "error", providerKind: null }),
+			trace({ id: "c", status: "fallthrough", providerKind: null }),
+		];
+		const html = renderToStaticMarkup(<SearchTab />);
+		expect(html).toContain(">served<");
+		expect(html).toContain(">error<");
+		expect(html).toContain(">fell through<");
+		expect(html).toContain("bg-amber-100");
+		expect(html).toContain("text-amber-900");
+		expect(html).toContain("dark:bg-amber-500/20");
+		expect(html).toContain("bg-green-500");
+		expect(html).toContain("bg-destructive");
+		// Rows without a provider show an em dash.
+		expect(html).toContain("—");
+	});
+
+	it("shows the empty state before any search is recorded", () => {
+		const html = renderToStaticMarkup(<SearchTab />);
+		expect(html).toContain('data-testid="recent-searches-empty"');
+		expect(html).toContain("No searches recorded yet");
+		expect(html).not.toContain('data-testid="recent-search-row"');
+	});
+
+	it("shows a load error inline", () => {
+		state.tracesError = new Error("Not found");
+		const html = renderToStaticMarkup(<SearchTab />);
+		expect(html).toContain("Failed to load searches");
+	});
+
+	it("never renders a raw key, even when one leaks into a trace field", () => {
+		state.providers = [provider()];
+		state.traces = [
+			trace({
+				// A buggy writer that put the key in an error message must not
+				// turn the table into a key viewer.
+				errorCode: `rejected ${RAW_KEY}`,
+				queryText: "harmless query",
+			}),
+		];
+		const html = renderToStaticMarkup(<SearchTab />);
+		expect(html).not.toContain(RAW_KEY);
+		// error_code is not a rendered column at all.
+		expect(html).not.toContain("rejected");
+		expect(html).toContain("harmless query");
+	});
+
+	it("truncates a long query and keeps the full text in the tooltip", () => {
+		const longQuery = `find ${"x".repeat(200)}`;
+		state.traces = [trace({ queryText: longQuery })];
+		const html = renderToStaticMarkup(<SearchTab />);
+		expect(html).toContain("…");
+		expect(html).toContain(`title="${longQuery}"`);
+	});
+
+	it("shows the relative time of each trace", () => {
+		state.traces = [trace({ timestamp: Date.now() - 2 * 60 * 60 * 1000 })];
+		const html = renderToStaticMarkup(<SearchTab />);
+		expect(html).toContain("2h ago");
+	});
+});
+
+describe("recent-searches helpers", () => {
+	it("summarizeTraces weights the average by call count", () => {
+		const totals = summarizeTraces([
+			{
+				providerKind: "tavily",
+				status: "ok",
+				callCount: 1,
+				totalLatencyMs: 1000,
+				avgLatencyMs: 1000,
+				totalResults: 2,
+			},
+			{
+				providerKind: "tavily",
+				status: "fallthrough",
+				callCount: 3,
+				totalLatencyMs: 0,
+				avgLatencyMs: 0,
+				totalResults: 0,
+			},
+		]);
+		expect(totals).toEqual({
+			served: 1,
+			errors: 0,
+			fellThrough: 3,
+			calls: 4,
+			avgLatencyMs: 250,
+			totalResults: 2,
+		});
+	});
+
+	it("summarizeTraces handles an empty window", () => {
+		expect(summarizeTraces([])).toEqual({
+			served: 0,
+			errors: 0,
+			fellThrough: 0,
+			calls: 0,
+			avgLatencyMs: 0,
+			totalResults: 0,
+		});
+	});
+
+	it("truncateQuery leaves short queries and null alone", () => {
+		expect(truncateQuery("short")).toBe("short");
+		expect(truncateQuery(null)).toBe("—");
+		expect(truncateQuery("a".repeat(90), 10)).toBe("aaaaaaaaaa…");
 	});
 });

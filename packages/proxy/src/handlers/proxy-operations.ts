@@ -43,7 +43,7 @@ import {
 	readOutgoingBody,
 	resolveSlotRouting,
 } from "../request-body-context";
-import { forwardToClient } from "../response-handler";
+import { forwardToClient as defaultForwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
 import { applyAccountRequestTransformer } from "./account-request-transformer";
 import { getXaiConvId } from "./account-selector";
@@ -64,6 +64,19 @@ import { collectWindows } from "./usage-throttling";
 import { peekSseForZai1305 } from "./zai-1305";
 
 const log = new Logger("ProxyOperations");
+
+/**
+ * Resolve the forwarding step for this context.
+ *
+ * Returns the real implementation unless a caller injected an override. The
+ * override exists for tests: `forwardToClient` is bound at module-evaluation
+ * time, so `mock.module` cannot replace it for this module, which previously
+ * made the 5xx failover tests depend on which other test file ran first.
+ * Production never sets the field, so this is a single property read.
+ */
+function resolveForwardToClient(ctx: ProxyContext) {
+	return ctx.forwardToClient ?? defaultForwardToClient;
+}
 
 import { cancelDiscardedResponseBody } from "./discard-body-cancel";
 
@@ -850,7 +863,7 @@ export async function proxyUnauthenticated(
 				),
 		);
 
-		return forwardToClient(
+		return resolveForwardToClient(ctx)(
 			{
 				requestId: requestMeta.id,
 				method: req.method,
@@ -3021,7 +3034,7 @@ export async function proxyWithAccount(
 				log.warn(
 					`Account ${account.name} returned final 529 overload response — forwarding upstream response instead of pool_exhausted`,
 				);
-				return forwardToClient(
+				return resolveForwardToClient(ctx)(
 					{
 						requestId: requestMeta.id,
 						method: req.method,
@@ -3055,7 +3068,7 @@ export async function proxyWithAccount(
 		}
 
 		// Forward response to client
-		return forwardToClient(
+		return resolveForwardToClient(ctx)(
 			{
 				requestId: requestMeta.id,
 				method: req.method,

@@ -7,8 +7,10 @@
  * provider. A throw is the only fallback trigger, and each throw records
  * provider health (plus a cooldown for credential/quota failures).
  *
- * Returning `null` is a normal outcome: the caller then lets the request go
- * upstream to Anthropic. Nothing in this module throws.
+ * A failed outcome is a normal result: the caller then lets the request go
+ * upstream to Anthropic. The outcome records whether any provider was
+ * attempted, so the caller can tell "nothing eligible" from "all failed".
+ * Nothing in this module throws.
  */
 
 import type { DatabaseOperations } from "@better-ccflare/database";
@@ -48,7 +50,10 @@ export interface WebToolChainDeps {
 
 export interface WebToolChainResult {
 	hits: WebToolSearchHit[];
+	/** Provider kind (which adapter / catalog entry served the search). */
 	providerId: SearchProviderId;
+	/** `search_providers.id` of the row that served it. */
+	providerRowId: string;
 	providerLabel: string;
 	/** Wall-clock time from the start of the chain to the successful result. */
 	latencyMs: number;
@@ -91,6 +96,22 @@ function failureMessage(error: unknown, apiKey: string | null): string {
 	return message.length > STATUS_MESSAGE_MAX_CHARS
 		? `${message.slice(0, STATUS_MESSAGE_MAX_CHARS)}…`
 		: message;
+}
+
+/**
+ * Short machine code for a failed attempt, safe to persist in the trace row.
+ *
+ * The full message is fine for the health column and the log, but the trace
+ * table is long-lived and exported; provider response bodies belong there
+ * only after being reduced to something that cannot carry credentials or
+ * arbitrary upstream text. `tvly_401` says everything an operator needs.
+ */
+function failureCode(error: unknown, providerId: SearchProviderId): string {
+	const status =
+		typeof (error as { status?: unknown })?.status === "number"
+			? (error as { status: number }).status
+			: null;
+	return status === null ? `${providerId}_error` : `${providerId}_${status}`;
 }
 
 /** Cooldown end timestamp for credential/quota failures; null otherwise. */
@@ -138,19 +159,79 @@ function requiresKey(providerId: SearchProviderId): boolean {
 }
 
 /**
+ * Why a chain run did not produce a result. `no_provider` means nothing was
+ * ever attempted (nothing configured, or every row skipped); `all_failed`
+ * means at least one provider was called and every attempt threw.
+ */
+export type WebToolChainFailureReason = "no_provider" | "all_failed";
+
+/** Outcome of one chain run: served, or not — with the reason kept. */
+export type WebToolChainOutcome =
+	| ({ ok: true } & WebToolChainResult)
+	| {
+			ok: false;
+			reason: WebToolChainFailureReason;
+			/** Providers actually called (0 when `reason` is `no_provider`). */
+			attemptedCount: number;
+			/** Provider kind of the last failed attempt, null if none. */
+			lastProviderId: SearchProviderId | null;
+			/**
+			 * `search_providers.id` of the last failed attempt. With several
+			 * rows of the same kind configured, the kind alone cannot say which
+			 * one failed.
+			 */
+			lastProviderRowId: string | null;
+			/** Redacted, length-capped message from the last failed attempt. */
+			lastErrorMessage: string | null;
+			/**
+			 * Short machine code for the last failed attempt (e.g. `tavily_401`).
+			 * This — not the message — is what gets persisted in the trace row:
+			 * the trace is long-lived and exported, and a provider response body
+			 * does not belong there.
+			 */
+			lastErrorCode: string | null;
+			/** Wall-clock time from the start of the chain to giving up. */
+			latencyMs: number;
+	  };
+
+/** Narrow an outcome to the `ok: false` branch. */
+export function isChainFailure(
+	outcome: WebToolChainOutcome,
+): outcome is Extract<WebToolChainOutcome, { ok: false }> {
+	return !outcome.ok;
+}
+
+/**
  * Run the search through the configured providers in priority order.
  *
- * Returns `null` when no provider is eligible or every attempt failed — the
- * caller then falls through to the upstream Anthropic call.
+ * Never throws. A failed outcome tells the caller whether anything was
+ * attempted, so it can tell "nothing eligible" (fall through, not a search
+ * failure) from "every provider failed" (a search error).
  */
 export async function runWebSearchChain(
 	deps: WebToolChainDeps,
 	request: WebToolSearchRequest,
-): Promise<WebToolChainResult | null> {
+): Promise<WebToolChainOutcome> {
 	const now = deps.now ?? Date.now;
 	const startedAt = now();
 	const deadline = startedAt + CHAIN_DEADLINE_MS;
 	const log = deps.log;
+	let attemptedCount = 0;
+	let lastProviderId: SearchProviderId | null = null;
+	let lastProviderRowId: string | null = null;
+	let lastErrorMessage: string | null = null;
+	let lastErrorCode: string | null = null;
+
+	const giveUp = (reason: WebToolChainFailureReason): WebToolChainOutcome => ({
+		ok: false,
+		reason,
+		attemptedCount,
+		lastProviderId: reason === "no_provider" ? null : lastProviderId,
+		lastProviderRowId: reason === "no_provider" ? null : lastProviderRowId,
+		lastErrorMessage: reason === "no_provider" ? null : lastErrorMessage,
+		lastErrorCode: reason === "no_provider" ? null : lastErrorCode,
+		latencyMs: now() - startedAt,
+	});
 
 	let repo: SearchProviderRepository;
 	let providers: SearchProvider[];
@@ -162,11 +243,11 @@ export async function runWebSearchChain(
 		log?.warn(
 			`web-search: failed to load search providers: ${errorMessage(error)}`,
 		);
-		return null;
+		return giveUp("no_provider");
 	}
 
 	for (const provider of providers) {
-		if (deps.signal?.aborted) return null;
+		if (deps.signal?.aborted) break;
 
 		const current = now();
 		if (current >= deadline) break;
@@ -185,6 +266,9 @@ export async function runWebSearchChain(
 		const remainingMs = deadline - current;
 		if (remainingMs <= 0) break;
 
+		attemptedCount += 1;
+		lastProviderId = provider.provider;
+		lastProviderRowId = provider.id;
 		try {
 			const hits = await adapter.search(
 				{ ...request, signal: budgetSignal(deps.signal, remainingMs) },
@@ -203,15 +287,19 @@ export async function runWebSearchChain(
 			);
 
 			return {
+				ok: true,
 				hits,
 				providerId: provider.provider,
+				providerRowId: provider.id,
 				providerLabel: provider.label,
 				latencyMs: now() - startedAt,
 			};
 		} catch (error) {
 			const failedAt = now();
 			const message = failureMessage(error, provider.apiKey);
+			lastErrorCode = failureCode(error, provider.provider);
 			const cooldownUntil = cooldownUntilFor(error, failedAt);
+			lastErrorMessage = message;
 
 			log?.warn(
 				`web-search: provider ${provider.provider} (${provider.label}) failed: ${message}`,
@@ -227,5 +315,5 @@ export async function runWebSearchChain(
 		}
 	}
 
-	return null;
+	return giveUp(attemptedCount > 0 ? "all_failed" : "no_provider");
 }

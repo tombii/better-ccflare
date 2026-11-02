@@ -463,6 +463,11 @@ export function ensureSchema(db: Database): void {
 	// keys but never leaves the server — the API only ever sees a mask.
 	// `status` / `cooldown_until` hold the last health probe result.
 	createSearchProvidersTable(db);
+
+	// Create web_tool_calls table: one row per intercepted web tool call
+	// (web_search, later web_fetch). These requests never select an account,
+	// so they write no `requests` row — this is their only record.
+	createWebToolCallsTable(db);
 }
 
 /**
@@ -493,6 +498,53 @@ function createSearchProvidersTable(db: Database): void {
 	);
 	db.run(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_search_providers_label ON search_providers(label)`,
+	);
+}
+
+/**
+ * Shared DDL for the `web_tool_calls` table and its indexes. Called from
+ * both `ensureSchema()` (fresh DBs) and `runMigrations()` (upgrades).
+ *
+ * `status` is one of:
+ * - 'ok'          served locally; result_count set (0 = no results)
+ * - 'error'       a provider was tried and failed; nothing else served it
+ * - 'fallthrough' no provider was eligible / the chain gave up, so the
+ *                 request went upstream (still paid for at Anthropic)
+ *
+ * `estimated_cost_usd` is a placeholder, always NULL today: nothing computes
+ * or writes pricing. Cost modelling was deprioritised.
+ *
+ * `query_text` is deliberate, and is the one place this table stores prompt
+ * content. A search trace without its query cannot answer "what search ran",
+ * which is the table's whole purpose. It is retained on the request-metadata
+ * window (90 days by default) rather than the 1-day payload window: a query
+ * is closer to a requested URL than to a conversation body. Set
+ * REQUEST_RETENTION_DAYS lower if that trade is not acceptable.
+ */
+function createWebToolCallsTable(db: Database): void {
+	db.run(`
+		CREATE TABLE IF NOT EXISTS web_tool_calls (
+			id TEXT PRIMARY KEY,
+			timestamp INTEGER NOT NULL,
+			tool TEXT NOT NULL,
+			provider_id TEXT,
+			provider_kind TEXT,
+			account_id TEXT,
+			project TEXT,
+			query_text TEXT,
+			query_chars INTEGER NOT NULL,
+			result_count INTEGER,
+			latency_ms INTEGER NOT NULL,
+			status TEXT NOT NULL,
+			error_code TEXT,
+			estimated_cost_usd REAL
+		)
+	`);
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_web_tool_calls_timestamp ON web_tool_calls(timestamp DESC)`,
+	);
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_web_tool_calls_kind_timestamp ON web_tool_calls(provider_kind, timestamp DESC)`,
 	);
 }
 
@@ -1753,6 +1805,10 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		// installs). Idempotent, so fresh DBs — where ensureSchema() already
 		// created it — pay nothing.
 		createSearchProvidersTable(db);
+
+		// Ensure web_tool_calls exists (for upgrades from pre-web-tools
+		// installs). Idempotent, same rationale as above.
+		createWebToolCallsTable(db);
 
 		// Add performance indexes
 		addPerformanceIndexes(db);

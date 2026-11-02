@@ -15,10 +15,13 @@ export function createCleanupHandler(
 		const payloadMs = config.getStorePayloads()
 			? config.getDataRetentionDays() * 24 * 60 * 60 * 1000
 			: 0;
-		const { removedRequests, removedPayloads } = await dbOps.cleanupOldRequests(
-			payloadMs,
-			requestMs,
-		);
+		const { removedRequests, removedPayloads, removedWebToolCalls } =
+			await dbOps.cleanupOldRequests(
+				payloadMs,
+				requestMs,
+				// Search traces are metadata: same window as request rows.
+				requestMs,
+			);
 		const [tableRowCounts, dbSizeBytes] = await Promise.all([
 			dbOps.getTableRowCounts(),
 			dbOps.getDbSizeBytes(),

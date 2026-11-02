@@ -7,8 +7,9 @@
  */
 import { afterEach, describe, expect, it } from "bun:test";
 import type { SearchProvider } from "@better-ccflare/types";
-import { runWebSearchChain, type WebToolChainDeps } from "../chain";
+import type { WebToolChainDeps } from "../chain";
 import type { WebToolSearchRequest } from "../types";
+import { runWebSearchChainFromModule } from "./chain-module";
 
 const originalFetch = globalThis.fetch;
 
@@ -16,7 +17,9 @@ afterEach(() => {
 	globalThis.fetch = originalFetch;
 });
 
-const NOW = 1_000_000;
+// A realistic epoch: the chain compares `startedAt + deadline` against the
+// clock, so a toy value near zero reads as "already past the deadline".
+const NOW = Date.now();
 
 function makeProvider(overrides: Partial<SearchProvider> = {}): SearchProvider {
 	return {
@@ -129,11 +132,12 @@ describe("runWebSearchChain — provider selection", () => {
 			"key-b": () => results("https://b.example/1"),
 		});
 
-		const result = await runWebSearchChain(deps, searchRequest);
-
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
 		expect(attempted).toEqual(["key-a"]);
 		expect(result).not.toBeNull();
+		expect(result?.ok).toBe(true);
 		expect(result?.providerId).toBe("tavily");
+		expect(result?.providerRowId).toBe("a");
 		expect(result?.providerLabel).toBe("A");
 		expect(result?.hits).toHaveLength(1);
 		expect(result?.hits[0].url).toBe("https://a.example/1");
@@ -159,7 +163,7 @@ describe("runWebSearchChain — provider selection", () => {
 			"key-first": () => results("https://first.example"),
 		});
 
-		const result = await runWebSearchChain(deps, searchRequest);
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
 
 		expect(attempted).toEqual(["key-second"]);
 		expect(result?.providerLabel).toBe("Second");
@@ -179,7 +183,7 @@ describe("runWebSearchChain — provider selection", () => {
 			"key-ready": () => results("https://ready.example"),
 		});
 
-		const result = await runWebSearchChain(deps, searchRequest);
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
 
 		expect(attempted).toEqual(["key-ready"]);
 		expect(result?.providerLabel).toBe("Ready");
@@ -200,7 +204,7 @@ describe("runWebSearchChain — provider selection", () => {
 			"key-expired": () => results("https://expired.example"),
 		});
 
-		const result = await runWebSearchChain(deps, searchRequest);
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
 
 		expect(attempted).toEqual(["key-expired"]);
 		expect(result).not.toBeNull();
@@ -220,7 +224,7 @@ describe("runWebSearchChain — provider selection", () => {
 			"key-tavily": () => results("https://tavily.example"),
 		});
 
-		const result = await runWebSearchChain(deps, searchRequest);
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
 
 		expect(attempted).toEqual(["key-tavily"]);
 		expect(result?.providerLabel).toBe("Tavily");
@@ -235,7 +239,7 @@ describe("runWebSearchChain — provider selection", () => {
 			"key-keyed": () => results("https://keyed.example"),
 		});
 
-		const result = await runWebSearchChain(deps, searchRequest);
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
 
 		expect(attempted).toEqual(["key-keyed"]);
 		expect(result?.providerLabel).toBe("Keyed");
@@ -248,7 +252,12 @@ describe("runWebSearchChain — provider selection", () => {
 		]);
 		const { attempted } = stubFetchByKey({});
 
-		expect(await runWebSearchChain(deps, searchRequest)).toBeNull();
+		const outcome = await runWebSearchChainFromModule(deps, searchRequest);
+		expect(outcome).toMatchObject({
+			ok: false,
+			reason: "no_provider",
+			attemptedCount: 0,
+		});
 		expect(attempted).toEqual([]);
 	});
 
@@ -258,20 +267,105 @@ describe("runWebSearchChain — provider selection", () => {
 			"key-a": () => results("https://a.example"),
 		});
 
-		const result = await runWebSearchChain(
+		const result = await runWebSearchChainFromModule(
 			{ ...deps, signal: AbortSignal.abort() },
 			searchRequest,
 		);
 
-		expect(result).toBeNull();
+		expect(result).toMatchObject({
+			ok: false,
+			reason: "no_provider",
+			attemptedCount: 0,
+		});
 		expect(attempted).toEqual([]);
 	});
 
 	it("returns null when the provider list cannot be loaded", async () => {
 		const { deps, warnings } = makeDeps(new Error("db offline"));
 
-		expect(await runWebSearchChain(deps, searchRequest)).toBeNull();
+		expect(
+			await runWebSearchChainFromModule(deps, searchRequest),
+		).toMatchObject({
+			ok: false,
+			reason: "no_provider",
+		});
 		expect(warnings.join("\n")).toContain("db offline");
+	});
+});
+
+describe("runWebSearchChain — failure attribution", () => {
+	it("distinguishes 'nothing eligible' from 'everything failed'", async () => {
+		const skipped = makeDeps([makeProvider({ apiKey: null })]);
+		stubFetchByKey({});
+		const nothing = await runWebSearchChainFromModule(
+			skipped.deps,
+			searchRequest,
+		);
+		expect(nothing.ok).toBe(false);
+		if (nothing.ok) return;
+		expect(nothing.reason).toBe("no_provider");
+		expect(nothing.attemptedCount).toBe(0);
+		expect(nothing.lastProviderId).toBeNull();
+		expect(nothing.lastErrorMessage).toBeNull();
+
+		const failing = makeDeps([makeProvider({ id: "a", apiKey: "key-a" })]);
+		stubFetchByKey({ "key-a": () => jsonResponse({}, 500) });
+		const failed = await runWebSearchChainFromModule(
+			failing.deps,
+			searchRequest,
+		);
+		expect(failed.ok).toBe(false);
+		if (failed.ok) return;
+		expect(failed.reason).toBe("all_failed");
+		expect(failed.attemptedCount).toBe(1);
+		expect(failed.lastProviderId).toBe("tavily");
+		expect(failed.lastErrorMessage).not.toBeNull();
+		// The trace persists the SHORT code, not the message: the message
+		// quotes the provider's response body and the trace row is long-lived
+		// and exportable.
+		expect(failed.lastErrorCode).toBe("tavily_500");
+	});
+
+	it("carries a short status code for a failed attempt", async () => {
+		const { deps } = makeDeps([makeProvider({ apiKey: "k" })]);
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify({ detail: "nope" }), {
+				status: 401,
+			})) as unknown as typeof fetch;
+
+		const outcome = await runWebSearchChainFromModule(deps, searchRequest);
+		expect(outcome.ok).toBe(false);
+		if (outcome.ok) return;
+		expect(outcome.lastErrorCode).toBe("tavily_401");
+		// And the message is not what callers persist.
+		expect(outcome.lastErrorMessage).toContain("401");
+	});
+
+	it("never puts the API key in the failure message", async () => {
+		const canary = "tvly-CANARY-failure-message";
+		const { deps } = makeDeps([makeProvider({ apiKey: canary })]);
+		globalThis.fetch = (async () => {
+			throw new Error(`rejected ${canary}`);
+		}) as typeof fetch;
+
+		const outcome = await runWebSearchChainFromModule(deps, searchRequest);
+		expect(outcome.ok).toBe(false);
+		if (outcome.ok) return;
+		expect(outcome.lastErrorMessage).toContain("[redacted]");
+		expect(outcome.lastErrorMessage).not.toContain(canary);
+	});
+
+	it("reports no_provider when a deadline leaves no attempt", async () => {
+		let clock = NOW;
+		const { deps } = makeDeps([makeProvider({ apiKey: "key-a" })]);
+		stubFetchByKey({ "key-a": () => results("https://a.example") });
+		// Advance past the deadline between loading providers and the loop:
+		// the repo load itself is the only await before the first check.
+		const outcome = await runWebSearchChainFromModule(
+			{ ...deps, now: () => (clock += 20_000) },
+			searchRequest,
+		);
+		expect(outcome).toMatchObject({ ok: false, reason: "no_provider" });
 	});
 });
 
@@ -286,7 +380,7 @@ describe("runWebSearchChain — fallback behaviour", () => {
 			"key-b": () => results("https://b.example/1"),
 		});
 
-		const result = await runWebSearchChain(deps, searchRequest);
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
 
 		expect(attempted).toEqual(["key-a", "key-b"]);
 		expect(result?.providerLabel).toBe("B");
@@ -317,7 +411,7 @@ describe("runWebSearchChain — fallback behaviour", () => {
 			"key-b": () => results("https://b.example/1"),
 		});
 
-		const result = await runWebSearchChain(deps, searchRequest);
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
 
 		expect(attempted).toEqual(["key-a"]);
 		expect(result).not.toBeNull();
@@ -338,9 +432,16 @@ describe("runWebSearchChain — fallback behaviour", () => {
 			"key-b": () => jsonResponse({ detail: "boom again" }, 503),
 		});
 
-		const result = await runWebSearchChain(deps, searchRequest);
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
 
-		expect(result).toBeNull();
+		expect(result).toMatchObject({
+			ok: false,
+			reason: "all_failed",
+			attemptedCount: 2,
+			lastProviderId: "tavily",
+		});
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.lastErrorMessage).toContain("503");
 		expect(attempted).toEqual(["key-a", "key-b"]);
 		expect(health).toHaveLength(2);
 		expect(health.every((write) => write.status === "error")).toBe(true);
@@ -352,7 +453,7 @@ describe("runWebSearchChain — fallback behaviour", () => {
 		});
 		stubFetchByKey({ "key-a": () => results("https://a.example/1") });
 
-		const result = await runWebSearchChain(deps, searchRequest);
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
 
 		expect(result?.hits).toHaveLength(1);
 	});
@@ -375,7 +476,7 @@ describe("runWebSearchChain — health accounting", () => {
 				"key-a": () => jsonResponse({ detail: "failure" }, status),
 			});
 
-			await runWebSearchChain(deps, searchRequest);
+			await runWebSearchChainFromModule(deps, searchRequest);
 
 			expect(health).toHaveLength(1);
 			expect(health[0].status).toBe("error");
@@ -395,7 +496,7 @@ describe("runWebSearchChain — health accounting", () => {
 			throw new Error(`upstream rejected ${canary}`);
 		}) as typeof fetch;
 
-		await runWebSearchChain(deps, searchRequest);
+		await runWebSearchChainFromModule(deps, searchRequest);
 
 		expect(health).toHaveLength(1);
 		expect(health[0].statusMessage).not.toContain(canary);
@@ -418,7 +519,7 @@ describe("runWebSearchChain — request pass-through", () => {
 			return results("https://a.example/1");
 		}) as typeof fetch;
 
-		await runWebSearchChain(deps, {
+		await runWebSearchChainFromModule(deps, {
 			query: "bun abort signal any",
 			maxResults: 4,
 			allowedDomains: ["bun.sh"],
@@ -449,7 +550,7 @@ describe("runWebSearchChain — request pass-through", () => {
 			return results("https://news.example/1");
 		}) as typeof fetch;
 
-		await runWebSearchChain(deps, searchRequest);
+		await runWebSearchChainFromModule(deps, searchRequest);
 
 		expect(sentBody?.topic).toBe("news");
 		expect(sentBody?.include_raw_content).toBe(true);
@@ -472,7 +573,7 @@ describe("runWebSearchChain — request pass-through", () => {
 		globalThis.fetch = (async () => results("https://example.com/1")) as never;
 
 		const started = Date.now();
-		const outcome = await runWebSearchChain(
+		const outcome = await runWebSearchChainFromModule(
 			{ dbOps: { getSearchProviderRepository: () => repo } as never },
 			searchRequest,
 		);

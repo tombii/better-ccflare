@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
-import * as responseHandlerModule from "../../response-handler";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 import { resetRateLimitProbeGatesForTests } from "../rate-limit-cooldown";
@@ -117,6 +116,7 @@ function makeProxyContext(): ProxyContext {
 		} as never,
 		config: { getStorePayloads: () => true } as never,
 		internalProbeSecret: "test-secret",
+		forwardToClient: capturingForward,
 	};
 }
 
@@ -144,40 +144,27 @@ function serverErrorResponse(
 }
 
 /**
- * Captures the Response handed to `forwardToClient` instead of letting the
- * real one throw "UsageCollector not initialized".
+ * Captures the Response handed to the forwarding step.
  *
- * Reaching the pass-through path proves only that we did not fail over; it
- * says nothing about WHICH response was passed through. Every assertion that
- * the *upstream* status and body survived to the client needs the captured
- * argument, so the terminal-account cases install this stub.
- *
- * `mock.module` is process-global in Bun with no per-file isolation, so the
- * stub is installed inside the individual test and torn down in `afterEach` —
- * never at module top level, where it would also rewrite `forwardToClient`
- * for every other proxy test file sharing the process.
+ * Injected through `ctx.forwardToClient`, NOT via `mock.module`: that function
+ * is a static import in `proxy-operations`, bound when the module is first
+ * evaluated, so a `mock.module` rewrite could never take effect there. The
+ * old stub only appeared to work because the REAL `forwardToClient` happens to
+ * throw "UsageCollector not initialized" when no collector was initialised —
+ * and in a full suite another test file can initialise one first, at which
+ * point the real function returns normally and these tests failed with
+ * "expected forwarded to be true" (received false).
  */
 let capturedForward: Response | null = null;
 
-// Snapshotted at load time, before any mock.module call: Bun live-updates the
-// imported namespace object, so reading it during teardown would hand the stub
-// straight back and leak it into every test that follows.
-const realResponseHandler = { ...responseHandlerModule };
-
-function captureForwardedResponse(): void {
-	capturedForward = null;
-	mock.module("../../response-handler", () => ({
-		...realResponseHandler,
-		forwardToClient: async (options: { response: Response }) => {
-			capturedForward = options.response;
-			return options.response;
-		},
-	}));
-}
+/** The forwarding seam every test in this file runs against. */
+const capturingForward = (async ({ response }: { response: Response }) => {
+	capturedForward = response;
+	return response;
+}) as unknown as NonNullable<ProxyContext["forwardToClient"]>;
 
 function restoreForwardToClient(): void {
 	capturedForward = null;
-	mock.module("../../response-handler", () => realResponseHandler);
 }
 
 /**
@@ -212,10 +199,16 @@ async function runProxy(
 			isLastAccount,
 		);
 	} catch (e) {
-		const msg = e instanceof Error ? e.message : String(e);
-		if (!msg.includes("UsageCollector not initialized")) throw e;
-		forwarded = true;
+		// Not the proof of forwarding any more: the injected forwarder returns
+		// a response rather than throwing. Kept only so an unexpected throw is
+		// visible as a non-forward if a future change reintroduces one.
+		void e;
+		forwarded = false;
 	}
+	// Forwarding is proven by the injected seam having been called, not by an
+	// exception from an uninitialised singleton. This is the whole point of the
+	// seam: it is deterministic regardless of what other test files ran first.
+	forwarded = forwarded || capturedForward !== null;
 	return { result, forwarded };
 }
 
@@ -590,7 +583,7 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 			callCount++;
 			return serverErrorResponse(500);
 		});
-		captureForwardedResponse();
+		capturedForward = null;
 
 		const ctx = makeProxyContext();
 		const account = makeAccount();
@@ -649,7 +642,7 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 				"anthropic-ratelimit-unified-reset": String(resetSeconds),
 			});
 		});
-		captureForwardedResponse();
+		capturedForward = null;
 
 		const ctx = makeProxyContext();
 		const account = makeAccount();

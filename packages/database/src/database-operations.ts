@@ -21,6 +21,10 @@ import type {
 	SearchProviderUpdate,
 	StrategyStore,
 	VacuumStatus,
+	WebToolCall,
+	WebToolCallStatus,
+	WebToolCallSummary,
+	WebToolCallWriteInput,
 } from "@better-ccflare/types";
 import { toSearchProviderPublic } from "@better-ccflare/types";
 import {
@@ -54,6 +58,7 @@ import { SearchProviderRepository } from "./repositories/search-provider.reposit
 import { StatsRepository } from "./repositories/stats.repository";
 import { StrategyRepository } from "./repositories/strategy.repository";
 import { UsageHistoryRepository } from "./repositories/usage-history.repository";
+import { WebToolCallRepository } from "./repositories/web-tool-call.repository";
 import { withDatabaseRetry } from "./retry";
 import { runWalTruncateInWorker } from "./wal-truncate-runner";
 
@@ -486,6 +491,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private combo: ComboRepository;
 	private usageHistory: UsageHistoryRepository;
 	private searchProviders: SearchProviderRepository;
+	private webToolCalls: WebToolCallRepository;
 
 	constructor(
 		dbPath?: string,
@@ -628,6 +634,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.combo = new ComboRepository(this.adapter);
 		this.usageHistory = new UsageHistoryRepository(this.adapter);
 		this.searchProviders = new SearchProviderRepository(this.adapter);
+		this.webToolCalls = new WebToolCallRepository(this.adapter);
 	}
 
 	/**
@@ -1228,6 +1235,35 @@ OAuth tokens will need to be re-authenticated.
 		return this.usageHistory.deleteOlderThan(cutoffTs);
 	}
 
+	// ── Web tool call analytics ───────────────────────────────────────────────
+
+	/** Record one intercepted web tool call (id + timestamp generated here). */
+	async recordWebToolCall(input: WebToolCallWriteInput): Promise<void> {
+		await this.webToolCalls.record(input);
+	}
+
+	/** Newest-first web tool calls, optionally filtered. */
+	async listWebToolCalls(
+		limit: number,
+		filters?: {
+			status?: WebToolCallStatus;
+			providerKind?: string;
+			since?: number;
+		},
+	): Promise<WebToolCall[]> {
+		return this.webToolCalls.listRecent(limit, filters);
+	}
+
+	/** Per `(provider_kind, status)` totals for calls at or after `since`. */
+	async webToolCallSummary(since: number): Promise<WebToolCallSummary[]> {
+		return this.webToolCalls.summary(since);
+	}
+
+	/** Delete web tool calls older than `cutoff`; returns rows removed. */
+	async pruneWebToolCalls(cutoff: number): Promise<number> {
+		return this.webToolCalls.deleteOlderThan(cutoff);
+	}
+
 	async forceResetAccountRateLimit(accountId: string): Promise<boolean> {
 		return withDatabaseRetry(
 			async () => {
@@ -1601,19 +1637,27 @@ OAuth tokens will need to be re-authenticated.
 		return this.requests.getRequestsByAccount(since);
 	}
 
-	// Cleanup operations — two explicit passes:
+	// Cleanup operations — three explicit passes:
 	// Pass 1: delete payloads older than payloadRetentionMs (+ orphan sweep)
 	// Pass 2: delete request metadata older than requestRetentionMs
+	// Pass 3: delete web_tool_calls older than webToolRetentionMs (optional)
+	//
+	// Pass 3 is skippable: when `webToolRetentionMs` is omitted or not a finite
+	// number, web-tool rows are left alone (existing two-argument callers keep
+	// their exact behaviour). `removedWebToolCalls` is additive on the result.
 	async cleanupOldRequests(
 		payloadRetentionMs: number,
 		requestRetentionMs?: number,
+		webToolRetentionMs?: number,
 	): Promise<{
 		removedRequests: number;
 		removedPayloads: number;
+		removedWebToolCalls: number;
 	}> {
 		const now = Date.now();
 		let removedPayloads = 0;
 		let removedRequests = 0;
+		let removedWebToolCalls = 0;
 		// Set once pass 2 starts: a batched delete that throws midway may already
 		// have removed rows whose count is lost with the exception.
 		let requestPassStarted = false;
@@ -1636,6 +1680,18 @@ OAuth tokens will need to be re-authenticated.
 				removedRequests = await this.requests.deleteOlderThan(requestCutoff);
 				requestPassStarted = false;
 			}
+
+			// Pass 3 — web tool call analytics (no derived stats depend on them)
+			if (
+				typeof webToolRetentionMs === "number" &&
+				Number.isFinite(webToolRetentionMs)
+			) {
+				// Same `now` as the other passes: the cutoff is deterministic for
+				// a run, exactly like the request/payload cutoffs above.
+				removedWebToolCalls = await this.pruneWebToolCalls(
+					now - webToolRetentionMs,
+				);
+			}
 		} finally {
 			// Runs on success and on a throwing pass (original error still
 			// propagates). Drop counts cached before or during cleanup.
@@ -1647,7 +1703,7 @@ OAuth tokens will need to be re-authenticated.
 			}
 		}
 
-		return { removedRequests, removedPayloads };
+		return { removedRequests, removedPayloads, removedWebToolCalls };
 	}
 
 	/**

@@ -133,6 +133,7 @@ import {
 } from "./handlers/token-health";
 import { createUsageHistoryHandler } from "./handlers/usage-history";
 import { createVersionCheckHandler } from "./handlers/version";
+import { createWebToolCallHandlers } from "./handlers/web-tool-calls";
 import { AuthService } from "./services/auth-service";
 import { createSearchProviderStore } from "./services/search-providers";
 import type { APIContext } from "./types";
@@ -155,6 +156,7 @@ export class APIRouter {
 	private searchProviderHandlers!: ReturnType<
 		typeof createSearchProviderHandlers
 	>;
+	private webToolCallHandlers!: ReturnType<typeof createWebToolCallHandlers>;
 
 	constructor(context: APIContext) {
 		this.context = context;
@@ -288,6 +290,10 @@ export class APIRouter {
 			createSearchProviderStore(dbOps),
 		);
 		this.searchProviderHandlers = searchProviderHandlers;
+
+		// Web tool call traces (read-only; rows are written by the proxy)
+		const webToolCallHandlers = createWebToolCallHandlers(dbOps);
+		this.webToolCallHandlers = webToolCallHandlers;
 
 		// Register routes
 		this.handlers.set("GET:/health", (_req, url) => healthHandler(url));
@@ -589,6 +595,15 @@ export class APIRouter {
 		);
 		this.handlers.set("GET:/api/search-providers/meta", () =>
 			searchProviderHandlers.meta(),
+		);
+
+		// Web tool call traces. Both are static paths, so no dynamic route can
+		// shadow them.
+		this.handlers.set("GET:/api/web-tool-calls", (_req, url) =>
+			webToolCallHandlers.list(url.searchParams),
+		);
+		this.handlers.set("GET:/api/web-tool-calls/summary", (_req, url) =>
+			webToolCallHandlers.summary(url.searchParams),
 		);
 	}
 

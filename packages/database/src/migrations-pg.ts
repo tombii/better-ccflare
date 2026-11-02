@@ -372,6 +372,9 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 	// Create search_providers table (see SQLite migration for rationale).
 	await createSearchProvidersTablePg(adapter);
 
+	// Create web_tool_calls table (see SQLite migration for rationale).
+	await createWebToolCallsTablePg(adapter);
+
 	log.info("PostgreSQL schema ensured");
 }
 
@@ -405,6 +408,40 @@ async function createSearchProvidersTablePg(
 	);
 	await adapter.unsafe(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_search_providers_label ON search_providers(label)`,
+	);
+}
+
+/**
+ * Create the `web_tool_calls` table and its indexes. Shared by
+ * `ensureSchemaPg()` (fresh DBs) and `runMigrationsPg()` (upgrades).
+ * `status` semantics match the SQLite migration's doc comment.
+ */
+async function createWebToolCallsTablePg(
+	adapter: BunSqlAdapter,
+): Promise<void> {
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS web_tool_calls (
+			id TEXT PRIMARY KEY,
+			timestamp BIGINT NOT NULL,
+			tool TEXT NOT NULL,
+			provider_id TEXT,
+			provider_kind TEXT,
+			account_id TEXT,
+			project TEXT,
+			query_text TEXT,
+			query_chars BIGINT NOT NULL,
+			result_count BIGINT,
+			latency_ms BIGINT NOT NULL,
+			status TEXT NOT NULL,
+			error_code TEXT,
+			estimated_cost_usd DOUBLE PRECISION
+		)
+	`);
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_web_tool_calls_timestamp ON web_tool_calls(timestamp DESC)`,
+	);
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_web_tool_calls_kind_timestamp ON web_tool_calls(provider_kind, timestamp DESC)`,
 	);
 }
 
@@ -1722,6 +1759,9 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 
 	// Ensure search_providers exists (for upgrades from pre-web-search installs).
 	await createSearchProvidersTablePg(adapter);
+
+	// Ensure web_tool_calls exists (for upgrades from pre-web-tools installs).
+	await createWebToolCallsTablePg(adapter);
 
 	// Rename oauth_sessions.mode 'max' → 'claude-oauth'
 	try {
