@@ -13,6 +13,17 @@ import { makeProxyRequest } from "../request-handler";
  * These tests drive a real local upstream so the assertions measure actual
  * socket behaviour rather than a mock's promise. The upstream records how many
  * requests it saw and whether its response stream was cancelled.
+ *
+ * ⚠️ Every test below keeps a reader on the response body for as long as it
+ * asserts on that stream. That is not stylistic: an unconsumed body that
+ * nothing references is collectable, and when the GC finalizes it Bun tears the
+ * in-flight fetch down — which cancels the *upstream* stream all by itself. The
+ * cancel then lands before the caller's abort, the abort has nothing left to
+ * cancel, and the "the abort reached the upstream" assertion can never pass.
+ * Whether that happens depends purely on GC timing, so it only ever showed up
+ * in full-suite runs, where the other files supply the allocation pressure.
+ * Holding the reader is also what production does — the proxy streams the body
+ * to the client for the whole request lifetime.
  */
 
 interface Upstream {
@@ -67,12 +78,45 @@ function startUpstream(opts: { chunkDelayMs?: number } = {}): Upstream {
 	};
 }
 
-/** Reads one chunk so we are provably past the header boundary. */
-async function readOneChunk(response: Response): Promise<void> {
+/**
+ * Reads one chunk so we are provably past the header boundary, and returns the
+ * reader. The caller MUST keep the returned reader reachable until it is done
+ * asserting on the stream (see the file header) and then release it with
+ * `reader.cancel()`.
+ */
+async function readOneChunk(
+	response: Response,
+): Promise<ReadableStreamDefaultReader<Uint8Array>> {
 	const reader = response.body?.getReader();
 	if (!reader) throw new Error("response had no body");
 	await reader.read();
-	reader.releaseLock();
+	return reader;
+}
+
+/**
+ * Wait until the upstream reports that it cancelled the response stream.
+ *
+ * The cancel is the far end of a real socket, so a fixed sleep is only ever a
+ * guess about how loaded the machine is. Polling asserts the same property —
+ * the cancel arrived — and still fails a broken implementation, just at the
+ * deadline with a message that names the cause. The deadline must stay well
+ * inside bun's 5 s per-test timeout, otherwise a regression surfaces as an
+ * opaque "this test timed out" instead of this error.
+ */
+async function waitForUpstreamCancel(
+	upstream: Upstream,
+	cancelledBefore: number,
+	timeoutMs = 2000,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (upstream.cancelled.length <= cancelledBefore) {
+		if (Date.now() > deadline) {
+			throw new Error(
+				`upstream stream was not cancelled within ${timeoutMs}ms of the caller abort (before: ${cancelledBefore}, after: ${upstream.cancelled.length})`,
+			);
+		}
+		await Bun.sleep(10);
+	}
 }
 
 describe("makeProxyRequest: client disconnect aborts the upstream fetch", () => {
@@ -98,16 +142,17 @@ describe("makeProxyRequest: client disconnect aborts the upstream fetch", () => 
 		);
 		expect(response.status).toBe(200);
 
-		await readOneChunk(response);
+		const reader = await readOneChunk(response);
 		const pullsAtAbort = upstream.pulls;
 		const cancelledBefore = upstream.cancelled.length;
 
 		controller.abort();
-		await Bun.sleep(600);
+		await waitForUpstreamCancel(upstream, cancelledBefore);
 
 		// The upstream must stop producing: at most the in-flight pull completes.
 		expect(upstream.pulls).toBeLessThanOrEqual(pullsAtAbort + 1);
 		expect(upstream.cancelled.length).toBeGreaterThan(cancelledBefore);
+		await reader.cancel().catch(() => {});
 	});
 
 	it("aborts the upstream when the signal is inherited from a Request target", async () => {
@@ -123,15 +168,16 @@ describe("makeProxyRequest: client disconnect aborts the upstream fetch", () => 
 		const response = await makeProxyRequest(target);
 		expect(response.status).toBe(200);
 
-		await readOneChunk(response);
+		const reader = await readOneChunk(response);
 		const pullsAtAbort = upstream.pulls;
 		const cancelledBefore = upstream.cancelled.length;
 
 		controller.abort();
-		await Bun.sleep(600);
+		await waitForUpstreamCancel(upstream, cancelledBefore);
 
 		expect(upstream.pulls).toBeLessThanOrEqual(pullsAtAbort + 1);
 		expect(upstream.cancelled.length).toBeGreaterThan(cancelledBefore);
+		await reader.cancel().catch(() => {});
 	});
 
 	it("rejects without contacting the upstream when the signal is already aborted", async () => {
@@ -249,13 +295,30 @@ describe("makeProxyRequest: existing contracts stay intact", () => {
 			false,
 			controller.signal,
 		);
-		await readOneChunk(response);
+		// The reader stays reachable across the wait below and is what we assert
+		// on afterwards — dropping it would let the GC cancel the upstream first
+		// and the test would measure its own teardown instead of the abort.
+		const reader = await readOneChunk(response);
 		await Bun.sleep(300); // well past the header boundary
 
+		const pullsAtAbort = upstream.pulls;
 		const cancelledBefore = upstream.cancelled.length;
 		controller.abort();
-		await Bun.sleep(600);
 
+		// The abort must surface on the client side of the same stream...
+		let caught: unknown;
+		try {
+			await reader.read();
+		} catch (err) {
+			caught = err;
+		}
+		expect(caught).toBeDefined();
+		expect((caught as Error).name).toBe("AbortError");
+
+		// ...and it must have travelled to the upstream, which then stops
+		// producing. A pull already in flight when the abort landed may finish.
+		await waitForUpstreamCancel(upstream, cancelledBefore);
+		expect(upstream.pulls).toBeLessThanOrEqual(pullsAtAbort + 1);
 		expect(upstream.cancelled.length).toBeGreaterThan(cancelledBefore);
 	});
 });
