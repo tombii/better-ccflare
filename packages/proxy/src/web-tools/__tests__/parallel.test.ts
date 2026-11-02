@@ -296,9 +296,7 @@ describe("parallel adapter — response mapping", () => {
 
 describe("parallel adapter — errors", () => {
 	it("throws a typed error carrying the HTTP status", async () => {
-		stubFetch(() =>
-			jsonResponse({ error: "you are searching too fast" }, 429),
-		);
+		stubFetch(() => jsonResponse({ error: "you are searching too fast" }, 429));
 
 		let caught: unknown;
 		try {

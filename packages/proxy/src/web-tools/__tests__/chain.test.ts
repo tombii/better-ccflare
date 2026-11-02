@@ -211,13 +211,14 @@ describe("runWebSearchChain — provider selection", () => {
 	});
 
 	it("skips providers with no adapter (not yet implemented)", async () => {
-		// `exa` now has an adapter, so use a catalog id that still has none.
+		// `perplexity` is the last catalog id without an adapter (exa, parallel,
+		// deepseek, serper and brave all gained one).
 		const { deps } = makeDeps([
 			makeProvider({
-				id: "serper",
-				provider: "serper",
-				label: "Serper",
-				apiKey: "key-serper",
+				id: "perplexity",
+				provider: "perplexity",
+				label: "Perplexity",
+				apiKey: "key-perplexity",
 			}),
 			makeProvider({ id: "tavily", label: "Tavily", apiKey: "key-tavily" }),
 		]);

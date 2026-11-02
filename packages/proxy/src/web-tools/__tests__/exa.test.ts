@@ -267,9 +267,7 @@ describe("exa adapter — response mapping", () => {
 
 describe("exa adapter — errors", () => {
 	it("throws a typed error carrying the HTTP status", async () => {
-		stubFetch(() =>
-			jsonResponse({ error: "you are searching too fast" }, 429),
-		);
+		stubFetch(() => jsonResponse({ error: "you are searching too fast" }, 429));
 
 		let caught: unknown;
 		try {
@@ -304,7 +302,10 @@ describe("exa adapter — errors", () => {
 
 	it("preserves 402 so credit exhaustion triggers a cooldown", async () => {
 		stubFetch(() =>
-			jsonResponse({ error: "Payment required — credit balance exhausted" }, 402),
+			jsonResponse(
+				{ error: "Payment required — credit balance exhausted" },
+				402,
+			),
 		);
 
 		let caught: unknown;
