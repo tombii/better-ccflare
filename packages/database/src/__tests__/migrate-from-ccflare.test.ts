@@ -9,16 +9,28 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { migrateFromCcflare } from "../migrate-from-ccflare";
 import { getLegacyDbPath, resolveDbPath } from "../paths";
 
 const ENV_KEYS = [
 	"BETTER_CCFLARE_DB_PATH",
 	"ccflare_DB_PATH",
+	// Every config-directory input the platform branches read. Redirecting
+	// only XDG_CONFIG_HOME would leave the Windows branches pointing at the
+	// real home directory, so the assertions below would escape `root`.
 	"XDG_CONFIG_HOME",
+	"LOCALAPPDATA",
+	"APPDATA",
 ] as const;
 
 describe("migrateFromCcflare", () => {
@@ -31,8 +43,12 @@ describe("migrateFromCcflare", () => {
 		for (const key of ENV_KEYS) saved[key] = process.env[key];
 
 		root = mkdtempSync(join(tmpdir(), "ccflare-legacy-"));
-		// getLegacyDbPath() derives from XDG_CONFIG_HOME/ccflare.
+		// Point every platform's config root at the temp dir, so both the
+		// Linux/macOS (XDG) and Windows (LOCALAPPDATA/APPDATA) branches of
+		// getPlatformConfigDir()/getLegacyConfigDir() resolve inside `root`.
 		process.env.XDG_CONFIG_HOME = root;
+		process.env.LOCALAPPDATA = root;
+		process.env.APPDATA = root;
 		legacyDb = join(root, "ccflare", "ccflare.db");
 		targetDb = join(root, "target", "better-ccflare.db");
 
@@ -53,7 +69,7 @@ describe("migrateFromCcflare", () => {
 	/** Create a legacy DB with recognisable content. */
 	function seedLegacy(): void {
 		rmSync(join(root, "ccflare"), { recursive: true, force: true });
-		require("node:fs").mkdirSync(join(root, "ccflare"), { recursive: true });
+		mkdirSync(join(root, "ccflare"), { recursive: true });
 		writeFileSync(legacyDb, "legacy-database-contents");
 	}
 
@@ -86,15 +102,27 @@ describe("migrateFromCcflare", () => {
 		expect(existsSync(expected)).toBe(true);
 	});
 
-	it("is a no-op when the target already exists, explicit or not", () => {
+	it("never overwrites an existing default database", () => {
+		seedLegacy();
+		// No env override, so the explicit-path guard does NOT fire and the
+		// existing-file check is the only thing protecting the target.
+		const existing = resolveDbPath();
+		mkdirSync(dirname(existing), { recursive: true });
+		writeFileSync(existing, "existing");
+
+		expect(migrateFromCcflare()).toBe(false);
+		// Left untouched rather than overwritten by the legacy copy.
+		expect(readFileSync(existing, "utf8")).toBe("existing");
+	});
+
+	it("never overwrites an existing database at an explicit path", () => {
 		seedLegacy();
 		process.env.BETTER_CCFLARE_DB_PATH = targetDb;
-		require("node:fs").mkdirSync(join(root, "target"), { recursive: true });
+		mkdirSync(dirname(targetDb), { recursive: true });
 		writeFileSync(targetDb, "existing");
 
 		expect(migrateFromCcflare()).toBe(false);
-		// Left untouched rather than overwritten.
-		expect(require("node:fs").readFileSync(targetDb, "utf8")).toBe("existing");
+		expect(readFileSync(targetDb, "utf8")).toBe("existing");
 	});
 
 	it("is a no-op when no legacy database exists", () => {
