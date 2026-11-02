@@ -11,11 +11,10 @@ export function resolveDbPath(): string {
 
 	const configDir = getPlatformConfigDir();
 
-	// Always use the same database path for consistency
-	// For development/testing, specify a different database using:
-	// - Environment variable: BETTER_CCFLARE_DB_PATH=/path/to/dev.db
-	// - Command line flag: --db-path /path/to/dev.db
-	// - .env file: BETTER_CCFLARE_DB_PATH=/path/to/dev.db
+	// Always use the same database path for consistency.
+	// For development/testing, point at a different database with the
+	// BETTER_CCFLARE_DB_PATH environment variable. Setting it also suppresses
+	// the one-time import of a legacy ccflare.db (see migrate-from-ccflare.ts).
 	return join(configDir, "better-ccflare.db");
 }
 
