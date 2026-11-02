@@ -9,6 +9,7 @@ import {
 import {
 	createSearchProviderHandlers,
 	DuplicateLabelError,
+	runSearchProviderTest,
 	type SearchProviderStore,
 	TAVILY_SEARCH_URL,
 } from "../search-providers";
@@ -577,5 +578,59 @@ describe("search provider handlers — edit and create round-trips", () => {
 
 		expect(res.status).toBe(201);
 		expect(seen[0]?.enabled).toBe(false);
+	});
+});
+
+describe("search provider test — adapter delegation", () => {
+	// The Test button used to hard-code Tavily and answer "not implemented"
+	// for every other provider, even once they had adapters. It now runs the
+	// adapter's own test(), so the button exercises the real URL and auth.
+	it("tests a non-Tavily provider through its adapter", async () => {
+		const calls: Array<{ url: string; init?: RequestInit }> = [];
+		const original = globalThis.fetch;
+		globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+			calls.push({ url: String(url), init });
+			return new Response(JSON.stringify({ organic: [] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as unknown as typeof fetch;
+
+		try {
+			const result = await runSearchProviderTest({
+				provider: "serper",
+				apiKey: "serper-canary-key",
+			});
+
+			expect(result.ok).toBe(true);
+			expect(calls).toHaveLength(1);
+			expect(calls[0]?.url).toContain("google.serper.dev");
+			const headers = calls[0]?.init?.headers as Record<string, string>;
+			// Serper's non-Bearer header is the whole point of delegating.
+			expect(headers["X-API-KEY"]).toBe("serper-canary-key");
+			expect(headers.Authorization).toBeUndefined();
+		} finally {
+			globalThis.fetch = original;
+		}
+	});
+
+	it("still reports a provider with no adapter without making a call", async () => {
+		let called = false;
+		const original = globalThis.fetch;
+		globalThis.fetch = (async () => {
+			called = true;
+			return new Response("{}", { status: 200 });
+		}) as unknown as typeof fetch;
+		try {
+			const result = await runSearchProviderTest({
+				provider: "perplexity",
+				apiKey: "k",
+			});
+			expect(result.ok).toBe(false);
+			expect(result.error).toContain("not implemented");
+			expect(called).toBe(false);
+		} finally {
+			globalThis.fetch = original;
+		}
 	});
 });

@@ -231,8 +231,18 @@ describe("brave adapter — response mapping", () => {
 		expect(await adapter.search(request(), baseConfig)).toEqual([]);
 	});
 
-	it("returns [] when web.results is absent", async () => {
+	it("throws when a web object carries no results array", async () => {
+		// `web` present without `results` is malformed. Accepting it would
+		// report a healthy empty search and stop the fallback chain.
 		stubFetch(() => jsonResponse({ type: "web", web: {} }));
+
+		await expect(adapter.search(request(), baseConfig)).rejects.toThrow(
+			/results/,
+		);
+	});
+
+	it("returns [] when the web key is absent entirely (Brave's no-results shape)", async () => {
+		stubFetch(() => jsonResponse({ type: "web" }));
 
 		expect(await adapter.search(request(), baseConfig)).toEqual([]);
 	});
@@ -485,5 +495,34 @@ describe("brave adapter — test()", () => {
 		expect(result.ok).toBe(false);
 		expect(result.error).toBe("no API key configured");
 		expect(calls).toHaveLength(0);
+	});
+});
+
+describe("brave adapter — safesearch", () => {
+	// The dashboard offers off/moderate/strict; without forwarding it the
+	// operator's saved choice silently had no effect on real searches.
+	for (const value of ["off", "moderate", "strict"]) {
+		it(`forwards safesearch=${value}`, async () => {
+			stubFetch(() => jsonResponse({ web: { results: [] } }));
+
+			await adapter.search(request(), {
+				...baseConfig,
+				extraConfig: { safesearch: value },
+			});
+
+			const url = new URL(calls[0].url);
+			expect(url.searchParams.get("safesearch")).toBe(value);
+		});
+	}
+
+	it("drops an unsupported safesearch value rather than sending it", async () => {
+		stubFetch(() => jsonResponse({ web: { results: [] } }));
+
+		await adapter.search(request(), {
+			...baseConfig,
+			extraConfig: { safesearch: "paranoid" },
+		});
+
+		expect(new URL(calls[0].url).searchParams.has("safesearch")).toBe(false);
 	});
 });

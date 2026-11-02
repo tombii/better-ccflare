@@ -2,12 +2,16 @@ import {
 	BadRequest,
 	Conflict,
 	errorResponse,
-	HttpClient,
 	InternalServerError,
 	jsonResponse,
 	NotFound,
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
+import { getWebToolAdapter } from "@better-ccflare/proxy";
+
+/** Tavily's search endpoint, re-exported for tests that assert on it. */
+export { TAVILY_SEARCH_URL } from "@better-ccflare/proxy";
+
 import {
 	SEARCH_PROVIDER_CATALOG,
 	type SearchProviderCatalogEntry,
@@ -90,8 +94,6 @@ const PRIORITY_MIN = 0;
 const PRIORITY_MAX = 1000;
 const MAX_RESULTS_MIN = 1;
 const MAX_RESULTS_MAX = 50;
-const TEST_TIMEOUT_MS = 10_000;
-export const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
 
 type ValidationResult =
 	| { ok: true; patch: SearchProviderUpdate }
@@ -211,40 +213,40 @@ async function readJsonObject(req: Request): Promise<Record<string, unknown>> {
 	return body;
 }
 
-/** Run a connectivity test for a stored provider. */
+/**
+ * Run a connectivity test for a stored provider.
+ *
+ * Delegates to the adapter's own `test()` so the dashboard exercises exactly
+ * the URL, auth header and response mapping a real search uses — one
+ * implementation, not a second copy that can drift. Adapters without an
+ * implementation (Perplexity today) still report `ok: false` and make NO
+ * outbound call.
+ */
 export async function runSearchProviderTest(row: {
 	provider: string;
 	apiKey: string | null;
+	maxResults?: number;
+	extraConfig?: Record<string, unknown> | null;
 }): Promise<SearchProviderTestResult> {
-	// Phase 1 only implements Tavily's URL/auth. Every other provider must
-	// report "not implemented" WITHOUT any outbound call.
-	if (row.provider !== "tavily") {
+	const adapter = getWebToolAdapter(row.provider as SearchProviderId);
+	if (!adapter || adapter.implemented === false) {
 		return { ok: false, latencyMs: 0, error: "provider not implemented yet" };
 	}
 	if (!row.apiKey) {
 		return { ok: false, latencyMs: 0, error: "no apiKey configured" };
 	}
-
-	// HttpClient goes through the global egress proxy configured in
-	// http-common. Non-2xx responses throw an HttpError.
-	const client = new HttpClient({ timeout: TEST_TIMEOUT_MS });
-	const started = Date.now();
 	try {
-		const data = await client.post<{ results?: unknown }>(
-			TAVILY_SEARCH_URL,
-			{ query: "better-ccflare connectivity test", max_results: 1 },
-			{ headers: { Authorization: `Bearer ${row.apiKey}` } },
-		);
-		const latencyMs = Date.now() - started;
-		if (!data || !Array.isArray(data.results)) {
-			return { ok: false, latencyMs, error: "unexpected response shape" };
-		}
-		return { ok: true, latencyMs };
+		// `test()` is contractually non-throwing; the catch is belt-and-braces
+		// so a broken adapter can never turn the dashboard into a 500.
+		return await adapter.test({
+			apiKey: row.apiKey,
+			maxResults: row.maxResults ?? 5,
+			extraConfig: row.extraConfig ?? {},
+		});
 	} catch (error) {
-		const latencyMs = Date.now() - started;
 		const message = error instanceof Error ? error.message : String(error);
 		log.warn(`Search provider test failed (${row.provider}): ${message}`);
-		return { ok: false, latencyMs, error: message };
+		return { ok: false, latencyMs: 0, error: message };
 	}
 }
 
@@ -436,6 +438,8 @@ export function createSearchProviderHandlers(
 				const result = await runSearchProviderTest({
 					provider: row.provider,
 					apiKey,
+					maxResults: row.maxResults,
+					extraConfig: row.extraConfig,
 				});
 				return jsonResponse({ success: true, data: result });
 			} catch (error) {

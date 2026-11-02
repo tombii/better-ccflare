@@ -229,10 +229,21 @@ describe("deepseek adapter — response mapping", () => {
 		expect(await adapter.search(request(), baseConfig)).toEqual([]);
 	});
 
-	it("treats a results-less 200 (unbilled empty search) as []", async () => {
-		// DeepSeek does not bill searches that return nothing; the documented
-		// payload for that case need not carry a results key.
+	it("throws for a 200 with no results key at all", async () => {
+		// A payload without `results` is malformed, not an empty search:
+		// accepting it would mark the provider healthy and stop the chain
+		// before a backup provider was tried.
 		stubFetch(() => jsonResponse({}));
+
+		await expect(adapter.search(request(), baseConfig)).rejects.toThrow(
+			/results array/,
+		);
+	});
+
+	it("keeps an explicit empty results array as a valid empty search", async () => {
+		// DeepSeek does not bill a search that returns nothing, so this is a
+		// real outcome and must not fall through to another provider.
+		stubFetch(() => jsonResponse({ results: [] }));
 
 		expect(await adapter.search(request(), baseConfig)).toEqual([]);
 	});
@@ -347,5 +358,61 @@ describe("deepseek adapter — test()", () => {
 		expect(result.ok).toBe(false);
 		expect(result.error).toBe("no API key configured");
 		expect(calls).toHaveLength(0);
+	});
+});
+
+describe("deepseek adapter — domain filters", () => {
+	// DeepSeek has no native include/exclude parameters, so these are applied
+	// as a post-filter. Without them a blocked site or an off-allowlist site
+	// would reach the model.
+	const payload = {
+		results: [
+			{ title: "Also", url: "https://blog.example.com/a", snippet: "s1" },
+			{ title: "Other", url: "https://other.test/b", snippet: "s2" },
+			{
+				title: "Root",
+				url: "https://example.com/c",
+				snippet: "s3",
+			},
+		],
+	};
+
+	it("keeps only allowlisted hosts and their subdomains", async () => {
+		stubFetch(() => jsonResponse(payload));
+
+		const hits = await adapter.search(
+			request({ allowedDomains: ["example.com"] }),
+			baseConfig,
+		);
+
+		expect(hits.map((h) => h.url)).toEqual([
+			"https://blog.example.com/a",
+			"https://example.com/c",
+		]);
+	});
+
+	it("drops blocked hosts and their subdomains", async () => {
+		stubFetch(() => jsonResponse(payload));
+
+		const hits = await adapter.search(
+			request({ blockedDomains: ["example.com"] }),
+			baseConfig,
+		);
+
+		expect(hits.map((h) => h.url)).toEqual(["https://other.test/b"]);
+	});
+
+	it("prefers the allowlist when both lists are given", async () => {
+		stubFetch(() => jsonResponse(payload));
+
+		const hits = await adapter.search(
+			request({
+				allowedDomains: ["other.test"],
+				blockedDomains: ["other.test"],
+			}),
+			baseConfig,
+		);
+
+		expect(hits.map((h) => h.url)).toEqual(["https://other.test/b"]);
 	});
 });

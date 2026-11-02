@@ -37,6 +37,8 @@ const SEARCH_TIMEOUT_MS = 10_000;
 const ERROR_BODY_EXCERPT_CHARS = 200;
 const TEST_QUERY = "better-ccflare connectivity test";
 const FRESHNESS_VALUES = new Set(["pd", "pw", "pm", "py"]);
+/** The only three values Brave accepts for `safesearch`. */
+const SAFESEARCH_VALUES = new Set(["off", "moderate", "strict"]);
 
 /**
  * Error raised for a non-2xx Brave response (and for aborts).
@@ -111,6 +113,12 @@ function buildSearchUrl(
 	const freshness = stringOption(config, "freshness");
 	if (freshness && FRESHNESS_VALUES.has(freshness)) {
 		url.searchParams.set("freshness", freshness);
+	}
+	// The dashboard offers off/moderate/strict; Brave accepts exactly those and
+	// rejects anything else, so an unknown value is dropped rather than sent.
+	const safesearch = stringOption(config, "safesearch");
+	if (safesearch && SAFESEARCH_VALUES.has(safesearch)) {
+		url.searchParams.set("safesearch", safesearch);
 	}
 
 	return url.toString();
@@ -207,11 +215,13 @@ async function getSearch(
 /**
  * Decide whether a 200 body is a Brave payload and return its result list.
  *
- * Brave documents no-results responses as `{type: "web", ...}` without a `web`
- * key — a 200 with `web` absent, or with `web.results: []`, is a valid EMPTY
- * search and maps to `[]` (it is not malformed, and not an error worth
- * falling through on). A body that is not an object, or that carries a `web`
- * key which is not an object, has an unrecognisable shape and throws.
+ * Brave documents no-results responses as `{type: "web", ...}` with the `web`
+ * key absent entirely, so that shape maps to `[]` — a valid EMPTY search, not
+ * a failure worth falling through on. `web.results: []` is equally valid.
+ *
+ * Everything else is malformed and throws, including a `web` object that
+ * carries no `results` array: treating that as an empty success would mark the
+ * provider healthy and stop the chain before a backup provider is tried.
  */
 function resultEntries(data: unknown): unknown[] {
 	if (!isRecord(data)) {
@@ -224,7 +234,6 @@ function resultEntries(data: unknown): unknown[] {
 			"Brave response has a malformed web object",
 		);
 	}
-	if (data.web.results === undefined) return [];
 	if (!Array.isArray(data.web.results)) {
 		throw new BraveSearchError(
 			502,

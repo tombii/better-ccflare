@@ -189,11 +189,66 @@ function isDeepSeekPayload(
 	data: unknown,
 ): data is Record<string, unknown> & { results?: unknown[] } {
 	if (!isRecord(data)) return false;
-	return data.results === undefined || Array.isArray(data.results);
+	// A payload without `results` at all is malformed: treating it as an empty
+	// success would mark the provider healthy and stop the chain before a
+	// backup provider is tried. `results: []` is DeepSeek's real "nothing
+	// found" and stays valid.
+	return Array.isArray(data.results);
+}
+
+/**
+ * Lower-cased hostname of a URL, or "" when it cannot be parsed.
+ */
+function hostnameOf(url: string): string {
+	try {
+		return new URL(url).hostname.toLowerCase();
+	} catch {
+		try {
+			return new URL(`https://${url}`).hostname.toLowerCase();
+		} catch {
+			return "";
+		}
+	}
+}
+
+/** True when `host` is `domain` itself or a subdomain of it. */
+function hostMatches(host: string, domain: string): boolean {
+	const wanted = domain.toLowerCase().trim();
+	if (!wanted) return false;
+	return host === wanted || host.endsWith(`.${wanted}`);
+}
+
+/**
+ * DeepSeek's search endpoint has no native include/exclude parameters, so the
+ * domain filters are applied here as a post-filter. Same rule as the other
+ * adapters: if both lists are present the allowlist wins.
+ *
+ * This narrows results; it cannot improve recall. A blocked or off-allowlist
+ * site is dropped, but an allowed domain that never ranked cannot be added.
+ */
+function matchesDomainFilter(
+	url: string,
+	allowedDomains: string[] | undefined,
+	blockedDomains: string[] | undefined,
+): boolean {
+	const allowed = (allowedDomains ?? []).filter((d) => d.trim().length > 0);
+	const blocked = (blockedDomains ?? []).filter((d) => d.trim().length > 0);
+	const host = hostnameOf(url);
+	if (allowed.length > 0) {
+		return host !== "" && allowed.some((domain) => hostMatches(host, domain));
+	}
+	if (blocked.length > 0) {
+		return !blocked.some((domain) => hostMatches(host, domain));
+	}
+	return true;
 }
 
 /** Map DeepSeek's `results` array onto the normalised hit shape. */
-function toHits(data: unknown, maxResults: number): WebToolSearchHit[] {
+function toHits(
+	data: unknown,
+	maxResults: number,
+	request: WebToolSearchRequest,
+): WebToolSearchHit[] {
 	if (!isDeepSeekPayload(data)) {
 		throw new DeepSeekSearchError(
 			502,
@@ -202,6 +257,7 @@ function toHits(data: unknown, maxResults: number): WebToolSearchHit[] {
 	}
 
 	const hits: WebToolSearchHit[] = [];
+	const { allowedDomains, blockedDomains } = request;
 	for (const entry of data.results ?? []) {
 		if (!isRecord(entry)) continue;
 		// DeepSeek's docs state that entries lacking a `url`, `title` or
@@ -210,6 +266,7 @@ function toHits(data: unknown, maxResults: number): WebToolSearchHit[] {
 		const title = typeof entry.title === "string" ? entry.title : "";
 		const snippet = typeof entry.snippet === "string" ? entry.snippet : "";
 		if (!url || !title || !snippet) continue;
+		if (!matchesDomainFilter(url, allowedDomains, blockedDomains)) continue;
 
 		const hit: WebToolSearchHit = { title, url, snippet };
 		if (typeof entry.content === "string" && entry.content) {
@@ -248,7 +305,7 @@ export function createDeepSeekAdapter(): WebToolSearchAdapter {
 				config.apiKey,
 				request.signal,
 			);
-			return toHits(data, effectiveMaxResults(request, config));
+			return toHits(data, effectiveMaxResults(request, config), request);
 		},
 
 		async test(
