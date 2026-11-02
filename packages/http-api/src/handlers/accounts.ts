@@ -104,6 +104,11 @@ const RATE_LIMIT_REASONS = new Set<RateLimitReason>([
 	// Transient upstream 500/502/503/504 that outlived its in-place retry. Also
 	// written to accounts.rate_limited_reason — the account is benched briefly.
 	"upstream_5xx_server_error",
+	// Upstream 402 (credits depleted upstream). Never written to
+	// accounts.rate_limited_reason — the account is not benched — but listed
+	// so this set stays a faithful mirror of the union and a future path that
+	// does persist it cannot be silently nulled.
+	"upstream_402_out_of_credits",
 ]);
 
 function toRateLimitReason(v: string | null): RateLimitReason | null {

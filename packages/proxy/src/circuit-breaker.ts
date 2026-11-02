@@ -232,6 +232,12 @@ interface CircuitEntry {
  * breaker is keyed per `(provider, accountId)`, it can never take healthy
  * accounts of the same provider down with it.
  *
+ * `upstream_402_out_of_credits` (the account's money/quota is exhausted
+ * upstream) does NOT count. It is not a health signal: credits can return at
+ * any moment via a top-up or at a billing rollover we cannot observe, and the
+ * account is deliberately never benched for it, so counting it would let a
+ * funding gap trip a breaker on an account that is still routable.
+ *
  * Every other `RateLimitReason` — account/provider-wide exhaustion,
  * 529 overload — counts as a circuit failure.
  *
@@ -262,6 +268,9 @@ export function shouldCountAsCircuitFailure(kind: FailureKind): boolean {
 		// Request-scoped, and no cooldown is applied — the account keeps
 		// serving other traffic, so this must not count toward opening.
 		case "windowless_429":
+			return false;
+		// Funding gap, not account health — never benched, see the doc comment.
+		case "upstream_402_out_of_credits":
 			return false;
 		case "upstream_429_with_reset":
 		case "upstream_429_no_reset_default_5h":

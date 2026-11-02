@@ -121,13 +121,15 @@ describe("issue #273 — Group A: helper contract", () => {
 // branch (400 code 11128 from the CodeBuddy gateway), which discards the
 // masked flat-body response before failing over to the next account. 20 is
 // the same branch's over-cap path: a terminal rejection whose body exceeds
-// the bounded-read cap is discarded rather than buffered for a replay.
+// the bounded-read cap is discarded rather than buffered for a replay. 21 is
+// the upstream_402_out_of_credits branch, which discards the 402 before
+// failing over.
 // ---------------------------------------------------------------------------
 
-const EXPECTED_SITE_COUNT = 20;
+const EXPECTED_SITE_COUNT = 21;
 
 describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", () => {
-	it("proxy-operations.ts has exactly 18 cancelDiscardedResponseBody call sites", () => {
+	it("proxy-operations.ts has exactly 21 cancelDiscardedResponseBody call sites", () => {
 		const source = readFileSync(
 			"packages/proxy/src/handlers/proxy-operations.ts",
 			"utf-8",

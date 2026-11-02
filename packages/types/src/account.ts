@@ -123,6 +123,16 @@ export type RateLimitReason =
 	 *  Not time-bounded: the bench will expire and the single-flight recovery
 	 *  probe will rediscover the 403 until the org setting actually changes. */
 	| "org_permission_denied"
+	/** Upstream HTTP 402 — the account's money/quota upstream is exhausted
+	 *  (Mistral: balance or included monthly usage; OpenRouter/NanoGPT-style
+	 *  resellers: no credits). The account is NOT benched: credits can return
+	 *  at any moment via a top-up, or at a billing rollover we cannot observe,
+	 *  so any bench length would be a guess that could lock the account out
+	 *  past a reset. The request fails over to the next account instead, and
+	 *  this does NOT trip the circuit breaker. Recorded per request for
+	 *  dashboard visibility only — nothing is written to
+	 *  `accounts.rate_limited_until`, so the account stays routable. */
+	| "upstream_402_out_of_credits"
 	/** Transient upstream server error — HTTP 500/502/503/504 from any provider.
 	 *  Not a quota signal and not specific to the account, but in production a
 	 *  single organization returned 500 for a minute at a time while sibling

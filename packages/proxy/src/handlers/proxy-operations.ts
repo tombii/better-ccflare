@@ -25,6 +25,7 @@ import {
 	type Provider,
 	readCodeBuddyGatewayRejection,
 	recoverCodexMessagesContinuation,
+	UPSTREAM_402_OUT_OF_CREDITS_REASON,
 	usageCache,
 } from "@better-ccflare/providers";
 import type {
@@ -1761,6 +1762,83 @@ export async function proxyWithAccount(
 			return NOT_CLASSIFIED;
 		};
 
+		/** HTTP 402 from any provider: the account is out of credits upstream. */
+		const classifyOutOfCredits402 = async (
+			rawResponse: Response,
+		): Promise<UpstreamErrorClassification> => {
+			// ── upstream_402_out_of_credits: money/quota exhausted upstream ──
+			// Any provider can answer 402 when the account's funding is gone:
+			// Mistral (balance / included monthly usage), OpenRouter and
+			// NanoGPT-style resellers (no credits). The request itself is fine,
+			// so a same-account retry is pointless — fail over to the next
+			// account. The account is NOT benched: credits can come back at any
+			// moment via a top-up, or at a month rollover we cannot observe, so
+			// any bench length would be a guess that could lock the account out
+			// past a reset. The `null` below also short-circuits
+			// processProxyResponse, which would otherwise treat the non-429 as
+			// "not rate limited" and clear any existing bench on the account.
+			//
+			// Matched on status alone, for every provider. 402 is not a status
+			// any supported upstream uses for anything other than "payment
+			// required", and a missed match only costs the client the upstream
+			// error, whereas a body-shape probe would clone every 402 body.
+			if (rawResponse.status === 402) {
+				let requestedModel: string | null = null;
+				if (effectiveBodyBuffer)
+					requestedModel = effectiveBodyContext.getModel();
+
+				const reason: RateLimitReason = UPSTREAM_402_OUT_OF_CREDITS_REASON;
+				log.warn(
+					`Account ${account.name} upstream_402_out_of_credits (402${requestedModel ? `, model=${requestedModel}` : ""}) — ` +
+						`account is out of credits upstream; NOT benching account, failing over to next account`,
+				);
+				// Synthetic probes still learn something real here, but their
+				// rejection was never a client-visible request — the audit row,
+				// like the other classification paths', is real-traffic-only.
+				if (!isSyntheticInternal) {
+					const responseTime = Date.now() - requestMeta.timestamp;
+					const modelRewrite = isModelRewrite(
+						requestMeta.originalModel,
+						requestMeta.appliedModel,
+					);
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.saveRequest(
+							crypto.randomUUID(),
+							req.method,
+							url.pathname,
+							account.id,
+							402,
+							false,
+							reason,
+							responseTime,
+							failoverAttempts,
+							requestedModel ? { model: requestedModel } : undefined,
+							requestMeta.agentUsed ?? undefined,
+							apiKeyId ?? undefined,
+							apiKeyName ?? undefined,
+							requestMeta.project ?? null,
+							undefined,
+							requestMeta.comboName ?? null,
+							modelRewrite ? (requestMeta.originalModel ?? null) : null,
+							modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+							requestMeta.projectAttributionSource ?? null,
+							requestMeta.agentAttributionSource ?? null,
+							null,
+							requestMeta.clientSessionId ?? null,
+							gatewayHint.requestClass,
+							gatewayHint.agentType,
+							gatewayHint.prevToolDurations,
+							gatewayHint.compaction,
+							gatewayHint.contextCompacted,
+						),
+					);
+				}
+				cancelDiscardedResponseBody(rawResponse);
+				return null;
+			}
+			return NOT_CLASSIFIED;
+		};
+
 		/** 429 carrying `overage-disabled-reason: out_of_credits`. */
 		const classifyOutOfCredits429 = async (
 			rawResponse: Response,
@@ -2213,6 +2291,9 @@ export async function proxyWithAccount(
 			const orgDenied = await classifyOrgPermissionDenied(retried);
 			if (orgDenied !== NOT_CLASSIFIED) return orgDenied;
 
+			const outOfCredits402 = await classifyOutOfCredits402(retried);
+			if (outOfCredits402 !== NOT_CLASSIFIED) return outOfCredits402;
+
 			const codeBuddyRejected = await classifyCodeBuddyChannelRejection(
 				retried,
 				returnRateLimitedResponseOnExhaustion,
@@ -2260,6 +2341,10 @@ export async function proxyWithAccount(
 
 		const orgPermissionOutcome = await classifyOrgPermissionDenied(rawResponse);
 		if (orgPermissionOutcome !== NOT_CLASSIFIED) return orgPermissionOutcome;
+
+		const outOfCredits402Outcome = await classifyOutOfCredits402(rawResponse);
+		if (outOfCredits402Outcome !== NOT_CLASSIFIED)
+			return outOfCredits402Outcome;
 
 		// On model unavailable / rate-limited: cycle through the model list for
 		// this account. getModelList returns [primary, ...fallbacks] merged from
