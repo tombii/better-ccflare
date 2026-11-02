@@ -2648,6 +2648,17 @@ export async function proxyWithAccount(
 				cancelDiscardedResponseBody(rawResponse);
 				return null;
 			}
+
+			// A model-fallback retry can answer 402 even though the primary did not
+			// (it was 404/429, say). That response left the cycling loop and reaches
+			// here, past the first-response check and without setting
+			// `retriedInPlace`, so it would otherwise be forwarded to the client
+			// instead of failing over. Same classification as a primary 402: record
+			// the reason, do not bench, fail over.
+			const fallbackOutOfCredits402 =
+				await classifyOutOfCredits402(rawResponse);
+			if (fallbackOutOfCredits402 !== NOT_CLASSIFIED)
+				return fallbackOutOfCredits402;
 		}
 
 		// Inject request metadata into response headers so providers can read

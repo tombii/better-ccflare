@@ -329,6 +329,54 @@ describe("proxyWithAccount — upstream 402 (out of credits upstream)", () => {
 		expect(account.rate_limited_until).toBeNull();
 		expect(saveReasons(ctx)).toContain("upstream_402_out_of_credits");
 	});
+
+	it("fails over when a model-fallback retry answers 402 after the primary 404s", async () => {
+		// Greptile P1 on #526: the model-cycling loop runs AFTER the
+		// first-response classification, so a 402 from a fallback model left the
+		// loop and was forwarded to the client instead of failing over.
+		// The primary answers 429 (rate-limited) because a 404 with no fallback
+		// models is forwarded by design; 429 always enters the model list.
+		const sentModels: string[] = [];
+		globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+			const req = input instanceof Request ? input : new Request(String(input));
+			const body = JSON.parse(await req.text().catch(() => "{}"));
+			sentModels.push(body.model);
+			// The primary is the first mapping entry; every later request is a
+			// fallback and answers 402.
+			if (sentModels.length === 1) {
+				return new Response(
+					JSON.stringify({
+						error: {
+							type: "rate_limit_error",
+							message: "Rate limit exceeded: limit_rpm/model/abc",
+						},
+					}),
+					{ status: 429, headers: { "content-type": "application/json" } },
+				);
+			}
+			return upstream402();
+		});
+
+		const ctx = makeProxyContext();
+		// Entry 0 is what the first request is rewritten to (the proxy maps the
+		// client's Claude id through the mapping, so the fallback list is looked
+		// up by the mapped name); entry 1 is the fallback tried on 429.
+		const account = makeAccount({
+			model_mappings: JSON.stringify({
+				sonnet: ["primary-model", "fallback-model"],
+			}),
+		});
+		const bodyBuffer = makeRequestBody();
+
+		const result = await runProxy(account, bodyBuffer, ctx);
+
+		// Fallback was actually tried, then the 402 caused failover.
+		expect(sentModels.length).toBe(2);
+		expect(result).toBeNull();
+		expect(capturedForward).toBeNull();
+		expect(account.rate_limited_until).toBeNull();
+		expect(saveReasons(ctx)).toContain("upstream_402_out_of_credits");
+	});
 });
 
 describe("upstream_402_out_of_credits reason plumbing", () => {
