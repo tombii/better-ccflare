@@ -50,6 +50,8 @@ function makeContext(account: Account): ProxyContext {
 		} as never,
 		runtime: { port: 8080, clientId: "test" } as never,
 		config: {
+			getWebSearchEnabled: () => false,
+			getWebSearchBypassHeader: () => true,
 			getUsageThrottlingFiveHourEnabled: () => true,
 			getUsageThrottlingWeeklyEnabled: () => true,
 			getSystemPromptCacheTtl1h: () => false,
