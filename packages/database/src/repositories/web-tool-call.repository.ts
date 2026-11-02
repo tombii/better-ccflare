@@ -9,6 +9,7 @@ import {
 	type WebToolCallSummaryRow,
 	type WebToolCallWriteInput,
 } from "@better-ccflare/types";
+import { getCleanupBatchSize } from "../adapters/bun-sql-adapter";
 import { BaseRepository } from "./base.repository";
 
 const SELECT_COLUMNS = `
@@ -130,13 +131,24 @@ export class WebToolCallRepository extends BaseRepository<WebToolCall> {
 	/**
 	 * Delete rows with `timestamp < cutoff`; returns the number removed.
 	 *
-	 * Single parameterised statement: `timestamp < cutoff` is served by
-	 * idx_web_tool_calls_timestamp, so no batching is needed.
+	 * Batched like the request/usage-history cleanups: an unbounded DELETE can
+	 * exceed the PostgreSQL statement_timeout after a backlog or a shortened
+	 * retention setting, and then rolls back everything it had done. Batch size
+	 * is configurable via BETTER_CCFLARE_DB_CLEANUP_BATCH_SIZE.
 	 */
 	async deleteOlderThan(cutoff: number): Promise<number> {
-		return this.runWithChanges(
-			`DELETE FROM web_tool_calls WHERE timestamp < ?`,
-			[cutoff],
-		);
+		const BATCH_SIZE = getCleanupBatchSize();
+		let total = 0;
+		let deleted: number;
+		do {
+			deleted = await this.runWithChanges(
+				`DELETE FROM web_tool_calls WHERE id IN (
+					SELECT id FROM web_tool_calls WHERE timestamp < ? LIMIT ?
+				)`,
+				[cutoff, BATCH_SIZE],
+			);
+			total += deleted;
+		} while (deleted === BATCH_SIZE);
+		return total;
 	}
 }

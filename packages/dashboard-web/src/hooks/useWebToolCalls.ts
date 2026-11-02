@@ -21,6 +21,10 @@ export const useWebToolCalls = (status?: WebToolCallStatus) =>
 		queryFn: () => listWebToolCalls({ limit: WEB_TOOL_CALLS_LIMIT, status }),
 		// Short enough that a returning tab is fresh without polling.
 		staleTime: 15 * 1000,
+		// The shared QueryClient polls every 30s by default; a trace list only
+		// changes when a search runs, so a button and stale-query refreshes are
+		// enough and a background poll would be pure load.
+		refetchInterval: false,
 	});
 
 export const useWebToolCallSummary = () =>
@@ -28,4 +32,5 @@ export const useWebToolCallSummary = () =>
 		queryKey: queryKeys.webToolCallSummary(WEB_TOOL_CALL_SUMMARY_HOURS),
 		queryFn: () => getWebToolCallSummary(WEB_TOOL_CALL_SUMMARY_HOURS),
 		staleTime: 15 * 1000,
+		refetchInterval: false,
 	});

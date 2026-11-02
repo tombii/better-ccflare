@@ -23,8 +23,6 @@ import { buildWebSearchResponse } from "./responder";
 
 /** How many hits to request per search; the responder trims the digest. */
 const MAX_RESULTS = 10;
-/** Cap on the stored error code so an upstream message can't bloat the row. */
-const ERROR_CODE_MAX_CHARS = 120;
 
 export interface WebSearchInterceptDeps {
 	body: unknown;
@@ -55,14 +53,14 @@ function errorMessage(error: unknown): string {
 	return String(error);
 }
 
-/** Redacted, length-capped message suitable for `error_code`. */
-function errorCodeFor(error: unknown): string {
-	const message = errorMessage(error).replace(/\s+/g, " ").trim();
-	if (!message) return "interception_failed";
-	return message.length > ERROR_CODE_MAX_CHARS
-		? `${message.slice(0, ERROR_CODE_MAX_CHARS)}…`
-		: message;
-}
+/**
+ * Fixed code for a failure inside the interceptor itself.
+ *
+ * The message goes to the log only. This column is long-lived and exportable,
+ * so it holds a constant — an exception message can carry a path, a URL or a
+ * fragment of the request, and nothing here is allowed to redact reliably.
+ */
+const INTERCEPTION_FAILED_CODE = "interception_failed";
 
 /**
  * Record one trace without ever letting the write fail the search. Like the
@@ -145,7 +143,7 @@ export async function maybeInterceptWebSearch(
 				{
 					...attribution,
 					tool: "web_search",
-					providerId: failed ? outcome.lastProviderId : null,
+					providerId: failed ? outcome.lastProviderRowId : null,
 					providerKind: failed ? outcome.lastProviderId : null,
 					resultCount: null,
 					latencyMs: outcome.latencyMs,
@@ -206,7 +204,7 @@ export async function maybeInterceptWebSearch(
 				resultCount: null,
 				latencyMs: 0,
 				status: "fallthrough",
-				errorCode: errorCodeFor(error),
+				errorCode: INTERCEPTION_FAILED_CODE,
 			},
 			deps.log,
 		);

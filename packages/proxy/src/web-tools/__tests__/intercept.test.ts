@@ -352,8 +352,10 @@ describe("maybeInterceptWebSearch — traceability", () => {
 		expect(sink.traces[0]).toMatchObject({
 			tool: "web_search",
 			status: "error",
-			// Failures carry the provider *kind*, not the row id.
-			providerId: "tavily",
+			// A failure names the row that failed, not just its kind: with two
+			// Tavily rows configured, the kind alone says nothing about which
+			// one broke.
+			providerId: PROVIDER_ROW_ID,
 			providerKind: "tavily",
 			resultCount: null,
 			queryText: QUERY,

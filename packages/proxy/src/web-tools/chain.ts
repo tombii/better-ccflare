@@ -175,6 +175,12 @@ export type WebToolChainOutcome =
 			attemptedCount: number;
 			/** Provider kind of the last failed attempt, null if none. */
 			lastProviderId: SearchProviderId | null;
+			/**
+			 * `search_providers.id` of the last failed attempt. With several
+			 * rows of the same kind configured, the kind alone cannot say which
+			 * one failed.
+			 */
+			lastProviderRowId: string | null;
 			/** Redacted, length-capped message from the last failed attempt. */
 			lastErrorMessage: string | null;
 			/**
@@ -212,6 +218,7 @@ export async function runWebSearchChain(
 	const log = deps.log;
 	let attemptedCount = 0;
 	let lastProviderId: SearchProviderId | null = null;
+	let lastProviderRowId: string | null = null;
 	let lastErrorMessage: string | null = null;
 	let lastErrorCode: string | null = null;
 
@@ -220,6 +227,7 @@ export async function runWebSearchChain(
 		reason,
 		attemptedCount,
 		lastProviderId: reason === "no_provider" ? null : lastProviderId,
+		lastProviderRowId: reason === "no_provider" ? null : lastProviderRowId,
 		lastErrorMessage: reason === "no_provider" ? null : lastErrorMessage,
 		lastErrorCode: reason === "no_provider" ? null : lastErrorCode,
 		latencyMs: now() - startedAt,
@@ -260,6 +268,7 @@ export async function runWebSearchChain(
 
 		attemptedCount += 1;
 		lastProviderId = provider.provider;
+		lastProviderRowId = provider.id;
 		try {
 			const hits = await adapter.search(
 				{ ...request, signal: budgetSignal(deps.signal, remainingMs) },
