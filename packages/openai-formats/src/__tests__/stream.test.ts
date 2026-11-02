@@ -713,6 +713,27 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 		expect(types).toContain("message_stop");
 	});
 
+	it("emits nothing terminal when the body closes before any valid chunk", async () => {
+		// Transport died before a single parseable chunk: message_start was never
+		// sent, so a message_delta/message_stop here would make a broken stream
+		// look like a completed empty answer.
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode("data: {not json\n\n"));
+				controller.close();
+			},
+		});
+		const upstream = new Response(body, {
+			headers: { "content-type": "text/event-stream" },
+		});
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const types = events.map(parseEventData).map((d) => d.type);
+		expect(types).not.toContain("message_delta");
+		expect(types).not.toContain("message_stop");
+	});
+
 	it("finishes the message on flush when no content block ever opened", async () => {
 		// Only empty content, then the body closes with no [DONE]. Nothing was
 		// opened, so no block may be stopped — but the message must still end.

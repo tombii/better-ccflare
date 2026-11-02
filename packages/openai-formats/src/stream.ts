@@ -748,10 +748,13 @@ export function transformStreamingResponse(
 						context.cacheCreationInputTokens,
 						context.thinkingBlockIndex,
 					);
-				} else {
+				} else if (context.hasSentStart) {
 					// Same case as the [DONE] handler: no block ever opened (only
 					// empty content), so finish the message without stopping a
 					// nonexistent block rather than leaving the client hanging.
+					// Gated on hasSentStart: if the body closed before ANY parseable
+					// chunk, message_start was never sent, and terminal events here
+					// would make an interrupted response look like a completed one.
 					log.warn(
 						"Stream terminated without [DONE] — no content block opened, finishing message",
 					);
