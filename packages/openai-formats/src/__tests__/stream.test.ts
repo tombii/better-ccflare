@@ -713,6 +713,42 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 		expect(types).toContain("message_stop");
 	});
 
+	it("finishes the message on flush when no content block ever opened", async () => {
+		// Only empty content, then the body closes with no [DONE]. Nothing was
+		// opened, so no block may be stopped — but the message must still end.
+		const encoder = new TextEncoder();
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const content of ["", []]) {
+					controller.enqueue(
+						encoder.encode(
+							`data: ${JSON.stringify({
+								id: "c1",
+								model: "zai-glm-5-3-flash",
+								choices: [{ index: 0, delta: { content }, finish_reason: null }],
+							})}\n\n`,
+						),
+					);
+				}
+				controller.close(); // close without [DONE]
+			},
+		});
+		const upstream = new Response(body, {
+			headers: { "content-type": "text/event-stream" },
+		});
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		expect(
+			events.filter((e) => e.event === "content_block_stop"),
+		).toHaveLength(0);
+		const data = events.map(parseEventData);
+		expect(data.find((d) => d.type === "message_delta")?.delta.stop_reason).toBe(
+			"end_turn",
+		);
+		expect(data.find((d) => d.type === "message_stop")).toBeDefined();
+	});
+
 	it("emits buffered tool call JSON on flush without [DONE]", async () => {
 		const encoder = new TextEncoder();
 		const body = new ReadableStream<Uint8Array>({

@@ -748,6 +748,26 @@ export function transformStreamingResponse(
 						context.cacheCreationInputTokens,
 						context.thinkingBlockIndex,
 					);
+				} else {
+					// Same case as the [DONE] handler: no block ever opened (only
+					// empty content), so finish the message without stopping a
+					// nonexistent block rather than leaving the client hanging.
+					log.warn(
+						"Stream terminated without [DONE] — no content block opened, finishing message",
+					);
+					emitStreamEnd(
+						controller,
+						encoder,
+						context.contextWindowSize,
+						"end_turn",
+						context.promptTokens,
+						context.completionTokens,
+						null,
+						context.cacheReadInputTokens,
+						context.cacheCreationInputTokens,
+						undefined,
+						false,
+					);
 				}
 
 				streamContext = null;
