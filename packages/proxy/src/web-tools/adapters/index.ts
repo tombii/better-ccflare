@@ -8,17 +8,24 @@
 
 import type { SearchProviderId } from "@better-ccflare/types";
 import type { WebToolAdapterRegistry, WebToolSearchAdapter } from "../types";
+import { createBraveAdapter } from "./brave";
+import { createDeepSeekAdapter } from "./deepseek";
+import { createSerperAdapter } from "./serper";
 import { createTavilyAdapter } from "./tavily";
 
 const adapters: WebToolAdapterRegistry = {
 	tavily: createTavilyAdapter(),
+	deepseek: createDeepSeekAdapter(),
+	serper: createSerperAdapter(),
+	brave: createBraveAdapter(),
 };
 
 /**
  * Look up the adapter for a catalog provider id.
  *
- * Returns `undefined` for every id without an implementation (currently all
- * but `tavily`); callers must treat that as "skip this provider".
+ * Returns `undefined` for every id without an implementation (currently
+ * `exa`, `parallel` and `perplexity`); callers must treat that as "skip this
+ * provider".
  */
 export function getWebToolAdapter(
 	id: SearchProviderId,
