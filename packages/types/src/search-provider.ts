@@ -70,7 +70,7 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 		label: "Exa",
 		requiresKey: true,
 		docsUrl: "https://docs.exa.ai/reference/search",
-		implemented: false,
+		implemented: true,
 		extraConfigFields: [
 			{
 				key: "type",
@@ -86,7 +86,7 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 		label: "Parallel",
 		requiresKey: true,
 		docsUrl: "https://docs.parallel.ai/search-api/search-quickstart",
-		implemented: false,
+		implemented: true,
 		extraConfigFields: [],
 	},
 	{

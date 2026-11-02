@@ -211,12 +211,13 @@ describe("runWebSearchChain — provider selection", () => {
 	});
 
 	it("skips providers with no adapter (not yet implemented)", async () => {
+		// `exa` now has an adapter, so use a catalog id that still has none.
 		const { deps } = makeDeps([
 			makeProvider({
-				id: "exa",
-				provider: "exa",
-				label: "Exa",
-				apiKey: "key-exa",
+				id: "serper",
+				provider: "serper",
+				label: "Serper",
+				apiKey: "key-serper",
 			}),
 			makeProvider({ id: "tavily", label: "Tavily", apiKey: "key-tavily" }),
 		]);
