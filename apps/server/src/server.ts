@@ -1462,14 +1462,21 @@ export default async function startServer(options?: {
 		try {
 			const payloadDays = config.getDataRetentionDays();
 			const requestDays = config.getRequestRetentionDays();
-			const { removedRequests, removedPayloads } =
+			const { removedRequests, removedPayloads, removedWebToolCalls } =
 				await dbOps.cleanupOldRequests(
 					payloadDays * TIME_CONSTANTS.DAY,
 					requestDays * TIME_CONSTANTS.DAY,
+					// Search traces are metadata (what ran, who served it), so they
+					// follow the request window rather than the payload one.
+					requestDays * TIME_CONSTANTS.DAY,
 				);
-			if (removedRequests > 0 || removedPayloads > 0) {
+			if (
+				removedRequests > 0 ||
+				removedPayloads > 0 ||
+				removedWebToolCalls > 0
+			) {
 				log.info(
-					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
+					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads, ${removedWebToolCalls} web tool calls in ${Date.now() - startTime}ms`,
 				);
 				// Reclaim freed pages adaptively. incrementalVacuumAdaptive()
 				// scales reclaim with the current freelist: in steady state it

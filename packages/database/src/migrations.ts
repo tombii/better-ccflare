@@ -513,6 +513,13 @@ function createSearchProvidersTable(db: Database): void {
  *
  * `estimated_cost_usd` is a placeholder, always NULL today: nothing computes
  * or writes pricing. Cost modelling was deprioritised.
+ *
+ * `query_text` is deliberate, and is the one place this table stores prompt
+ * content. A search trace without its query cannot answer "what search ran",
+ * which is the table's whole purpose. It is retained on the request-metadata
+ * window (90 days by default) rather than the 1-day payload window: a query
+ * is closer to a requested URL than to a conversation body. Set
+ * REQUEST_RETENTION_DAYS lower if that trade is not acceptable.
  */
 function createWebToolCallsTable(db: Database): void {
 	db.run(`
