@@ -76,8 +76,14 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 				key: "type",
 				label: "Search type",
 				type: "select",
-				options: ["auto", "keyword", "neural", "fast"],
+				// Exa's current pricing/quality tiers. The legacy `keyword`,
+				// `neural` and `fast` names are still accepted by the API but
+				// the adapter only forwards these four, so offering the legacy
+				// ones in the UI would silently send `auto` instead.
+				options: ["auto", "lite", "deep-lite", "deep"],
 				defaultValue: "auto",
+				description:
+					"Quality/cost tier. `lite` is cheapest, `deep` the slowest.",
 			},
 		],
 	},
@@ -87,7 +93,25 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 		requiresKey: true,
 		docsUrl: "https://docs.parallel.ai/search-api/search-quickstart",
 		implemented: true,
-		extraConfigFields: [],
+		extraConfigFields: [
+			{
+				key: "mode",
+				label: "Mode",
+				type: "select",
+				options: ["turbo", "fast", "basic", "advanced"],
+				defaultValue: "basic",
+				description:
+					"Processing mode. `fast`/`turbo` are cheapest, `advanced` the most thorough.",
+			},
+			{
+				key: "objective",
+				label: "Objective",
+				type: "text",
+				placeholder: "What the search is for, e.g. 'current API docs'",
+				description:
+					"Guides result selection. Leave blank to search on the query alone.",
+			},
+		],
 	},
 	{
 		id: "deepseek",
