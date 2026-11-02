@@ -1482,6 +1482,33 @@ describe("transformStreamingResponse — delta.content as an array of blocks", (
 		expect(
 			events.filter((e) => e.event === "content_block_start"),
 		).toHaveLength(0);
+		// No block opened, so none may be stopped — but the message must still
+		// finish, or the client hangs waiting for message_delta/message_stop.
+		expect(events.filter((e) => e.event === "content_block_stop")).toHaveLength(
+			0,
+		);
+		const types = events.map(parseEventData).map((d) => d.type);
+		expect(types).toContain("message_delta");
+		expect(types).toContain("message_stop");
+	});
+
+	it("finishes a stream whose only content is empty blocks", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ role: "assistant", content: [] }),
+			chunk({ content: [{ type: "text", text: "" }] }),
+			chunk({ content: "" }, "stop"),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		expect(
+			events.filter((e) => e.event === "content_block_delta"),
+		).toHaveLength(0);
+		const data = events.map(parseEventData);
+		const messageDelta = data.find((d) => d.type === "message_delta");
+		expect(messageDelta.delta.stop_reason).toBe("end_turn");
+		expect(data.find((d) => d.type === "message_stop")).toBeDefined();
 	});
 
 	it("still handles plain string content (regression)", async () => {

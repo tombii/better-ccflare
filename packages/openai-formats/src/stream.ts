@@ -80,6 +80,8 @@ function emitToolCallJson(
  *   Pass null when stopReason is "end_turn" (text-only response).
  * @param endTurnBlockIndex - Anthropic block index to close when stopReason is "end_turn".
  *   May be a text block or a thinking block depending on the stream pattern.
+ * @param closesBlock - False when the stream never opened a content block, so
+ *   no `content_block_stop` must be emitted (the terminal delta still is).
  */
 function emitStreamEnd(
 	controller: TransformStreamDefaultController,
@@ -92,9 +94,11 @@ function emitStreamEnd(
 	cacheReadInputTokens: number,
 	cacheCreationInputTokens: number,
 	endTurnBlockIndex = 0,
+	closesBlock = true,
 ) {
-	// Send content_block_stop for all blocks
-	if (toolCallBlockIndices) {
+	// Send content_block_stop for all blocks. Skipped entirely when nothing was
+	// opened (see `closesBlock`); the terminal message events still go out.
+	if (closesBlock && toolCallBlockIndices) {
 		// Tool call blocks — use Anthropic block indices (not OpenAI tool_call indices)
 		for (const anthropicIdx of Object.values(toolCallBlockIndices)) {
 			const contentBlockStop = {
@@ -111,7 +115,7 @@ function emitStreamEnd(
 `),
 			);
 		}
-	} else if (stopReason === "end_turn") {
+	} else if (closesBlock && stopReason === "end_turn") {
 		// Text or thinking block — use the assigned Anthropic block index
 		const contentBlockStop = {
 			type: "content_block_stop",
@@ -324,6 +328,27 @@ export function transformStreamingResponse(
 									context.cacheReadInputTokens,
 									context.cacheCreationInputTokens,
 									context.thinkingBlockIndex,
+								);
+							} else {
+								// No content block ever opened: the stream carried only empty
+								// content (`content: ""`, `content: []`, or empty text blocks),
+								// which providers such as Mistral/GLM send on the final chunk.
+								// Still finish the message so the client gets message_delta and
+								// message_stop instead of a message_start with no terminator.
+								// emitStreamEnd's block-stop is skipped via `closesBlock=false`
+								// because there is no open block to close at index 0.
+								emitStreamEnd(
+									controller,
+									encoder,
+									context.contextWindowSize,
+									"end_turn",
+									context.promptTokens,
+									context.completionTokens,
+									null,
+									context.cacheReadInputTokens,
+									context.cacheCreationInputTokens,
+									undefined,
+									false,
 								);
 							}
 
