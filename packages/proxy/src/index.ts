@@ -119,6 +119,8 @@ export {
 	truncateWalAfterIntegrityCheck,
 	truncateWalQuietly,
 } from "./wal-truncate";
+export { getWebToolAdapter } from "./web-tools/adapters";
+export { TAVILY_SEARCH_URL } from "./web-tools/adapters/tavily";
 export type {
 	ChunkMessage,
 	ControlMessage,

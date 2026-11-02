@@ -70,7 +70,7 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 		label: "Exa",
 		requiresKey: true,
 		docsUrl: "https://docs.exa.ai/reference/search",
-		implemented: false,
+		implemented: true,
 		extraConfigFields: [
 			{
 				key: "type",
@@ -86,7 +86,7 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 		label: "Parallel",
 		requiresKey: true,
 		docsUrl: "https://docs.parallel.ai/search-api/search-quickstart",
-		implemented: false,
+		implemented: true,
 		extraConfigFields: [],
 	},
 	{
@@ -94,7 +94,7 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 		label: "DeepSeek",
 		requiresKey: true,
 		docsUrl: "https://api-docs.deepseek.com/",
-		implemented: false,
+		implemented: true,
 		extraConfigFields: [],
 	},
 	{
@@ -102,7 +102,7 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 		label: "Serper",
 		requiresKey: true,
 		docsUrl: "https://serper.dev/playground",
-		implemented: false,
+		implemented: true,
 		extraConfigFields: [
 			{
 				key: "gl",
@@ -124,7 +124,7 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 		requiresKey: true,
 		docsUrl:
 			"https://api.search.brave.com/app/documentation/web-search/get-started",
-		implemented: false,
+		implemented: true,
 		extraConfigFields: [
 			{
 				key: "country",
