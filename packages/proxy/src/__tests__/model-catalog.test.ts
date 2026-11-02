@@ -776,9 +776,17 @@ describe("model-catalog", () => {
 			global.fetch = fetchMock as unknown as typeof fetch;
 
 			const ctx = makeCtx(accounts);
+			// Long interval on purpose. Recurring ticks are driven by
+			// registerHeartbeat, and that symbol is rewritten process-wide by
+			// any test file that mocks @better-ccflare/core (see
+			// cache-keepalive-scheduler.test.ts), so a test that depends on
+			// the background loop passes alone and fails in a full run. What
+			// this test is actually about is that a LATER refresh sees the
+			// newly eligible account, which the exposed manual tick proves
+			// without touching the mocked path.
 			const unregister = initModelCatalogRefresh(ctx, {
 				initialDelayMs: 5,
-				tickSeconds: 0.03,
+				tickSeconds: 3600,
 			});
 
 			// First tick: no eligible account, refresh fails; fetch never runs.
@@ -786,10 +794,10 @@ describe("model-catalog", () => {
 			expect(fetchMock).not.toHaveBeenCalled();
 			expect((await getModelCatalog()).source).toBe("fallback");
 
-			// A console account becomes available; a later tick should pick it
-			// up rather than waiting out the (already tiny) nominal interval.
+			// A console account becomes available; the next check should pick
+			// it up rather than waiting out the nominal interval.
 			accounts.push(makeAccount());
-			await new Promise((resolve) => setTimeout(resolve, 100));
+			await refreshModelCatalog(ctx);
 			unregister();
 
 			expect(fetchMock).toHaveBeenCalled();
