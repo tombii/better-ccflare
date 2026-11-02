@@ -1498,6 +1498,77 @@ describe("transformStreamingResponse — delta.content as an array of blocks", (
 			.filter((d) => d.delta?.type === "text_delta");
 		expect(textDeltas.map((d) => d.delta.text)).toEqual(["OK"]);
 	});
+
+	it("closes array-shaped thinking and text blocks before the first tool_use block", async () => {
+		// Block-array content (Mistral/GLM shape) followed by tool calls in the
+		// same stream: both open blocks must be closed before the tool_use block
+		// opens, and the tool_use block must take the next monotonic index (2).
+		const upstream = makeOpenAIStream([
+			chunk({ role: "assistant", content: [] }),
+			chunk({
+				content: [thinkingBlock([{ type: "text", text: "Need to search." }])],
+			}),
+			chunk({ content: [{ type: "text", text: "Let me check." }] }),
+			chunk({
+				tool_calls: [
+					{
+						index: 0,
+						id: "tc1",
+						type: "function",
+						function: { name: "search", arguments: '{"q":"x"}' },
+					},
+				],
+			}),
+			chunk({ content: "" }, "tool_calls"),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+
+		const starts = events
+			.filter((e) => e.event === "content_block_start")
+			.map(parseEventData);
+		expect(starts.map((s) => s.content_block.type)).toEqual([
+			"thinking",
+			"text",
+			"tool_use",
+		]);
+		expect(starts.map((s) => s.index)).toEqual([0, 1, 2]);
+
+		const thinkingStop = events.findIndex(
+			(e) => e.event === "content_block_stop" && parseEventData(e).index === 0,
+		);
+		const textStop = events.findIndex(
+			(e) => e.event === "content_block_stop" && parseEventData(e).index === 1,
+		);
+		const toolStart = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				parseEventData(e).content_block.type === "tool_use",
+		);
+		expect(thinkingStop).toBeGreaterThanOrEqual(0);
+		expect(textStop).toBeGreaterThanOrEqual(0);
+		expect(toolStart).toBeGreaterThanOrEqual(0);
+		expect(thinkingStop).toBeLessThan(toolStart);
+		expect(textStop).toBeLessThan(toolStart);
+
+		const thinkingDeltas = events
+			.map(parseEventData)
+			.filter((d) => d.delta?.type === "thinking_delta");
+		expect(thinkingDeltas.map((d) => d.delta.thinking)).toEqual([
+			"Need to search.",
+		]);
+		const textDeltas = events
+			.map(parseEventData)
+			.filter((d) => d.delta?.type === "text_delta");
+		expect(textDeltas.map((d) => d.delta.text)).toEqual(["Let me check."]);
+
+		const messageDelta = events
+			.map(parseEventData)
+			.find((d) => d.type === "message_delta");
+		expect(messageDelta.delta.stop_reason).toBe("tool_use");
+	});
 });
 
 // ── transformStreamingResponse — model extraction ────────────────────────────
