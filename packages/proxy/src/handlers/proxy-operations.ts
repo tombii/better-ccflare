@@ -1774,9 +1774,9 @@ export async function proxyWithAccount(
 			// account. The account is NOT benched: credits can come back at any
 			// moment via a top-up, or at a month rollover we cannot observe, so
 			// any bench length would be a guess that could lock the account out
-			// past a reset. The `null` below also short-circuits
-			// processProxyResponse, which would otherwise treat the non-429 as
-			// "not rate limited" and clear any existing bench on the account.
+			// past a reset. Returning `null` (fail over) also short-circuits
+			// processProxyResponse, which is exactly what we want here: the
+			// account keeps whatever state it already had.
 			//
 			// Matched on status alone, for every provider. 402 is not a status
 			// any supported upstream uses for anything other than "payment
