@@ -1,18 +1,28 @@
 /**
  * Brave Search implementation of {@link WebToolSearchAdapter}.
  *
- * `GET https://api.search.brave.com/res/v1/web/search` — the only adapter that
- * uses GET. Parameters ride in the query string (`q`, `count`, plus optional
- * `country`, `search_lang`, `freshness`) and the key travels in an
+ * Brave ships two products on the same `/res/v1` base, both covered by the
+ * same Search plan at the same $5/1k price:
+ *
+ *   - `GET .../res/v1/web/search` — results pages built for humans. Entries
+ *     under `web.results[]` carry a short meta-description `description`.
+ *   - `GET .../res/v1/llm/context` — the same index, but ranked and compiled
+ *     for machine consumption: pre-extracted page chunks under
+ *     `grounding.generic[].snippets[]`, with token/URL/snippet budgets the
+ *     caller sets.
+ *
+ * `extraConfig.endpoint` selects between them (`"web"` or `"llm-context"`).
+ * Anything unrecognised falls back to `web`, so existing rows keep the exact
+ * behaviour they had before the option existed.
+ *
+ * Both are GET; parameters ride in the query string and the key travels in an
  * `X-Subscription-Token` header, not `Authorization: Bearer`.
  *
- * Results are nested under `web.results[]`. Brave is snippet-only — there is
- * no extracted page text.
- *
- * Brave has no include/exclude domain parameters, so Anthropic's
- * `allowed_domains` / `blocked_domains` are applied as a POST-FILTER over the
- * returned hits. That can only narrow what the provider already returned; it
- * cannot improve recall when an allowed domain didn't rank on the first page.
+ * Brave has no include/exclude domain parameters on either endpoint, so
+ * Anthropic's `allowed_domains` / `blocked_domains` are applied as a
+ * POST-FILTER over the returned hits. That can only narrow what the provider
+ * already returned; it cannot improve recall when an allowed domain didn't
+ * rank on the first page.
  *
  * The subscription token must never appear in an error message, log line or
  * health write.
@@ -27,6 +37,21 @@ import type {
 
 export const BRAVE_SEARCH_URL =
 	"https://api.search.brave.com/res/v1/web/search";
+export const BRAVE_LLM_CONTEXT_URL =
+	"https://api.search.brave.com/res/v1/llm/context";
+
+/** `extraConfig.endpoint` value selecting the LLM Context product. */
+const LLM_CONTEXT_ENDPOINT = "llm-context";
+
+/**
+ * Token budget for one LLM Context call. The API defaults to 8,192 tokens
+ * across 20 URLs and 50 snippets; the responder truncates every snippet to
+ * 500 characters anyway, so the default would pay for content that is thrown
+ * away before the model ever sees it. 2,048 tokens is Brave's own figure for
+ * simple factual queries and comfortably covers `maxResults` hits at the
+ * responder's cap.
+ */
+const LLM_CONTEXT_MAX_TOKENS = 2048;
 
 /** Brave rejects `count` above 20. */
 const BRAVE_MAX_RESULTS_LIMIT = 20;
@@ -94,13 +119,19 @@ function stringOption(
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/** True when the operator selected the LLM Context product. */
+function usesLlmContext(config: WebToolAdapterConfig): boolean {
+	return stringOption(config, "endpoint") === LLM_CONTEXT_ENDPOINT;
+}
+
 /** Build the GET URL, adding optional parameters only when configured. */
 function buildSearchUrl(
 	query: string,
 	count: number,
 	config: WebToolAdapterConfig,
 ): string {
-	const url = new URL(BRAVE_SEARCH_URL);
+	const llmContext = usesLlmContext(config);
+	const url = new URL(llmContext ? BRAVE_LLM_CONTEXT_URL : BRAVE_SEARCH_URL);
 	url.searchParams.set("q", query);
 	url.searchParams.set("count", String(count));
 
@@ -108,10 +139,10 @@ function buildSearchUrl(
 	if (country) url.searchParams.set("country", country);
 	const searchLang = stringOption(config, "searchLang");
 	if (searchLang) url.searchParams.set("search_lang", searchLang);
-	// Brave only accepts the four documented freshness codes; anything else
-	// would make the whole request fail, so drop it.
+	// `freshness` is a web/search parameter; llm/context does not document it,
+	// so it is only sent on the endpoint that accepts it.
 	const freshness = stringOption(config, "freshness");
-	if (freshness && FRESHNESS_VALUES.has(freshness)) {
+	if (!llmContext && freshness && FRESHNESS_VALUES.has(freshness)) {
 		url.searchParams.set("freshness", freshness);
 	}
 	// The dashboard offers off/moderate/strict; Brave accepts exactly those and
@@ -119,6 +150,18 @@ function buildSearchUrl(
 	const safesearch = stringOption(config, "safesearch");
 	if (safesearch && SAFESEARCH_VALUES.has(safesearch)) {
 		url.searchParams.set("safesearch", safesearch);
+	}
+
+	// Pin the context budgets to what this request will actually keep. Without
+	// them Brave returns its 8,192-token / 20-URL / 50-snippet default and the
+	// responder truncates the surplus away.
+	if (llmContext) {
+		url.searchParams.set(
+			"maximum_number_of_tokens",
+			String(LLM_CONTEXT_MAX_TOKENS),
+		);
+		url.searchParams.set("maximum_number_of_urls", String(count));
+		url.searchParams.set("maximum_number_of_snippets", String(count));
 	}
 
 	return url.toString();
@@ -137,6 +180,92 @@ function redactUrl(url: string): string {
 	} catch {
 		return BRAVE_SEARCH_URL;
 	}
+}
+
+/**
+ * Decide whether a 200 body is an LLM Context payload and return its context
+ * items.
+ *
+ * An absent `grounding` is a valid EMPTY search (Brave omits containers it has
+ * nothing for), as is an explicit `grounding.generic: []`. A `grounding` that
+ * is not an object, or a `generic` that is not an array, is malformed and
+ * throws — treating it as empty would mark the provider healthy and stop the
+ * chain before a backup provider is tried.
+ */
+function contextEntries(data: unknown): unknown[] {
+	if (!isRecord(data)) {
+		throw new BraveSearchError(502, "Brave response is not a JSON object");
+	}
+	if (data.grounding === undefined) return [];
+	if (!isRecord(data.grounding)) {
+		throw new BraveSearchError(
+			502,
+			"Brave response has a malformed grounding object",
+		);
+	}
+	if (data.grounding.generic === undefined) return [];
+	if (!Array.isArray(data.grounding.generic)) {
+		throw new BraveSearchError(
+			502,
+			"Brave response is missing the grounding.generic array",
+		);
+	}
+	return data.grounding.generic;
+}
+
+/**
+ * The `sources` map keyed by URL, used to recover a title an entry omitted.
+ * Absent or malformed maps degrade to `{}` — they only ever supply a fallback
+ * title, so they are not worth failing a search over.
+ */
+function sourceTitles(data: unknown): Record<string, unknown> {
+	if (!isRecord(data) || !isRecord(data.sources)) return {};
+	return data.sources;
+}
+
+/** Map LLM Context's `grounding.generic` array onto the normalised hit shape. */
+function contextToHits(
+	data: unknown,
+	maxResults: number,
+	allowedDomains: string[] | undefined,
+	blockedDomains: string[] | undefined,
+): WebToolSearchHit[] {
+	const entries = contextEntries(data);
+	const sources = sourceTitles(data);
+
+	const hits: WebToolSearchHit[] = [];
+	for (const entry of entries) {
+		if (!isRecord(entry)) continue;
+		const url = typeof entry.url === "string" ? entry.url : "";
+		if (!url) continue;
+		if (!matchesDomainFilter(url, allowedDomains, blockedDomains)) continue;
+
+		// `snippets` are the query-relevant chunks Brave extracted from the
+		// page. Joining them with a blank line keeps the chunk boundaries
+		// visible to the model; the responder re-collapses whitespace and
+		// truncates to its own per-snippet cap.
+		const snippets = Array.isArray(entry.snippets)
+			? entry.snippets.filter(
+					(chunk): chunk is string =>
+						typeof chunk === "string" && chunk.trim().length > 0,
+				)
+			: [];
+		// A hit with no text is just a link the model could not have found on
+		// its own — the whole point of this endpoint is the chunks, so drop it.
+		if (snippets.length === 0) continue;
+
+		const source = sources[url];
+		const sourceTitle =
+			isRecord(source) && typeof source.title === "string" ? source.title : "";
+		const title =
+			typeof entry.title === "string" && entry.title
+				? entry.title
+				: sourceTitle;
+
+		hits.push({ title, url, snippet: snippets.join("\n\n") });
+	}
+
+	return hits.slice(0, clampMaxResults(maxResults));
 }
 
 /** Collapse and truncate a response body so error messages stay short. */
@@ -360,6 +489,14 @@ export function createBraveAdapter(): WebToolSearchAdapter {
 				config.apiKey,
 				request.signal,
 			);
+			if (usesLlmContext(config)) {
+				return contextToHits(
+					data,
+					maxResults,
+					request.allowedDomains,
+					request.blockedDomains,
+				);
+			}
 			return toHits(
 				data,
 				maxResults,
@@ -385,7 +522,11 @@ export function createBraveAdapter(): WebToolSearchAdapter {
 				);
 				const latencyMs = Date.now() - started;
 				try {
-					resultEntries(data);
+					if (usesLlmContext(config)) {
+						contextEntries(data);
+					} else {
+						resultEntries(data);
+					}
 				} catch {
 					return { ok: false, latencyMs, error: "unexpected response shape" };
 				}

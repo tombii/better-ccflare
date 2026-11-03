@@ -6,6 +6,7 @@
  */
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+	BRAVE_LLM_CONTEXT_URL,
 	BRAVE_SEARCH_URL,
 	BraveSearchError,
 	createBraveAdapter,
@@ -524,5 +525,220 @@ describe("brave adapter — safesearch", () => {
 		});
 
 		expect(new URL(calls[0].url).searchParams.has("safesearch")).toBe(false);
+	});
+});
+
+describe("brave adapter — llm/context endpoint", () => {
+	const llmConfig: WebToolAdapterConfig = {
+		...baseConfig,
+		extraConfig: { endpoint: "llm-context" },
+	};
+
+	/** A documented LLM Context payload: chunks under grounding.generic[]. */
+	function llmPayload(
+		entries: Array<Record<string, unknown>> = [
+			{
+				url: "https://example.com/a",
+				title: "Alpha",
+				snippets: ["first chunk", "second chunk"],
+			},
+			{
+				url: "https://example.com/b",
+				title: "Beta",
+				snippets: ["only chunk"],
+			},
+		],
+	): Record<string, unknown> {
+		return {
+			grounding: { generic: entries, map: [] },
+			sources: {
+				"https://example.com/a": {
+					title: "Alpha",
+					hostname: "example.com",
+				},
+			},
+		};
+	}
+
+	it("GETs the llm/context URL instead of web/search", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		await adapter.search(request(), llmConfig);
+
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+		expect(calls[0].url.startsWith(BRAVE_SEARCH_URL)).toBe(false);
+		expect(calls[0].init.method).toBe("GET");
+		expect(headersOf(calls[0]).get("X-Subscription-Token")).toBe(
+			"brave-canary-token-9876",
+		);
+	});
+
+	it("keeps web/search as the default when no endpoint is configured", async () => {
+		stubFetch(() => jsonResponse({ web: { results: [] } }));
+
+		await adapter.search(request(), baseConfig);
+
+		expect(calls[0].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+	});
+
+	it("falls back to web/search for an unrecognised endpoint value", async () => {
+		stubFetch(() => jsonResponse({ web: { results: [] } }));
+
+		await adapter.search(request(), {
+			...baseConfig,
+			extraConfig: { endpoint: "legacy-ai" },
+		});
+
+		expect(calls[0].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+	});
+
+	it("pins the token, URL and snippet budgets so we never pay for content we truncate", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		await adapter.search(request(), llmConfig);
+
+		const params = paramsOf(calls[0]);
+		expect(params.get("maximum_number_of_tokens")).toBe("2048");
+		expect(params.get("maximum_number_of_urls")).toBe("5");
+		expect(params.get("maximum_number_of_snippets")).toBe("5");
+	});
+
+	it("maps grounding.generic onto hits, joining chunks into the snippet", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		const hits = await adapter.search(request(), llmConfig);
+
+		expect(hits).toEqual([
+			{
+				title: "Alpha",
+				url: "https://example.com/a",
+				snippet: "first chunk\n\nsecond chunk",
+			},
+			{
+				title: "Beta",
+				url: "https://example.com/b",
+				snippet: "only chunk",
+			},
+		]);
+	});
+
+	it("falls back to the sources map for a title the entry omits", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				llmPayload([{ url: "https://example.com/a", snippets: ["chunk"] }]),
+			),
+		);
+
+		const hits = await adapter.search(request(), llmConfig);
+
+		expect(hits[0].title).toBe("Alpha");
+	});
+
+	it("drops entries with no URL and entries with no snippets", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				llmPayload([
+					{ title: "No URL", snippets: ["chunk"] },
+					{ url: "https://example.com/empty", title: "Empty" },
+					{ url: "https://example.com/ok", snippets: ["chunk"] },
+				]),
+			),
+		);
+
+		const hits = await adapter.search(request(), llmConfig);
+
+		expect(hits.map((h) => h.url)).toEqual(["https://example.com/ok"]);
+	});
+
+	it("returns at most maxResults hits", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				llmPayload(
+					Array.from({ length: 8 }, (_, i) => ({
+						url: `https://example.com/${i}`,
+						title: `T${i}`,
+						snippets: ["chunk"],
+					})),
+				),
+			),
+		);
+
+		const hits = await adapter.search(request({ maxResults: 3 }), llmConfig);
+
+		expect(hits).toHaveLength(3);
+	});
+
+	it("applies the domain post-filter to llm/context hits", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				llmPayload([
+					{ url: "https://docs.example.com/x", snippets: ["chunk"] },
+					{ url: "https://evil.test/y", snippets: ["chunk"] },
+				]),
+			),
+		);
+
+		const hits = await adapter.search(
+			request({ allowedDomains: ["example.com"] }),
+			llmConfig,
+		);
+
+		expect(hits.map((h) => h.url)).toEqual(["https://docs.example.com/x"]);
+	});
+
+	it("returns [] when grounding is absent (a valid empty search)", async () => {
+		stubFetch(() => jsonResponse({}));
+
+		expect(await adapter.search(request(), llmConfig)).toEqual([]);
+	});
+
+	it("keeps an explicit empty grounding.generic as a valid empty search", async () => {
+		stubFetch(() => jsonResponse({ grounding: { generic: [] } }));
+
+		expect(await adapter.search(request(), llmConfig)).toEqual([]);
+	});
+
+	it("throws when grounding is present but not an object", async () => {
+		stubFetch(() => jsonResponse({ grounding: "nope" }));
+
+		await expect(adapter.search(request(), llmConfig)).rejects.toBeInstanceOf(
+			BraveSearchError,
+		);
+	});
+
+	it("throws when grounding.generic is present but not an array", async () => {
+		stubFetch(() => jsonResponse({ grounding: { generic: {} } }));
+
+		await expect(adapter.search(request(), llmConfig)).rejects.toBeInstanceOf(
+			BraveSearchError,
+		);
+	});
+
+	it("probes the configured endpoint from test()", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		const result = await adapter.test(llmConfig);
+
+		expect(result.ok).toBe(true);
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+	});
+
+	it("forwards country, search_lang and safesearch on llm/context", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		await adapter.search(request(), {
+			...baseConfig,
+			extraConfig: {
+				endpoint: "llm-context",
+				country: "DE",
+				searchLang: "de",
+				safesearch: "strict",
+			},
+		});
+
+		const params = paramsOf(calls[0]);
+		expect(params.get("country")).toBe("DE");
+		expect(params.get("search_lang")).toBe("de");
+		expect(params.get("safesearch")).toBe("strict");
 	});
 });

@@ -151,6 +151,19 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 		implemented: true,
 		extraConfigFields: [
 			{
+				key: "endpoint",
+				label: "Endpoint",
+				type: "select",
+				// Two products, one plan, one price. `llm-context` returns
+				// pre-extracted page chunks instead of the short meta
+				// descriptions `web` returns — strictly better input for an
+				// agent's search tool, at the same $5/1k.
+				options: ["web", "llm-context"],
+				defaultValue: "web",
+				description:
+					"`web` returns human-oriented URLs and short snippets; `llm-context` returns model-ready page chunks from the same index.",
+			},
+			{
 				key: "country",
 				label: "Country",
 				type: "text",
