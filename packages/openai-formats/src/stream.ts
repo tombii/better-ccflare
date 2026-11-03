@@ -226,6 +226,7 @@ export function transformStreamingResponse(
 					extractedModel: options.fallbackModel || "unknown",
 					contextWindowSize: undefined,
 					hasSentStart: false,
+					hasSeenFinishReason: false,
 					hasSentContentBlockStart: false,
 					hasSentThinkingBlockStart: false,
 					thinkingBlockClosed: false,
@@ -363,6 +364,10 @@ export function transformStreamingResponse(
 						// Parse OpenAI chunk
 						try {
 							const data = JSON.parse(dataStr);
+
+							if (data.choices?.[0]?.finish_reason != null) {
+								context.hasSeenFinishReason = true;
+							}
 
 							// Extract model from first chunk
 							if (!context.hasStarted && data.model) {
@@ -751,13 +756,16 @@ export function transformStreamingResponse(
 						context.cacheCreationInputTokens,
 						context.thinkingBlockIndex,
 					);
-				} else if (context.hasSentStart) {
+				} else if (context.hasSentStart && context.hasSeenFinishReason) {
 					// Same case as the [DONE] handler: no block ever opened (only
 					// empty content), so finish the message without stopping a
 					// nonexistent block rather than leaving the client hanging.
-					// Gated on hasSentStart: if the body closed before ANY parseable
-					// chunk, message_start was never sent, and terminal events here
-					// would make an interrupted response look like a completed one.
+					// Gated on hasSeenFinishReason: without [DONE], only a chunk
+					// carrying finish_reason declares the completion over. A body that
+					// merely closed (role-only chunk then EOF) is a dropped connection,
+					// and terminating it here would record a truncated response as a
+					// successful empty one. Leaving it unterminated lets terminal
+					// recovery classify it as truncated.
 					log.warn(
 						"Stream terminated without [DONE] — no content block opened, finishing message",
 					);
