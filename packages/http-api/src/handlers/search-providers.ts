@@ -223,6 +223,8 @@ async function readJsonObject(req: Request): Promise<Record<string, unknown>> {
  * outbound call.
  */
 export async function runSearchProviderTest(row: {
+	/** `search_providers.id`; adapters use it for per-row memory, when given. */
+	id?: string;
 	provider: string;
 	apiKey: string | null;
 	maxResults?: number;
@@ -242,6 +244,7 @@ export async function runSearchProviderTest(row: {
 			apiKey: row.apiKey,
 			maxResults: row.maxResults ?? 5,
 			extraConfig: row.extraConfig ?? {},
+			rowId: row.id,
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -436,6 +439,7 @@ export function createSearchProviderHandlers(
 				// outbound call and never place it in the response.
 				const apiKey = await getApiKey(id);
 				const result = await runSearchProviderTest({
+					id: row.id,
 					provider: row.provider,
 					apiKey,
 					maxResults: row.maxResults,

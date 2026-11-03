@@ -96,6 +96,12 @@ export interface WebToolAdapterConfig {
 	apiKey: string | null;
 	maxResults: number;
 	extraConfig: Record<string, unknown>;
+	/**
+	 * `search_providers.id` of the row being used. Optional: adapters that
+	 * remember per-row facts (e.g. Brave's plan not including an endpoint) key
+	 * that memory on it, and simply skip the optimisation when it is absent.
+	 */
+	rowId?: string;
 }
 
 /**

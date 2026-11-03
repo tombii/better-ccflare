@@ -10,6 +10,7 @@ import {
 	BRAVE_SEARCH_URL,
 	BraveSearchError,
 	createBraveAdapter,
+	resetBravePlanMemory,
 } from "../adapters/brave";
 import type { WebToolAdapterConfig, WebToolSearchRequest } from "../types";
 
@@ -765,5 +766,170 @@ describe("brave adapter — llm/context endpoint", () => {
 		expect(params.get("country")).toBe("DE");
 		expect(params.get("search_lang")).toBe("de");
 		expect(params.get("safesearch")).toBe("strict");
+	});
+});
+
+describe("brave adapter — plan without LLM Context", () => {
+	/**
+	 * Brave's documented shape for a key whose plan lacks the endpoint:
+	 * HTTP 400 with `error.code = "OPTION_NOT_IN_PLAN"`. The legacy "Free AI"
+	 * plan returns exactly this for `/llm/context` while `/web/search` works.
+	 */
+	function optionNotInPlan(): Response {
+		return jsonResponse(
+			{
+				type: "ErrorResponse",
+				error: {
+					id: "probe",
+					status: 400,
+					detail: "The option is not included in the plan.",
+					meta: { component: "authentication" },
+					code: "OPTION_NOT_IN_PLAN",
+				},
+				time: 0,
+			},
+			400,
+		);
+	}
+
+	const ROW_ID = "row-brave-legacy";
+
+	/** Config for a row that asks for llm-context and carries its id. */
+	const llmConfig: WebToolAdapterConfig = {
+		...baseConfig,
+		extraConfig: {},
+		rowId: ROW_ID,
+	};
+
+	afterEach(() => {
+		resetBravePlanMemory();
+	});
+
+	it("falls back to web/search and returns its hits", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({
+						web: {
+							results: [
+								{ title: "W", url: "https://example.com/w", description: "d" },
+							],
+						},
+					}),
+		);
+
+		const hits = await adapter.search(request(), llmConfig);
+
+		expect(calls).toHaveLength(2);
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+		expect(calls[1].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+		expect(hits).toEqual([
+			{ title: "W", url: "https://example.com/w", snippet: "d" },
+		]);
+	});
+
+	it("remembers the answer, so later searches skip the doomed call", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ web: { results: [] } }),
+		);
+
+		await adapter.search(request(), llmConfig);
+		expect(calls).toHaveLength(2);
+
+		await adapter.search(request(), llmConfig);
+		// No second llm/context attempt: only the web/search call.
+		expect(calls).toHaveLength(3);
+		expect(calls[2].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+	});
+
+	it("keeps the memory per row: another row still tries llm-context", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ web: { results: [] } }),
+		);
+
+		await adapter.search(request(), llmConfig);
+		calls = [];
+		await adapter.search(request(), { ...llmConfig, rowId: "other-row" });
+
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+	});
+
+	it("does not fall back on a 400 that is not a plan problem", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				{ type: "ErrorResponse", error: { status: 400, code: "BAD_REQUEST" } },
+				400,
+			),
+		);
+
+		await expect(adapter.search(request(), llmConfig)).rejects.toBeInstanceOf(
+			BraveSearchError,
+		);
+		expect(calls).toHaveLength(1);
+	});
+
+	it("does not fall back on a 429 (rate limit is not a plan problem)", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				{ type: "ErrorResponse", error: { status: 429, code: "RATE_LIMITED" } },
+				429,
+			),
+		);
+
+		await expect(adapter.search(request(), llmConfig)).rejects.toBeInstanceOf(
+			BraveSearchError,
+		);
+		expect(calls).toHaveLength(1);
+	});
+
+	it("still throws when the web/search fallback itself fails", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ error: "nope" }, 500),
+		);
+
+		await expect(adapter.search(request(), llmConfig)).rejects.toBeInstanceOf(
+			BraveSearchError,
+		);
+		expect(calls).toHaveLength(2);
+	});
+
+	it("carries the code on the error so the chain can tell what failed", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				{
+					type: "ErrorResponse",
+					error: { status: 400, code: "OPTION_NOT_IN_PLAN" },
+				},
+				400,
+			),
+		);
+
+		// No rowId: the memory cannot be kept, so the error surfaces as-is.
+		const error = await adapter
+			.search(request(), { ...llmConfig, rowId: undefined })
+			.catch((e: unknown) => e);
+
+		expect(error).toBeInstanceOf(BraveSearchError);
+		expect((error as BraveSearchError).code).toBe("OPTION_NOT_IN_PLAN");
+	});
+
+	it("reports ok from test() on a legacy plan", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ web: { results: [] } }),
+		);
+
+		const result = await adapter.test(llmConfig);
+
+		expect(result.ok).toBe(true);
+		expect(result.error).toBeUndefined();
+		expect(calls[1].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
 	});
 });

@@ -276,6 +276,7 @@ export async function runWebSearchChain(
 					apiKey: provider.apiKey,
 					maxResults: provider.maxResults,
 					extraConfig: provider.extraConfig,
+					rowId: provider.id,
 				},
 			);
 

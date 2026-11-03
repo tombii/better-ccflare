@@ -161,7 +161,7 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 				options: ["llm-context", "web"],
 				defaultValue: "llm-context",
 				description:
-					"`web` returns human-oriented URLs and short snippets; `llm-context` returns model-ready page chunks from the same index.",
+					"`llm-context` returns model-ready page chunks; `web` returns human-oriented URLs and short snippets. Rows whose Brave plan lacks LLM Context (the legacy Free AI plan) fall back to `web` automatically.",
 			},
 			{
 				key: "country",

@@ -228,18 +228,41 @@ The provider list and field definitions live in `SEARCH_PROVIDER_CATALOG`
 
 #### Brave: `web` vs `llm-context`
 
-Brave sells two **separate products in the same Search plan at the same
-price** ([`$5` per 1,000 requests](https://api-dashboard.search.brave.com/documentation/pricing)).
-The adapter defaults to `llm-context`, because a `web_search` tool result is
-read by a model, not a person:
+Brave's API exposes two search products with the same `/res/v1` base, and the
+adapter prefers `llm-context` because a `web_search` tool result is read by a
+model, not a person:
 
 | `endpoint` | Brave endpoint | Returns |
 |------------|----------------|---------|
 | `llm-context` *(default)* | `/res/v1/llm/context` | Pre-extracted, query-relevant page chunks (`grounding.generic[].snippets[]`) |
 | `web` | `/res/v1/web/search` | Result pages for humans: URLs and short meta-description snippets |
 
-Set `"endpoint": "web"` only if you deliberately want the human-oriented
-results page. Any value other than `"web"` is treated as `llm-context`.
+Any value other than `"web"` is treated as `llm-context`.
+
+**Plans differ, and the adapter handles that itself.** LLM Context is not on
+every plan — the legacy **Free AI** plan includes web search but not LLM
+Context, and answers `/llm/context` with:
+
+```text
+HTTP 400 · "The option is not included in the plan." · code: OPTION_NOT_IN_PLAN
+```
+
+That is a plan fact, not a fault, so the adapter does **not** surface it as a
+search failure. On `OPTION_NOT_IN_PLAN` only, it retries the same query on
+`web/search` and remembers the answer for that provider row for the life of
+the process — subsequent searches go straight to `web/search` with no wasted
+call. Any other error (a real 400, a 429, a 5xx) still fails normally and
+falls through to the next provider.
+
+Consequences:
+
+- Rows on a legacy plan keep working with no configuration, served by
+  `web/search`.
+- The **Test** button reports `ok` on such a plan, because it exercises the
+  same fallback.
+- If the key is later upgraded, restart the proxy (or edit the row) to clear
+  the memory and start using `llm-context`.
+- Set `"endpoint": "web"` explicitly to skip the probe entirely.
 
 The adapter pins the LLM Context budgets (`maximum_number_of_tokens` = 2048,
 and the URL/snippet limits to the request's result count). Brave's defaults
