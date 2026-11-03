@@ -62,7 +62,16 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 
 	return (
 		<Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-			<DialogContent className="flex max-h-[90vh] max-w-lg flex-col overflow-hidden">
+			<DialogContent
+				className={
+					isEditMode
+						? // Slot rows carry provider badge + account name + model
+							// (+ routing summary): at max-w-lg the name was truncated
+							// away entirely on long ids.
+							"flex max-h-[90vh] w-[calc(100%-2rem)] max-w-4xl flex-col overflow-hidden"
+						: "flex max-h-[90vh] max-w-lg flex-col overflow-hidden"
+				}
+			>
 				<DialogHeader>
 					<DialogTitle>
 						{isEditMode ? "Edit Combo" : "Create Combo"}
