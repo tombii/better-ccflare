@@ -47,6 +47,11 @@
  *   subscription access turned off). Account-wide and not quota-related, but
  *   the account cannot serve anything, so it is benched and DOES trip the
  *   breaker.
+ * - `upstream_402_out_of_credits` — any provider's HTTP 402: the account's
+ *   money/quota upstream is exhausted (balance, included monthly usage, or
+ *   reseller credits). The account is never benched (credits can return at
+ *   any moment or at an unobservable rollover) and stays routable; the
+ *   request fails over. Does NOT trip the breaker.
  */
 import type { RateLimitReason } from "./account";
 
@@ -63,6 +68,7 @@ export const RATE_LIMIT_REASONS: readonly RateLimitReason[] = [
 	"windowless_429",
 	"org_permission_denied",
 	"upstream_5xx_server_error",
+	"upstream_402_out_of_credits",
 ] as const;
 
 export function isRateLimitReason(value: string): value is RateLimitReason {

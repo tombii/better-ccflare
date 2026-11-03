@@ -74,6 +74,17 @@ export function isAnthropicOutOfCredits(response: Response): boolean {
  */
 export const EXTRA_USAGE_EXHAUSTED_REASON = "extra_usage_exhausted";
 
+/**
+ * Any provider's HTTP 402: the account's money/quota upstream is exhausted —
+ * a Mistral balance or included monthly usage, or an OpenRouter/NanoGPT-style
+ * reseller's credit balance. The request itself is fine, so callers fail over
+ * to the next account instead of retrying; the account is never benched
+ * (credits can return at any moment via a top-up, or at a billing rollover
+ * we cannot observe) and the condition does not count as a circuit failure.
+ * Recorded on the request for dashboard visibility only.
+ */
+export const UPSTREAM_402_OUT_OF_CREDITS_REASON = "upstream_402_out_of_credits";
+
 export async function isAnthropicExtraUsageExhausted(
 	response: Response,
 ): Promise<boolean> {

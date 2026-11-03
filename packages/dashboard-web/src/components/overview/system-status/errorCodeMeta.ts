@@ -111,6 +111,19 @@ const KNOWN_ERROR_META: Record<
 			"stays in rotation and the request is passed through unchanged.",
 		severity: "error",
 	},
+	upstream_402_out_of_credits: {
+		title: "Out of credits upstream",
+		description:
+			"The upstream provider returned HTTP 402: this account's balance, " +
+			"included monthly usage or reseller credits are exhausted (e.g. " +
+			"Mistral, OpenRouter, NanoGPT). The account stays routable — it is " +
+			"not benched — and the request failed over to the next account.",
+		suggestion:
+			"Top up the account (or wait for the billing month to roll over). " +
+			"This is a funding state upstream, not a proxy failure: the account " +
+			"returns to service on its own as soon as credits are available.",
+		severity: "error",
+	},
 	org_permission_denied: {
 		title: "Organization forbids this account",
 		description:
