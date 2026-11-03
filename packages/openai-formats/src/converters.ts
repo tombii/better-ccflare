@@ -342,6 +342,36 @@ export function convertOpenAIResponseToAnthropic(
 				},
 			};
 		}
+		// Mistral-style rejection: `{object: "error", message: {detail: [...]}}`.
+		// Its `message` is an object of pydantic validation errors, so pass a
+		// flattened summary through rather than letting the object fall to the
+		// generic text (which would hide why the request was refused).
+		const nested = (openaiData as { message?: unknown }).message;
+		if (typeof nested === "object" && nested !== null) {
+			const detail = (nested as { detail?: unknown }).detail;
+			if (Array.isArray(detail) && detail.length > 0) {
+				const summary = detail
+					.map((entry: unknown) => {
+						if (typeof entry !== "object" || entry === null) return null;
+						const { loc, msg } = entry as { loc?: unknown; msg?: unknown };
+						const path = Array.isArray(loc) ? loc.join(".") : "";
+						const text = typeof msg === "string" ? msg : "";
+						if (!path && !text) return null;
+						return path && text ? `${path}: ${text}` : path || text;
+					})
+					.filter((line): line is string => line !== null)
+					.join("; ");
+				if (summary) {
+					return {
+						type: "error",
+						error: {
+							type: "invalid_request_error",
+							message: summary,
+						},
+					};
+				}
+			}
+		}
 		return {
 			type: "error",
 			error: {

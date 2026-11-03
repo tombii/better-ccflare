@@ -29,4 +29,28 @@ describe("convertOpenAIResponseToAnthropic — flat gateway rejection bodies", (
 			"Invalid response format from OpenAI provider",
 		);
 	});
+
+	it("flattens Mistral's nested pydantic detail into readable text", () => {
+		// Mistral 422 (captured live 2026-11-03). Its `message` is an object, so
+		// a client reached only when the cache_control retry also fails would
+		// otherwise see "[object Object]" / the generic invalid_response text.
+		const result = convertOpenAIResponseToAnthropic({
+			object: "error",
+			message: {
+				detail: [
+					{
+						type: "extra_forbidden",
+						loc: ["body", "thinking"],
+						msg: "Extra inputs are not permitted",
+					},
+				],
+			},
+		} as never);
+
+		expect(result.type).toBe("error");
+		expect(result.error?.type).toBe("invalid_request_error");
+		expect(result.error?.message).toContain("body.thinking");
+		expect(result.error?.message).toContain("Extra inputs are not permitted");
+		expect(result.error?.message).not.toContain("[object Object]");
+	});
 });
