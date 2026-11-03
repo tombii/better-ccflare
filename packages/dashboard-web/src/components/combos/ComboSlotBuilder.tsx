@@ -110,7 +110,7 @@ function SortableSlotRow({
 		<div
 			ref={setNodeRef}
 			style={style}
-			className="flex items-center gap-2 rounded-md border bg-card px-3 py-2"
+			className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border bg-card px-3 py-2"
 		>
 			<span className="w-4 shrink-0 text-center text-xs font-medium text-muted-foreground">
 				{index}
@@ -124,11 +124,19 @@ function SortableSlotRow({
 				<GripVertical className="h-4 w-4" />
 			</button>
 
-			<div className="flex min-w-0 flex-1 items-center gap-2">
+			{/* Wraps onto its own line on narrow screens only when it has to; the
+			    account is the key identity of a slot, so it wraps rather than
+			    truncating, while the model keeps its glyph budget. */}
+			<div className="flex min-w-0 flex-[1_1_12rem] items-center gap-2">
 				<Badge variant="secondary" className="shrink-0 text-xs">
 					{provider}
 				</Badge>
-				<span className="truncate text-sm font-medium">{accountName}</span>
+				<span
+					className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]"
+					title={accountName}
+				>
+					{accountName}
+				</span>
 			</div>
 
 			<SlotModelLabel model={slot.model} />
@@ -138,7 +146,7 @@ function SortableSlotRow({
 				size="sm"
 				onClick={onRemove}
 				disabled={isRemoving}
-				className="shrink-0 text-destructive hover:text-destructive"
+				className="ml-auto shrink-0 text-destructive hover:text-destructive"
 			>
 				<Trash2 className="h-4 w-4" />
 			</Button>
