@@ -264,6 +264,23 @@ describe("SearchProviderRow", () => {
 		expect(html).not.toContain("OK ·");
 	});
 
+	it("shows priority as plain text, with no input field at all", () => {
+		const html = renderToStaticMarkup(
+			<SearchProviderRow
+				provider={provider({ priority: 3 })}
+				onEdit={() => {}}
+			/>,
+		);
+		// A number field in the row looked like it could reorder the chain but
+		// its edits never saved. Nothing editable may live here — reordering is
+		// the Edit dialog's job.
+		expect(html).not.toContain('id="search-provider-priority-p1"');
+		expect(html).not.toContain('type="number"');
+		expect(html).toContain("Priority");
+		expect(html).toContain("3");
+		expect(html).toContain("lower = tried first");
+	});
+
 	it("shows the remaining cooldown time", () => {
 		const html = renderToStaticMarkup(
 			<SearchProviderRow
@@ -305,6 +322,23 @@ describe("ProviderDialog", () => {
 		expect(html).toContain("Safe search");
 		expect(html).not.toContain("show key");
 		expect(html).not.toContain("Show key");
+	});
+
+	it("keeps the edit dialog's priority as a number input", () => {
+		const html = renderToStaticMarkup(
+			<ProviderFormFields
+				form={{ ...emptyFormState(catalog), extraConfig: {} }}
+				onChange={() => {}}
+				catalog={catalog}
+				catalogEntry={catalog[0]}
+				isEdit={false}
+			/>,
+		);
+		// The dialog is where priorities are actually changeable, and it keeps
+		// the native number stepper.
+		expect(html).toContain('id="search-provider-priority"');
+		expect(html).toContain('type="number"');
+		expect(html).toContain('id="search-provider-max-results"');
 	});
 });
 
