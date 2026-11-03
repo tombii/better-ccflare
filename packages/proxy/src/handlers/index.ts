@@ -36,6 +36,11 @@ export {
 	resolveOverageStatus,
 } from "./model-capacity";
 export {
+	clearModelCooldownsForAccount,
+	isModelCooling,
+	markModelCooling,
+} from "./model-cooldown";
+export {
 	clearPendingRotation,
 	flushPendingRotation,
 	getPendingRotation,

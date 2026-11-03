@@ -10,6 +10,7 @@ import {
 	type ModelRouting,
 	ProviderError,
 	splitModelRouting,
+	stripModelRouting,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import { withSanitizedProxyHeaders } from "@better-ccflare/http-common";
@@ -47,8 +48,9 @@ import {
 import { forwardToClient as defaultForwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
 import { applyAccountRequestTransformer } from "./account-request-transformer";
-import { getXaiConvId } from "./account-selector";
+import { getComboSlotInfo, getXaiConvId } from "./account-selector";
 import { markFamilyExhausted } from "./model-capacity";
+import { markModelCooling } from "./model-cooldown";
 import { forwardObservedUpstream } from "./observed-upstream";
 import {
 	ERROR_MESSAGES,
@@ -1051,6 +1053,36 @@ export function systemSuspectScan(bodyText: string | undefined): string {
 	}
 }
 
+/**
+ * Whether this account has another combo slot, in the request's current
+ * combo, carrying a DIFFERENT model than `model`. Only then is a 429 on this
+ * slot safe to scope to the (account, model) pair instead of benching the
+ * account: the account still has a routable slot, and benching it would also
+ * block that slot. A passthrough slot (empty modelOverride) is treated as
+ * NOT different — it sends the request's own model, and the ambiguity
+ * resolves in favour of the existing, better-tested account-wide bench.
+ *
+ * `meta.comboName != null` is the authoritative "this attempt is combo-routed"
+ * signal, not the presence of a ComboSlotInfo: proxy.ts's step-10 combo
+ * fallback clears comboName before re-selecting with SessionStrategy, leaving
+ * a stale entry in the WeakMap that must not authorise the model-scoped branch.
+ */
+function comboHasSiblingModel(
+	meta: RequestMeta,
+	accountId: string,
+	model: string | null,
+): boolean {
+	const info = getComboSlotInfo(meta);
+	if (!info || meta.comboName == null) return false;
+	const normalizedModel = model ? stripModelRouting(model).trim() : "";
+	return info.slots.some(
+		(s) =>
+			s.accountId === accountId &&
+			s.modelOverride.trim().length > 0 &&
+			stripModelRouting(s.modelOverride).trim() !== normalizedModel,
+	);
+}
+
 export async function proxyWithAccount(
 	req: Request,
 	url: URL,
@@ -2039,14 +2071,15 @@ export async function proxyWithAccount(
 					return null;
 				}
 
-				log.warn(
-					`Account ${account.name} rate-limited (429), no model fallbacks — failing over to next account`,
-				);
 				// The provider's own read of this response outranks the usage-API
 				// marker and the default: it names the window that just refused
 				// the request. Providers that publish the window in the body
 				// (ZAI, CodeBuddy) get it parsed here; the body read is gated on
 				// a JSON error body inside the provider's parser.
+				//
+				// Hoisted above the combo branch below so a combo-routed 429 and
+				// the account-wide bench share one body read and one resolved
+				// deadline rather than reading the body twice.
 				const providerReset = await resolveProviderResetTime(
 					provider,
 					rawResponse,
@@ -2062,6 +2095,74 @@ export async function proxyWithAccount(
 					providerReset.resetTime,
 				);
 				const reason: RateLimitReason = "model_fallback_429";
+				// Shared by both exits below so the account-wide bench and the
+				// model-scoped cooldown cannot drift in the audit row they write.
+				const saveNoFallback429AuditRow = () => {
+					const responseTime = Date.now() - requestMeta.timestamp;
+					const modelRewrite = isModelRewrite(
+						requestMeta.originalModel,
+						requestMeta.appliedModel,
+					);
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.saveRequest(
+							crypto.randomUUID(),
+							req.method,
+							url.pathname,
+							account.id,
+							429,
+							false,
+							reason,
+							responseTime,
+							failoverAttempts,
+							requestedModel ? { model: requestedModel } : undefined,
+							requestMeta.agentUsed ?? undefined,
+							apiKeyId ?? undefined,
+							apiKeyName ?? undefined,
+							requestMeta.project ?? null,
+							undefined,
+							requestMeta.comboName ?? null,
+							modelRewrite ? (requestMeta.originalModel ?? null) : null,
+							modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+							requestMeta.projectAttributionSource ?? null,
+							requestMeta.agentAttributionSource ?? null,
+							null,
+							requestMeta.clientSessionId ?? null,
+							gatewayHint.requestClass,
+							gatewayHint.agentType,
+							gatewayHint.prevToolDurations,
+							gatewayHint.compaction,
+							gatewayHint.contextCompacted,
+						),
+					);
+				};
+
+				// ── combo slot 429: model-scoped, NOT account-wide ──
+				// A combo routes one request through ordered (account, model)
+				// slots, so a 429 from ONE slot says nothing about the account's
+				// other slots. When the combo definition proves this account
+				// still has a different-model slot to route to, cool only the
+				// (account, model) pair and fail over: benching the account
+				// would also block that healthy slot (the CodeBuddy free
+				// deepseek-v4.1-flash vs paid deepseek-v4.1-flash-sg incident).
+				// `applyRateLimitCooldown` is deliberately NOT called here — no
+				// consecutive_rate_limits bump, no RateLimitError, no
+				// circuit-breaker failure, all correct for a model-scoped reason.
+				if (
+					requestedModel != null &&
+					comboHasSiblingModel(requestMeta, account.id, requestedModel)
+				) {
+					markModelCooling(account.id, requestedModel, cooldown.until);
+					log.warn(
+						`Account ${account.name} 429 on combo slot model "${requestedModel}" — model-scoped cooldown until ${new Date(cooldown.until).toISOString()} (account NOT benched: it has another combo slot with a different model)`,
+					);
+					saveNoFallback429AuditRow();
+					cancelDiscardedResponseBody(rawResponse);
+					return null;
+				}
+
+				log.warn(
+					`Account ${account.name} rate-limited (429), no model fallbacks — failing over to next account`,
+				);
 				applyRateLimitCooldown(
 					account,
 					{
@@ -2073,42 +2174,7 @@ export async function proxyWithAccount(
 					},
 					ctx,
 				);
-				const responseTime = Date.now() - requestMeta.timestamp;
-				const modelRewrite = isModelRewrite(
-					requestMeta.originalModel,
-					requestMeta.appliedModel,
-				);
-				ctx.asyncWriter.enqueue(() =>
-					ctx.dbOps.saveRequest(
-						crypto.randomUUID(),
-						req.method,
-						url.pathname,
-						account.id,
-						429,
-						false,
-						reason,
-						responseTime,
-						failoverAttempts,
-						requestedModel ? { model: requestedModel } : undefined,
-						requestMeta.agentUsed ?? undefined,
-						apiKeyId ?? undefined,
-						apiKeyName ?? undefined,
-						requestMeta.project ?? null,
-						undefined,
-						requestMeta.comboName ?? null,
-						modelRewrite ? (requestMeta.originalModel ?? null) : null,
-						modelRewrite ? (requestMeta.appliedModel ?? null) : null,
-						requestMeta.projectAttributionSource ?? null,
-						requestMeta.agentAttributionSource ?? null,
-						null,
-						requestMeta.clientSessionId ?? null,
-						gatewayHint.requestClass,
-						gatewayHint.agentType,
-						gatewayHint.prevToolDurations,
-						gatewayHint.compaction,
-						gatewayHint.contextCompacted,
-					),
-				);
+				saveNoFallback429AuditRow();
 				cancelDiscardedResponseBody(rawResponse);
 				return null;
 			}

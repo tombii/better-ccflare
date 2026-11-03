@@ -123,13 +123,15 @@ describe("issue #273 — Group A: helper contract", () => {
 // the same branch's over-cap path: a terminal rejection whose body exceeds
 // the bounded-read cap is discarded rather than buffered for a replay. 21 is
 // the upstream_402_out_of_credits branch, which discards the 402 before
-// failing over.
+// failing over. 22 is the combo model-scoped 429 branch: a combo-routed 429
+// that cools only its (account, model) pair still discards the response
+// before failing over to the next slot.
 // ---------------------------------------------------------------------------
 
-const EXPECTED_SITE_COUNT = 21;
+const EXPECTED_SITE_COUNT = 22;
 
 describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", () => {
-	it("proxy-operations.ts has exactly 21 cancelDiscardedResponseBody call sites", () => {
+	it("proxy-operations.ts has exactly 22 cancelDiscardedResponseBody call sites", () => {
 		const source = readFileSync(
 			"packages/proxy/src/handlers/proxy-operations.ts",
 			"utf-8",

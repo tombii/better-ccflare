@@ -25,6 +25,7 @@ import {
 	isAccountExhaustedForModel,
 	type ModelFamilyExhaustionInfo,
 } from "./model-capacity";
+import { isModelCooling } from "./model-cooldown";
 import { isInternalProbe, type ProxyContext } from "./proxy-types";
 
 const log = new Logger("AccountSelector");
@@ -790,6 +791,18 @@ export async function selectAccountsForRequest(
 								usageSnapshot(account) ?? undefined,
 							)
 						) {
+							continue;
+						}
+
+						// A 429 only cools the (account, model) pair it hit — the
+						// account stays eligible for its other combo slots. The slot's
+						// effective upstream model is the one that cools: a passthrough
+						// slot (empty model) sends the request's own model.
+						const slotModel = slot.model?.trim() ? slot.model : model;
+						if (slotModel && isModelCooling(account.id, slotModel)) {
+							log.info(
+								`Combo slot ${slot.account_id}/${slotModel} for ${combo.name} is in a model-scoped cooldown — skipping (account stays eligible for its other slots)`,
+							);
 							continue;
 						}
 

@@ -49,6 +49,7 @@ export {
 	clearAccountRefreshCache,
 	clearAutoRefreshTrackingForAccount,
 	clearFamilyExhaustionForAccount,
+	clearModelCooldownsForAccount,
 	clearPendingRotation,
 	computeReauthDeadline,
 	createUsageThrottledResponse,
