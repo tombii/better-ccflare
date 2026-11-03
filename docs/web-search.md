@@ -241,23 +241,29 @@ Any value other than `"web"` is treated as `llm-context`.
 
 **Plans differ, and the adapter handles that itself.** LLM Context is not on
 every plan — the legacy **Free AI** plan includes web search but not LLM
-Context, and answers `/llm/context` with:
+Context, and answers `/llm/context` in one of two ways:
 
 ```text
 HTTP 400 · "The option is not included in the plan." · code: OPTION_NOT_IN_PLAN
 ```
 
-That is a plan fact, not a fault, so the adapter does **not** surface it as a
-search failure. On `OPTION_NOT_IN_PLAN` only, it retries the same query on
-`web/search` and remembers the answer for that provider row for the life of
-the process — subsequent searches go straight to `web/search` with no wasted
-call. Any other error (a real 400, a 429, a 5xx) still fails normally and
-falls through to the next provider.
+```text
+HTTP 429 · detail: "Request rate limit exceeded for plan" · meta.plan: "Free AI"
+```
+
+The 429 is not throttling, despite the status: the plan is not entitled to the
+endpoint, so the answer never changes. Both are plan facts, not faults, so the
+adapter does **not** surface either as a search failure. It retries the same
+query on `web/search` and remembers the answer for that provider row for the
+life of the process — subsequent searches go straight to `web/search` with no
+wasted call. Any other error (a real 400, a plain 429 from `web/search`, a
+5xx) still fails normally and falls through to the next provider.
 
 Consequences:
 
 - Rows on a legacy plan keep working with no configuration, served by
-  `web/search`.
+  `web/search` — even though the row is configured for `llm-context`, and
+  whether the plan refuses it with the 400 or the 429.
 - The **Test** button reports `ok` on such a plan, because it exercises the
   same fallback.
 - The memory is scoped to the credential, not just the row: replacing the
