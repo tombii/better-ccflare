@@ -87,10 +87,27 @@ export class BraveSearchError extends Error {
 		super(message);
 		this.name = "BraveSearchError";
 	}
+
+	/**
+	 * Brave reporting that the key's *plan* will not serve this endpoint (see
+	 * {@link PLAN_EXCLUDES_ENDPOINT_DETAIL}), set by {@link getSearch}. Only the
+	 * adapter reads it. It is not really a quota event: the plan simply has no
+	 * LLM Context access, so waiting never helps.
+	 */
+	planExcludesEndpoint = false;
 }
 
 /** Brave's code for "your plan does not include this endpoint". */
 const OPTION_NOT_IN_PLAN = "OPTION_NOT_IN_PLAN";
+
+/**
+ * Brave's wording when a plan allows web search but not this endpoint. It
+ * arrives as HTTP 429 with "Request rate limit exceeded for plan" — the status
+ * makes it look like throttling, but it is the plan's access level showing
+ * through, and it does not clear with time. See
+ * {@link getSearchWithPlanFallback}.
+ */
+const PLAN_EXCLUDES_ENDPOINT_DETAIL = /rate limit exceeded for plan/i;
 
 /**
  * Credentials whose plan turned out not to include LLM Context. Brave bills
@@ -329,7 +346,7 @@ function contextToHits(
  */
 async function readErrorDetail(
 	response: Response,
-): Promise<{ excerpt: string; code?: string }> {
+): Promise<{ excerpt: string; code?: string; detail?: string }> {
 	let text: string;
 	try {
 		text = await response.text();
@@ -343,16 +360,19 @@ async function readErrorDetail(
 			? `${collapsed.slice(0, ERROR_BODY_EXCERPT_CHARS)}…`
 			: collapsed;
 	let code: string | undefined;
+	let detail: string | undefined;
 	try {
 		const parsed: unknown = JSON.parse(text);
 		if (isRecord(parsed) && isRecord(parsed.error)) {
 			const raw = parsed.error.code;
 			if (typeof raw === "string" && raw) code = raw;
+			const rawDetail = parsed.error.detail;
+			if (typeof rawDetail === "string" && rawDetail) detail = rawDetail;
 		}
 	} catch {
 		// Not JSON — the excerpt is all we have.
 	}
-	return { excerpt, code };
+	return { excerpt, code, detail };
 }
 
 /**
@@ -409,12 +429,17 @@ async function getSearch(
 	}
 
 	if (!response.ok) {
-		const { excerpt, code } = await readErrorDetail(response);
-		throw new BraveSearchError(
+		const { excerpt, code, detail } = await readErrorDetail(response);
+		const error = new BraveSearchError(
 			response.status,
 			code,
 			`Brave search failed with status ${response.status}${excerpt ? `: ${excerpt}` : ""}`,
 		);
+		error.planExcludesEndpoint =
+			response.status === 429 &&
+			(detail ?? "").length > 0 &&
+			PLAN_EXCLUDES_ENDPOINT_DETAIL.test(detail ?? "");
+		throw error;
 	}
 
 	return response.json();
@@ -557,17 +582,23 @@ function errorMessage(error: unknown): string {
  * Run one search, falling back to `web/search` when the key's Brave plan does
  * not include LLM Context.
  *
- * Plans are per key, and the legacy "Free AI" plan has web search but not LLM
- * Context — its `llm/context` call fails with HTTP 400 `OPTION_NOT_IN_PLAN`.
- * That is a configuration fact, not a transient fault, so it must not surface
- * as a search failure (the chain would cool the provider down and fall through
- * to another provider for every search). Instead the row is remembered in
- * {@link plansWithoutLlmContext} and served from `web/search`, which every
- * plan includes.
+ * Plans are per key, and some plans (notably "Free AI") have web search but no
+ * LLM Context access. Brave reports that in two shapes:
  *
- * Only that specific code triggers the fallback: a genuine 400 (bad query) or
- * a 429 must still fail, because retrying a different endpoint would either
- * repeat the same error or spend quota learning nothing.
+ *   - HTTP 400 `OPTION_NOT_IN_PLAN` — the endpoint is explicitly not offered;
+ *   - HTTP 429 "Request rate limit exceeded for plan" — not throttling, despite
+ *     the status: the plan is simply not entitled to this endpoint, so it never
+ *     clears while the endpoint stays LLM Context.
+ *
+ * Both are facts about the key's plan, not transient faults, so neither must
+ * surface as a search failure (the chain would cool the provider down and fall
+ * through to another provider for every search). Instead the row is remembered
+ * in {@link plansWithoutLlmContext} and the search is served from `web/search`,
+ * so the downgrade is invisible to the caller.
+ *
+ * Only those two failures trigger it. A 429 on a `web/search` call, or a
+ * genuine 400 (bad query), is passed through untouched: retrying a different
+ * endpoint would only repeat the same error.
  *
  * @returns The payload, and whether it came from the LLM Context endpoint.
  */
@@ -605,12 +636,11 @@ async function getSearchWithPlanFallback(
 			llmContext: true,
 		};
 	} catch (error) {
-		if (
-			!(error instanceof BraveSearchError) ||
-			error.code !== OPTION_NOT_IN_PLAN
-		) {
-			throw error;
-		}
+		const planExcludesLlmContext =
+			error instanceof BraveSearchError && error.code === OPTION_NOT_IN_PLAN;
+		const planExcludesEndpoint =
+			error instanceof BraveSearchError && error.planExcludesEndpoint;
+		if (!planExcludesLlmContext && !planExcludesEndpoint) throw error;
 		if (memoryKey) plansWithoutLlmContext.add(memoryKey);
 		return {
 			data: await getSearch(

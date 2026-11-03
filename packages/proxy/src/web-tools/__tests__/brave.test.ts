@@ -934,6 +934,109 @@ describe("brave adapter — plan without LLM Context", () => {
 	});
 });
 
+describe("brave adapter — plan without LLM Context, reported as 429", () => {
+	/** Brave's 429 for a plan that has no LLM Context access (Free AI). */
+	function planExcludesEndpoint(): Response {
+		return jsonResponse(
+			{
+				type: "ErrorResponse",
+				error: {
+					id: "7307041c-4966-46c1-a44b-857ef023e331",
+					status: 429,
+					detail: "Request rate limit exceeded for plan",
+					meta: { plan: "Free AI", rate_limit: 1, rate_current: 1 },
+				},
+			},
+			429,
+		);
+	}
+
+	const llmConfig: WebToolAdapterConfig = {
+		...baseConfig,
+		// No `endpoint` key: this is the default llm-context row.
+		extraConfig: {},
+		rowId: "row-brave-free",
+	};
+
+	/** A different row, so the answer remembered for {@link llmConfig} cannot leak. */
+	const otherConfig: WebToolAdapterConfig = {
+		...llmConfig,
+		rowId: "row-brave-2",
+	};
+
+	afterEach(() => {
+		resetBravePlanMemory();
+	});
+
+	it("falls back when llm-context is refused with a 429", async () => {
+		// This plan has no LLM Context access; `web/search` works.
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? planExcludesEndpoint()
+				: jsonResponse({
+						web: {
+							results: [{ title: "W", url: "https://example.com/w" }],
+						},
+					}),
+		);
+
+		const hits = await adapter.search(request(), llmConfig);
+
+		expect(calls).toHaveLength(2);
+		expect(calls[1].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+		expect(hits).toEqual([{ title: "W", url: "https://example.com/w" }]);
+	});
+
+	it("remembers the plan answer, so later searches skip llm-context", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? planExcludesEndpoint()
+				: jsonResponse({ web: { results: [] } }),
+		);
+
+		await adapter.search(request(), llmConfig);
+		expect(calls).toHaveLength(2);
+
+		await adapter.search(request(), llmConfig);
+		expect(calls).toHaveLength(3);
+		expect(calls[2].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+	});
+
+	it("passes the 429 through when web/search is what failed", async () => {
+		stubFetch(() => planExcludesEndpoint());
+
+		await expect(
+			adapter.search(request(), {
+				...llmConfig,
+				extraConfig: { endpoint: "web" },
+			}),
+		).rejects.toBeInstanceOf(BraveSearchError);
+		expect(calls).toHaveLength(1);
+	});
+
+	it("reports ok from test() when llm-context is refused with a 429", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? planExcludesEndpoint()
+				: jsonResponse({ web: { results: [] } }),
+		);
+
+		const result = await adapter.test(otherConfig);
+
+		expect(result.ok).toBe(true);
+		expect(calls[1].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+	});
+
+	it("still leaves the 429 to the chain when web/search fails too", async () => {
+		stubFetch(() => planExcludesEndpoint());
+
+		await expect(adapter.search(request(), llmConfig)).rejects.toBeInstanceOf(
+			BraveSearchError,
+		);
+		expect(calls).toHaveLength(2);
+	});
+});
+
 describe("brave adapter — replacing the key rescopes the plan memory", () => {
 	function optionNotInPlan(): Response {
 		return jsonResponse(
