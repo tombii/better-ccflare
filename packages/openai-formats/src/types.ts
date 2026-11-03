@@ -154,6 +154,12 @@ export interface TransformStreamContext {
 	extractedModel: string;
 	contextWindowSize?: number;
 	hasSentStart: boolean;
+	/**
+	 * True once any upstream chunk carried a non-empty `choices[0].finish_reason`.
+	 * Declares that the upstream considers the completion finished, so a stream
+	 * that ends without `[DONE]` may still be terminated (see the flush branch).
+	 */
+	hasSeenFinishReason: boolean;
 	hasSentContentBlockStart: boolean;
 	hasSentThinkingBlockStart: boolean;
 	thinkingBlockClosed: boolean;

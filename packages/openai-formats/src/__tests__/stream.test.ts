@@ -736,18 +736,24 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 
 	it("finishes the message on flush when no content block ever opened", async () => {
 		// Only empty content, then the body closes with no [DONE]. Nothing was
-		// opened, so no block may be stopped — but the message must still end.
+		// opened, so no block may be stopped — but the message must still end
+		// because the final chunk declared completion via finish_reason.
 		const encoder = new TextEncoder();
 		const body = new ReadableStream<Uint8Array>({
 			start(controller) {
-				for (const content of ["", []]) {
+				const contents = ["", []];
+				for (const [i, content] of contents.entries()) {
 					controller.enqueue(
 						encoder.encode(
 							`data: ${JSON.stringify({
 								id: "c1",
 								model: "zai-glm-5-3-flash",
 								choices: [
-									{ index: 0, delta: { content }, finish_reason: null },
+									{
+										index: 0,
+										delta: { content },
+										finish_reason: i === contents.length - 1 ? "stop" : null,
+									},
 								],
 							})}\n\n`,
 						),
@@ -759,6 +765,95 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 		const upstream = new Response(body, {
 			headers: { "content-type": "text/event-stream" },
 		});
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		expect(events.filter((e) => e.event === "content_block_stop")).toHaveLength(
+			0,
+		);
+		const data = events.map(parseEventData);
+		expect(
+			data.find((d) => d.type === "message_delta")?.delta.stop_reason,
+		).toBe("end_turn");
+		expect(data.find((d) => d.type === "message_stop")).toBeDefined();
+	});
+
+	it("does not finish the message on flush when no finish_reason was seen", async () => {
+		// A role-only chunk followed by EOF: the connection died before the
+		// upstream declared completion. Emitting message_stop here would make the
+		// proxy record a truncated empty response as a successful completion, so
+		// the stream must stay unterminated for terminal recovery to classify it
+		// as truncated.
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "gpt-4",
+				choices: [
+					{
+						index: 0,
+						delta: { role: "assistant", content: "" },
+						finish_reason: null,
+					},
+				],
+			}),
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const types = events.map(parseEventData).map((d) => d.type);
+		expect(types).toContain("message_start");
+		expect(types).not.toContain("message_delta");
+		expect(types).not.toContain("message_stop");
+	});
+
+	it("treats an empty-string finish_reason as not finished", async () => {
+		// Some senders put `finish_reason: ""` on every chunk to mean "still
+		// generating". That is not a declaration of completion, so a dropped
+		// connection must still classify as truncated.
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "gpt-4",
+				choices: [
+					{
+						index: 0,
+						delta: { role: "assistant", content: "" },
+						finish_reason: "",
+					},
+				],
+			}),
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const types = events.map(parseEventData).map((d) => d.type);
+		expect(types).toContain("message_start");
+		expect(types).not.toContain("message_delta");
+		expect(types).not.toContain("message_stop");
+	});
+
+	it("finishes the message on flush when the upstream declared finish_reason", async () => {
+		// The GLM/Mistral shape from the hang fix: a final empty-content chunk
+		// carrying `finish_reason: "stop"`, then EOF with no [DONE]. Completion
+		// was declared, so the message must be finished rather than left hanging.
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "zai-glm-5-3-flash",
+				choices: [
+					{
+						index: 0,
+						delta: { role: "assistant", content: "" },
+						finish_reason: null,
+					},
+				],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "zai-glm-5-3-flash",
+				choices: [{ index: 0, delta: { content: "" }, finish_reason: "stop" }],
+			}),
+		]);
 		const events = parseSSEEvents(
 			await readStream(transformStreamingResponse(upstream).body),
 		);
