@@ -260,8 +260,9 @@ Consequences:
   `web/search`.
 - The **Test** button reports `ok` on such a plan, because it exercises the
   same fallback.
-- If the key is later upgraded, restart the proxy (or edit the row) to clear
-  the memory and start using `llm-context`.
+- The memory is scoped to the credential, not just the row: replacing the
+  API key starts a fresh answer, so a row whose new key includes LLM Context
+  uses it on the next search with no restart.
 - Set `"endpoint": "web"` explicitly to skip the probe entirely.
 
 The adapter pins the LLM Context budgets (`maximum_number_of_tokens` = 2048,

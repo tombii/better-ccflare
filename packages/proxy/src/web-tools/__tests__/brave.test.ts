@@ -933,3 +933,72 @@ describe("brave adapter — plan without LLM Context", () => {
 		expect(calls[1].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
 	});
 });
+
+describe("brave adapter — replacing the key rescopes the plan memory", () => {
+	function optionNotInPlan(): Response {
+		return jsonResponse(
+			{
+				type: "ErrorResponse",
+				error: { status: 400, code: "OPTION_NOT_IN_PLAN" },
+			},
+			400,
+		);
+	}
+
+	afterEach(() => {
+		resetBravePlanMemory();
+	});
+
+	it("a new key on the same row tries llm-context again", async () => {
+		// Old key: no LLM Context, so the row is remembered as web-only.
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ web: { results: [] } }),
+		);
+		const legacy: WebToolAdapterConfig = {
+			...baseConfig,
+			extraConfig: {},
+			rowId: "row-1",
+		};
+		await adapter.search(request(), legacy);
+		calls = [];
+
+		// Same row id, upgraded key — must probe llm-context rather than stay
+		// pinned to web/search until a restart.
+		const upgraded: WebToolAdapterConfig = {
+			...legacy,
+			apiKey: "brave-upgraded-plan-key",
+		};
+		stubFetch(() =>
+			jsonResponse({
+				grounding: { generic: [{ url: "https://x.test/a", snippets: ["c"] }] },
+			}),
+		);
+		await adapter.search(request(), upgraded);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+	});
+
+	it("the legacy key stays on web/search after a different key is seen", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ web: { results: [] } }),
+		);
+		const legacy: WebToolAdapterConfig = {
+			...baseConfig,
+			extraConfig: {},
+			rowId: "row-1",
+		};
+		await adapter.search(request(), legacy);
+		await adapter.search(request(), { ...legacy, apiKey: "other-key" });
+
+		calls = [];
+		await adapter.search(request(), legacy);
+		// Still remembered as web-only: one call, straight to web/search.
+		expect(calls).toHaveLength(1);
+		expect(calls[0].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+	});
+});

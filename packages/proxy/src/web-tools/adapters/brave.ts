@@ -93,17 +93,32 @@ export class BraveSearchError extends Error {
 const OPTION_NOT_IN_PLAN = "OPTION_NOT_IN_PLAN";
 
 /**
- * Rows whose key turned out not to include LLM Context. Brave bills plans per
- * key, so the answer is stable for the life of the process — remembering it
- * stops every search paying a doomed `llm/context` round-trip before falling
- * back. Keyed by `search_providers.id`; cleared on restart, which is fine
- * because one wasted call per restart re-learns it.
+ * Credentials whose plan turned out not to include LLM Context. Brave bills
+ * plans per key, so the answer is stable for the life of the key — remembering
+ * it stops every search paying a doomed `llm/context` round-trip before
+ * falling back.
+ *
+ * Keyed on row id PLUS a fingerprint of the key (see {@link planMemoryKey}),
+ * not the row id alone: replacing the API key on a row must be able to move
+ * it back onto LLM Context immediately, and a row id survives that edit. With
+ * the fingerprint, a new key is simply a different entry, so upgrading a plan
+ * takes effect on the next search with no restart.
  */
 const plansWithoutLlmContext = new Set<string>();
 
 /** Test seam: forget which rows fell back, so specs do not leak into each other. */
 export function resetBravePlanMemory(): void {
 	plansWithoutLlmContext.clear();
+}
+
+/**
+ * Cache key for the plan answer: the row id plus a non-reversible fingerprint
+ * of the credential, so the set never holds key material while still changing
+ * when the key does. `Bun.hash` is a non-cryptographic 64-bit digest — enough
+ * to tell two keys apart, and useless for recovering either.
+ */
+function planMemoryKey(rowId: string, apiKey: string): string {
+	return `${rowId}:${Bun.hash(apiKey).toString(16)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -566,9 +581,10 @@ async function getSearchWithPlanFallback(
 	// `string` narrowing local instead of relying on that.
 	if (!config.apiKey) throw new Error("Brave requires an API key");
 	const apiKey = config.apiKey;
-	const rowId = config.rowId;
+	const memoryKey = config.rowId ? planMemoryKey(config.rowId, apiKey) : null;
 	const wantsLlmContext =
-		usesLlmContext(config) && !(rowId && plansWithoutLlmContext.has(rowId));
+		usesLlmContext(config) &&
+		!(memoryKey && plansWithoutLlmContext.has(memoryKey));
 	if (!wantsLlmContext) {
 		return {
 			data: await getSearch(
@@ -595,7 +611,7 @@ async function getSearchWithPlanFallback(
 		) {
 			throw error;
 		}
-		if (rowId) plansWithoutLlmContext.add(rowId);
+		if (memoryKey) plansWithoutLlmContext.add(memoryKey);
 		return {
 			data: await getSearch(
 				buildSearchUrl(query, maxResults, config, false),
