@@ -53,4 +53,24 @@ describe("convertOpenAIResponseToAnthropic — flat gateway rejection bodies", (
 		expect(result.error?.message).toContain("Extra inputs are not permitted");
 		expect(result.error?.message).not.toContain("[object Object]");
 	});
+
+	it("reads a top-level detail array with no message wrapper", () => {
+		// The shape Mistral actually returned live on 2026-11-03: the pydantic
+		// errors are top-level, with no `message` object around them. Missing
+		// this sent the client the generic invalid_response text.
+		const result = convertOpenAIResponseToAnthropic({
+			detail: [
+				{
+					type: "extra_forbidden",
+					loc: ["body", "thinking"],
+					msg: "Extra inputs are not permitted",
+				},
+			],
+		} as never);
+
+		expect(result.type).toBe("error");
+		expect(result.error?.type).toBe("invalid_request_error");
+		expect(result.error?.message).toContain("body.thinking");
+		expect(result.error?.message).toContain("Extra inputs are not permitted");
+	});
 });

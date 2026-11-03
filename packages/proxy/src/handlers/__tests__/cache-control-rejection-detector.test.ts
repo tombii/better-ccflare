@@ -99,6 +99,24 @@ describe("isCacheControlRejectionError", () => {
 		expect(await isCacheControlRejectionError(res)).toBe(true);
 	});
 
+	it("matches when the field name appears only in msg, not loc", async () => {
+		// The union-branch entry names the field in `msg` rather than `loc`, so
+		// this fails if the msgText match is dropped.
+		const res = jsonResponse(
+			{
+				detail: [
+					{
+						type: "extra_forbidden",
+						loc: ["body", "messages", 0, "system", "content", 0],
+						msg: "Extra inputs are not permitted: cache_control",
+					},
+				],
+			},
+			422,
+		);
+		expect(await isCacheControlRejectionError(res)).toBe(true);
+	});
+
 	it("ignores a 422 about an unrelated field", async () => {
 		// Mistral answers 422 for Anthropic-only fields too (`thinking`,
 		// `output_config`). Retrying those without cache_control cannot help,
