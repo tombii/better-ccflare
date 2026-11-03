@@ -215,7 +215,7 @@ Only the query *length* is logged at info level — queries can be sensitive.
 | **Parallel** | `mode`: `turbo`, `fast`, `basic` (default), `advanced`; `objective` (free text) | `source_policy` carries `allowed_domains` / `blocked_domains` |
 | **DeepSeek** | — | Domain filtering is applied client-side to the returned hits |
 | **Serper** | `gl` (country), `hl` (language) | Google results |
-| **Brave Search** | `country`, `safesearch`: `off`, `moderate` (default), `strict` | Domain filtering is applied client-side |
+| **Brave Search** | `endpoint`: `llm-context` (default), `web`; `country`, `safesearch`: `off`, `moderate` (default), `strict` | Domain filtering is applied client-side. See [Brave: `web` vs `llm-context`](#brave-web-vs-llm-context) |
 | **Perplexity** | `model` (default `sonar`) | **Listed but not implemented** — rows are accepted but the chain skips them |
 
 `maxResults` accepts 1–50 (default 10). The adapter requests
@@ -225,6 +225,51 @@ your per-provider `maxResults` is the binding limit.
 The provider list and field definitions live in `SEARCH_PROVIDER_CATALOG`
 (`packages/types/src/search-provider.ts`); the adapters live in
 `packages/proxy/src/web-tools/adapters/`.
+
+#### Brave: `web` vs `llm-context`
+
+Brave's API exposes two search products with the same `/res/v1` base, and the
+adapter prefers `llm-context` because a `web_search` tool result is read by a
+model, not a person:
+
+| `endpoint` | Brave endpoint | Returns |
+|------------|----------------|---------|
+| `llm-context` *(default)* | `/res/v1/llm/context` | Pre-extracted, query-relevant page chunks (`grounding.generic[].snippets[]`) |
+| `web` | `/res/v1/web/search` | Result pages for humans: URLs and short meta-description snippets |
+
+Any value other than `"web"` is treated as `llm-context`.
+
+**Plans differ, and the adapter handles that itself.** LLM Context is not on
+every plan — the legacy **Free AI** plan includes web search but not LLM
+Context, and answers `/llm/context` with:
+
+```text
+HTTP 400 · "The option is not included in the plan." · code: OPTION_NOT_IN_PLAN
+```
+
+That is a plan fact, not a fault, so the adapter does **not** surface it as a
+search failure. On `OPTION_NOT_IN_PLAN` only, it retries the same query on
+`web/search` and remembers the answer for that provider row for the life of
+the process — subsequent searches go straight to `web/search` with no wasted
+call. Any other error (a real 400, a 429, a 5xx) still fails normally and
+falls through to the next provider.
+
+Consequences:
+
+- Rows on a legacy plan keep working with no configuration, served by
+  `web/search`.
+- The **Test** button reports `ok` on such a plan, because it exercises the
+  same fallback.
+- The memory is scoped to the credential, not just the row: replacing the
+  API key starts a fresh answer, so a row whose new key includes LLM Context
+  uses it on the next search with no restart.
+- Set `"endpoint": "web"` explicitly to skip the probe entirely.
+
+The adapter pins the LLM Context budgets (`maximum_number_of_tokens` = 2048,
+and the URL/snippet limits to the request's result count). Brave's defaults
+(8,192 tokens, 20 URLs, 50 snippets) would pay for content the responder
+truncates to 500 characters per snippet anyway. `freshness` is a `web`-only
+parameter and is not sent on `llm-context`.
 
 ### Managing providers
 

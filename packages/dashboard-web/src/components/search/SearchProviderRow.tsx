@@ -17,7 +17,6 @@ import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
-import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import { DeleteProviderDialog } from "./DeleteProviderDialog";
@@ -40,30 +39,9 @@ export function SearchProviderRow({
 	const update = useUpdateSearchProvider();
 	const test = useTestSearchProvider();
 	const { formatError } = useApiError();
-	// The draft is the value the user typed; while it equals the last priority
-	// we rendered, it simply mirrors the server value, so a reorder returned by
-	// the server shows up immediately.
-	const [lastPriority, setLastPriority] = useState(provider.priority);
-	const [priorityDraft, setPriorityDraft] = useState(String(provider.priority));
 	const [isDeleteOpen, setIsDeleteOpen] = useState(false);
-	if (lastPriority !== provider.priority) {
-		setLastPriority(provider.priority);
-		if (priorityDraft === String(lastPriority)) {
-			setPriorityDraft(String(provider.priority));
-		}
-	}
 
 	const disabled = !provider.enabled;
-
-	const commitPriority = () => {
-		const parsed = Number.parseInt(priorityDraft, 10);
-		if (!Number.isFinite(parsed) || parsed < 0) {
-			setPriorityDraft(String(provider.priority));
-			return;
-		}
-		if (parsed === provider.priority) return;
-		update.mutate({ id: provider.id, patch: { priority: parsed } });
-	};
 
 	const testResult = test.data;
 
@@ -128,31 +106,21 @@ export function SearchProviderRow({
 				</div>
 
 				<div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
-					<div className="flex items-center gap-2">
-						<Label
-							htmlFor={`search-provider-priority-${provider.id}`}
-							className="text-xs text-muted-foreground"
-						>
-							Priority
-						</Label>
-						<Input
-							id={`search-provider-priority-${provider.id}`}
-							type="number"
-							min={0}
-							className="h-8 w-20"
-							value={priorityDraft}
-							disabled={update.isPending}
-							onChange={(e) => setPriorityDraft(e.target.value)}
-							onBlur={commitPriority}
-							onKeyDown={(e) => {
-								if (e.key === "Enter") commitPriority();
-							}}
-							title="Lower numbers are tried first"
-						/>
-						<span className="text-xs text-muted-foreground">
-							lower = tried first
-						</span>
-					</div>
+					{/*
+					 * Plain text, not a field and not a badge-with-a-shape-that-
+					 * reads-as-a-control. The row shows the stored value so the
+					 * fallback order is legible, but nothing here is editable: the
+					 * old number input looked like it could reorder the chain and
+					 * its edits never saved. Changing the order is the Edit
+					 * dialog's job.
+					 */}
+					<span className="text-xs text-muted-foreground">
+						Priority{" "}
+						<span className="font-mono text-foreground">
+							{provider.priority}
+						</span>{" "}
+						· lower = tried first
+					</span>
 
 					<div className="flex flex-wrap items-center gap-2">
 						{testResult && !test.isPending && (

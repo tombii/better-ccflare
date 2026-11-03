@@ -1,18 +1,29 @@
 /**
  * Brave Search implementation of {@link WebToolSearchAdapter}.
  *
- * `GET https://api.search.brave.com/res/v1/web/search` — the only adapter that
- * uses GET. Parameters ride in the query string (`q`, `count`, plus optional
- * `country`, `search_lang`, `freshness`) and the key travels in an
+ * Brave ships two products on the same `/res/v1` base, both covered by the
+ * same Search plan at the same $5/1k price:
+ *
+ *   - `GET .../res/v1/web/search` — results pages built for humans. Entries
+ *     under `web.results[]` carry a short meta-description `description`.
+ *   - `GET .../res/v1/llm/context` — the same index, but ranked and compiled
+ *     for machine consumption: pre-extracted page chunks under
+ *     `grounding.generic[].snippets[]`, with token/URL/snippet budgets the
+ *     caller sets.
+ *
+ * `extraConfig.endpoint` selects between them (`"web"` or `"llm-context"`),
+ * defaulting to `llm-context` — this adapter exists to feed a model, and the
+ * chunks are the same price as the meta descriptions. Anything unrecognised
+ * also falls back to `llm-context`; `web` is opt-in.
+ *
+ * Both are GET; parameters ride in the query string and the key travels in an
  * `X-Subscription-Token` header, not `Authorization: Bearer`.
  *
- * Results are nested under `web.results[]`. Brave is snippet-only — there is
- * no extracted page text.
- *
- * Brave has no include/exclude domain parameters, so Anthropic's
- * `allowed_domains` / `blocked_domains` are applied as a POST-FILTER over the
- * returned hits. That can only narrow what the provider already returned; it
- * cannot improve recall when an allowed domain didn't rank on the first page.
+ * Brave has no include/exclude domain parameters on either endpoint, so
+ * Anthropic's `allowed_domains` / `blocked_domains` are applied as a
+ * POST-FILTER over the returned hits. That can only narrow what the provider
+ * already returned; it cannot improve recall when an allowed domain didn't
+ * rank on the first page.
  *
  * The subscription token must never appear in an error message, log line or
  * health write.
@@ -27,6 +38,21 @@ import type {
 
 export const BRAVE_SEARCH_URL =
 	"https://api.search.brave.com/res/v1/web/search";
+export const BRAVE_LLM_CONTEXT_URL =
+	"https://api.search.brave.com/res/v1/llm/context";
+
+/** `extraConfig.endpoint` value selecting the human-oriented results page. */
+const WEB_ENDPOINT = "web";
+
+/**
+ * Token budget for one LLM Context call. The API defaults to 8,192 tokens
+ * across 20 URLs and 50 snippets; the responder truncates every snippet to
+ * 500 characters anyway, so the default would pay for content that is thrown
+ * away before the model ever sees it. 2,048 tokens is Brave's own figure for
+ * simple factual queries and comfortably covers `maxResults` hits at the
+ * responder's cap.
+ */
+const LLM_CONTEXT_MAX_TOKENS = 2048;
 
 /** Brave rejects `count` above 20. */
 const BRAVE_MAX_RESULTS_LIMIT = 20;
@@ -50,11 +76,49 @@ const SAFESEARCH_VALUES = new Set(["off", "moderate", "strict"]);
 export class BraveSearchError extends Error {
 	constructor(
 		readonly status: number,
-		message: string,
+		/**
+		 * Brave's machine code (`OPTION_NOT_IN_PLAN`, `RATE_LIMITED`, …), when
+		 * the body carried one. Used to tell "this key's plan does not include
+		 * LLM Context" apart from a generic 400.
+		 */
+		readonly code?: string,
+		message = "",
 	) {
 		super(message);
 		this.name = "BraveSearchError";
 	}
+}
+
+/** Brave's code for "your plan does not include this endpoint". */
+const OPTION_NOT_IN_PLAN = "OPTION_NOT_IN_PLAN";
+
+/**
+ * Credentials whose plan turned out not to include LLM Context. Brave bills
+ * plans per key, so the answer is stable for the life of the key — remembering
+ * it stops every search paying a doomed `llm/context` round-trip before
+ * falling back.
+ *
+ * Keyed on row id PLUS a fingerprint of the key (see {@link planMemoryKey}),
+ * not the row id alone: replacing the API key on a row must be able to move
+ * it back onto LLM Context immediately, and a row id survives that edit. With
+ * the fingerprint, a new key is simply a different entry, so upgrading a plan
+ * takes effect on the next search with no restart.
+ */
+const plansWithoutLlmContext = new Set<string>();
+
+/** Test seam: forget which rows fell back, so specs do not leak into each other. */
+export function resetBravePlanMemory(): void {
+	plansWithoutLlmContext.clear();
+}
+
+/**
+ * Cache key for the plan answer: the row id plus a non-reversible fingerprint
+ * of the credential, so the set never holds key material while still changing
+ * when the key does. `Bun.hash` is a non-cryptographic 64-bit digest — enough
+ * to tell two keys apart, and useless for recovering either.
+ */
+function planMemoryKey(rowId: string, apiKey: string): string {
+	return `${rowId}:${Bun.hash(apiKey).toString(16)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -94,13 +158,28 @@ function stringOption(
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-/** Build the GET URL, adding optional parameters only when configured. */
+/**
+ * True when the *configured* endpoint is LLM Context. This is the default:
+ * only an explicit `endpoint: "web"` selects the human-oriented results page.
+ * Whether the key's plan actually includes it is a separate question — see
+ * {@link getSearchWithPlanFallback}.
+ */
+function usesLlmContext(config: WebToolAdapterConfig): boolean {
+	return stringOption(config, "endpoint") !== WEB_ENDPOINT;
+}
+
+/**
+ * Build the GET URL, adding optional parameters only when configured.
+ * `llmContext` is passed in rather than derived, because the plan fallback may
+ * deliberately target `web/search` on a row configured for LLM Context.
+ */
 function buildSearchUrl(
 	query: string,
 	count: number,
 	config: WebToolAdapterConfig,
+	llmContext: boolean,
 ): string {
-	const url = new URL(BRAVE_SEARCH_URL);
+	const url = new URL(llmContext ? BRAVE_LLM_CONTEXT_URL : BRAVE_SEARCH_URL);
 	url.searchParams.set("q", query);
 	url.searchParams.set("count", String(count));
 
@@ -108,10 +187,10 @@ function buildSearchUrl(
 	if (country) url.searchParams.set("country", country);
 	const searchLang = stringOption(config, "searchLang");
 	if (searchLang) url.searchParams.set("search_lang", searchLang);
-	// Brave only accepts the four documented freshness codes; anything else
-	// would make the whole request fail, so drop it.
+	// `freshness` is a web/search parameter; llm/context does not document it,
+	// so it is only sent on the endpoint that accepts it.
 	const freshness = stringOption(config, "freshness");
-	if (freshness && FRESHNESS_VALUES.has(freshness)) {
+	if (!llmContext && freshness && FRESHNESS_VALUES.has(freshness)) {
 		url.searchParams.set("freshness", freshness);
 	}
 	// The dashboard offers off/moderate/strict; Brave accepts exactly those and
@@ -119,6 +198,18 @@ function buildSearchUrl(
 	const safesearch = stringOption(config, "safesearch");
 	if (safesearch && SAFESEARCH_VALUES.has(safesearch)) {
 		url.searchParams.set("safesearch", safesearch);
+	}
+
+	// Pin the context budgets to what this request will actually keep. Without
+	// them Brave returns its 8,192-token / 20-URL / 50-snippet default and the
+	// responder truncates the surplus away.
+	if (llmContext) {
+		url.searchParams.set(
+			"maximum_number_of_tokens",
+			String(LLM_CONTEXT_MAX_TOKENS),
+		);
+		url.searchParams.set("maximum_number_of_urls", String(count));
+		url.searchParams.set("maximum_number_of_snippets", String(count));
 	}
 
 	return url.toString();
@@ -139,18 +230,129 @@ function redactUrl(url: string): string {
 	}
 }
 
-/** Collapse and truncate a response body so error messages stay short. */
-async function readErrorExcerpt(response: Response): Promise<string> {
+/**
+ * Decide whether a 200 body is an LLM Context payload and return its context
+ * items.
+ *
+ * An absent `grounding` is a valid EMPTY search (Brave omits containers it has
+ * nothing for), as is an explicit `grounding.generic: []`. A `grounding` that
+ * is not an object, or a `generic` that is not an array, is malformed and
+ * throws — treating it as empty would mark the provider healthy and stop the
+ * chain before a backup provider is tried.
+ */
+function contextEntries(data: unknown): unknown[] {
+	if (!isRecord(data)) {
+		throw new BraveSearchError(
+			502,
+			undefined,
+			"Brave response is not a JSON object",
+		);
+	}
+	if (data.grounding === undefined) return [];
+	if (!isRecord(data.grounding)) {
+		throw new BraveSearchError(
+			502,
+			undefined,
+			"Brave response has a malformed grounding object",
+		);
+	}
+	if (data.grounding.generic === undefined) return [];
+	if (!Array.isArray(data.grounding.generic)) {
+		throw new BraveSearchError(
+			502,
+			undefined,
+			"Brave response is missing the grounding.generic array",
+		);
+	}
+	return data.grounding.generic;
+}
+
+/**
+ * The `sources` map keyed by URL, used to recover a title an entry omitted.
+ * Absent or malformed maps degrade to `{}` — they only ever supply a fallback
+ * title, so they are not worth failing a search over.
+ */
+function sourceTitles(data: unknown): Record<string, unknown> {
+	if (!isRecord(data) || !isRecord(data.sources)) return {};
+	return data.sources;
+}
+
+/** Map LLM Context's `grounding.generic` array onto the normalised hit shape. */
+function contextToHits(
+	data: unknown,
+	maxResults: number,
+	allowedDomains: string[] | undefined,
+	blockedDomains: string[] | undefined,
+): WebToolSearchHit[] {
+	const entries = contextEntries(data);
+	const sources = sourceTitles(data);
+
+	const hits: WebToolSearchHit[] = [];
+	for (const entry of entries) {
+		if (!isRecord(entry)) continue;
+		const url = typeof entry.url === "string" ? entry.url : "";
+		if (!url) continue;
+		if (!matchesDomainFilter(url, allowedDomains, blockedDomains)) continue;
+
+		// `snippets` are the query-relevant chunks Brave extracted from the
+		// page. Joining them with a blank line keeps the chunk boundaries
+		// visible to the model; the responder re-collapses whitespace and
+		// truncates to its own per-snippet cap.
+		const snippets = Array.isArray(entry.snippets)
+			? entry.snippets.filter(
+					(chunk): chunk is string =>
+						typeof chunk === "string" && chunk.trim().length > 0,
+				)
+			: [];
+		// A hit with no text is just a link the model could not have found on
+		// its own — the whole point of this endpoint is the chunks, so drop it.
+		if (snippets.length === 0) continue;
+
+		const source = sources[url];
+		const sourceTitle =
+			isRecord(source) && typeof source.title === "string" ? source.title : "";
+		const title =
+			typeof entry.title === "string" && entry.title
+				? entry.title
+				: sourceTitle;
+
+		hits.push({ title, url, snippet: snippets.join("\n\n") });
+	}
+
+	return hits.slice(0, clampMaxResults(maxResults));
+}
+
+/**
+ * Collapse and truncate a response body so error messages stay short, and
+ * pull out Brave's machine code (`error.code`) when the body is its documented
+ * `{type: "ErrorResponse", error: {status, detail, code}}` shape.
+ */
+async function readErrorDetail(
+	response: Response,
+): Promise<{ excerpt: string; code?: string }> {
+	let text: string;
 	try {
-		const text = (await response.text()).replace(/\s+/g, " ").trim();
-		if (!text) return "";
-		return text.length > ERROR_BODY_EXCERPT_CHARS
-			? `${text.slice(0, ERROR_BODY_EXCERPT_CHARS)}…`
-			: text;
+		text = await response.text();
 	} catch {
 		// A body that cannot be read must not mask the status error.
-		return "";
+		return { excerpt: "" };
 	}
+	const collapsed = text.replace(/\s+/g, " ").trim();
+	const excerpt =
+		collapsed.length > ERROR_BODY_EXCERPT_CHARS
+			? `${collapsed.slice(0, ERROR_BODY_EXCERPT_CHARS)}…`
+			: collapsed;
+	let code: string | undefined;
+	try {
+		const parsed: unknown = JSON.parse(text);
+		if (isRecord(parsed) && isRecord(parsed.error)) {
+			const raw = parsed.error.code;
+			if (typeof raw === "string" && raw) code = raw;
+		}
+	} catch {
+		// Not JSON — the excerpt is all we have.
+	}
+	return { excerpt, code };
 }
 
 /**
@@ -191,20 +393,26 @@ async function getSearch(
 			(error instanceof Error &&
 				(error.name === "AbortError" || error.name === "TimeoutError"))
 		) {
-			throw new BraveSearchError(408, "Brave search request aborted");
+			throw new BraveSearchError(
+				408,
+				undefined,
+				"Brave search request aborted",
+			);
 		}
 		// A fetch-level failure (DNS, TLS, …) is not an HTTP status.
 		const detail = errorMessage(error);
 		throw new BraveSearchError(
 			0,
+			undefined,
 			`Brave search request failed for ${redactUrl(url)}: ${detail}`,
 		);
 	}
 
 	if (!response.ok) {
-		const excerpt = await readErrorExcerpt(response);
+		const { excerpt, code } = await readErrorDetail(response);
 		throw new BraveSearchError(
 			response.status,
+			code,
 			`Brave search failed with status ${response.status}${excerpt ? `: ${excerpt}` : ""}`,
 		);
 	}
@@ -225,18 +433,24 @@ async function getSearch(
  */
 function resultEntries(data: unknown): unknown[] {
 	if (!isRecord(data)) {
-		throw new BraveSearchError(502, "Brave response is not a JSON object");
+		throw new BraveSearchError(
+			502,
+			undefined,
+			"Brave response is not a JSON object",
+		);
 	}
 	if (data.web === undefined) return [];
 	if (!isRecord(data.web)) {
 		throw new BraveSearchError(
 			502,
+			undefined,
 			"Brave response has a malformed web object",
 		);
 	}
 	if (!Array.isArray(data.web.results)) {
 		throw new BraveSearchError(
 			502,
+			undefined,
 			"Brave response is missing the web.results array",
 		);
 	}
@@ -339,6 +553,76 @@ function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Run one search, falling back to `web/search` when the key's Brave plan does
+ * not include LLM Context.
+ *
+ * Plans are per key, and the legacy "Free AI" plan has web search but not LLM
+ * Context — its `llm/context` call fails with HTTP 400 `OPTION_NOT_IN_PLAN`.
+ * That is a configuration fact, not a transient fault, so it must not surface
+ * as a search failure (the chain would cool the provider down and fall through
+ * to another provider for every search). Instead the row is remembered in
+ * {@link plansWithoutLlmContext} and served from `web/search`, which every
+ * plan includes.
+ *
+ * Only that specific code triggers the fallback: a genuine 400 (bad query) or
+ * a 429 must still fail, because retrying a different endpoint would either
+ * repeat the same error or spend quota learning nothing.
+ *
+ * @returns The payload, and whether it came from the LLM Context endpoint.
+ */
+async function getSearchWithPlanFallback(
+	query: string,
+	maxResults: number,
+	config: WebToolAdapterConfig,
+	signal: AbortSignal | undefined,
+): Promise<{ data: unknown; llmContext: boolean }> {
+	// Both callers reject a keyless config before reaching here; this keeps the
+	// `string` narrowing local instead of relying on that.
+	if (!config.apiKey) throw new Error("Brave requires an API key");
+	const apiKey = config.apiKey;
+	const memoryKey = config.rowId ? planMemoryKey(config.rowId, apiKey) : null;
+	const wantsLlmContext =
+		usesLlmContext(config) &&
+		!(memoryKey && plansWithoutLlmContext.has(memoryKey));
+	if (!wantsLlmContext) {
+		return {
+			data: await getSearch(
+				buildSearchUrl(query, maxResults, config, false),
+				apiKey,
+				signal,
+			),
+			llmContext: false,
+		};
+	}
+	try {
+		return {
+			data: await getSearch(
+				buildSearchUrl(query, maxResults, config, true),
+				apiKey,
+				signal,
+			),
+			llmContext: true,
+		};
+	} catch (error) {
+		if (
+			!(error instanceof BraveSearchError) ||
+			error.code !== OPTION_NOT_IN_PLAN
+		) {
+			throw error;
+		}
+		if (memoryKey) plansWithoutLlmContext.add(memoryKey);
+		return {
+			data: await getSearch(
+				buildSearchUrl(query, maxResults, config, false),
+				apiKey,
+				signal,
+			),
+			llmContext: false,
+		};
+	}
+}
+
 /** Build the Brave adapter singleton. */
 export function createBraveAdapter(): WebToolSearchAdapter {
 	return {
@@ -355,11 +639,20 @@ export function createBraveAdapter(): WebToolSearchAdapter {
 				throw new Error("Brave requires an API key");
 			}
 			const maxResults = effectiveMaxResults(request, config);
-			const data = await getSearch(
-				buildSearchUrl(request.query, maxResults, config),
-				config.apiKey,
+			const { data, llmContext } = await getSearchWithPlanFallback(
+				request.query,
+				maxResults,
+				config,
 				request.signal,
 			);
+			if (llmContext) {
+				return contextToHits(
+					data,
+					maxResults,
+					request.allowedDomains,
+					request.blockedDomains,
+				);
+			}
 			return toHits(
 				data,
 				maxResults,
@@ -378,14 +671,22 @@ export function createBraveAdapter(): WebToolSearchAdapter {
 				return { ok: false, latencyMs: 0, error: "no API key configured" };
 			}
 			try {
-				const data = await getSearch(
-					buildSearchUrl(TEST_QUERY, 1, config),
-					config.apiKey,
+				// Same plan fallback as a real search, so the Test button reports
+				// the endpoint the row will actually use rather than failing on a
+				// plan Brave simply does not include.
+				const { data, llmContext } = await getSearchWithPlanFallback(
+					TEST_QUERY,
+					1,
+					config,
 					undefined,
 				);
 				const latencyMs = Date.now() - started;
 				try {
-					resultEntries(data);
+					if (llmContext) {
+						contextEntries(data);
+					} else {
+						resultEntries(data);
+					}
 				} catch {
 					return { ok: false, latencyMs, error: "unexpected response shape" };
 				}

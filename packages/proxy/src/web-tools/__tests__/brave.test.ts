@@ -6,9 +6,11 @@
  */
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+	BRAVE_LLM_CONTEXT_URL,
 	BRAVE_SEARCH_URL,
 	BraveSearchError,
 	createBraveAdapter,
+	resetBravePlanMemory,
 } from "../adapters/brave";
 import type { WebToolAdapterConfig, WebToolSearchRequest } from "../types";
 
@@ -62,10 +64,15 @@ function web(url: string): Record<string, unknown> {
 
 const adapter = createBraveAdapter();
 
+/**
+ * The web/search product, which is now opt-in: every spec that exercises the
+ * `web.results[]` shape has to name it explicitly. Specs for the LLM Context
+ * product (the default) live in their own describe block below.
+ */
 const baseConfig: WebToolAdapterConfig = {
 	apiKey: "brave-canary-token-9876",
 	maxResults: 10,
-	extraConfig: {},
+	extraConfig: { endpoint: "web" },
 };
 
 function request(
@@ -129,7 +136,12 @@ describe("brave adapter — request shape", () => {
 
 		await adapter.search(request(), {
 			...baseConfig,
-			extraConfig: { country: "DE", searchLang: "de", freshness: "pw" },
+			extraConfig: {
+				...baseConfig.extraConfig,
+				country: "DE",
+				searchLang: "de",
+				freshness: "pw",
+			},
 		});
 		await adapter.search(request(), baseConfig);
 
@@ -149,7 +161,7 @@ describe("brave adapter — request shape", () => {
 
 		await adapter.search(request(), {
 			...baseConfig,
-			extraConfig: { freshness: "yesterday" },
+			extraConfig: { ...baseConfig.extraConfig, freshness: "yesterday" },
 		});
 
 		expect(paramsOf(calls[0]).has("freshness")).toBe(false);
@@ -507,7 +519,7 @@ describe("brave adapter — safesearch", () => {
 
 			await adapter.search(request(), {
 				...baseConfig,
-				extraConfig: { safesearch: value },
+				extraConfig: { ...baseConfig.extraConfig, safesearch: value },
 			});
 
 			const url = new URL(calls[0].url);
@@ -520,9 +532,473 @@ describe("brave adapter — safesearch", () => {
 
 		await adapter.search(request(), {
 			...baseConfig,
-			extraConfig: { safesearch: "paranoid" },
+			extraConfig: { ...baseConfig.extraConfig, safesearch: "paranoid" },
 		});
 
 		expect(new URL(calls[0].url).searchParams.has("safesearch")).toBe(false);
+	});
+});
+
+describe("brave adapter — llm/context endpoint", () => {
+	const llmConfig: WebToolAdapterConfig = {
+		...baseConfig,
+		extraConfig: { endpoint: "llm-context" },
+	};
+
+	/** A documented LLM Context payload: chunks under grounding.generic[]. */
+	function llmPayload(
+		entries: Array<Record<string, unknown>> = [
+			{
+				url: "https://example.com/a",
+				title: "Alpha",
+				snippets: ["first chunk", "second chunk"],
+			},
+			{
+				url: "https://example.com/b",
+				title: "Beta",
+				snippets: ["only chunk"],
+			},
+		],
+	): Record<string, unknown> {
+		return {
+			grounding: { generic: entries, map: [] },
+			sources: {
+				"https://example.com/a": {
+					title: "Alpha",
+					hostname: "example.com",
+				},
+			},
+		};
+	}
+
+	it("GETs the llm/context URL instead of web/search", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		await adapter.search(request(), llmConfig);
+
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+		expect(calls[0].url.startsWith(BRAVE_SEARCH_URL)).toBe(false);
+		expect(calls[0].init.method).toBe("GET");
+		expect(headersOf(calls[0]).get("X-Subscription-Token")).toBe(
+			"brave-canary-token-9876",
+		);
+	});
+
+	it("defaults to llm/context when no endpoint is configured", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		await adapter.search(request(), {
+			...baseConfig,
+			extraConfig: {},
+		});
+
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+	});
+
+	it("falls back to llm/context for an unrecognised endpoint value", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		await adapter.search(request(), {
+			...baseConfig,
+			extraConfig: { endpoint: "legacy-ai" },
+		});
+
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+	});
+
+	it('uses web/search only when endpoint is explicitly "web"', async () => {
+		stubFetch(() => jsonResponse({ web: { results: [] } }));
+
+		await adapter.search(request(), {
+			...baseConfig,
+			extraConfig: { endpoint: "web" },
+		});
+
+		expect(calls[0].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+		expect(paramsOf(calls[0]).has("maximum_number_of_tokens")).toBe(false);
+	});
+
+	it("pins the token, URL and snippet budgets so we never pay for content we truncate", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		await adapter.search(request(), llmConfig);
+
+		const params = paramsOf(calls[0]);
+		expect(params.get("maximum_number_of_tokens")).toBe("2048");
+		expect(params.get("maximum_number_of_urls")).toBe("5");
+		expect(params.get("maximum_number_of_snippets")).toBe("5");
+	});
+
+	it("maps grounding.generic onto hits, joining chunks into the snippet", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		const hits = await adapter.search(request(), llmConfig);
+
+		expect(hits).toEqual([
+			{
+				title: "Alpha",
+				url: "https://example.com/a",
+				snippet: "first chunk\n\nsecond chunk",
+			},
+			{
+				title: "Beta",
+				url: "https://example.com/b",
+				snippet: "only chunk",
+			},
+		]);
+	});
+
+	it("falls back to the sources map for a title the entry omits", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				llmPayload([{ url: "https://example.com/a", snippets: ["chunk"] }]),
+			),
+		);
+
+		const hits = await adapter.search(request(), llmConfig);
+
+		expect(hits[0].title).toBe("Alpha");
+	});
+
+	it("drops entries with no URL and entries with no snippets", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				llmPayload([
+					{ title: "No URL", snippets: ["chunk"] },
+					{ url: "https://example.com/empty", title: "Empty" },
+					{ url: "https://example.com/ok", snippets: ["chunk"] },
+				]),
+			),
+		);
+
+		const hits = await adapter.search(request(), llmConfig);
+
+		expect(hits.map((h) => h.url)).toEqual(["https://example.com/ok"]);
+	});
+
+	it("returns at most maxResults hits", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				llmPayload(
+					Array.from({ length: 8 }, (_, i) => ({
+						url: `https://example.com/${i}`,
+						title: `T${i}`,
+						snippets: ["chunk"],
+					})),
+				),
+			),
+		);
+
+		const hits = await adapter.search(request({ maxResults: 3 }), llmConfig);
+
+		expect(hits).toHaveLength(3);
+	});
+
+	it("applies the domain post-filter to llm/context hits", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				llmPayload([
+					{ url: "https://docs.example.com/x", snippets: ["chunk"] },
+					{ url: "https://evil.test/y", snippets: ["chunk"] },
+				]),
+			),
+		);
+
+		const hits = await adapter.search(
+			request({ allowedDomains: ["example.com"] }),
+			llmConfig,
+		);
+
+		expect(hits.map((h) => h.url)).toEqual(["https://docs.example.com/x"]);
+	});
+
+	it("returns [] when grounding is absent (a valid empty search)", async () => {
+		stubFetch(() => jsonResponse({}));
+
+		expect(await adapter.search(request(), llmConfig)).toEqual([]);
+	});
+
+	it("keeps an explicit empty grounding.generic as a valid empty search", async () => {
+		stubFetch(() => jsonResponse({ grounding: { generic: [] } }));
+
+		expect(await adapter.search(request(), llmConfig)).toEqual([]);
+	});
+
+	it("throws when grounding is present but not an object", async () => {
+		stubFetch(() => jsonResponse({ grounding: "nope" }));
+
+		await expect(adapter.search(request(), llmConfig)).rejects.toBeInstanceOf(
+			BraveSearchError,
+		);
+	});
+
+	it("throws when grounding.generic is present but not an array", async () => {
+		stubFetch(() => jsonResponse({ grounding: { generic: {} } }));
+
+		await expect(adapter.search(request(), llmConfig)).rejects.toBeInstanceOf(
+			BraveSearchError,
+		);
+	});
+
+	it("probes the configured endpoint from test()", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		const result = await adapter.test(llmConfig);
+
+		expect(result.ok).toBe(true);
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+	});
+
+	it("forwards country, search_lang and safesearch on llm/context", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
+
+		await adapter.search(request(), {
+			...baseConfig,
+			extraConfig: {
+				endpoint: "llm-context",
+				country: "DE",
+				searchLang: "de",
+				safesearch: "strict",
+			},
+		});
+
+		const params = paramsOf(calls[0]);
+		expect(params.get("country")).toBe("DE");
+		expect(params.get("search_lang")).toBe("de");
+		expect(params.get("safesearch")).toBe("strict");
+	});
+});
+
+describe("brave adapter — plan without LLM Context", () => {
+	/**
+	 * Brave's documented shape for a key whose plan lacks the endpoint:
+	 * HTTP 400 with `error.code = "OPTION_NOT_IN_PLAN"`. The legacy "Free AI"
+	 * plan returns exactly this for `/llm/context` while `/web/search` works.
+	 */
+	function optionNotInPlan(): Response {
+		return jsonResponse(
+			{
+				type: "ErrorResponse",
+				error: {
+					id: "probe",
+					status: 400,
+					detail: "The option is not included in the plan.",
+					meta: { component: "authentication" },
+					code: "OPTION_NOT_IN_PLAN",
+				},
+				time: 0,
+			},
+			400,
+		);
+	}
+
+	const ROW_ID = "row-brave-legacy";
+
+	/** Config for a row that asks for llm-context and carries its id. */
+	const llmConfig: WebToolAdapterConfig = {
+		...baseConfig,
+		extraConfig: {},
+		rowId: ROW_ID,
+	};
+
+	afterEach(() => {
+		resetBravePlanMemory();
+	});
+
+	it("falls back to web/search and returns its hits", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({
+						web: {
+							results: [
+								{ title: "W", url: "https://example.com/w", description: "d" },
+							],
+						},
+					}),
+		);
+
+		const hits = await adapter.search(request(), llmConfig);
+
+		expect(calls).toHaveLength(2);
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+		expect(calls[1].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+		expect(hits).toEqual([
+			{ title: "W", url: "https://example.com/w", snippet: "d" },
+		]);
+	});
+
+	it("remembers the answer, so later searches skip the doomed call", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ web: { results: [] } }),
+		);
+
+		await adapter.search(request(), llmConfig);
+		expect(calls).toHaveLength(2);
+
+		await adapter.search(request(), llmConfig);
+		// No second llm/context attempt: only the web/search call.
+		expect(calls).toHaveLength(3);
+		expect(calls[2].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+	});
+
+	it("keeps the memory per row: another row still tries llm-context", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ web: { results: [] } }),
+		);
+
+		await adapter.search(request(), llmConfig);
+		calls = [];
+		await adapter.search(request(), { ...llmConfig, rowId: "other-row" });
+
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+	});
+
+	it("does not fall back on a 400 that is not a plan problem", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				{ type: "ErrorResponse", error: { status: 400, code: "BAD_REQUEST" } },
+				400,
+			),
+		);
+
+		await expect(adapter.search(request(), llmConfig)).rejects.toBeInstanceOf(
+			BraveSearchError,
+		);
+		expect(calls).toHaveLength(1);
+	});
+
+	it("does not fall back on a 429 (rate limit is not a plan problem)", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				{ type: "ErrorResponse", error: { status: 429, code: "RATE_LIMITED" } },
+				429,
+			),
+		);
+
+		await expect(adapter.search(request(), llmConfig)).rejects.toBeInstanceOf(
+			BraveSearchError,
+		);
+		expect(calls).toHaveLength(1);
+	});
+
+	it("still throws when the web/search fallback itself fails", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ error: "nope" }, 500),
+		);
+
+		await expect(adapter.search(request(), llmConfig)).rejects.toBeInstanceOf(
+			BraveSearchError,
+		);
+		expect(calls).toHaveLength(2);
+	});
+
+	it("carries the code on the error so the chain can tell what failed", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				{
+					type: "ErrorResponse",
+					error: { status: 400, code: "OPTION_NOT_IN_PLAN" },
+				},
+				400,
+			),
+		);
+
+		// No rowId: the memory cannot be kept, so the error surfaces as-is.
+		const error = await adapter
+			.search(request(), { ...llmConfig, rowId: undefined })
+			.catch((e: unknown) => e);
+
+		expect(error).toBeInstanceOf(BraveSearchError);
+		expect((error as BraveSearchError).code).toBe("OPTION_NOT_IN_PLAN");
+	});
+
+	it("reports ok from test() on a legacy plan", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ web: { results: [] } }),
+		);
+
+		const result = await adapter.test(llmConfig);
+
+		expect(result.ok).toBe(true);
+		expect(result.error).toBeUndefined();
+		expect(calls[1].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+	});
+});
+
+describe("brave adapter — replacing the key rescopes the plan memory", () => {
+	function optionNotInPlan(): Response {
+		return jsonResponse(
+			{
+				type: "ErrorResponse",
+				error: { status: 400, code: "OPTION_NOT_IN_PLAN" },
+			},
+			400,
+		);
+	}
+
+	afterEach(() => {
+		resetBravePlanMemory();
+	});
+
+	it("a new key on the same row tries llm-context again", async () => {
+		// Old key: no LLM Context, so the row is remembered as web-only.
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ web: { results: [] } }),
+		);
+		const legacy: WebToolAdapterConfig = {
+			...baseConfig,
+			extraConfig: {},
+			rowId: "row-1",
+		};
+		await adapter.search(request(), legacy);
+		calls = [];
+
+		// Same row id, upgraded key — must probe llm-context rather than stay
+		// pinned to web/search until a restart.
+		const upgraded: WebToolAdapterConfig = {
+			...legacy,
+			apiKey: "brave-upgraded-plan-key",
+		};
+		stubFetch(() =>
+			jsonResponse({
+				grounding: { generic: [{ url: "https://x.test/a", snippets: ["c"] }] },
+			}),
+		);
+		await adapter.search(request(), upgraded);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+	});
+
+	it("the legacy key stays on web/search after a different key is seen", async () => {
+		stubFetch((call) =>
+			call.url.startsWith(BRAVE_LLM_CONTEXT_URL)
+				? optionNotInPlan()
+				: jsonResponse({ web: { results: [] } }),
+		);
+		const legacy: WebToolAdapterConfig = {
+			...baseConfig,
+			extraConfig: {},
+			rowId: "row-1",
+		};
+		await adapter.search(request(), legacy);
+		await adapter.search(request(), { ...legacy, apiKey: "other-key" });
+
+		calls = [];
+		await adapter.search(request(), legacy);
+		// Still remembered as web-only: one call, straight to web/search.
+		expect(calls).toHaveLength(1);
+		expect(calls[0].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
 	});
 });
