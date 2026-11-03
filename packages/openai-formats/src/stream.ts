@@ -365,7 +365,10 @@ export function transformStreamingResponse(
 						try {
 							const data = JSON.parse(dataStr);
 
-							if (data.choices?.[0]?.finish_reason != null) {
+							// Truthy, not `!= null`: some senders emit `finish_reason: ""` on
+							// every chunk to mean "still generating", and treating that as a
+							// declaration would finish a dropped connection as a success.
+							if (data.choices?.[0]?.finish_reason) {
 								context.hasSeenFinishReason = true;
 							}
 

@@ -806,6 +806,32 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 		expect(types).not.toContain("message_stop");
 	});
 
+	it("treats an empty-string finish_reason as not finished", async () => {
+		// Some senders put `finish_reason: ""` on every chunk to mean "still
+		// generating". That is not a declaration of completion, so a dropped
+		// connection must still classify as truncated.
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "gpt-4",
+				choices: [
+					{
+						index: 0,
+						delta: { role: "assistant", content: "" },
+						finish_reason: "",
+					},
+				],
+			}),
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const types = events.map(parseEventData).map((d) => d.type);
+		expect(types).toContain("message_start");
+		expect(types).not.toContain("message_delta");
+		expect(types).not.toContain("message_stop");
+	});
+
 	it("finishes the message on flush when the upstream declared finish_reason", async () => {
 		// The GLM/Mistral shape from the hang fix: a final empty-content chunk
 		// carrying `finish_reason: "stop"`, then EOF with no [DONE]. Completion
