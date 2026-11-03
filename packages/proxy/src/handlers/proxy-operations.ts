@@ -596,13 +596,22 @@ function cacheControlRejectorKey(accountId: string, model: string): string {
 }
 
 /**
- * Checks if a 400 response is caused by an upstream provider rejecting the
- * cache_control field (e.g. GLM-5.1 strict OpenAI-compatible validation).
+ * Checks if a response is caused by an upstream provider rejecting the
+ * cache_control field. Two shapes are seen in practice:
+ *   - GLM-5.1 style: HTTP 400, a flat string message (e.g. "Extra inputs are
+ *     not permitted: cache_control is not a valid field").
+ *   - Mistral style: HTTP 422, `{object: "error", message: {detail: [...]}}`
+ *     with pydantic `extra_forbidden` errors whose `loc` names the field.
+ * `cache_control` is Anthropic-only - it is not part of the OpenAI
+ * chat-completions schema - so a retry without it is the correct recovery for
+ * either shape. Matching anything but `cache_control` in the loc array keeps
+ * unrelated 422s (e.g. `thinking`, `output_config` - also Anthropic-only but
+ * not fixed by stripping cache_control) from marking the pair as a rejector.
  */
-async function isCacheControlRejectionError(
+export async function isCacheControlRejectionError(
 	response: Response,
 ): Promise<boolean> {
-	if (response.status !== 400) return false;
+	if (response.status !== 400 && response.status !== 422) return false;
 
 	try {
 		const contentType = response.headers.get("content-type");
@@ -614,16 +623,47 @@ async function isCacheControlRejectionError(
 		// original. Reachable in normal operation: providers such as Qwen do
 		// return non-JSON error bodies. See issue #356.
 		const json = await response.clone().json();
-		const message: string = json.error?.message ?? json.message ?? "";
-		return (
-			typeof message === "string" &&
-			message.includes("cache_control") &&
-			(message.includes("Extra inputs are not permitted") ||
-				message.includes("unknown field"))
-		);
+		// Mistral nests the pydantic errors under a top-level `detail` array and
+		// wraps the same array in `message` only on some paths; check both.
+		const detail = Array.isArray(json.detail)
+			? json.detail
+			: (json.error?.message ?? json.message)?.detail;
+		if (Array.isArray(detail) && detail.length > 0) {
+			return hasCacheControlDetail(detail);
+		}
+		// Flat string message (GLM-style).
+		const message = json.error?.message ?? json.message ?? "";
+		if (typeof message === "string") {
+			return (
+				message.includes("cache_control") &&
+				(message.includes("Extra inputs are not permitted") ||
+					message.includes("unknown field"))
+			);
+		}
+		return false;
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * True when any pydantic validation entry is the strict-schema rejection of
+ * `cache_control`. Two loc shapes carry the field: a short
+ * `[... "cache_control"]` path, and the long union branch where the name sits
+ * in `msg` instead - the retry strip is keyed on the field, not on where
+ * pydantic reports it.
+ */
+function hasCacheControlDetail(detail: unknown[]): boolean {
+	return detail.some((entry: unknown) => {
+		if (typeof entry !== "object" || entry === null) return false;
+		const { loc, msg } = entry as { loc?: unknown; msg?: unknown };
+		const msgText = typeof msg === "string" ? msg : "";
+		if (!msgText.includes("Extra inputs are not permitted")) return false;
+		const locText = Array.isArray(loc) ? loc.join(".") : "";
+		return (
+			locText.includes("cache_control") || msgText.includes("cache_control")
+		);
+	});
 }
 
 /**
