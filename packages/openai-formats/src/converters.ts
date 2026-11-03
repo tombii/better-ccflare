@@ -1,6 +1,7 @@
 import { mapModelName } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
+import { normalizeOpenAIContent } from "./content";
 import { resolveReasoningEffort } from "./reasoning";
 import type {
 	AnthropicContent,
@@ -355,18 +356,23 @@ export function convertOpenAIResponseToAnthropic(
 
 	// Add thinking content first (Anthropic ordering) — DeepSeek/reasoning
 	// providers return reasoning_content on the message in non-streaming responses.
-	if (choice.message?.reasoning_content) {
+	// Some gateways (Mistral/GLM) instead return `content` as an array of
+	// thinking + text blocks; reasoning_content wins when both carry thinking.
+	const normalizedContent = normalizeOpenAIContent(choice.message?.content);
+	const thinking =
+		choice.message?.reasoning_content || normalizedContent.thinking;
+	if (thinking) {
 		content.push({
 			type: "thinking",
-			thinking: choice.message.reasoning_content,
+			thinking,
 		});
 	}
 
 	// Add text content if present
-	if (choice.message?.content) {
+	if (normalizedContent.hasContent) {
 		content.push({
 			type: "text",
-			text: choice.message.content,
+			text: normalizedContent.text,
 		});
 	}
 

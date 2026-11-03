@@ -713,6 +713,65 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 		expect(types).toContain("message_stop");
 	});
 
+	it("emits nothing terminal when the body closes before any valid chunk", async () => {
+		// Transport died before a single parseable chunk: message_start was never
+		// sent, so a message_delta/message_stop here would make a broken stream
+		// look like a completed empty answer.
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode("data: {not json\n\n"));
+				controller.close();
+			},
+		});
+		const upstream = new Response(body, {
+			headers: { "content-type": "text/event-stream" },
+		});
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const types = events.map(parseEventData).map((d) => d.type);
+		expect(types).not.toContain("message_delta");
+		expect(types).not.toContain("message_stop");
+	});
+
+	it("finishes the message on flush when no content block ever opened", async () => {
+		// Only empty content, then the body closes with no [DONE]. Nothing was
+		// opened, so no block may be stopped — but the message must still end.
+		const encoder = new TextEncoder();
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const content of ["", []]) {
+					controller.enqueue(
+						encoder.encode(
+							`data: ${JSON.stringify({
+								id: "c1",
+								model: "zai-glm-5-3-flash",
+								choices: [
+									{ index: 0, delta: { content }, finish_reason: null },
+								],
+							})}\n\n`,
+						),
+					);
+				}
+				controller.close(); // close without [DONE]
+			},
+		});
+		const upstream = new Response(body, {
+			headers: { "content-type": "text/event-stream" },
+		});
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		expect(events.filter((e) => e.event === "content_block_stop")).toHaveLength(
+			0,
+		);
+		const data = events.map(parseEventData);
+		expect(
+			data.find((d) => d.type === "message_delta")?.delta.stop_reason,
+		).toBe("end_turn");
+		expect(data.find((d) => d.type === "message_stop")).toBeDefined();
+	});
+
 	it("emits buffered tool call JSON on flush without [DONE]", async () => {
 		const encoder = new TextEncoder();
 		const body = new ReadableStream<Uint8Array>({
@@ -1343,6 +1402,271 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		const stops = events.filter((e) => e.event === "content_block_stop");
 		expect(stops).toHaveLength(2);
 		expect(stops.map((e) => parseEventData(e).index).sort()).toEqual([0, 1]);
+	});
+});
+
+// ── transformStreamingResponse — array-shaped delta.content ──────────────────
+// Some OpenAI-compatible gateways (Mistral serving zai-glm-5-3-flash) stream
+// `delta.content` as an array of content blocks instead of a string.
+
+describe("transformStreamingResponse — delta.content as an array of blocks", () => {
+	function chunk(delta: unknown, finishReason: string | null = null) {
+		return JSON.stringify({
+			id: "c1",
+			model: "zai-glm-5-3-flash",
+			choices: [{ index: 0, delta, finish_reason: finishReason }],
+		});
+	}
+
+	function thinkingBlock(thinking: unknown) {
+		return { type: "thinking", thinking, closed: true };
+	}
+
+	it("maps streamed thinking blocks to a thinking block then text from the mixed final chunk", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ role: "assistant", content: [] }),
+			chunk({
+				index: 0,
+				content: [thinkingBlock([{ type: "text", text: "The" }])],
+			}),
+			chunk({
+				index: 0,
+				content: [thinkingBlock([{ type: "text", text: " answer" }])],
+			}),
+			chunk({
+				index: 0,
+				content: [
+					thinkingBlock([{ type: "text", text: 'I\'ll respond with "OK".' }]),
+					{ type: "text", text: "OK" },
+				],
+			}),
+			chunk({ content: "" }, "stop"),
+			"[DONE]",
+		]);
+		const raw = await readStream(transformStreamingResponse(upstream).body);
+		const events = parseSSEEvents(raw);
+
+		const starts = events
+			.filter((e) => e.event === "content_block_start")
+			.map(parseEventData);
+		expect(starts.map((s) => s.content_block.type)).toEqual([
+			"thinking",
+			"text",
+		]);
+		expect(starts.map((s) => s.index)).toEqual([0, 1]);
+
+		const deltas = events
+			.filter((e) => e.event === "content_block_delta")
+			.map(parseEventData);
+		const thinkingDeltas = deltas.filter(
+			(d) => d.delta.type === "thinking_delta",
+		);
+		expect(thinkingDeltas.map((d) => d.delta.thinking)).toEqual([
+			"The",
+			" answer",
+			'I\'ll respond with "OK".',
+		]);
+		expect(thinkingDeltas.every((d) => d.index === 0)).toBe(true);
+
+		const textDeltas = deltas.filter((d) => d.delta.type === "text_delta");
+		expect(textDeltas).toEqual([
+			{
+				type: "content_block_delta",
+				index: 1,
+				delta: { type: "text_delta", text: "OK" },
+			},
+		]);
+
+		// thinking block closed before text block opens
+		const thinkingStopIdx = events.findIndex(
+			(e) => e.event === "content_block_stop" && parseEventData(e).index === 0,
+		);
+		const textStartIdx = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				parseEventData(e).content_block.type === "text",
+		);
+		expect(thinkingStopIdx).toBeGreaterThanOrEqual(0);
+		expect(thinkingStopIdx).toBeLessThan(textStartIdx);
+
+		const stops = events.filter((e) => e.event === "content_block_stop");
+		expect(stops.map((e) => parseEventData(e).index)).toEqual([0, 1]);
+
+		// usage is still read off the final chunk even with content: ""
+		const messageDelta = events
+			.map(parseEventData)
+			.find((d) => d.type === "message_delta");
+		expect(messageDelta.delta.stop_reason).toBe("end_turn");
+	});
+
+	it("accepts a string-valued thinking field inside a thinking block", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ content: [thinkingBlock("Plain thought")] }),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const thinkingDelta = events
+			.map(parseEventData)
+			.find((d) => d.delta?.type === "thinking_delta");
+		expect(thinkingDelta.delta.thinking).toBe("Plain thought");
+	});
+
+	it("opens a text block for a single text block array", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ content: [{ type: "text", text: "Hello" }] }),
+			chunk({ content: [{ type: "text", text: " world" }] }),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const textDeltas = events
+			.map(parseEventData)
+			.filter((d) => d.delta?.type === "text_delta");
+		expect(textDeltas.map((d) => d.delta.text)).toEqual(["Hello", " world"]);
+		expect(textDeltas.every((d) => d.index === 0)).toBe(true);
+	});
+
+	it("does not open a block for content: []", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ role: "assistant", content: [] }),
+			chunk({ content: "" }, "stop"),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		expect(
+			events.filter((e) => e.event === "content_block_start"),
+		).toHaveLength(0);
+		// No block opened, so none may be stopped — but the message must still
+		// finish, or the client hangs waiting for message_delta/message_stop.
+		expect(events.filter((e) => e.event === "content_block_stop")).toHaveLength(
+			0,
+		);
+		const types = events.map(parseEventData).map((d) => d.type);
+		expect(types).toContain("message_delta");
+		expect(types).toContain("message_stop");
+	});
+
+	it("emits nothing terminal for a [DONE]-only stream that never started", async () => {
+		// message_start is only sent on the first parseable chunk, and [DONE] is
+		// handled before that. A body of just `[DONE]` therefore never started a
+		// message, so terminal events here would fabricate a completed answer.
+		const upstream = makeOpenAIStream(["[DONE]"]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const types = events.map(parseEventData).map((d) => d.type);
+		expect(types).not.toContain("message_delta");
+		expect(types).not.toContain("message_stop");
+	});
+
+	it("finishes a stream whose only content is empty blocks", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ role: "assistant", content: [] }),
+			chunk({ content: [{ type: "text", text: "" }] }),
+			chunk({ content: "" }, "stop"),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		expect(
+			events.filter((e) => e.event === "content_block_delta"),
+		).toHaveLength(0);
+		const data = events.map(parseEventData);
+		const messageDelta = data.find((d) => d.type === "message_delta");
+		expect(messageDelta.delta.stop_reason).toBe("end_turn");
+		expect(data.find((d) => d.type === "message_stop")).toBeDefined();
+	});
+
+	it("still handles plain string content (regression)", async () => {
+		const upstream = makeOpenAIStream([
+			chunk({ role: "assistant", content: "OK" }),
+			chunk({ content: "" }, "stop"),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const textDeltas = events
+			.map(parseEventData)
+			.filter((d) => d.delta?.type === "text_delta");
+		expect(textDeltas.map((d) => d.delta.text)).toEqual(["OK"]);
+	});
+
+	it("closes array-shaped thinking and text blocks before the first tool_use block", async () => {
+		// Block-array content (Mistral/GLM shape) followed by tool calls in the
+		// same stream: both open blocks must be closed before the tool_use block
+		// opens, and the tool_use block must take the next monotonic index (2).
+		const upstream = makeOpenAIStream([
+			chunk({ role: "assistant", content: [] }),
+			chunk({
+				content: [thinkingBlock([{ type: "text", text: "Need to search." }])],
+			}),
+			chunk({ content: [{ type: "text", text: "Let me check." }] }),
+			chunk({
+				tool_calls: [
+					{
+						index: 0,
+						id: "tc1",
+						type: "function",
+						function: { name: "search", arguments: '{"q":"x"}' },
+					},
+				],
+			}),
+			chunk({ content: "" }, "tool_calls"),
+			"[DONE]",
+		]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+
+		const starts = events
+			.filter((e) => e.event === "content_block_start")
+			.map(parseEventData);
+		expect(starts.map((s) => s.content_block.type)).toEqual([
+			"thinking",
+			"text",
+			"tool_use",
+		]);
+		expect(starts.map((s) => s.index)).toEqual([0, 1, 2]);
+
+		const thinkingStop = events.findIndex(
+			(e) => e.event === "content_block_stop" && parseEventData(e).index === 0,
+		);
+		const textStop = events.findIndex(
+			(e) => e.event === "content_block_stop" && parseEventData(e).index === 1,
+		);
+		const toolStart = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				parseEventData(e).content_block.type === "tool_use",
+		);
+		expect(thinkingStop).toBeGreaterThanOrEqual(0);
+		expect(textStop).toBeGreaterThanOrEqual(0);
+		expect(toolStart).toBeGreaterThanOrEqual(0);
+		expect(thinkingStop).toBeLessThan(toolStart);
+		expect(textStop).toBeLessThan(toolStart);
+
+		const thinkingDeltas = events
+			.map(parseEventData)
+			.filter((d) => d.delta?.type === "thinking_delta");
+		expect(thinkingDeltas.map((d) => d.delta.thinking)).toEqual([
+			"Need to search.",
+		]);
+		const textDeltas = events
+			.map(parseEventData)
+			.filter((d) => d.delta?.type === "text_delta");
+		expect(textDeltas.map((d) => d.delta.text)).toEqual(["Let me check."]);
+
+		const messageDelta = events
+			.map(parseEventData)
+			.find((d) => d.type === "message_delta");
+		expect(messageDelta.delta.stop_reason).toBe("tool_use");
 	});
 });
 

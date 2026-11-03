@@ -181,8 +181,22 @@ export interface TransformStreamContext {
 	maxToolCallIndex: number;
 }
 
+/**
+ * Content block used by gateways that shape `content`/`delta.content` as an
+ * array (e.g. Mistral serving GLM): `{type:"text"}` or a `{type:"thinking"}`
+ * block whose `thinking` is a string or an array of text parts.
+ */
+export interface OpenAIContentBlock {
+	type: string;
+	text?: string;
+	thinking?: string | OpenAIContentBlock[];
+	closed?: boolean;
+}
+
+export type OpenAIStreamContent = string | OpenAIContentBlock[] | null;
+
 export interface OpenAIStreamDelta {
-	content?: string;
+	content?: OpenAIStreamContent;
 	reasoning_content?: string;
 	tool_calls?: Array<{
 		index: number;
@@ -201,7 +215,7 @@ export interface OpenAIResponse {
 	model?: string;
 	choices?: Array<{
 		message?: {
-			content?: string | null;
+			content?: OpenAIStreamContent;
 			role?: string;
 			tool_calls?: OpenAIToolCall[];
 			reasoning_content?: string;

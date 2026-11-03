@@ -1,4 +1,5 @@
 import { Logger } from "@better-ccflare/logger";
+import { normalizeOpenAIContent } from "./content";
 import type { TransformStreamContext } from "./types";
 import { repairTruncatedToolJson } from "./utils";
 
@@ -79,6 +80,8 @@ function emitToolCallJson(
  *   Pass null when stopReason is "end_turn" (text-only response).
  * @param endTurnBlockIndex - Anthropic block index to close when stopReason is "end_turn".
  *   May be a text block or a thinking block depending on the stream pattern.
+ * @param closesBlock - False when the stream never opened a content block, so
+ *   no `content_block_stop` must be emitted (the terminal delta still is).
  */
 function emitStreamEnd(
 	controller: TransformStreamDefaultController,
@@ -91,9 +94,11 @@ function emitStreamEnd(
 	cacheReadInputTokens: number,
 	cacheCreationInputTokens: number,
 	endTurnBlockIndex = 0,
+	closesBlock = true,
 ) {
-	// Send content_block_stop for all blocks
-	if (toolCallBlockIndices) {
+	// Send content_block_stop for all blocks. Skipped entirely when nothing was
+	// opened (see `closesBlock`); the terminal message events still go out.
+	if (closesBlock && toolCallBlockIndices) {
 		// Tool call blocks — use Anthropic block indices (not OpenAI tool_call indices)
 		for (const anthropicIdx of Object.values(toolCallBlockIndices)) {
 			const contentBlockStop = {
@@ -110,7 +115,7 @@ function emitStreamEnd(
 `),
 			);
 		}
-	} else if (stopReason === "end_turn") {
+	} else if (closesBlock && stopReason === "end_turn") {
 		// Text or thinking block — use the assigned Anthropic block index
 		const contentBlockStop = {
 			type: "content_block_stop",
@@ -324,6 +329,30 @@ export function transformStreamingResponse(
 									context.cacheCreationInputTokens,
 									context.thinkingBlockIndex,
 								);
+							} else if (context.hasSentStart) {
+								// No content block ever opened: the stream carried only empty
+								// content (`content: ""`, `content: []`, or empty text blocks),
+								// which providers such as Mistral/GLM send on the final chunk.
+								// Gated on hasSentStart for the same reason as the flush branch:
+								// [DONE] is handled before message_start is emitted, so a body
+								// of only `[DONE]` never started a message.
+								// Still finish the message so the client gets message_delta and
+								// message_stop instead of a message_start with no terminator.
+								// emitStreamEnd's block-stop is skipped via `closesBlock=false`
+								// because there is no open block to close at index 0.
+								emitStreamEnd(
+									controller,
+									encoder,
+									context.contextWindowSize,
+									"end_turn",
+									context.promptTokens,
+									context.completionTokens,
+									null,
+									context.cacheReadInputTokens,
+									context.cacheCreationInputTokens,
+									undefined,
+									false,
+								);
 							}
 
 							// Cleanup entire context after stream completion
@@ -512,7 +541,14 @@ export function transformStreamingResponse(
 								const reasoningText =
 									delta?.reasoning_content ||
 									(delta as { reasoning?: unknown } | undefined)?.reasoning;
-								if (typeof reasoningText === "string" && reasoningText) {
+								// Some gateways (Mistral/GLM) stream `content` as an array of
+								// blocks; reasoning_content wins when both carry thinking.
+								const normalized = normalizeOpenAIContent(delta?.content);
+								const thinkingText =
+									typeof reasoningText === "string" && reasoningText
+										? reasoningText
+										: normalized.thinking;
+								if (thinkingText) {
 									// DeepSeek/reasoning providers emit reasoning_content before text.
 									// Map to Anthropic thinking block using monotonic nextBlockIndex.
 									if (!context.hasSentThinkingBlockStart) {
@@ -558,7 +594,7 @@ export function transformStreamingResponse(
 										index: context.thinkingBlockIndex,
 										delta: {
 											type: "thinking_delta",
-											thinking: reasoningText,
+											thinking: thinkingText,
 										},
 									};
 									controller.enqueue(
@@ -570,7 +606,7 @@ export function transformStreamingResponse(
 										),
 									);
 								}
-								if (delta?.content) {
+								if (normalized.hasContent) {
 									// Send content_block_start on first content.
 									// Use the monotonic nextBlockIndex so the text block index
 									// never collides with any tool_use blocks.
@@ -622,7 +658,7 @@ export function transformStreamingResponse(
 										index: context.textBlockIndex,
 										delta: {
 											type: "text_delta",
-											text: delta.content,
+											text: normalized.text,
 										},
 									};
 									controller.enqueue(
@@ -714,6 +750,29 @@ export function transformStreamingResponse(
 						context.cacheReadInputTokens,
 						context.cacheCreationInputTokens,
 						context.thinkingBlockIndex,
+					);
+				} else if (context.hasSentStart) {
+					// Same case as the [DONE] handler: no block ever opened (only
+					// empty content), so finish the message without stopping a
+					// nonexistent block rather than leaving the client hanging.
+					// Gated on hasSentStart: if the body closed before ANY parseable
+					// chunk, message_start was never sent, and terminal events here
+					// would make an interrupted response look like a completed one.
+					log.warn(
+						"Stream terminated without [DONE] — no content block opened, finishing message",
+					);
+					emitStreamEnd(
+						controller,
+						encoder,
+						context.contextWindowSize,
+						"end_turn",
+						context.promptTokens,
+						context.completionTokens,
+						null,
+						context.cacheReadInputTokens,
+						context.cacheCreationInputTokens,
+						undefined,
+						false,
 					);
 				}
 
