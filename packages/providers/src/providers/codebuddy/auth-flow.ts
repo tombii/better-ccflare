@@ -5,7 +5,7 @@ import type { TokenRefreshResult } from "../../types";
 const log = new Logger("CodeBuddyAuthFlow");
 
 export const CODEBUDDY_DEFAULT_ENDPOINT = "https://www.codebuddy.ai";
-export const CODEBUDDY_CLI_VERSION = "2.178.1";
+export const CODEBUDDY_CLI_VERSION = "2.179.3";
 
 const CODEBUDDY_ENDPOINT_ENV = "CCFLARE_CODEBUDDY_ENDPOINT";
 const DEFAULT_POLL_TIMEOUT_MS = 300_000;
