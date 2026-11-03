@@ -11,9 +11,10 @@
  *     `grounding.generic[].snippets[]`, with token/URL/snippet budgets the
  *     caller sets.
  *
- * `extraConfig.endpoint` selects between them (`"web"` or `"llm-context"`).
- * Anything unrecognised falls back to `web`, so existing rows keep the exact
- * behaviour they had before the option existed.
+ * `extraConfig.endpoint` selects between them (`"web"` or `"llm-context"`),
+ * defaulting to `llm-context` — this adapter exists to feed a model, and the
+ * chunks are the same price as the meta descriptions. Anything unrecognised
+ * also falls back to `llm-context`; `web` is opt-in.
  *
  * Both are GET; parameters ride in the query string and the key travels in an
  * `X-Subscription-Token` header, not `Authorization: Bearer`.
@@ -40,8 +41,8 @@ export const BRAVE_SEARCH_URL =
 export const BRAVE_LLM_CONTEXT_URL =
 	"https://api.search.brave.com/res/v1/llm/context";
 
-/** `extraConfig.endpoint` value selecting the LLM Context product. */
-const LLM_CONTEXT_ENDPOINT = "llm-context";
+/** `extraConfig.endpoint` value selecting the human-oriented results page. */
+const WEB_ENDPOINT = "web";
 
 /**
  * Token budget for one LLM Context call. The API defaults to 8,192 tokens
@@ -119,9 +120,12 @@ function stringOption(
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-/** True when the operator selected the LLM Context product. */
+/**
+ * True when the request goes to the LLM Context product. This is the default:
+ * only an explicit `endpoint: "web"` selects the human-oriented results page.
+ */
 function usesLlmContext(config: WebToolAdapterConfig): boolean {
-	return stringOption(config, "endpoint") === LLM_CONTEXT_ENDPOINT;
+	return stringOption(config, "endpoint") !== WEB_ENDPOINT;
 }
 
 /** Build the GET URL, adding optional parameters only when configured. */

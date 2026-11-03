@@ -215,7 +215,7 @@ Only the query *length* is logged at info level — queries can be sensitive.
 | **Parallel** | `mode`: `turbo`, `fast`, `basic` (default), `advanced`; `objective` (free text) | `source_policy` carries `allowed_domains` / `blocked_domains` |
 | **DeepSeek** | — | Domain filtering is applied client-side to the returned hits |
 | **Serper** | `gl` (country), `hl` (language) | Google results |
-| **Brave Search** | `country`, `safesearch`: `off`, `moderate` (default), `strict` | Domain filtering is applied client-side |
+| **Brave Search** | `endpoint`: `llm-context` (default), `web`; `country`, `safesearch`: `off`, `moderate` (default), `strict` | Domain filtering is applied client-side. See [Brave: `web` vs `llm-context`](#brave-web-vs-llm-context) |
 | **Perplexity** | `model` (default `sonar`) | **Listed but not implemented** — rows are accepted but the chain skips them |
 
 `maxResults` accepts 1–50 (default 10). The adapter requests
@@ -225,6 +225,27 @@ your per-provider `maxResults` is the binding limit.
 The provider list and field definitions live in `SEARCH_PROVIDER_CATALOG`
 (`packages/types/src/search-provider.ts`); the adapters live in
 `packages/proxy/src/web-tools/adapters/`.
+
+#### Brave: `web` vs `llm-context`
+
+Brave sells two **separate products in the same Search plan at the same
+price** ([`$5` per 1,000 requests](https://api-dashboard.search.brave.com/documentation/pricing)).
+The adapter defaults to `llm-context`, because a `web_search` tool result is
+read by a model, not a person:
+
+| `endpoint` | Brave endpoint | Returns |
+|------------|----------------|---------|
+| `llm-context` *(default)* | `/res/v1/llm/context` | Pre-extracted, query-relevant page chunks (`grounding.generic[].snippets[]`) |
+| `web` | `/res/v1/web/search` | Result pages for humans: URLs and short meta-description snippets |
+
+Set `"endpoint": "web"` only if you deliberately want the human-oriented
+results page. Any value other than `"web"` is treated as `llm-context`.
+
+The adapter pins the LLM Context budgets (`maximum_number_of_tokens` = 2048,
+and the URL/snippet limits to the request's result count). Brave's defaults
+(8,192 tokens, 20 URLs, 50 snippets) would pay for content the responder
+truncates to 500 characters per snippet anyway. `freshness` is a `web`-only
+parameter and is not sent on `llm-context`.
 
 ### Managing providers
 

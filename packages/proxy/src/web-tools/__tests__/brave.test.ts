@@ -63,10 +63,15 @@ function web(url: string): Record<string, unknown> {
 
 const adapter = createBraveAdapter();
 
+/**
+ * The web/search product, which is now opt-in: every spec that exercises the
+ * `web.results[]` shape has to name it explicitly. Specs for the LLM Context
+ * product (the default) live in their own describe block below.
+ */
 const baseConfig: WebToolAdapterConfig = {
 	apiKey: "brave-canary-token-9876",
 	maxResults: 10,
-	extraConfig: {},
+	extraConfig: { endpoint: "web" },
 };
 
 function request(
@@ -130,7 +135,12 @@ describe("brave adapter — request shape", () => {
 
 		await adapter.search(request(), {
 			...baseConfig,
-			extraConfig: { country: "DE", searchLang: "de", freshness: "pw" },
+			extraConfig: {
+				...baseConfig.extraConfig,
+				country: "DE",
+				searchLang: "de",
+				freshness: "pw",
+			},
 		});
 		await adapter.search(request(), baseConfig);
 
@@ -150,7 +160,7 @@ describe("brave adapter — request shape", () => {
 
 		await adapter.search(request(), {
 			...baseConfig,
-			extraConfig: { freshness: "yesterday" },
+			extraConfig: { ...baseConfig.extraConfig, freshness: "yesterday" },
 		});
 
 		expect(paramsOf(calls[0]).has("freshness")).toBe(false);
@@ -508,7 +518,7 @@ describe("brave adapter — safesearch", () => {
 
 			await adapter.search(request(), {
 				...baseConfig,
-				extraConfig: { safesearch: value },
+				extraConfig: { ...baseConfig.extraConfig, safesearch: value },
 			});
 
 			const url = new URL(calls[0].url);
@@ -521,7 +531,7 @@ describe("brave adapter — safesearch", () => {
 
 		await adapter.search(request(), {
 			...baseConfig,
-			extraConfig: { safesearch: "paranoid" },
+			extraConfig: { ...baseConfig.extraConfig, safesearch: "paranoid" },
 		});
 
 		expect(new URL(calls[0].url).searchParams.has("safesearch")).toBe(false);
@@ -573,23 +583,38 @@ describe("brave adapter — llm/context endpoint", () => {
 		);
 	});
 
-	it("keeps web/search as the default when no endpoint is configured", async () => {
-		stubFetch(() => jsonResponse({ web: { results: [] } }));
+	it("defaults to llm/context when no endpoint is configured", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
 
-		await adapter.search(request(), baseConfig);
+		await adapter.search(request(), {
+			...baseConfig,
+			extraConfig: {},
+		});
 
-		expect(calls[0].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
 	});
 
-	it("falls back to web/search for an unrecognised endpoint value", async () => {
-		stubFetch(() => jsonResponse({ web: { results: [] } }));
+	it("falls back to llm/context for an unrecognised endpoint value", async () => {
+		stubFetch(() => jsonResponse(llmPayload()));
 
 		await adapter.search(request(), {
 			...baseConfig,
 			extraConfig: { endpoint: "legacy-ai" },
 		});
 
+		expect(calls[0].url.startsWith(BRAVE_LLM_CONTEXT_URL)).toBe(true);
+	});
+
+	it('uses web/search only when endpoint is explicitly "web"', async () => {
+		stubFetch(() => jsonResponse({ web: { results: [] } }));
+
+		await adapter.search(request(), {
+			...baseConfig,
+			extraConfig: { endpoint: "web" },
+		});
+
 		expect(calls[0].url.startsWith(BRAVE_SEARCH_URL)).toBe(true);
+		expect(paramsOf(calls[0]).has("maximum_number_of_tokens")).toBe(false);
 	});
 
 	it("pins the token, URL and snippet budgets so we never pay for content we truncate", async () => {

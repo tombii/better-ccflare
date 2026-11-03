@@ -157,9 +157,9 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 				// Two products, one plan, one price. `llm-context` returns
 				// pre-extracted page chunks instead of the short meta
 				// descriptions `web` returns — strictly better input for an
-				// agent's search tool, at the same $5/1k.
-				options: ["web", "llm-context"],
-				defaultValue: "web",
+				// agent's search tool, at the same $5/1k, so it is the default.
+				options: ["llm-context", "web"],
+				defaultValue: "llm-context",
 				description:
 					"`web` returns human-oriented URLs and short snippets; `llm-context` returns model-ready page chunks from the same index.",
 			},
