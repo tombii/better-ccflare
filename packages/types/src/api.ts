@@ -10,6 +10,14 @@ export interface ComboSlotInfo {
 	comboName: string | null;
 	/** Ordered list of { accountId, modelOverride } for combo slots, indexed by position in the returned accounts array */
 	slots: Array<{ accountId: string; modelOverride: string }>;
+	/**
+	 * Every ENABLED slot in the combo definition, independent of this request's
+	 * availability filtering. `slots` above is the per-request routable subset
+	 * (index-aligned with the returned accounts); this is the stable definition
+	 * for decisions that must not change as slots cool down — e.g. whether an
+	 * account has another model slot (comboHasSiblingModel in proxy-operations).
+	 */
+	definitionSlots?: Array<{ accountId: string; modelOverride: string }>;
 }
 
 export interface RequestMeta {

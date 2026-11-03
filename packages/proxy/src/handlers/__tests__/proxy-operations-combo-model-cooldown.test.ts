@@ -244,6 +244,118 @@ describe("proxyWithAccount — combo 429 cools (account, model), not the account
 		expect(saveReasons(ctx)).toContain("model_fallback_429");
 	});
 
+	it("uses definitionSlots, not the per-request filtered slots, to find a sibling", async () => {
+		globalThis.fetch = mock(async () => plain429());
+
+		// The request's routable `slots` list contains ONLY the failed model's
+		// slot — model-b is cooling and was filtered out of the returned
+		// accounts. `definitionSlots` is the stable combo definition and still
+		// knows the account has a different-model slot. Without the definition
+		// the sibling check would find nothing and bench the whole account,
+		// which would also block model-b once its own cooldown expired.
+		const meta = makeRequestMeta({ comboName: "my-combo" });
+		setComboSlotInfo(meta, {
+			comboName: "my-combo",
+			slots: [{ accountId: ACCOUNT_ID, modelOverride: "model-a" }],
+			definitionSlots: [
+				{ accountId: ACCOUNT_ID, modelOverride: "model-a" },
+				{ accountId: ACCOUNT_ID, modelOverride: "model-b" },
+			],
+		});
+
+		const ctx = makeCtx();
+		const account = makeAccount();
+
+		const result = await runProxy(account, ctx, meta, "model-a");
+
+		expect(result).toBeNull();
+		// Model-scoped: the definition proves a sibling, so the account is NOT
+		// benched — only the failed model cools.
+		expect(account.rate_limited_until).toBeNull();
+		expect(markCalls(ctx)).toHaveLength(0);
+		expect(isModelCooling(ACCOUNT_ID, "model-a")).toBe(true);
+		expect(isModelCooling(ACCOUNT_ID, "model-b")).toBe(false);
+		expect(saveReasons(ctx)).toContain("model_fallback_429");
+	});
+
+	it("falls back to slots when definitionSlots is absent (benches when no sibling there)", async () => {
+		globalThis.fetch = mock(async () => plain429());
+
+		// No definitionSlots populated: the sibling check must fall back to the
+		// per-request `slots` list, which here holds only the failed model.
+		const meta = makeRequestMeta({ comboName: "my-combo" });
+		setComboSlotInfo(meta, {
+			comboName: "my-combo",
+			slots: [{ accountId: ACCOUNT_ID, modelOverride: "model-a" }],
+		});
+
+		const ctx = makeCtx();
+		const account = makeAccount();
+
+		const result = await runProxy(account, ctx, meta, "model-a");
+
+		expect(result).toBeNull();
+		// Old behaviour preserved: no sibling in `slots` → account-wide bench.
+		expect(typeof account.rate_limited_until).toBe("number");
+		expect(account.rate_limited_reason).toBe("model_fallback_429");
+		expect(markCalls(ctx)).toHaveLength(1);
+		expect(isModelCooling(ACCOUNT_ID, "model-a")).toBe(false);
+	});
+
+	it("falls back to slots when definitionSlots IS absent but a sibling lives there", async () => {
+		globalThis.fetch = mock(async () => plain429());
+
+		// Same fallback, the other direction: with no definitionSlots the two
+		// routable slots ARE the definition, so the sibling is still found and
+		// the cooldown stays model-scoped.
+		const meta = makeRequestMeta({ comboName: "my-combo" });
+		setComboSlotInfo(meta, {
+			comboName: "my-combo",
+			slots: [
+				{ accountId: ACCOUNT_ID, modelOverride: "model-a" },
+				{ accountId: ACCOUNT_ID, modelOverride: "model-b" },
+			],
+		});
+
+		const ctx = makeCtx();
+		const account = makeAccount();
+
+		const result = await runProxy(account, ctx, meta, "model-a");
+
+		expect(result).toBeNull();
+		expect(account.rate_limited_until).toBeNull();
+		expect(markCalls(ctx)).toHaveLength(0);
+		expect(isModelCooling(ACCOUNT_ID, "model-a")).toBe(true);
+	});
+
+	it("cools with the store's 5-minute fallback TTL when the 429 names no reset", async () => {
+		globalThis.fetch = mock(async () => plain429());
+
+		const meta = makeRequestMeta({ comboName: "my-combo" });
+		setComboSlotInfo(meta, {
+			comboName: "my-combo",
+			slots: [
+				{ accountId: ACCOUNT_ID, modelOverride: "model-a" },
+				{ accountId: ACCOUNT_ID, modelOverride: "model-b" },
+			],
+		});
+
+		const ctx = makeCtx();
+		const account = makeAccount();
+
+		const result = await runProxy(account, ctx, meta, "model-a");
+
+		expect(result).toBeNull();
+		expect(account.rate_limited_until).toBeNull();
+		expect(markCalls(ctx)).toHaveLength(0);
+		// No reset was resolved, so the cooldown must fall back to the store's
+		// DEFAULT_MODEL_COOLDOWN_TTL_MS (5 min) — NOT the 60s `default` cooldown
+		// deadline that `extractCooldownUntilWithSource` invents.
+		const now = Date.now();
+		expect(isModelCooling(ACCOUNT_ID, "model-a", now + 4 * 60_000)).toBe(true);
+		expect(isModelCooling(ACCOUNT_ID, "model-a", now + 6 * 60_000)).toBe(false);
+	});
+
 	it("write the same audit-row shape as the account-wide path", async () => {
 		globalThis.fetch = mock(async () => plain429());
 

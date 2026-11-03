@@ -50,7 +50,10 @@ import { isModelRewrite } from "../worker-messages";
 import { applyAccountRequestTransformer } from "./account-request-transformer";
 import { getComboSlotInfo, getXaiConvId } from "./account-selector";
 import { markFamilyExhausted } from "./model-capacity";
-import { markModelCooling } from "./model-cooldown";
+import {
+	DEFAULT_MODEL_COOLDOWN_TTL_MS,
+	markModelCooling,
+} from "./model-cooldown";
 import { forwardObservedUpstream } from "./observed-upstream";
 import {
 	ERROR_MESSAGES,
@@ -1055,12 +1058,20 @@ export function systemSuspectScan(bodyText: string | undefined): string {
 
 /**
  * Whether this account has another combo slot, in the request's current
- * combo, carrying a DIFFERENT model than `model`. Only then is a 429 on this
- * slot safe to scope to the (account, model) pair instead of benching the
- * account: the account still has a routable slot, and benching it would also
+ * combo DEFINITION, carrying a DIFFERENT model than `model`. Only then is a 429
+ * on this slot safe to scope to the (account, model) pair instead of benching
+ * the account: the account still has a routable slot, and benching it would also
  * block that slot. A passthrough slot (empty modelOverride) is treated as
  * NOT different — it sends the request's own model, and the ambiguity
  * resolves in favour of the existing, better-tested account-wide bench.
+ *
+ * The check consults `info.definitionSlots` (the stable enabled-slot list from
+ * the combo definition) rather than `info.slots` (the per-request routable
+ * subset). `slots` shrinks as slots cool down, so after model A cools, the
+ * next request's `slots` no longer contains A — and a 429 on a sibling model B
+ * would then find no sibling and bench the whole account, blocking A too once
+ * A's own cooldown expires. `definitionSlots` falls back to `slots` for any
+ * caller that doesn't populate it.
  *
  * `meta.comboName != null` is the authoritative "this attempt is combo-routed"
  * signal, not the presence of a ComboSlotInfo: proxy.ts's step-10 combo
@@ -1074,8 +1085,9 @@ function comboHasSiblingModel(
 ): boolean {
 	const info = getComboSlotInfo(meta);
 	if (!info || meta.comboName == null) return false;
+	const slots = info.definitionSlots ?? info.slots;
 	const normalizedModel = model ? stripModelRouting(model).trim() : "";
-	return info.slots.some(
+	return slots.some(
 		(s) =>
 			s.accountId === accountId &&
 			s.modelOverride.trim().length > 0 &&
@@ -2095,6 +2107,15 @@ export async function proxyWithAccount(
 					providerReset.resetTime,
 				);
 				const reason: RateLimitReason = "model_fallback_429";
+				// A reset we invented rather than one the upstream named: our own
+				// `default` 60s probe cooldown, or a provider's own default when no
+				// real header outranked it. Both exits below share this so the
+				// account-wide bench and the model-scoped cooldown agree on
+				// provenance, and so the model cooldown can defer to the store's
+				// 5-minute fallback rather than the invented deadline.
+				const resetIsInferred =
+					!isExplicitUpstreamCooldown(cooldown.source) ||
+					(cooldown.source === "provider" && providerReset.resetIsInferred);
 				// Shared by both exits below so the account-wide bench and the
 				// model-scoped cooldown cannot drift in the audit row they write.
 				const saveNoFallback429AuditRow = () => {
@@ -2151,9 +2172,17 @@ export async function proxyWithAccount(
 					requestedModel != null &&
 					comboHasSiblingModel(requestMeta, account.id, requestedModel)
 				) {
-					markModelCooling(account.id, requestedModel, cooldown.until);
+					markModelCooling(
+						account.id,
+						requestedModel,
+						resetIsInferred ? null : cooldown.until,
+					);
 					log.warn(
-						`Account ${account.name} 429 on combo slot model "${requestedModel}" — model-scoped cooldown until ${new Date(cooldown.until).toISOString()} (account NOT benched: it has another combo slot with a different model)`,
+						`Account ${account.name} 429 on combo slot model "${requestedModel}" — model-scoped cooldown ${
+							resetIsInferred
+								? `for the store's ${DEFAULT_MODEL_COOLDOWN_TTL_MS / 60_000}min fallback TTL (no upstream reset named)`
+								: `until ${new Date(cooldown.until).toISOString()}`
+						} (account NOT benched: it has another combo slot with a different model)`,
 					);
 					saveNoFallback429AuditRow();
 					cancelDiscardedResponseBody(rawResponse);
@@ -2167,9 +2196,7 @@ export async function proxyWithAccount(
 					account,
 					{
 						resetTime: cooldown.until,
-						resetIsInferred:
-							!isExplicitUpstreamCooldown(cooldown.source) ||
-							(cooldown.source === "provider" && providerReset.resetIsInferred),
+						resetIsInferred,
 						reason,
 					},
 					ctx,

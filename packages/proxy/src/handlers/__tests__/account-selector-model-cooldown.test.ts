@@ -151,6 +151,36 @@ describe("selectAccountsForRequest — combo model-scoped cooldown", () => {
 		]);
 	});
 
+	it("keeps the combo DEFINITION in definitionSlots even when a slot is cooling", async () => {
+		const acc = makeAccount({ id: "acc-1" });
+		const combo = makeCombo([
+			makeSlot("acc-1", "claude-sonnet-4-5", 0),
+			makeSlot("acc-1", "claude-opus-4-5", 1),
+		]);
+		markModelCooling("acc-1", "claude-sonnet-4-5", FROZEN_NOW + 10 * MINUTE);
+		const ctx = makeCtx({ accounts: [acc], activeCombo: combo });
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
+
+		const info = getComboSlotInfo(meta);
+		// The routable subset excludes the cooling slot...
+		expect(info?.slots).toEqual([
+			{ accountId: "acc-1", modelOverride: "claude-opus-4-5" },
+		]);
+		expect(result.map((a) => a.id)).toEqual(["acc-1"]);
+		// ...but the stable definition still lists it, so a 429 on the cooling
+		// model's slot can prove the sibling exists (comboHasSiblingModel).
+		expect(info?.definitionSlots).toEqual([
+			{ accountId: "acc-1", modelOverride: "claude-sonnet-4-5" },
+			{ accountId: "acc-1", modelOverride: "claude-opus-4-5" },
+		]);
+	});
+
 	it("does not affect a different account serving the same model", async () => {
 		const acc1 = makeAccount({ id: "acc-1" });
 		const acc2 = makeAccount({ id: "acc-2" });

@@ -837,9 +837,20 @@ export async function selectAccountsForRequest(
 						// actually being returned — setting this earlier (even when every
 						// slot ends up unavailable/filtered) would leave stale combo state
 						// on `meta` for the normal-routing fallthrough below.
+						// `slots` is the per-request routable subset (index-aligned
+						// with the returned accounts); `definitionSlots` is the
+						// stable combo definition, so an account's sibling-model
+						// check survives its own slots cooling down.
+						const definitionSlots = combo.slots
+							.filter((s) => s.enabled)
+							.map((s) => ({
+								accountId: s.account_id,
+								modelOverride: s.model,
+							}));
 						const slotInfo: ComboSlotInfo = {
 							comboName: combo.name,
 							slots: slotEntries,
+							definitionSlots,
 						};
 						setComboSlotInfo(meta, slotInfo);
 						meta.comboName = combo.name;
@@ -850,7 +861,19 @@ export async function selectAccountsForRequest(
 					// is deliberately left unset (never was set above) so this fallthrough
 					// is treated as ordinary, non-combo selection downstream.
 					if (isComboSessionFallbackDisabled(ctx)) {
-						setComboSlotInfo(meta, { comboName: combo.name, slots: [] });
+						setComboSlotInfo(meta, {
+							comboName: combo.name,
+							slots: [],
+							// Even with no routable slots this request, keep the
+							// stable definition so a 429 can still prove the
+							// account has a sibling-model slot.
+							definitionSlots: combo.slots
+								.filter((s) => s.enabled)
+								.map((s) => ({
+									accountId: s.account_id,
+									modelOverride: s.model,
+								})),
+						});
 						meta.comboName = combo.name;
 						log.warn(
 							`All ${combo.slots.length} combo slots unavailable for ${combo.name}, session fallback disabled by the Combo Session Fallback setting (Settings → Advanced)`,
