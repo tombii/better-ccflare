@@ -746,7 +746,9 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 							`data: ${JSON.stringify({
 								id: "c1",
 								model: "zai-glm-5-3-flash",
-								choices: [{ index: 0, delta: { content }, finish_reason: null }],
+								choices: [
+									{ index: 0, delta: { content }, finish_reason: null },
+								],
 							})}\n\n`,
 						),
 					);
@@ -760,13 +762,13 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 		const events = parseSSEEvents(
 			await readStream(transformStreamingResponse(upstream).body),
 		);
-		expect(
-			events.filter((e) => e.event === "content_block_stop"),
-		).toHaveLength(0);
-		const data = events.map(parseEventData);
-		expect(data.find((d) => d.type === "message_delta")?.delta.stop_reason).toBe(
-			"end_turn",
+		expect(events.filter((e) => e.event === "content_block_stop")).toHaveLength(
+			0,
 		);
+		const data = events.map(parseEventData);
+		expect(
+			data.find((d) => d.type === "message_delta")?.delta.stop_reason,
+		).toBe("end_turn");
 		expect(data.find((d) => d.type === "message_stop")).toBeDefined();
 	});
 
@@ -1547,6 +1549,19 @@ describe("transformStreamingResponse — delta.content as an array of blocks", (
 		const types = events.map(parseEventData).map((d) => d.type);
 		expect(types).toContain("message_delta");
 		expect(types).toContain("message_stop");
+	});
+
+	it("emits nothing terminal for a [DONE]-only stream that never started", async () => {
+		// message_start is only sent on the first parseable chunk, and [DONE] is
+		// handled before that. A body of just `[DONE]` therefore never started a
+		// message, so terminal events here would fabricate a completed answer.
+		const upstream = makeOpenAIStream(["[DONE]"]);
+		const events = parseSSEEvents(
+			await readStream(transformStreamingResponse(upstream).body),
+		);
+		const types = events.map(parseEventData).map((d) => d.type);
+		expect(types).not.toContain("message_delta");
+		expect(types).not.toContain("message_stop");
 	});
 
 	it("finishes a stream whose only content is empty blocks", async () => {

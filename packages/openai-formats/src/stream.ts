@@ -329,10 +329,13 @@ export function transformStreamingResponse(
 									context.cacheCreationInputTokens,
 									context.thinkingBlockIndex,
 								);
-							} else {
+							} else if (context.hasSentStart) {
 								// No content block ever opened: the stream carried only empty
 								// content (`content: ""`, `content: []`, or empty text blocks),
 								// which providers such as Mistral/GLM send on the final chunk.
+								// Gated on hasSentStart for the same reason as the flush branch:
+								// [DONE] is handled before message_start is emitted, so a body
+								// of only `[DONE]` never started a message.
 								// Still finish the message so the client gets message_delta and
 								// message_stop instead of a message_start with no terminator.
 								// emitStreamEnd's block-stop is skipped via `closesBlock=false`
