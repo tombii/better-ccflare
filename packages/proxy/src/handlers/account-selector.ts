@@ -25,6 +25,7 @@ import {
 	isAccountExhaustedForModel,
 	type ModelFamilyExhaustionInfo,
 } from "./model-capacity";
+import { isModelCooling } from "./model-cooldown";
 import { isInternalProbe, type ProxyContext } from "./proxy-types";
 
 const log = new Logger("AccountSelector");
@@ -793,6 +794,18 @@ export async function selectAccountsForRequest(
 							continue;
 						}
 
+						// A 429 only cools the (account, model) pair it hit — the
+						// account stays eligible for its other combo slots. The slot's
+						// effective upstream model is the one that cools: a passthrough
+						// slot (empty model) sends the request's own model.
+						const slotModel = slot.model?.trim() ? slot.model : model;
+						if (slotModel && isModelCooling(account.id, slotModel)) {
+							log.info(
+								`Combo slot ${slot.account_id}/${slotModel} for ${combo.name} is in a model-scoped cooldown — skipping (account stays eligible for its other slots)`,
+							);
+							continue;
+						}
+
 						// Per-slot capacity check uses the slot's own model override
 						// (not the combo family's request model), since slots can carry
 						// distinct concrete models within the same family.
@@ -824,9 +837,20 @@ export async function selectAccountsForRequest(
 						// actually being returned — setting this earlier (even when every
 						// slot ends up unavailable/filtered) would leave stale combo state
 						// on `meta` for the normal-routing fallthrough below.
+						// `slots` is the per-request routable subset (index-aligned
+						// with the returned accounts); `definitionSlots` is the
+						// stable combo definition, so an account's sibling-model
+						// check survives its own slots cooling down.
+						const definitionSlots = combo.slots
+							.filter((s) => s.enabled)
+							.map((s) => ({
+								accountId: s.account_id,
+								modelOverride: s.model,
+							}));
 						const slotInfo: ComboSlotInfo = {
 							comboName: combo.name,
 							slots: slotEntries,
+							definitionSlots,
 						};
 						setComboSlotInfo(meta, slotInfo);
 						meta.comboName = combo.name;
@@ -837,7 +861,19 @@ export async function selectAccountsForRequest(
 					// is deliberately left unset (never was set above) so this fallthrough
 					// is treated as ordinary, non-combo selection downstream.
 					if (isComboSessionFallbackDisabled(ctx)) {
-						setComboSlotInfo(meta, { comboName: combo.name, slots: [] });
+						setComboSlotInfo(meta, {
+							comboName: combo.name,
+							slots: [],
+							// Even with no routable slots this request, keep the
+							// stable definition so a 429 can still prove the
+							// account has a sibling-model slot.
+							definitionSlots: combo.slots
+								.filter((s) => s.enabled)
+								.map((s) => ({
+									accountId: s.account_id,
+									modelOverride: s.model,
+								})),
+						});
 						meta.comboName = combo.name;
 						log.warn(
 							`All ${combo.slots.length} combo slots unavailable for ${combo.name}, session fallback disabled by the Combo Session Fallback setting (Settings → Advanced)`,

@@ -634,6 +634,11 @@ describe("selectAccountsForRequest — combo routing", () => {
 		expect(getComboSlotInfo(meta)).toEqual({
 			comboName: "Test Combo",
 			slots: [],
+			// The stable definition is still recorded so a 429 can prove a
+			// sibling-model slot exists even when none is routable this request.
+			definitionSlots: [
+				{ accountId: "acc-1", modelOverride: "claude-sonnet-4-5" },
+			],
 		});
 		expect(select).not.toHaveBeenCalled();
 	});
