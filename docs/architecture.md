@@ -608,6 +608,12 @@ sequenceDiagram
 - **Request Body Buffering**:
   - Buffers small request bodies (up to 256KB) for retry scenarios
   - Enables request replay on failover without client resend
+- **Web Search Interception** (`packages/proxy/src/web-tools/`):
+  - Recognises Claude Code's single-`web_search`-tool helper request before account selection
+  - Serves it from a priority-ordered chain of configured search providers (`search_providers`), falling through on failure
+  - Replays the Anthropic server-tool response shape; any failure forwards the request upstream unchanged
+  - Records one `web_tool_calls` trace per intercepted request — no `requests` row, no account selected
+  - See [Web Search](./web-search.md)
 
 ### 8. OAuth Flow Package (`packages/oauth-flow`)
 
@@ -1091,6 +1097,10 @@ sequenceDiagram
         Router-->>Client: JSON Response
     else Proxy Route
         Router->>Proxy: Forward to Proxy
+        Proxy->>Proxy: Check for web_search helper request
+        alt Search helper + provider available
+            Proxy-->>Client: Synthesised search response (no upstream call)
+        end
         Proxy->>AgentInterceptor: Check for Agent
         
         alt Agent Detected

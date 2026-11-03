@@ -1264,6 +1264,254 @@ Get historical logs.
 curl http://localhost:8080/api/logs/history
 ```
 
+### Web Search
+
+Serving Claude Code's `web_search` helper request through your own search
+providers. For how detection, fallback and the synthesised response work, see
+[Web Search](./web-search.md).
+
+#### GET /api/web-search/settings
+
+Read the web-search settings.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "enabled": false,
+    "maxResultChars": 4000,
+    "bypassHeader": true
+  }
+}
+```
+
+- `enabled` — master switch; off forwards the helper request upstream untouched.
+- `maxResultChars` — cap on the result digest returned to the model (500–100000).
+- `bypassHeader` — whether `x-better-ccflare-web-tools: off` opts a request out.
+
+**Example:**
+```bash
+curl http://localhost:8080/api/web-search/settings
+```
+
+#### PATCH /api/web-search/settings
+
+Update any subset of the settings above. At least one of `enabled`,
+`maxResultChars`, `bypassHeader` is required. `maxResultChars` must be a
+positive integer — values outside 500–100000 are clamped. Applied at runtime;
+no restart. Responds with the full settings object, same shape as `GET`.
+
+**Example:**
+```bash
+curl -X PATCH http://localhost:8080/api/web-search/settings \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+```
+
+#### GET /api/search-providers
+
+List configured search providers in priority order. API keys are returned
+masked (`apiKeyMasked`, e.g. `****abcd`).
+
+**Response:**
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "id": "sp_…",
+      "provider": "tavily",
+      "label": "tavily-main",
+      "apiKeyMasked": "****abcd",
+      "priority": 0,
+      "enabled": true,
+      "maxResults": 10,
+      "extraConfig": { "topic": "general" },
+      "status": "ok",
+      "statusMessage": null,
+      "statusCheckedAt": 1762166400000,
+      "cooldownUntil": null,
+      "createdAt": 1762000000000,
+      "updatedAt": 1762100000000
+    }
+  ]
+}
+```
+
+**Example:**
+```bash
+curl http://localhost:8080/api/search-providers
+```
+
+#### POST /api/search-providers
+
+Create a provider. Responds `201` with `{ "success": true, "data": <provider> }`.
+
+**Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `provider` | string | yes | Catalog id: `tavily`, `exa`, `parallel`, `deepseek`, `serper`, `brave`, `perplexity` |
+| `label` | string | yes | Unique name, at most 64 characters (`409` on collision) |
+| `apiKey` | string | for keyed providers | Required unless the catalog entry has `requiresKey: false` |
+| `priority` | integer | no | 0–1000, lower tried first (default 0) |
+| `enabled` | boolean | no | Default `true` |
+| `maxResults` | integer | no | 1–50 (default 10) — caps results per search |
+| `extraConfig` | object | no | Provider-specific fields; see `GET /api/search-providers/meta` |
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/search-providers \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"tavily","label":"tavily-main","apiKey":"tvly-…","priority":0}'
+```
+
+#### GET /api/search-providers/meta
+
+The provider catalog the dashboard renders: for each id, its label, docs URL,
+`requiresKey`, `implemented`, and the `extraConfigFields` (key, label, type,
+options, placeholder, default, description).
+
+**Example:**
+```bash
+curl http://localhost:8080/api/search-providers/meta
+```
+
+#### GET /api/search-providers/:id
+
+Read one provider (masked key).
+
+#### PATCH /api/search-providers/:id
+
+Update a provider. `provider` cannot be changed — an unchanged value is accepted
+and ignored, a different one is a `400`. Omit `apiKey` to keep the stored key;
+pass an empty string to clear it (rejected while the provider requires a key).
+Any other field from the create body may be patched, including `priority`.
+
+**Example:**
+```bash
+curl -X PATCH http://localhost:8080/api/search-providers/sp_… \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+```
+
+#### DELETE /api/search-providers/:id
+
+Delete a provider. Nothing references it: past traces keep `providerKind` but
+their `providerId` no longer resolves to a row.
+
+**Example:**
+```bash
+curl -X DELETE http://localhost:8080/api/search-providers/sp_…
+```
+
+#### POST /api/search-providers/:id/test
+
+Run one real, minimal search (`better-ccflare connectivity test`) against the
+stored key. Does not affect the provider's health status. Unimplemented
+providers return `ok: false` with `error: "provider not implemented yet"`.
+
+**Response:**
+```json
+{ "success": true, "data": { "ok": true, "latencyMs": 312 } }
+```
+
+On failure `data` carries `ok: false` and an `error` string (the request itself
+is still `200`).
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/search-providers/sp_…/test
+```
+
+#### POST /api/search-providers/:id/reorder
+
+Set the provider's priority (position in the fallback chain).
+
+**Body:** `{ "priority": 2 }` — integer 0–1000.
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/search-providers/sp_…/reorder \
+  -H "Content-Type: application/json" \
+  -d '{"priority": 2}'
+```
+
+#### GET /api/web-tool-calls
+
+List recent search traces, newest first.
+
+**Query parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `limit` | 1–200, default 50 |
+| `status` | `ok`, `error`, or `fallthrough` (unknown values are a `400`) |
+| `providerKind` | Filter by provider kind, e.g. `tavily` |
+| `since` | Epoch ms, epoch seconds (below 1e12), or an ISO-8601 date |
+
+**Response:**
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "id": "wtc_…",
+      "timestamp": 1762166400000,
+      "tool": "web_search",
+      "providerId": "sp_…",
+      "providerKind": "tavily",
+      "accountId": null,
+      "project": "my-project",
+      "queryText": "typescript 5.9 release notes",
+      "queryChars": 30,
+      "resultCount": 8,
+      "latencyMs": 412,
+      "status": "ok",
+      "errorCode": null,
+      "estimatedCostUsd": null
+    }
+  ]
+}
+```
+
+**Example:**
+```bash
+curl "http://localhost:8080/api/web-tool-calls?status=error&limit=20"
+```
+
+#### GET /api/web-tool-calls/summary
+
+Per-`(providerKind, status)` counts over a time window — how many searches each
+provider served, failed, or missed.
+
+**Query parameters:** `hours` — 1–8760, default 24.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "providerKind": "tavily",
+      "status": "ok",
+      "callCount": 42,
+      "totalLatencyMs": 17304,
+      "avgLatencyMs": 412,
+      "totalResults": 336
+    }
+  ]
+}
+```
+
+**Example:**
+```bash
+curl "http://localhost:8080/api/web-tool-calls/summary?hours=168"
+```
+
 ---
 
 ## Error Handling
