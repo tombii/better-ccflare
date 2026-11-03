@@ -238,6 +238,68 @@ The `agent_preferences` table stores user-defined model preferences for specific
 | `model` | TEXT | NOT NULL | Preferred model for this agent |
 | `updated_at` | INTEGER | NOT NULL | Unix timestamp of last update |
 
+### search_providers Table
+
+Third-party web-search APIs (Tavily, Exa, Brave, …) the proxy uses to serve
+Claude Code's `web_search` helper request locally. Unlike `accounts` these are
+label-addressed rows with no OAuth or request-accounting state. See
+[Web Search](./web-search.md).
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | TEXT | PRIMARY KEY | Unique provider row id |
+| `provider` | TEXT | NOT NULL | Catalog kind: `tavily`, `exa`, `parallel`, `deepseek`, `serper`, `brave`, `perplexity` |
+| `label` | TEXT | NOT NULL, UNIQUE | Operator-facing name |
+| `api_key` | TEXT | nullable | API key (plaintext, like account API keys) |
+| `priority` | INTEGER | NOT NULL, DEFAULT 0 | Fallback order; lower is tried first |
+| `enabled` | INTEGER | NOT NULL, DEFAULT 1 | 0 or 1 |
+| `max_results` | INTEGER | NOT NULL, DEFAULT 10 | Results per search (1–50) |
+| `extra_config` | TEXT | nullable | JSON object of provider-specific options |
+| `status` | TEXT | NOT NULL, DEFAULT `'unknown'` | Health: `unknown`, `ok`, `error`, `cooldown` |
+| `status_message` | TEXT | nullable | Last failure message, API key redacted and capped at 200 chars |
+| `status_checked_at` | INTEGER | nullable | Unix ms of the last health write |
+| `cooldown_until` | INTEGER | nullable | Unix ms; the row is skipped until then |
+| `created_at` | INTEGER | NOT NULL | Unix timestamp |
+| `updated_at` | INTEGER | NOT NULL | Unix timestamp |
+
+**Indexes:**
+- `idx_search_providers_priority` on `priority` for chain ordering
+- `idx_search_providers_label` (unique) on `label`
+
+### web_tool_calls Table
+
+One row per intercepted `web_search` helper request, regardless of outcome.
+This is the **only** trace of a locally served search: no `requests` row is
+written and no account is selected, because nothing goes upstream.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | TEXT | PRIMARY KEY | Trace id |
+| `timestamp` | INTEGER | NOT NULL | Unix ms |
+| `tool` | TEXT | NOT NULL | `web_search` |
+| `provider_id` | TEXT | nullable | `search_providers.id` that served (or last failed) |
+| `provider_kind` | TEXT | nullable | Provider kind, e.g. `tavily` |
+| `account_id` | TEXT | nullable | Always null — no account is selected for an intercepted request |
+| `project` | TEXT | nullable | Request attribution |
+| `query_text` | TEXT | nullable | The search query |
+| `query_chars` | INTEGER | NOT NULL | Query length |
+| `result_count` | INTEGER | nullable | Hits returned (`ok` only; 0 = no results) |
+| `latency_ms` | INTEGER | NOT NULL | Chain latency |
+| `status` | TEXT | NOT NULL | `ok`, `error` (all providers failed → forwarded upstream), or `fallthrough` (nothing eligible / interceptor error → forwarded upstream) |
+| `error_code` | TEXT | nullable | Short code such as `tavily_429`; never a provider message |
+| `estimated_cost_usd` | REAL | nullable | Reserved; always NULL today |
+
+**Indexes:**
+- `idx_web_tool_calls_timestamp` on `timestamp DESC`
+- `idx_web_tool_calls_kind_timestamp` on `(provider_kind, timestamp DESC)`
+
+`web_tool_calls` is pruned by the same retention pass as `requests`, on the
+**request-metadata** window (`REQUEST_RETENTION_DAYS`, default 90 days), not
+the shorter payload window. `query_text` is the one place this table stores
+prompt content; lower `REQUEST_RETENTION_DAYS` if that is unacceptable. In
+PostgreSQL the numeric columns are `BIGINT`, which the driver returns as
+strings — reads coerce them.
+
 ### strategies Table (Not Yet Implemented)
 
 **Note**: The codebase references a `strategies` table through the `StrategyRepository`, but this table is not currently created in the schema. When implemented, it would store:

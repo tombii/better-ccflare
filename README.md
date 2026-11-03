@@ -663,6 +663,13 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **SessionStrategy Fallback** - If all combo slots fail, automatically falls back to normal session-based routing
 - **Dashboard Management** - Drag-and-drop slot builder with account provider badges, enable/disable per combo, and family assignment UI
 
+### 🔎 Local Web Search
+- **Serve `web_search` yourself** - Claude Code's built-in web search sub-request is answered by your own search provider instead of Anthropic, so it is billed at your provider's price
+- **Provider fallback chain** - Tavily, Exa, Parallel, DeepSeek, Serper and Brave, tried in priority order with automatic cooldown on credentials/quota failures
+- **Safe fall-through** - if no provider can serve a search, the request goes upstream unchanged; a missed interception never breaks the tool
+- **Search traces** - every search is recorded (provider, result count, latency, status) and shown under **Search** in the dashboard
+- See [Web Search](docs/web-search.md)
+
 ### 📈 Real-Time Analytics
 - Token usage tracking per request with optimized batch processing
 - Response time monitoring with intelligent caching
@@ -734,6 +741,7 @@ Full documentation available in [`docs/`](docs/):
 - [Auto-Refresh Guide](docs/auto-refresh.md)
 - [OpenAI-Compatible Providers](docs/providers.md)
 - [Combos — Fallback Chains](docs/combos.md)
+- [Web Search](docs/web-search.md)
 
 ## Screenshots
 

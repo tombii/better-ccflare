@@ -11,6 +11,7 @@ This guide covers all configuration options for better-ccflare, including file-b
 - [Environment Variables](#environment-variables)
 - [Model Catalog](#model-catalog)
 - [Editable Provider Model Defaults](#editable-provider-model-defaults)
+- [Web Search](#web-search)
 - [Force Account Model](#force-account-model)
 - [Use Extra Usage](#use-extra-usage)
 - [Runtime Configuration API](#runtime-configuration-api)
@@ -318,6 +319,23 @@ The **global override** is an editable layer in between: an operator-set default
 Only `codex` is editable by default. `xai` and `qwen` use the same mechanism but are gated behind `CCFLARE_MODEL_DEFAULTS_PROVIDERS` (see [Additional Environment Variables](#additional-environment-variables)) since they haven't been exercised against real accounts as extensively. Disabling a provider doesn't discard its stored override — it just stops applying until the provider is re-enabled.
 
 Manage this via the dashboard (Settings → Advanced → Provider Model Defaults) or directly through the API — see [api-http.md](api-http.md#get-apiconfigprovider-model-defaults).
+
+## Web Search
+
+Three config fields control [web search interception](web-search.md). They are
+also editable at runtime from the dashboard (Search page) or via
+`PATCH /api/web-search/settings` — no restart required. There are no
+environment variables for them.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `web_search_enabled` | boolean | `false` | Master switch. Off forwards Claude Code's `web_search` helper request upstream untouched |
+| `web_search_max_result_chars` | number | `4000` | Cap on the plain-text result digest returned to the model. Clamped to 500–100000 |
+| `web_search_bypass_header` | boolean | `true` | Whether `x-better-ccflare-web-tools: off` opts a single request out of interception |
+
+Search providers themselves (Tavily, Exa, Brave, …) live in the
+`search_providers` table, not the config file — manage them from the dashboard
+or `POST /api/search-providers`. See [web-search.md](web-search.md).
 
 ## Force Account Model
 
