@@ -10,9 +10,9 @@
  * turn every search into a set of heavy page fetches. A failed call reports
  * `{ success: false, error }`, which surfaces as the thrown message.
  *
- * The endpoint serves keyless callers at low rate limits, so the API key is
- * OPTIONAL: the `Authorization: Bearer` header is only sent when a key is
- * stored, and `test()` must not refuse a keyless config.
+ * The API key is REQUIRED: Firecrawl serves no keyless callers, so `search()`
+ * throws before any network call when no key is stored, and `test()` reports
+ * `ok: false` without calling out.
  */
 
 import type {
@@ -170,20 +170,20 @@ function requestSignal(signal: AbortSignal | undefined): AbortSignal {
 
 /**
  * POST a search body to Firecrawl, throwing {@link FirecrawlSearchError} on
- * failure. `apiKey` is null for keyless rows — the call goes out with no auth
- * header at all.
+ * failure. `apiKey` is always set — both callers guard the missing-key case
+ * before any network call.
  */
 async function postSearch(
 	body: FirecrawlSearchBody,
-	apiKey: string | null,
+	apiKey: string,
 	signal: AbortSignal | undefined,
 ): Promise<unknown> {
 	const effectiveSignal = requestSignal(signal);
 
 	const headers: Record<string, string> = {
 		"Content-Type": "application/json",
+		Authorization: `Bearer ${apiKey}`,
 	};
-	if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
 	let response: Response;
 	try {
@@ -345,8 +345,12 @@ export function createFirecrawlAdapter(): WebToolSearchAdapter {
 			request: WebToolSearchRequest,
 			config: WebToolAdapterConfig,
 		): Promise<WebToolSearchHit[]> {
-			// No key check here: Firecrawl serves keyless callers at low limits,
-			// so a null key goes out with no auth header instead of throwing.
+			// Firecrawl mandates a key, so refuse before any outbound call. (The
+			// chain filters keyless providers out via `requiresKey`, but a
+			// direct call must not send an empty key.)
+			if (!config.apiKey) {
+				throw new Error("Firecrawl requires an API key");
+			}
 			const data = await postSearch(
 				buildSearchBody(request, config),
 				config.apiKey,
@@ -364,8 +368,11 @@ export function createFirecrawlAdapter(): WebToolSearchAdapter {
 			config: WebToolAdapterConfig,
 		): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
 			// `test()` is dashboard-facing and must never throw: every failure
-			// becomes `{ ok: false, error }`. Keyless rows are testable too.
+			// becomes `{ ok: false, error }`.
 			const started = Date.now();
+			if (!config.apiKey) {
+				return { ok: false, latencyMs: 0, error: "no API key configured" };
+			}
 			try {
 				const data = await postSearch(
 					buildTestBody(config),

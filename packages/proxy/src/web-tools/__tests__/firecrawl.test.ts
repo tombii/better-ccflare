@@ -109,13 +109,13 @@ describe("firecrawl adapter — request shape", () => {
 		);
 	});
 
-	it("sends no auth header at all when keyless", async () => {
+	it("throws before any network call when no key is stored", async () => {
 		stubFetch(() => jsonResponse({ success: true, data: [] }));
 
-		await adapter.search(request(), keylessConfig);
-
-		expect(headersOf(calls[0]).get("Authorization")).toBeNull();
-		expect(headersOf(calls[0]).get("X-API-Key")).toBeNull();
+		await expect(adapter.search(request(), keylessConfig)).rejects.toThrow(
+			/requires an API key/,
+		);
+		expect(calls).toHaveLength(0);
 	});
 
 	it("forwards location and tbs only when configured", async () => {
@@ -168,10 +168,13 @@ describe("firecrawl adapter — response mapping", () => {
 		]);
 	});
 
-	it("works keyless too (low free limits)", async () => {
+	it("refuses a search with no key before any network call", async () => {
 		stubFetch(() => jsonResponse({ success: true, data: [] }));
 
-		expect(await adapter.search(request(), keylessConfig)).toEqual([]);
+		await expect(adapter.search(request(), keylessConfig)).rejects.toThrow(
+			/requires an API key/,
+		);
+		expect(calls).toHaveLength(0);
 	});
 
 	it("returns at most maxResults hits", async () => {
@@ -375,14 +378,14 @@ describe("firecrawl adapter — test()", () => {
 		});
 	});
 
-	it("works keyless, omitting the auth header", async () => {
+	it("reports ok:false without calling out when no key is stored", async () => {
 		stubFetch(() => jsonResponse({ success: true, data: [] }));
 
 		const result = await adapter.test(keylessConfig);
 
-		expect(result.ok).toBe(true);
-		expect(calls).toHaveLength(1);
-		expect(headersOf(calls[0]).get("Authorization")).toBeNull();
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain("no API key configured");
+		expect(calls).toHaveLength(0);
 	});
 
 	it("returns ok:false on a server error without throwing", async () => {

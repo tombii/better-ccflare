@@ -223,9 +223,8 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 	{
 		id: "firecrawl",
 		label: "Firecrawl",
-		// Firecrawl serves keyless callers at low rate limits, so the key is
-		// optional — the adapter sends no auth header when none is stored.
-		requiresKey: false,
+		// Firecrawl always requires an API key — keyless calls fail.
+		requiresKey: true,
 		docsUrl: "https://docs.firecrawl.dev/api-reference/v1-endpoint/search",
 		implemented: true,
 		extraConfigFields: [
