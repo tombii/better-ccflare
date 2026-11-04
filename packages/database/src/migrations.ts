@@ -485,6 +485,7 @@ function createSearchProvidersTable(db: Database): void {
 			enabled INTEGER NOT NULL DEFAULT 1,
 			max_results INTEGER NOT NULL DEFAULT 10,
 			extra_config TEXT,
+			tier TEXT NOT NULL DEFAULT 'paid',
 			status TEXT NOT NULL DEFAULT 'unknown',
 			status_message TEXT,
 			status_checked_at INTEGER,
@@ -1805,6 +1806,29 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		// installs). Idempotent, so fresh DBs — where ensureSchema() already
 		// created it — pay nothing.
 		createSearchProvidersTable(db);
+
+		// Additive column upgrades for search_providers. CREATE TABLE IF NOT
+		// EXISTS above is a no-op on an existing table, so columns introduced
+		// later are added here.
+		const searchProviderColumns = new Set(
+			(
+				db.prepare("PRAGMA table_info(search_providers)").all() as Array<{
+					name: string;
+				}>
+			).map((c) => c.name),
+		);
+		if (!searchProviderColumns.has("tier")) {
+			db.run(
+				"ALTER TABLE search_providers ADD COLUMN tier TEXT NOT NULL DEFAULT 'paid'",
+			);
+		}
+		// Backfill EVERY row from its key (including databases that briefly
+		// carried the pre-release `free_tier` column): a row's tier is simply
+		// what its stored key says, so recomputing unconditionally is always
+		// correct and can never leave a keyless row marked paid.
+		db.run(
+			"UPDATE search_providers SET tier = CASE WHEN api_key IS NULL OR api_key = '' THEN 'free' ELSE 'paid' END",
+		);
 
 		// Ensure web_tool_calls exists (for upgrades from pre-web-tools
 		// installs). Idempotent, same rationale as above.

@@ -36,9 +36,38 @@ export interface SearchProviderExtraConfigField {
 	description?: string;
 }
 
+/** A search provider's access tier: keyless public endpoint, or keyed. */
+export type SearchProviderTier = "free" | "paid";
+
+/**
+ * What the keyless (free) endpoint of a provider cannot do.
+ *
+ * The free endpoints are anonymous public twins of the keyed APIs, so they
+ * accept the same body shape but drop or reject some options. The dashboard
+ * warns about these on a keyless row rather than letting an operator wonder
+ * why a setting has no effect.
+ */
+export interface SearchProviderKeylessInfo {
+	/** Extra-config keys the keyless endpoint does not apply. */
+	droppedExtraConfigKeys?: string[];
+	/** Request parameters the keyless endpoint does not apply. */
+	droppedRequestParams?: string[];
+	/** Result count the keyless endpoint caps at (adapter clamps to it). */
+	maxResultsCap?: number;
+	/** Human-readable limits, e.g. "1000 requests/hour shared per server IP". */
+	limitsNote: string;
+	/** Optional header the endpoint needs as an app identifier (e.g. Keenable). */
+	appIdentifierHeader?: { name: string; value: string };
+}
+
 export interface SearchProviderCatalogEntry {
 	id: SearchProviderId;
 	label: string;
+	/**
+	 * True when a row of this provider MUST have an API key to be saved.
+	 * False for providers with a keyless path: the key becomes optional and
+	 * the adapter picks the free or keyed endpoint from what is stored.
+	 */
 	requiresKey: boolean;
 	docsUrl: string;
 	extraConfigFields: SearchProviderExtraConfigField[];
@@ -47,6 +76,48 @@ export interface SearchProviderCatalogEntry {
 	 * by the proxy (phase 1 implements `tavily` only).
 	 */
 	implemented: boolean;
+	/** Tiers this provider supports. Absent means `["paid"]`. */
+	tiers?: SearchProviderTier[];
+	/** Present when the provider has a keyless (free) path. */
+	keyless?: SearchProviderKeylessInfo;
+	/**
+	 * Placement of the seeded free-tier row when free search is enabled:
+	 * last-resort priority and the enabled state it is installed with.
+	 * Absent for providers without a keyless path.
+	 */
+	freeTierDefault?: { priority: number; enabled: boolean };
+}
+
+/** Tiers a catalog entry supports (defaults to keyed-only). */
+export function catalogTiers(
+	entry: SearchProviderCatalogEntry,
+): SearchProviderTier[] {
+	return entry.tiers ?? ["paid"];
+}
+
+/** Whether the provider can run without a stored key. */
+export function catalogSupportsKeyless(
+	entry: SearchProviderCatalogEntry,
+): boolean {
+	return entry.keyless !== undefined && catalogTiers(entry).includes("free");
+}
+
+/**
+ * The tier a row actually uses, derived from the provider and the stored key.
+ *
+ * A key always means the paid endpoint and no key always means the free one —
+ * there is no third state, which is what keeps the stored `tier` from ever
+ * disagreeing with the call the adapter makes. A row with no key for a
+ * provider lacking a keyless path is reported as `'paid'`: its search fails
+ * loudly (adapter requires a key) rather than silently hitting a free tier
+ * that does not exist.
+ */
+export function resolveSearchProviderTier(
+	entry: SearchProviderCatalogEntry | undefined,
+	apiKey: string | null | undefined,
+): SearchProviderTier {
+	if (apiKey) return "paid";
+	return entry && catalogSupportsKeyless(entry) ? "free" : "paid";
 }
 
 export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
@@ -224,10 +295,18 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 	{
 		id: "firecrawl",
 		label: "Firecrawl",
-		// Firecrawl always requires an API key — keyless calls fail.
-		requiresKey: true,
+		// A key is optional: without one the adapter calls the keyless v2
+		// endpoint, which Firecrawl gates by IP reputation.
+		requiresKey: false,
 		docsUrl: "https://docs.firecrawl.dev/api-reference/v1-endpoint/search",
 		implemented: true,
+		tiers: ["free", "paid"],
+		keyless: {
+			droppedRequestParams: ["blockedDomains"],
+			limitsNote:
+				"No key: anonymous calls are IP-gated (blocked from VPN/proxy/datacenter IPs) and rate-limited. Add a key for higher limits.",
+		},
+		freeTierDefault: { priority: 901, enabled: false },
 		extraConfigFields: [
 			{
 				key: "location",
@@ -250,11 +329,23 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 	{
 		id: "keenable",
 		label: "Keenable",
-		// The adapter uses the keyed endpoint; the keyless `/public` twin is
-		// IP-rate-limited and unsuitable for a shared proxy.
-		requiresKey: true,
+		// A key is optional: without one the adapter calls the keyless
+		// `/v1/search/public` twin with the app-identifier header.
+		requiresKey: false,
 		docsUrl: "https://docs.keenable.ai/api-reference/search",
 		implemented: true,
+		tiers: ["free", "paid"],
+		keyless: {
+			droppedRequestParams: ["blockedDomains"],
+			maxResultsCap: 50,
+			limitsNote:
+				"No key: 1,000 requests/hour (10/s) shared per server IP, so a busy proxy can exhaust the free bucket.",
+			appIdentifierHeader: {
+				name: "X-Keenable-Title",
+				value: "better-ccflare",
+			},
+		},
+		freeTierDefault: { priority: 900, enabled: false },
 		extraConfigFields: [
 			{
 				key: "mode",
@@ -337,6 +428,8 @@ export interface SearchProviderRow {
 	enabled: DriverInteger; // 0 or 1
 	max_results: DriverInteger;
 	extra_config: string | null; // JSON object
+	/** `'free'` (keyless endpoint) or `'paid'` (keyed endpoint). */
+	tier?: string;
 	status: string;
 	status_message: string | null;
 	status_checked_at: DriverInteger | null;
@@ -366,6 +459,13 @@ export interface SearchProvider extends SearchProviderHealthStatus {
 	enabled: boolean;
 	maxResults: number;
 	extraConfig: Record<string, unknown>;
+	/**
+	 * Which endpoint the row uses: `'free'` calls the provider's keyless
+	 * endpoint, `'paid'` its keyed one. Always derived at the handler boundary
+	 * from the stored key (see {@link resolveSearchProviderTier}), so it can
+	 * never disagree with what the adapter will actually call.
+	 */
+	tier: SearchProviderTier;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -381,6 +481,7 @@ export interface SearchProviderPublic extends SearchProviderHealthStatus {
 	enabled: boolean;
 	maxResults: number;
 	extraConfig: Record<string, unknown>;
+	tier: SearchProviderTier;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -393,6 +494,11 @@ export interface SearchProviderInput {
 	enabled?: boolean;
 	maxResults?: number;
 	extraConfig?: Record<string, unknown> | null;
+	/**
+	 * Requested endpoint tier. The handler only accepts `'free'` for a row
+	 * with no key and `'paid'` for a row with one; it is stored as resolved.
+	 */
+	tier?: SearchProviderTier;
 }
 
 export interface SearchProviderUpdate {
@@ -404,6 +510,7 @@ export interface SearchProviderUpdate {
 	enabled?: boolean;
 	maxResults?: number;
 	extraConfig?: Record<string, unknown> | null;
+	tier?: SearchProviderTier;
 }
 
 /**
@@ -453,6 +560,7 @@ export function toSearchProvider(row: SearchProviderRow): SearchProvider {
 		enabled: toInt(row.enabled) === 1,
 		maxResults: toInt(row.max_results),
 		extraConfig: parseExtraConfig(row.extra_config),
+		tier: row.tier === "free" ? "free" : "paid",
 		status: row.status,
 		statusMessage: row.status_message ?? null,
 		statusCheckedAt: toNullableInt(row.status_checked_at),

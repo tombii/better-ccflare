@@ -13,11 +13,13 @@ import { getWebToolAdapter } from "@better-ccflare/proxy";
 export { TAVILY_SEARCH_URL } from "@better-ccflare/proxy";
 
 import {
+	resolveSearchProviderTier,
 	SEARCH_PROVIDER_CATALOG,
 	type SearchProviderCatalogEntry,
 	type SearchProviderId,
 	type SearchProviderInput,
 	type SearchProviderPublic,
+	type SearchProviderTier,
 	type SearchProviderUpdate,
 } from "@better-ccflare/types";
 
@@ -34,9 +36,21 @@ export interface SearchProviderStore {
 	/** Unmasked apiKey for the outbound /test call; never returned over HTTP. */
 	getApiKey(id: string): Promise<string | null>;
 	create(input: SearchProviderInput): Promise<SearchProviderPublic>;
+	/** Enable/disable all free-tier rows; returns how many changed. */
+	setFreeTierEnabled(enabled: boolean): Promise<number>;
 	update(
 		id: string,
 		patch: SearchProviderUpdate,
+	): Promise<SearchProviderPublic | null>;
+	/**
+	 * Update only while the stored key is still `expectedApiKey`; null when it
+	 * moved (the caller retries against the new key). Keeps a derived tier
+	 * from being written against a key that changed mid-request.
+	 */
+	updateExpectingKey?(
+		id: string,
+		patch: SearchProviderUpdate,
+		expectedApiKey: string | null,
 	): Promise<SearchProviderPublic | null>;
 	remove(id: string): Promise<boolean>;
 }
@@ -86,7 +100,20 @@ export interface SearchProviderHandlers {
 		getApiKey?: (id: string) => Promise<string | null>,
 	): Promise<Response>;
 	reorder(req: Request, id: string): Promise<Response>;
+	/** Enable or disable every free-tier row at once (the "use free tier" toggle). */
+	setFreeTier(req: Request): Promise<Response>;
 	meta(): Response;
+}
+
+/** Body of the free-tier toggle: `{ enabled: boolean }`. */
+async function readFreeTierToggle(req: Request): Promise<boolean | null> {
+	let body: Record<string, unknown>;
+	try {
+		body = await readJsonObject(req);
+	} catch {
+		return null;
+	}
+	return typeof body.enabled === "boolean" ? body.enabled : null;
 }
 
 const LABEL_MAX_LENGTH = 64;
@@ -186,6 +213,13 @@ function validateFields(
 		patch.enabled = body.enabled;
 	}
 
+	if (body.tier !== undefined) {
+		if (body.tier !== "free" && body.tier !== "paid") {
+			return failure("tier must be 'free' or 'paid'");
+		}
+		patch.tier = body.tier;
+	}
+
 	// apiKey is write-only. On create an empty/absent key means "none"; on
 	// update "" (or null) means "clear the stored key". Trimming avoids
 	// storing a key with a stray newline pasted from a UI.
@@ -214,6 +248,45 @@ async function readJsonObject(req: Request): Promise<Record<string, unknown>> {
 }
 
 /**
+ * Reject a requested tier that the stored key cannot honour, and say what to
+ * change. Keeping this strict is the point: the toggle and the per-row badge
+ * both read `tier`, so a row whose tier disagrees with its key would let
+ * "use free tier" switch a paid search on/off (or leave a free one running).
+ */
+function tierConflict(
+	entry: SearchProviderCatalogEntry | undefined,
+	apiKey: string | null | undefined,
+	tier: SearchProviderTier,
+): Response | null {
+	if (tier === "free") {
+		if (apiKey) {
+			return errorResponse(
+				BadRequest(
+					"A search provider with an API key is the paid tier. Clear the key first to use the free (keyless) endpoint.",
+				),
+			);
+		}
+		if (!entry?.keyless) {
+			return errorResponse(
+				BadRequest(
+					"This provider has no free (keyless) endpoint; its tier is always paid.",
+				),
+			);
+		}
+		return null;
+	}
+	if (!apiKey) {
+		const freeAvailable = entry?.keyless
+			? " Omit tier to use the free endpoint, or add a key."
+			: "";
+		return errorResponse(
+			BadRequest(`The paid tier needs an API key.${freeAvailable}`),
+		);
+	}
+	return null;
+}
+
+/**
  * Run a connectivity test for a stored provider.
  *
  * Delegates to the adapter's own `test()` so the dashboard exercises exactly
@@ -234,7 +307,11 @@ export async function runSearchProviderTest(row: {
 	if (!adapter || adapter.implemented === false) {
 		return { ok: false, latencyMs: 0, error: "provider not implemented yet" };
 	}
-	if (!row.apiKey) {
+	// Only providers that cannot run without a key are refused here. A
+	// keyless-capable provider is tested unauthenticated, which is exactly the
+	// call a real search would make for a row with no key.
+	const entry = catalogEntry(row.provider);
+	if (!row.apiKey && entry?.requiresKey !== false) {
 		return { ok: false, latencyMs: 0, error: "no apiKey configured" };
 	}
 	try {
@@ -251,6 +328,27 @@ export async function runSearchProviderTest(row: {
 		log.warn(`Search provider test failed (${row.provider}): ${message}`);
 		return { ok: false, latencyMs: 0, error: message };
 	}
+}
+
+/**
+ * Write a patch with its derived tier, guarded by the key it was derived from.
+ *
+ * Falls back to a plain update for stores that cannot do a compare-and-set
+ * (test fakes, or an older adapter); those have no concurrent writers.
+ */
+async function writeTier(
+	store: SearchProviderStore,
+	id: string,
+	patch: SearchProviderUpdate,
+	expectedApiKey: string | null,
+	tier: SearchProviderTier,
+): Promise<SearchProviderPublic | null | "stale"> {
+	const next = { ...patch, tier };
+	if (!store.updateExpectingKey) {
+		return store.update(id, next);
+	}
+	const row = await store.updateExpectingKey(id, next, expectedApiKey);
+	return row ?? "stale";
 }
 
 export function createSearchProviderHandlers(
@@ -296,10 +394,22 @@ export function createSearchProviderHandlers(
 			const { patch } = validated;
 
 			const apiKey = patch.apiKey ?? "";
+			// `requiresKey` is false only for providers with a keyless path, so
+			// an empty key there means "use the free tier", not "incomplete".
 			if (entry.requiresKey && apiKey.length === 0) {
 				return errorResponse(
 					BadRequest(`provider '${provider}' requires an apiKey`),
 				);
+			}
+
+			// The tier is derived, never trusted from the client: a key means
+			// the paid endpoint, no key means the free one. A client may send
+			// the derived value (the dashboard round-trips rows) but not a
+			// contradictory one.
+			const tier = resolveSearchProviderTier(entry, apiKey);
+			if (patch.tier !== undefined && patch.tier !== tier) {
+				const conflict = tierConflict(entry, apiKey, patch.tier);
+				if (conflict) return conflict;
 			}
 
 			const input: SearchProviderInput = {
@@ -311,6 +421,7 @@ export function createSearchProviderHandlers(
 				enabled: patch.enabled,
 				maxResults: patch.maxResults,
 				extraConfig: patch.extraConfig,
+				tier,
 			};
 
 			try {
@@ -381,8 +492,8 @@ export function createSearchProviderHandlers(
 				if (!validated.ok) return validated.response;
 				const { patch } = validated;
 
+				const entry = catalogEntry(existing.provider);
 				if (patch.apiKey === "") {
-					const entry = catalogEntry(existing.provider);
 					if (entry?.requiresKey) {
 						return errorResponse(
 							BadRequest(
@@ -394,7 +505,45 @@ export function createSearchProviderHandlers(
 					patch.apiKey = null;
 				}
 
-				const row = await store.update(id, patch);
+				// Two different keys are in play here and must not be confused:
+				//   - the key the row has NOW, which guards the write (it is
+				//     what a concurrent edit would change under us), and
+				//   - the key the patch LEAVES BEHIND, which the tier is derived
+				//     from (an edit that adds or clears a key changes it).
+				// The public row is masked, so the stored key comes from
+				// `getApiKey`.
+				const deriveTier = (storedKey: string | null) => {
+					const nextKey = patch.apiKey !== undefined ? patch.apiKey : storedKey;
+					return {
+						nextKey,
+						tier: resolveSearchProviderTier(entry, nextKey),
+					};
+				};
+
+				let storedKey = await store.getApiKey(id);
+				let derived = deriveTier(storedKey);
+				if (patch.tier !== undefined && patch.tier !== derived.tier) {
+					const conflict = tierConflict(entry, derived.nextKey, patch.tier);
+					if (conflict) return conflict;
+				}
+
+				let row = await writeTier(store, id, patch, storedKey, derived.tier);
+				if (row === "stale") {
+					// Somebody else changed the stored key: re-read it and
+					// re-derive. The patch's own key still decides the tier.
+					storedKey = await store.getApiKey(id);
+					derived = deriveTier(storedKey);
+					if (patch.tier !== undefined && patch.tier !== derived.tier) {
+						const conflict = tierConflict(entry, derived.nextKey, patch.tier);
+						if (conflict) return conflict;
+					}
+					row = await writeTier(store, id, patch, storedKey, derived.tier);
+				}
+				if (row === "stale") {
+					return errorResponse(
+						Conflict("The provider's API key is being changed; retry"),
+					);
+				}
 				if (!row) {
 					return errorResponse(NotFound(`Search provider '${id}' not found`));
 				}
@@ -480,6 +629,27 @@ export function createSearchProviderHandlers(
 				log.error("Search provider reorder error:", error);
 				return errorResponse(
 					InternalServerError("Failed to reorder search provider"),
+				);
+			}
+		},
+
+		setFreeTier: async (req: Request): Promise<Response> => {
+			const enabled = await readFreeTierToggle(req);
+			if (enabled === null) {
+				return errorResponse(
+					BadRequest("body must be a JSON object with a boolean 'enabled'"),
+				);
+			}
+			try {
+				// Bulk update rather than a flag: the toggle's state IS the rows'
+				// enabled column, so it survives restarts and sits in the same
+				// table the chain reads.
+				const changed = await store.setFreeTierEnabled(enabled);
+				return jsonResponse({ success: true, data: { enabled, changed } });
+			} catch (error) {
+				log.error("Search provider free-tier toggle error:", error);
+				return errorResponse(
+					InternalServerError("Failed to toggle free-tier search providers"),
 				);
 			}
 		},

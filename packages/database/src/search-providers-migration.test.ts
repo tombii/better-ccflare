@@ -14,6 +14,7 @@ const EXPECTED_COLUMNS = [
 	"enabled",
 	"max_results",
 	"extra_config",
+	"tier",
 	"status",
 	"status_message",
 	"status_checked_at",
@@ -112,6 +113,40 @@ describe("search_providers migration (SQLite)", () => {
 			.prepare(`SELECT COUNT(*) AS n FROM search_providers`)
 			.get() as { n: number };
 		expect(count.n).toBe(1);
+	});
+
+	it("backfills tier from the stored key on an upgrade", () => {
+		// Simulate a pre-tier install: apply the schema, then rebuild the table
+		// without the tier column and run the migrations again.
+		ensureSchema(db);
+		runMigrations(db);
+		db.run("DROP TABLE search_providers");
+		db.run(`CREATE TABLE search_providers (
+			id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL,
+			api_key TEXT, priority INTEGER NOT NULL DEFAULT 0,
+			enabled INTEGER NOT NULL DEFAULT 1, max_results INTEGER NOT NULL DEFAULT 10,
+			extra_config TEXT, status TEXT NOT NULL DEFAULT 'unknown',
+			status_message TEXT, status_checked_at INTEGER, cooldown_until INTEGER,
+			created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+		)`);
+		db.run(
+			`INSERT INTO search_providers (id, provider, label, api_key, created_at, updated_at) VALUES
+			 ('paid', 'keenable', 'keyed', 'keen-key', 1, 1),
+			 ('free', 'keenable', 'keyless', NULL, 1, 1),
+			 ('empty', 'firecrawl', 'blank', '', 1, 1)`,
+		);
+
+		runMigrations(db);
+
+		const tiers = Object.fromEntries(
+			(
+				db.prepare(`SELECT id, tier FROM search_providers`).all() as Array<{
+					id: string;
+					tier: string;
+				}>
+			).map((r) => [r.id, r.tier]),
+		);
+		expect(tiers).toEqual({ paid: "paid", free: "free", empty: "free" });
 	});
 
 	it("adds the table to a pre-existing database that lacks it", () => {

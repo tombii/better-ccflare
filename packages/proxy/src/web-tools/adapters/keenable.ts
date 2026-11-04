@@ -6,13 +6,13 @@
  * `title` / `url` / `snippet` per entry (`description` is deprecated and
  * always empty — never read it).
  *
- * The API also has a keyless twin, `POST /v1/search/public`, which requires an
- * `X-Keenable-Title` app-identifier header and is rate limited per IP. This
- * adapter deliberately does NOT use it: the keyed endpoint is what an operator
- * configured, it carries the account's credits and rate limits, and a shared
- * proxy IP would exhaust the keyless bucket almost immediately. The key is
- * therefore REQUIRED — `search()` throws before any network call when none is
- * stored, and `test()` reports `ok: false` without calling out.
+ * The API also has a keyless twin, `POST /v1/search/public`, which needs no
+ * key but requires an `X-Keenable-Title` app-identifier header and is rate
+ * limited per IP (1000 requests/hour, 10/s, shared by every caller behind the
+ * proxy's address). When a row has no stored key the adapter calls that twin
+ * with the same body; when a key is stored the keyed endpoint is always used.
+ * The free tier is therefore a deliberate last resort, not a silent
+ * downgrade — a stored key always wins.
  */
 
 import type {
@@ -23,6 +23,14 @@ import type {
 } from "../types";
 
 export const KEENABLE_SEARCH_URL = "https://api.keenable.ai/v1/search";
+export const KEENABLE_KEYLESS_SEARCH_URL =
+	"https://api.keenable.ai/v1/search/public";
+
+/**
+ * App identifier the keyless endpoint requires. Keenable only asks for a
+ * stable title for the calling app; any non-empty value works.
+ */
+export const KEENABLE_KEYLESS_APP_ID = "better-ccflare";
 
 /** Keenable's documented `max_results` bounds. */
 const MIN_MAX_RESULTS = 1;
@@ -228,23 +236,31 @@ function requestSignal(signal: AbortSignal | undefined): AbortSignal {
 
 /**
  * POST a search body to Keenable, throwing {@link KeenableSearchError} on
- * failure. `apiKey` is always set — both callers guard the missing-key case
- * before any network call.
+ * failure.
+ *
+ * With a key the keyed `/v1/search` endpoint is called; without one the
+ * keyless `/v1/search/public` twin is called with the app-identifier header
+ * instead. The body is identical — the free endpoint accepts the same
+ * `mode` / `site` / date / snippet options.
  */
 async function postSearch(
 	body: KeenableSearchBody,
-	apiKey: string,
+	apiKey: string | null,
 	signal: AbortSignal | undefined,
 ): Promise<unknown> {
 	const effectiveSignal = requestSignal(signal);
+	const url = apiKey ? KEENABLE_SEARCH_URL : KEENABLE_KEYLESS_SEARCH_URL;
+	const authHeaders: Record<string, string> = apiKey
+		? { "X-API-Key": apiKey }
+		: { "X-Keenable-Title": KEENABLE_KEYLESS_APP_ID };
 
 	let response: Response;
 	try {
-		response = await fetch(KEENABLE_SEARCH_URL, {
+		response = await fetch(url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				"X-API-Key": apiKey,
+				...authHeaders,
 			},
 			body: JSON.stringify(body),
 			signal: effectiveSignal,
@@ -394,13 +410,7 @@ export function createKeenableAdapter(): WebToolSearchAdapter {
 			request: WebToolSearchRequest,
 			config: WebToolAdapterConfig,
 		): Promise<WebToolSearchHit[]> {
-			// Keenable mandates a key on the endpoint this adapter targets, so
-			// refuse before any outbound call. (The chain filters keyless
-			// providers out via `requiresKey`, but a direct call must not send
-			// an empty key.)
-			if (!config.apiKey) {
-				throw new Error("Keenable requires an API key");
-			}
+			// No key is fine: `postSearch` switches to the keyless public twin.
 			const data = await postSearch(
 				buildSearchBody(request, config),
 				config.apiKey,
@@ -420,9 +430,6 @@ export function createKeenableAdapter(): WebToolSearchAdapter {
 			// `test()` is dashboard-facing and must never throw: every failure
 			// becomes `{ ok: false, error }`.
 			const started = Date.now();
-			if (!config.apiKey) {
-				return { ok: false, latencyMs: 0, error: "no API key configured" };
-			}
 			try {
 				const data = await postSearch(
 					buildTestBody(config),

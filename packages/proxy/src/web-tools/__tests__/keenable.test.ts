@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
 	createKeenableAdapter,
+	KEENABLE_KEYLESS_SEARCH_URL,
 	KEENABLE_SEARCH_URL,
 	KeenableSearchError,
 } from "../adapters/keenable";
@@ -100,13 +101,16 @@ describe("keenable adapter — request shape", () => {
 		expect(calls[0].url).not.toContain("keen-canary-key-5678");
 	});
 
-	it("throws before any network call when no key is stored", async () => {
+	it("calls the public endpoint with the app-id header when no key is stored", async () => {
 		stubFetch(() => jsonResponse({ query: "hello world", results: [] }));
 
-		await expect(adapter.search(request(), keylessConfig)).rejects.toThrow(
-			/requires an API key/,
-		);
-		expect(calls).toHaveLength(0);
+		await adapter.search(request(), keylessConfig);
+
+		expect(calls).toHaveLength(1);
+		const headers = new Headers(calls[0].init.headers as HeadersInit);
+		expect(calls[0].url).toBe(KEENABLE_KEYLESS_SEARCH_URL);
+		expect(headers.get("X-Keenable-Title")).toBe("better-ccflare");
+		expect(headers.has("X-API-Key")).toBe(false);
 	});
 
 	it("forwards mode, site and date filters only when configured", async () => {
@@ -472,14 +476,14 @@ describe("keenable adapter — test()", () => {
 		});
 	});
 
-	it("reports ok:false without calling out when no key is stored", async () => {
+	it("tests the public endpoint when no key is stored", async () => {
 		stubFetch(() => jsonResponse({ query: "q", results: [] }));
 
 		const result = await adapter.test(keylessConfig);
 
-		expect(result.ok).toBe(false);
-		expect(result.error).toMatch(/no API key/);
-		expect(calls).toHaveLength(0);
+		expect(result.ok).toBe(true);
+		expect(calls).toHaveLength(1);
+		expect(calls[0].url).toBe(KEENABLE_KEYLESS_SEARCH_URL);
 	});
 
 	it("returns ok:false on a server error without throwing", async () => {

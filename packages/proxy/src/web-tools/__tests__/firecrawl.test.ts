@@ -109,13 +109,15 @@ describe("firecrawl adapter — request shape", () => {
 		);
 	});
 
-	it("throws before any network call when no key is stored", async () => {
-		stubFetch(() => jsonResponse({ success: true, data: [] }));
+	it("calls keyless (no Authorization header) when no key is stored", async () => {
+		stubFetch(() => jsonResponse({ success: true, data: { web: [] } }));
 
-		await expect(adapter.search(request(), keylessConfig)).rejects.toThrow(
-			/requires an API key/,
-		);
-		expect(calls).toHaveLength(0);
+		await adapter.search(request(), keylessConfig);
+
+		expect(calls).toHaveLength(1);
+		expect(headersOf(calls[0]).has("Authorization")).toBe(false);
+		expect(headersOf(calls[0]).get("Content-Type")).toBe("application/json");
+		expect(bodyOf(calls[0])).toEqual({ query: "hello world", limit: 5 });
 	});
 
 	it("forwards location and tbs only when configured", async () => {
@@ -168,13 +170,41 @@ describe("firecrawl adapter — response mapping", () => {
 		]);
 	});
 
-	it("refuses a search with no key before any network call", async () => {
-		stubFetch(() => jsonResponse({ success: true, data: [] }));
+	it("maps v2 data.web entries", async () => {
+		stubFetch(() =>
+			jsonResponse({
+				success: true,
+				data: { web: [entry("https://example.com/a")] },
+			}),
+		);
+
+		const hits = await adapter.search(request(), keylessConfig);
+
+		expect(hits).toEqual([
+			{
+				title: "t https://example.com/a",
+				url: "https://example.com/a",
+				snippet: "s",
+			},
+		]);
+	});
+
+	it("surfaces a keyless 403 (IP gate) as the error message", async () => {
+		stubFetch(() =>
+			jsonResponse(
+				{
+					success: false,
+					error:
+						"Unfortunately, your IP address looks like a VPN or proxy, so Firecrawl can't be used without an API key from here.",
+				},
+				403,
+			),
+		);
 
 		await expect(adapter.search(request(), keylessConfig)).rejects.toThrow(
-			/requires an API key/,
+			/looks like a VPN or proxy/,
 		);
-		expect(calls).toHaveLength(0);
+		expect(calls).toHaveLength(1);
 	});
 
 	it("returns at most maxResults hits", async () => {
@@ -378,14 +408,14 @@ describe("firecrawl adapter — test()", () => {
 		});
 	});
 
-	it("reports ok:false without calling out when no key is stored", async () => {
-		stubFetch(() => jsonResponse({ success: true, data: [] }));
+	it("tests the keyless endpoint when no key is stored", async () => {
+		stubFetch(() => jsonResponse({ success: true, data: { web: [] } }));
 
 		const result = await adapter.test(keylessConfig);
 
-		expect(result.ok).toBe(false);
-		expect(result.error).toContain("no API key configured");
-		expect(calls).toHaveLength(0);
+		expect(result.ok).toBe(true);
+		expect(calls).toHaveLength(1);
+		expect(headersOf(calls[0]).has("Authorization")).toBe(false);
 	});
 
 	it("returns ok:false on a server error without throwing", async () => {

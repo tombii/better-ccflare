@@ -1,3 +1,4 @@
+import type { SearchProviderTier } from "@better-ccflare/types";
 import { ExternalLink } from "lucide-react";
 import type {
 	CreateSearchProviderInput,
@@ -26,6 +27,8 @@ export interface ProviderFormState {
 	priority: string;
 	maxResults: string;
 	extraConfig: Record<string, string>;
+	/** Edit only: the operator asked to clear the stored key (switch to free). */
+	clearKey?: boolean;
 }
 
 export function emptyFormState(
@@ -76,11 +79,32 @@ function parseWholeNumber(raw: string): number | null {
 	return Number.isSafeInteger(value) ? value : null;
 }
 
+/**
+ * Which endpoint the edited row would use after saving. The key field is
+ * blank on every edit (the stored key is never sent to the browser), so a
+ * blank field with a stored key stays paid; an explicit clear switches to
+ * free. Mirrors the server's derivation.
+ */
+export function formTier(
+	form: ProviderFormState,
+	catalogEntry: SearchProviderCatalogEntry | undefined,
+	options: { isEdit: boolean; hasStoredKey: boolean },
+): SearchProviderTier {
+	const typed = form.apiKey.trim();
+	if (typed) return "paid";
+	// "Clear the stored key" is only offered for rows that can actually go
+	// keyless; honouring it here keeps the preview equal to what is saved.
+	const clearing =
+		form.clearKey === true && catalogEntry?.requiresKey === false;
+	if (options.isEdit && options.hasStoredKey && !clearing) return "paid";
+	return catalogEntry?.requiresKey === false ? "free" : "paid";
+}
+
 /** Returns an error message, or null when the form may be submitted. */
 export function validateForm(
 	form: ProviderFormState,
 	catalogEntry: SearchProviderCatalogEntry | undefined,
-	options: { isEdit: boolean },
+	options: { isEdit: boolean; hasStoredKey?: boolean },
 ): string | null {
 	if (!form.provider) return "Choose a provider.";
 	if (!form.label.trim()) return "Give the provider a label.";
@@ -99,6 +123,16 @@ export function validateForm(
 	// Editing: leaving the key blank keeps the stored one.
 	if (catalogEntry?.requiresKey && !options.isEdit && !form.apiKey.trim())
 		return "This provider needs an API key.";
+	// An edit that clears the only key of a paid-only provider would leave it
+	// unable to search at all.
+	if (
+		options.isEdit &&
+		catalogEntry?.requiresKey &&
+		!form.apiKey.trim() &&
+		options.hasStoredKey === true &&
+		form.clearKey
+	)
+		return "This provider needs an API key, so it cannot be cleared.";
 	return null;
 }
 
@@ -108,12 +142,15 @@ export function ProviderFormFields({
 	catalog,
 	catalogEntry,
 	isEdit,
+	hasStoredKey = false,
 }: {
 	form: ProviderFormState;
 	onChange: (next: ProviderFormState) => void;
 	catalog: SearchProviderCatalogEntry[];
 	catalogEntry: SearchProviderCatalogEntry | undefined;
 	isEdit: boolean;
+	/** Edit only: the row has a stored key (shown masked in the list). */
+	hasStoredKey?: boolean;
 }) {
 	const set = (patch: Partial<ProviderFormState>) =>
 		onChange({ ...form, ...patch });
@@ -194,14 +231,44 @@ export function ProviderFormFields({
 					autoComplete="new-password"
 					value={form.apiKey}
 					placeholder={
-						isEdit ? "Leave blank to keep the stored key" : "Paste the key"
+						isEdit
+							? hasStoredKey
+								? "Leave blank to keep the stored key"
+								: "Paste a key for the paid tier"
+							: "Paste a key for the paid tier"
 					}
 					onChange={(e) => set({ apiKey: e.target.value })}
 				/>
 				<p className="text-xs text-muted-foreground">
-					Stored by the proxy; it is only ever shown masked after saving.
+					{keyRequired
+						? "Stored by the proxy; it is only ever shown masked after saving."
+						: isEdit && hasStoredKey
+							? "Leave blank to keep the stored key (paid searches). Stored by the proxy; it is only ever shown masked after saving."
+							: "Leave blank to use this provider's free (keyless) endpoint, which is rate-limited and may refuse this host's address. Add a key for paid searches."}
 				</p>
+				{isEdit && hasStoredKey && (
+					<label className="flex items-center gap-2 text-xs text-muted-foreground">
+						<input
+							type="checkbox"
+							checked={form.clearKey === true}
+							onChange={(e) => set({ clearKey: e.target.checked })}
+						/>
+						Clear the stored key and switch this row to Free
+					</label>
+				)}
 			</div>
+
+			{catalogEntry?.keyless && (
+				<p className="text-xs text-muted-foreground">
+					Tier after saving:{" "}
+					<span className="font-medium">
+						{formTier(form, catalogEntry, { isEdit, hasStoredKey }) === "free"
+							? "Free (keyless)"
+							: "Paid (keyed)"}
+					</span>
+					. Free rows are switched by the "Use free tier" toggle.
+				</p>
+			)}
 
 			<div className="grid grid-cols-2 gap-4">
 				<div className="space-y-2">
@@ -282,6 +349,7 @@ export function formStateToPayload(
 	form: ProviderFormState,
 	catalogEntry: SearchProviderCatalogEntry | undefined,
 ) {
+	const apiKeyClearable = catalogEntry?.requiresKey === false;
 	const extra: Record<string, unknown> = {};
 	for (const field of catalogEntry?.extraConfigFields ?? []) {
 		const raw = form.extraConfig[field.key];
@@ -293,10 +361,18 @@ export function formStateToPayload(
 			extra[field.key] = raw;
 		}
 	}
+	// A cleared key is sent as "" so the server drops it. A typed key always
+	// wins over a stale clear checkbox.
+	const typedKey = form.apiKey.trim();
+	const apiKey = typedKey
+		? typedKey
+		: form.clearKey === true && apiKeyClearable
+			? ""
+			: undefined;
 	return {
 		provider: form.provider as CreateSearchProviderInput["provider"],
 		label: form.label.trim(),
-		apiKey: form.apiKey.trim() || undefined,
+		apiKey,
 		priority: Number.parseInt(form.priority, 10),
 		maxResults: Number.parseInt(form.maxResults, 10),
 		extraConfig: Object.keys(extra).length > 0 ? extra : null,

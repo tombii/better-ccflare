@@ -74,6 +74,7 @@ function normalizeProvider(raw: unknown): SearchProviderPublic | null {
 			extraConfig && typeof extraConfig === "object"
 				? asRecord(extraConfig)
 				: {},
+		tier: entry.tier === "free" ? "free" : "paid",
 		status: asStatus(entry.status),
 		statusMessage: asNullableString(entry.statusMessage),
 		statusCheckedAt: asNullableNumber(entry.statusCheckedAt),
@@ -109,6 +110,13 @@ function normalizeCatalogEntry(
 				})
 				.filter((f): f is NonNullable<typeof f> => f !== null)
 		: undefined;
+	const tiers = Array.isArray(entry.tiers)
+		? entry.tiers.filter(
+				(t): t is "free" | "paid" => t === "free" || t === "paid",
+			)
+		: undefined;
+	const keyless = asRecord(entry.keyless);
+	const freeTierDefault = asRecord(entry.freeTierDefault);
 	return {
 		id: id as SearchProviderCatalogEntry["id"],
 		label: asString(entry.label, id),
@@ -116,7 +124,42 @@ function normalizeCatalogEntry(
 		docsUrl: asString(entry.docsUrl),
 		extraConfigFields: fields ?? [],
 		implemented: entry.implemented === true,
+		tiers: tiers && tiers.length > 0 ? tiers : undefined,
+		keyless:
+			keyless.limitsNote !== undefined
+				? {
+						limitsNote: asString(keyless.limitsNote),
+						droppedExtraConfigKeys: stringArray(keyless.droppedExtraConfigKeys),
+						droppedRequestParams: stringArray(keyless.droppedRequestParams),
+						maxResultsCap: asNullableNumber(keyless.maxResultsCap) ?? undefined,
+					}
+				: undefined,
+		freeTierDefault:
+			freeTierDefault.priority !== undefined
+				? {
+						priority: asNumber(freeTierDefault.priority, 0),
+						enabled: freeTierDefault.enabled === true,
+					}
+				: undefined,
 	};
+}
+
+/** Non-empty strings from an unknown value; undefined when none remain. */
+function stringArray(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const out = value.filter(
+		(v): v is string => typeof v === "string" && v !== "",
+	);
+	return out.length > 0 ? out : undefined;
+}
+
+/** Bulk-enable or bulk-disable every free-tier row. @returns rows changed. */
+export async function setFreeTierEnabled(enabled: boolean): Promise<number> {
+	const body = await api.patch<Envelope<{ changed?: unknown }>>(
+		"/api/search-providers/free-tier",
+		{ enabled },
+	);
+	return asNumber(body?.data?.changed, 0);
 }
 
 export async function listSearchProviders(): Promise<SearchProviderPublic[]> {

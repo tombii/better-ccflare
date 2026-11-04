@@ -8,6 +8,7 @@ import {
 import type { SearchProviderPublic } from "../../lib/search-provider-types";
 import { Button } from "../ui/button";
 import { Separator } from "../ui/separator";
+import { FreeTierToggle } from "./FreeTierToggle";
 import { ProviderDialog } from "./ProviderDialog";
 import { RecentSearchesSection } from "./RecentSearchesSection";
 import { SearchProviderRow } from "./SearchProviderRow";
@@ -33,6 +34,14 @@ export function SearchTab() {
 	const catalogLabel = (id: string) =>
 		catalog.find((entry) => entry.id === id)?.label;
 
+	// Only rows that are actually free: tier says so AND no key is stored. A
+	// free row given a key is a paid row, so it is not counted here.
+	const freeRows = providers.filter(
+		(provider) => provider.tier === "free" && !provider.apiKeyMasked,
+	);
+	const freeEnabled =
+		freeRows.length > 0 && freeRows.some((provider) => provider.enabled);
+
 	return (
 		<div className="space-y-6">
 			<WebSearchSettingsCard />
@@ -48,11 +57,23 @@ export function SearchTab() {
 							fails or is cooling down.
 						</p>
 					</div>
-					<Button onClick={() => setIsAddOpen(true)}>
-						<Plus className="mr-2 h-4 w-4" />
-						Add provider
-					</Button>
+					<div className="flex items-center gap-3">
+						{freeRows.length > 0 && <FreeTierToggle enabled={freeEnabled} />}
+						<Button onClick={() => setIsAddOpen(true)}>
+							<Plus className="mr-2 h-4 w-4" />
+							Add provider
+						</Button>
+					</div>
 				</div>
+
+				{freeRows.length > 0 && freeEnabled && (
+					<p className="text-xs text-muted-foreground">
+						Free-tier rows call each provider's keyless public endpoint. They
+						are rate-limited (often per server IP) and may refuse this host's
+						address, so they are installed disabled and aimed last. Edit a row's
+						priority to try it first.
+					</p>
+				)}
 
 				{providersQuery.isLoading && (
 					<p className="text-sm text-muted-foreground">Loading providers...</p>

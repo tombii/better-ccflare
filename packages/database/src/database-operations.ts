@@ -60,6 +60,10 @@ import { StrategyRepository } from "./repositories/strategy.repository";
 import { UsageHistoryRepository } from "./repositories/usage-history.repository";
 import { WebToolCallRepository } from "./repositories/web-tool-call.repository";
 import { withDatabaseRetry } from "./retry";
+import {
+	seedFreeSearchProviders,
+	setFreeSearchTiersEnabled,
+} from "./search-tier-seeding";
 import { runWalTruncateInWorker } from "./wal-truncate-runner";
 
 export interface DatabaseConfig {
@@ -651,6 +655,19 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		// Default mode is "warn" — see #351.
 		const mode = readMultiInstanceMode();
 		await runStartupGuard(this.adapter, { mode });
+		// Install any missing free-tier search rows (disabled, last resort).
+		// Idempotent and create-only, so operator edits are never overwritten.
+		try {
+			const created = await seedFreeSearchProviders(this.searchProviders);
+			if (created.length > 0) {
+				console.log(
+					`[database] seeded free search providers: ${created.join(", ")}`,
+				);
+			}
+		} catch (error) {
+			// Seeding is a convenience; a failure must not block startup.
+			console.warn("Failed to seed free search providers:", error);
+		}
 		// Start the heartbeat loop so this instance's row is refreshed
 		// while it lives. The stopper is invoked from close().
 		this.heartbeatStop = startHeartbeatLoop(this.adapter);
@@ -2905,9 +2922,35 @@ OAuth tokens will need to be re-authenticated.
 		return toSearchProviderPublic(updated);
 	}
 
+	/**
+	 * Update, but only if the stored key is still `expectedApiKey` (null for
+	 * "still no key"). Returns null when it moved — the caller re-reads and
+	 * retries, so a tier derived from a stale key is never written.
+	 */
+	async updateSearchProviderExpectingKey(
+		id: string,
+		fields: SearchProviderUpdate,
+		expectedApiKey: string | null,
+	): Promise<SearchProviderPublic | null> {
+		const updated = await this.searchProviders.updateExpectingKey(
+			id,
+			fields,
+			expectedApiKey,
+		);
+		return updated ? toSearchProviderPublic(updated) : null;
+	}
+
 	/** @returns true if a row was deleted, false if the id didn't exist. */
 	async deleteSearchProvider(id: string): Promise<boolean> {
 		return this.searchProviders.delete(id);
+	}
+
+	/**
+	 * Enable/disable every free-tier row (the "use free tier" toggle).
+	 * @returns ids of the rows whose state changed.
+	 */
+	async setFreeSearchTiersEnabled(enabled: boolean): Promise<string[]> {
+		return setFreeSearchTiersEnabled(this.searchProviders, enabled);
 	}
 
 	/** Enabled providers by priority ASC (proxy routing order). */

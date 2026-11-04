@@ -55,6 +55,17 @@ export function SearchProviderRow({
 							<Badge variant="secondary" className="font-mono text-xs">
 								{provider.provider}
 							</Badge>
+							<Badge
+								variant={provider.tier === "free" ? "default" : "outline"}
+								className="text-xs"
+								title={
+									provider.tier === "free"
+										? "Calls the provider's keyless public endpoint. Switched by 'Use free tier'."
+										: "Calls the provider's keyed (paid) endpoint. Never touched by 'Use free tier'."
+								}
+							>
+								{provider.tier === "free" ? "Free" : "Paid"}
+							</Badge>
 							{disabled && (
 								<Badge variant="outline" className="text-xs">
 									Disabled
@@ -71,7 +82,8 @@ export function SearchProviderRow({
 							<span className="text-xs text-muted-foreground">
 								Key:{" "}
 								<span className="font-mono">
-									{provider.apiKeyMasked ?? "none"}
+									{provider.apiKeyMasked ??
+										(provider.tier === "free" ? "keyless" : "none")}
 								</span>
 							</span>
 							{provider.maxResults > 0 && (

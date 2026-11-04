@@ -48,7 +48,8 @@ function createFakeStore(seed: Partial<SearchProvider>[] = []): {
 			priority: input.priority ?? 100,
 			maxResults: input.maxResults ?? 5,
 			extraConfig: input.extraConfig ?? null,
-			enabled: true,
+			tier: input.tier ?? "paid",
+			enabled: input.enabled ?? true,
 			createdAt: new Date().toISOString(),
 			updatedAt: new Date().toISOString(),
 		}) as unknown as SearchProvider;
@@ -93,12 +94,23 @@ function createFakeStore(seed: Partial<SearchProvider>[] = []): {
 			if (patch.maxResults !== undefined) next.maxResults = patch.maxResults;
 			if (patch.extraConfig !== undefined) next.extraConfig = patch.extraConfig;
 			if (patch.enabled !== undefined) next.enabled = patch.enabled;
+			if (patch.tier !== undefined) next.tier = patch.tier;
 			if (patch.apiKey !== undefined) {
 				next.apiKey =
 					patch.apiKey === null || patch.apiKey === "" ? null : patch.apiKey;
 			}
 			rows.set(id, next as SearchProvider);
 			return toPublic(next as SearchProvider);
+		},
+		async setFreeTierEnabled(enabled) {
+			let changed = 0;
+			for (const row of rows.values()) {
+				if (row.tier === "free" && !row.apiKey && row.enabled !== enabled) {
+					row.enabled = enabled;
+					changed += 1;
+				}
+			}
+			return changed;
 		},
 		async remove(id) {
 			return rows.delete(id);
@@ -632,5 +644,284 @@ describe("search provider test — adapter delegation", () => {
 		} finally {
 			globalThis.fetch = original;
 		}
+	});
+});
+
+describe("keyless (free-tier) search providers", () => {
+	it("lets a keyless-capable provider be created without a key", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.create(
+			jsonRequest({
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "Free",
+				tier: "free",
+			}),
+		);
+
+		expect(res.status).toBe(201);
+		const row = [...rows.values()][0];
+		expect(row.apiKey).toBeNull();
+		expect(row.tier).toBe("free");
+	});
+
+	it("still refuses a keyed-only provider with no key", async () => {
+		const { store } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.create(
+			jsonRequest({ provider: PROVIDER_WITH_KEY, label: "No key" }),
+		);
+
+		expect(res.status).toBe(400);
+	});
+
+	it("tests a keyless row unauthenticated instead of refusing it", async () => {
+		// A real adapter call would hit the network; assert only that the
+		// "no apiKey configured" short-circuit no longer fires.
+		const result = await runSearchProviderTest({
+			provider: "perplexity-implemented-check",
+			apiKey: null,
+		});
+		// Unknown provider → "not implemented", never "no apiKey configured".
+		expect(result.error).not.toBe("no apiKey configured");
+	});
+
+	it("toggles every free-tier row and leaves keyed rows alone", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore([
+			{
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "A (free)",
+				apiKey: null,
+				tier: "free",
+				enabled: false,
+			},
+			{
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "B (free)",
+				apiKey: null,
+				tier: "free",
+				enabled: false,
+			},
+			{ provider: PROVIDER_WITH_KEY, label: "Paid", apiKey: SECRET },
+		]);
+		const handlers = createSearchProviderHandlers(store);
+
+		const on = await handlers.setFreeTier(
+			jsonRequest({ enabled: true }, "PATCH"),
+		);
+		expect(on.status).toBe(200);
+		expect((await readJson(on)).data.changed).toBe(2);
+		expect(
+			[...rows.values()]
+				.filter((r) => r.tier === "free")
+				.every((r) => r.enabled),
+		).toBe(true);
+		expect([...rows.values()].find((r) => r.label === "Paid")?.enabled).toBe(
+			true,
+		);
+
+		const off = await handlers.setFreeTier(
+			jsonRequest({ enabled: false }, "PATCH"),
+		);
+		expect(off.status).toBe(200);
+		expect(
+			[...rows.values()]
+				.filter((r) => r.tier === "free")
+				.every((r) => !r.enabled),
+		).toBe(true);
+		expect([...rows.values()].find((r) => r.label === "Paid")?.enabled).toBe(
+			true,
+		);
+	});
+
+	it("rejects a toggle body without a boolean enabled", async () => {
+		const { store } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.setFreeTier(
+			jsonRequest({ enabled: "yes" }, "PATCH"),
+		);
+
+		expect(res.status).toBe(400);
+	});
+});
+
+describe("free/paid tier is derived from the key, never trusted from the client", () => {
+	it("adding a key to a free row turns it paid, so the toggle can no longer reach it", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore([
+			{ provider: PROVIDER_WITHOUT_KEY, label: "Free", tier: "free" },
+		]);
+		const handlers = createSearchProviderHandlers(store);
+		const id = [...rows.keys()][0];
+
+		const res = await handlers.update(
+			jsonRequest({ apiKey: "k-1234" }, "PATCH"),
+			id,
+		);
+		expect(res.status).toBe(200);
+		expect(rows.get(id)?.tier).toBe("paid");
+		expect(rows.get(id)?.apiKey).toBe("k-1234");
+
+		// Disabling the free tier must not switch this (now paid) row off.
+		await handlers.setFreeTier(jsonRequest({ enabled: false }, "PATCH"));
+		expect(rows.get(id)?.enabled).toBe(true);
+	});
+
+	it("clearing the key turns a paid row back into a free row", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore([
+			{ provider: PROVIDER_WITHOUT_KEY, label: "Paid", apiKey: "k-old" },
+		]);
+		const handlers = createSearchProviderHandlers(store);
+		const id = [...rows.keys()][0];
+		expect(rows.get(id)?.tier).toBe("paid");
+
+		const res = await handlers.update(jsonRequest({ apiKey: "" }, "PATCH"), id);
+		expect(res.status).toBe(200);
+		expect(rows.get(id)?.tier).toBe("free");
+	});
+
+	it("a keyless-capable row created with no key is stored as free", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		await handlers.create(
+			jsonRequest({ provider: PROVIDER_WITHOUT_KEY, label: "Free" }),
+		);
+
+		expect([...rows.values()][0]?.tier).toBe("free");
+	});
+
+	it("rejects a client claiming 'free' while supplying a key", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.create(
+			jsonRequest({
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "X",
+				apiKey: "k-1",
+				tier: "free",
+			}),
+		);
+
+		expect(res.status).toBe(400);
+	});
+
+	it("adds, replaces and clears a key with no concurrent edit (no false 409)", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		// The guard must compare against the key stored NOW, not the one the
+		// patch is about to write — otherwise every key edit races itself.
+		const { store, rows } = createFakeStore([
+			{ provider: PROVIDER_WITHOUT_KEY, label: "K", tier: "free" },
+		]);
+		store.updateExpectingKey = (rowId, patch, expected) => {
+			const row = rows.get(rowId)!;
+			if ((row.apiKey ?? null) !== expected) return Promise.resolve(null);
+			return store.update(rowId, patch);
+		};
+		const handlers = createSearchProviderHandlers(store);
+		const id = [...rows.keys()][0];
+
+		const added = await handlers.update(
+			jsonRequest({ apiKey: "k-new" }, "PATCH"),
+			id,
+		);
+		expect(added.status).toBe(200);
+		expect(rows.get(id)?.tier).toBe("paid");
+
+		const replaced = await handlers.update(
+			jsonRequest({ apiKey: "k-newer" }, "PATCH"),
+			id,
+		);
+		expect(replaced.status).toBe(200);
+		expect(rows.get(id)?.tier).toBe("paid");
+
+		const cleared = await handlers.update(
+			jsonRequest({ apiKey: "" }, "PATCH"),
+			id,
+		);
+		expect(cleared.status).toBe(200);
+		expect(rows.get(id)?.tier).toBe("free");
+		expect(rows.get(id)?.apiKey).toBeNull();
+	});
+
+	it("re-derives and retries when the key moves between read and write", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore([
+			{
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "K",
+				apiKey: "k-old",
+				tier: "paid",
+			},
+		]);
+		const id = [...rows.keys()][0];
+		// First guarded write sees a key that no longer matches: the row was
+		// cleared to free (keyless) behind our back.
+		let calls = 0;
+		store.updateExpectingKey = async (rowId, patch, expected) => {
+			calls += 1;
+			if (calls === 1) {
+				expect(expected).toBe("k-old");
+				rows.get(rowId)!.apiKey = null;
+				rows.get(rowId)!.tier = "free";
+				return null;
+			}
+			// The retry was derived from the key that is actually stored now.
+			expect(expected).toBeNull();
+			expect(patch.tier).toBe("free");
+			return store.update(rowId, patch);
+		};
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.update(
+			jsonRequest({ priority: 7 }, "PATCH"),
+			id,
+		);
+
+		expect(res.status).toBe(200);
+		expect(calls).toBe(2);
+		expect(rows.get(id)?.tier).toBe("free");
+		expect(rows.get(id)?.priority).toBe(7);
+	});
+
+	it("rejects a client claiming 'paid' with no key", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.create(
+			jsonRequest({
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "X",
+				tier: "paid",
+			}),
+		);
+
+		expect(res.status).toBe(400);
+	});
+
+	it("refuses 'free' for a provider that has no keyless endpoint", async () => {
+		const { store } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.create(
+			jsonRequest({
+				provider: PROVIDER_WITH_KEY,
+				label: "X",
+				apiKey: "k-1",
+				tier: "free",
+			}),
+		);
+
+		expect(res.status).toBe(400);
 	});
 });

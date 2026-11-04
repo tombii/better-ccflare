@@ -53,7 +53,7 @@ function isUniqueViolation(error: unknown): boolean {
 
 const SELECT_COLUMNS = `
 	id, provider, label, api_key, priority, enabled, max_results, extra_config,
-	status, status_message, status_checked_at, cooldown_until, created_at, updated_at`;
+	tier, status, status_message, status_checked_at, cooldown_until, created_at, updated_at`;
 
 /**
  * Repository for the `search_providers` table.
@@ -95,6 +95,26 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 		return row ? toSearchProvider(row) : null;
 	}
 
+	/**
+	 * The row currently serving a provider's FREE (keyless) endpoint, if any.
+	 *
+	 * Identity is the row's tier, not its label: a seeded free row that the
+	 * operator renamed is still "the free row for keenable". Only rows with no
+	 * key count — a free row that was given a key is a paid row now.
+	 */
+	async findFreeTierByProvider(
+		provider: SearchProviderId,
+	): Promise<SearchProvider | null> {
+		const row = await this.get<SearchProviderRow>(
+			`SELECT ${SELECT_COLUMNS} FROM search_providers
+			 WHERE provider = ? AND tier = 'free' AND (api_key IS NULL OR api_key = '')
+			 ORDER BY priority ASC, label ASC
+			 LIMIT 1`,
+			[provider],
+		);
+		return row ? toSearchProvider(row) : null;
+	}
+
 	async isLabelTaken(label: string, exceptId?: string): Promise<boolean> {
 		const row = exceptId
 			? await this.get<{ id: string }>(
@@ -120,9 +140,9 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 			await this.run(
 				`INSERT INTO search_providers (
 					id, provider, label, api_key, priority, enabled, max_results,
-					extra_config, status, status_message, status_checked_at,
+					extra_config, tier, status, status_message, status_checked_at,
 					cooldown_until, created_at, updated_at
-				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, NULL, NULL, ?, ?)`,
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, NULL, NULL, ?, ?)`,
 				[
 					id,
 					input.provider,
@@ -132,6 +152,7 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 					input.enabled === false ? 0 : 1,
 					input.maxResults ?? DEFAULT_SEARCH_MAX_RESULTS,
 					input.extraConfig ? JSON.stringify(input.extraConfig) : null,
+					input.tier ?? "paid",
 					now,
 					now,
 				],
@@ -193,6 +214,10 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 			setClauses.push("max_results = ?");
 			params.push(fields.maxResults);
 		}
+		if (fields.tier !== undefined) {
+			setClauses.push("tier = ?");
+			params.push(fields.tier);
+		}
 		if (Object.hasOwn(fields, "extraConfig")) {
 			setClauses.push("extra_config = ?");
 			params.push(
@@ -209,6 +234,104 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 		} catch (error) {
 			if (isUniqueViolation(error)) {
 				throw new SearchProviderLabelTakenError(fields.label ?? existing.label);
+			}
+			throw error;
+		}
+
+		const updated = await this.findById(id);
+		if (!updated) throw new SearchProviderNotFoundError(id);
+		return updated;
+	}
+
+	/**
+	 * Apply the patch, but only if the stored `api_key` is still
+	 * `expectedApiKey` (null = still no key).
+	 *
+	 * The tier handler derives `tier` from the key it READ. Between that read
+	 * and this write, a concurrent PATCH can change the key — the key predicate
+	 * in the UPDATE turns that into a no-op (null) instead of writing a tier
+	 * that no longer matches the endpoint the row will actually call.
+	 *
+	 * @returns null when the key moved (nothing was written).
+	 */
+	async updateExpectingKey(
+		id: string,
+		fields: SearchProviderUpdate,
+		expectedApiKey: string | null,
+	): Promise<SearchProvider | null> {
+		const current = await this.findById(id);
+		if (!current) throw new SearchProviderNotFoundError(id);
+		if ((current.apiKey ?? null) !== (expectedApiKey ?? null)) return null;
+
+		if (fields.label !== undefined && fields.label !== current.label) {
+			if (await this.isLabelTaken(fields.label, id)) {
+				throw new SearchProviderLabelTakenError(fields.label);
+			}
+		}
+
+		// The key this write leaves behind: an explicit apiKey wins, otherwise
+		// the one we just verified. The tier is derived from THAT, in the same
+		// statement that looks for it.
+		const nextApiKey = Object.hasOwn(fields, "apiKey")
+			? (fields.apiKey ?? null)
+			: (expectedApiKey ?? null);
+
+		const setClauses: string[] = ["updated_at = ?"];
+		const params: unknown[] = [Date.now()];
+		if (fields.provider !== undefined) {
+			setClauses.push("provider = ?");
+			params.push(fields.provider);
+		}
+		if (fields.label !== undefined) {
+			setClauses.push("label = ?");
+			params.push(fields.label);
+		}
+		if (Object.hasOwn(fields, "apiKey")) {
+			setClauses.push("api_key = ?");
+			params.push(nextApiKey);
+		}
+		if (fields.priority !== undefined) {
+			setClauses.push("priority = ?");
+			params.push(fields.priority);
+		}
+		if (fields.enabled !== undefined) {
+			setClauses.push("enabled = ?");
+			params.push(fields.enabled ? 1 : 0);
+		}
+		if (fields.maxResults !== undefined) {
+			setClauses.push("max_results = ?");
+			params.push(fields.maxResults);
+		}
+		if (Object.hasOwn(fields, "extraConfig")) {
+			setClauses.push("extra_config = ?");
+			params.push(
+				fields.extraConfig ? JSON.stringify(fields.extraConfig) : null,
+			);
+		}
+		if (fields.tier !== undefined) {
+			setClauses.push("tier = ?");
+			params.push(fields.tier);
+		}
+
+		const expected = expectedApiKey ?? null;
+		const keyPredicate = expected === null ? "api_key IS NULL" : "api_key = ?";
+		const keyParams = expected === null ? [] : [expected];
+		try {
+			const changed = await this.runWithChanges(
+				`UPDATE search_providers SET ${setClauses.join(", ")}
+				 WHERE id = ? AND ${keyPredicate}`,
+				[...params, id, ...keyParams],
+			);
+			if (changed === 0) {
+				if (!(await this.findById(id))) {
+					throw new SearchProviderNotFoundError(id);
+				}
+				// The key moved under us; the caller re-derives and retries.
+				return null;
+			}
+		} catch (error) {
+			if (isUniqueViolation(error)) {
+				throw new SearchProviderLabelTakenError(fields.label ?? current.label);
 			}
 			throw error;
 		}
