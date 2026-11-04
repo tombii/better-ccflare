@@ -1822,14 +1822,12 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"ALTER TABLE search_providers ADD COLUMN tier TEXT NOT NULL DEFAULT 'paid'",
 			);
 		}
-		// Backfill rows written before `tier` existed (including databases that
-		// briefly carried the pre-release `free_tier` flag): a row's tier is
-		// simply what its stored key says.
+		// Backfill EVERY row from its key (including databases that briefly
+		// carried the pre-release `free_tier` column): a row's tier is simply
+		// what its stored key says, so recomputing unconditionally is always
+		// correct and can never leave a keyless row marked paid.
 		db.run(
 			"UPDATE search_providers SET tier = CASE WHEN api_key IS NULL OR api_key = '' THEN 'free' ELSE 'paid' END",
-		);
-		db.run(
-			"UPDATE search_providers SET tier = 'paid' WHERE tier NOT IN ('free', 'paid')",
 		);
 
 		// Ensure web_tool_calls exists (for upgrades from pre-web-tools

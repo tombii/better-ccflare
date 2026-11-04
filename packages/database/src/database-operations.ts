@@ -2922,6 +2922,24 @@ OAuth tokens will need to be re-authenticated.
 		return toSearchProviderPublic(updated);
 	}
 
+	/**
+	 * Update, but only if the stored key is still `expectedApiKey` (null for
+	 * "still no key"). Returns null when it moved — the caller re-reads and
+	 * retries, so a tier derived from a stale key is never written.
+	 */
+	async updateSearchProviderExpectingKey(
+		id: string,
+		fields: SearchProviderUpdate,
+		expectedApiKey: string | null,
+	): Promise<SearchProviderPublic | null> {
+		const updated = await this.searchProviders.updateExpectingKey(
+			id,
+			fields,
+			expectedApiKey,
+		);
+		return updated ? toSearchProviderPublic(updated) : null;
+	}
+
 	/** @returns true if a row was deleted, false if the id didn't exist. */
 	async deleteSearchProvider(id: string): Promise<boolean> {
 		return this.searchProviders.delete(id);

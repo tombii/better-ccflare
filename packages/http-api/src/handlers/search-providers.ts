@@ -42,6 +42,16 @@ export interface SearchProviderStore {
 		id: string,
 		patch: SearchProviderUpdate,
 	): Promise<SearchProviderPublic | null>;
+	/**
+	 * Update only while the stored key is still `expectedApiKey`; null when it
+	 * moved (the caller retries against the new key). Keeps a derived tier
+	 * from being written against a key that changed mid-request.
+	 */
+	updateExpectingKey?(
+		id: string,
+		patch: SearchProviderUpdate,
+		expectedApiKey: string | null,
+	): Promise<SearchProviderPublic | null>;
 	remove(id: string): Promise<boolean>;
 }
 
@@ -320,6 +330,27 @@ export async function runSearchProviderTest(row: {
 	}
 }
 
+/**
+ * Write a patch with its derived tier, guarded by the key it was derived from.
+ *
+ * Falls back to a plain update for stores that cannot do a compare-and-set
+ * (test fakes, or an older adapter); those have no concurrent writers.
+ */
+async function writeTier(
+	store: SearchProviderStore,
+	id: string,
+	patch: SearchProviderUpdate,
+	expectedApiKey: string | null,
+	tier: SearchProviderTier,
+): Promise<SearchProviderPublic | null | "stale"> {
+	const next = { ...patch, tier };
+	if (!store.updateExpectingKey) {
+		return store.update(id, next);
+	}
+	const row = await store.updateExpectingKey(id, next, expectedApiKey);
+	return row ?? "stale";
+}
+
 export function createSearchProviderHandlers(
 	store: SearchProviderStore,
 ): SearchProviderHandlers {
@@ -478,18 +509,39 @@ export function createSearchProviderHandlers(
 				// patch (absent `apiKey` keeps the stored one — the public row
 				// is masked, so the stored key comes from `getApiKey`). Adding a
 				// key therefore turns a free row into a paid one, and clearing
-				// it turns a paid row back into the free one: `tier` and the
-				// endpoint the adapter calls can never disagree.
-				const storedApiKey =
+				// it turns a paid row back into the free one.
+				//
+				// The derivation is against a READ, so the write is guarded by
+				// the key it was derived from: if a concurrent PATCH changes the
+				// key in between, the write is refused and retried against the
+				// new key rather than storing a tier that no longer matches it.
+				const readKey =
 					patch.apiKey !== undefined ? patch.apiKey : await store.getApiKey(id);
-				const tier = resolveSearchProviderTier(entry, storedApiKey);
+				let tier = resolveSearchProviderTier(entry, readKey);
 				if (patch.tier !== undefined && patch.tier !== tier) {
-					const conflict = tierConflict(entry, storedApiKey, patch.tier);
+					const conflict = tierConflict(entry, readKey, patch.tier);
 					if (conflict) return conflict;
 				}
-				patch.tier = tier;
 
-				const row = await store.update(id, patch);
+				let row = await writeTier(store, id, patch, readKey, tier);
+				if (row === "stale") {
+					// Re-derive once from the key that is actually stored now.
+					const freshKey =
+						patch.apiKey !== undefined
+							? patch.apiKey
+							: await store.getApiKey(id);
+					tier = resolveSearchProviderTier(entry, freshKey);
+					if (patch.tier !== undefined && patch.tier !== tier) {
+						const conflict = tierConflict(entry, freshKey, patch.tier);
+						if (conflict) return conflict;
+					}
+					row = await writeTier(store, id, patch, freshKey, tier);
+				}
+				if (row === "stale") {
+					return errorResponse(
+						Conflict("The provider's API key is being changed; retry"),
+					);
+				}
 				if (!row) {
 					return errorResponse(NotFound(`Search provider '${id}' not found`));
 				}

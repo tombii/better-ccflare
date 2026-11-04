@@ -1519,14 +1519,16 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		}
 	}
 
-	// search_providers.tier backfill — mirrors the SQLite migration. A row's
-	// tier is what its stored key says, so rows written before the column
-	// existed (and any rows carrying the pre-release `free_tier` flag) land
-	// on the right side. Idempotent: it never overwrites a valid tier.
+	// search_providers.tier backfill — mirrors the SQLite migration, which
+	// recomputes EVERY row from its key on each startup. That is deliberate:
+	// the column is added with `DEFAULT 'paid'`, so a freshly added column
+	// would otherwise mark existing keyless rows paid and the free toggle
+	// would never reach them. Recomputing unconditionally is safe because the
+	// tier is derived from `api_key` on every write anyway — the two cannot
+	// disagree once this has run.
 	await adapter.unsafe(
 		`UPDATE search_providers SET tier = CASE
-			WHEN api_key IS NULL OR api_key = '' THEN 'free' ELSE 'paid' END
-		 WHERE tier IS NULL OR tier NOT IN ('free', 'paid')`,
+			WHEN api_key IS NULL OR api_key = '' THEN 'free' ELSE 'paid' END`,
 	);
 
 	// Performance indexes — mirrors packages/database/src/performance-indexes.ts

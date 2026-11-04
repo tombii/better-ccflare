@@ -92,8 +92,11 @@ export function formTier(
 ): SearchProviderTier {
 	const typed = form.apiKey.trim();
 	if (typed) return "paid";
-	const keepsStoredKey = options.isEdit && options.hasStoredKey;
-	if (keepsStoredKey) return "paid";
+	// "Clear the stored key" is only offered for rows that can actually go
+	// keyless; honouring it here keeps the preview equal to what is saved.
+	const clearing =
+		form.clearKey === true && catalogEntry?.requiresKey === false;
+	if (options.isEdit && options.hasStoredKey && !clearing) return "paid";
 	return catalogEntry?.requiresKey === false ? "free" : "paid";
 }
 

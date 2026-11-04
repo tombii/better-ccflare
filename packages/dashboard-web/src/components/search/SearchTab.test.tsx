@@ -113,6 +113,7 @@ mock.module("../../hooks/useWebSearchSettings", () => ({
 	useSaveWebSearchSettings: () => ({ ...idleMutation, mutate: () => {} }),
 }));
 
+import { KEYLESS_TEST_ENTRY } from "../../test-providers";
 import { ProviderDialog } from "./ProviderDialog";
 import {
 	emptyFormState,
@@ -639,9 +640,7 @@ describe("recent-searches helpers", () => {
 });
 
 describe("formTier / key clearing", () => {
-	const freeEntry = catalog.find(
-		(id) => id.requiresKey === false && id.keyless,
-	) as (typeof catalog)[number] | undefined;
+	const freeEntry = KEYLESS_TEST_ENTRY;
 	const form = (patch: Record<string, unknown> = {}) => ({
 		provider: "keenable",
 		label: "K",
@@ -653,14 +652,22 @@ describe("formTier / key clearing", () => {
 	});
 
 	it("editing a paid row keeps it paid when the key field is left blank", () => {
-		if (!freeEntry) return;
 		expect(
 			formTier(form(), freeEntry, { isEdit: true, hasStoredKey: true }),
 		).toBe("paid");
 	});
 
+	it("preview reads Free when a paid row is set to clear its key", () => {
+		// The exact case the early-skipping test masked: a paid row with the
+		// clear-key box ticked must preview Free, matching what is saved.
+		const paidForm = form({ clearKey: true });
+		expect(
+			formTier(paidForm, freeEntry, { isEdit: true, hasStoredKey: true }),
+		).toBe("free");
+		expect(formStateToPayload(paidForm, freeEntry).apiKey).toBe("");
+	});
+
 	it("clearing the stored key switches the row to free", () => {
-		if (!freeEntry) return;
 		expect(
 			formTier(form({ clearKey: true }), freeEntry, {
 				isEdit: true,
@@ -670,7 +677,6 @@ describe("formTier / key clearing", () => {
 	});
 
 	it("typing a key on a keyless row makes it paid", () => {
-		if (!freeEntry) return;
 		expect(
 			formTier(form({ apiKey: "k-1" }), freeEntry, {
 				isEdit: true,
@@ -683,7 +689,6 @@ describe("formTier / key clearing", () => {
 	});
 
 	it("sends apiKey '' to clear, and omits it when merely keeping the key", () => {
-		if (!freeEntry) return;
 		expect(formStateToPayload(form({ clearKey: true }), freeEntry).apiKey).toBe(
 			"",
 		);

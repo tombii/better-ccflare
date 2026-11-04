@@ -815,6 +815,46 @@ describe("free/paid tier is derived from the key, never trusted from the client"
 		expect(res.status).toBe(400);
 	});
 
+	it("re-derives and retries when the key moves between read and write", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore([
+			{
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "K",
+				apiKey: "k-old",
+				tier: "paid",
+			},
+		]);
+		const id = [...rows.keys()][0];
+		// First guarded write sees a key that no longer matches: the row was
+		// cleared to free (keyless) behind our back.
+		let calls = 0;
+		store.updateExpectingKey = async (rowId, patch, expected) => {
+			calls += 1;
+			if (calls === 1) {
+				expect(expected).toBe("k-old");
+				rows.get(rowId)!.apiKey = null;
+				rows.get(rowId)!.tier = "free";
+				return null;
+			}
+			// The retry was derived from the key that is actually stored now.
+			expect(expected).toBeNull();
+			expect(patch.tier).toBe("free");
+			return store.update(rowId, patch);
+		};
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.update(
+			jsonRequest({ priority: 7 }, "PATCH"),
+			id,
+		);
+
+		expect(res.status).toBe(200);
+		expect(calls).toBe(2);
+		expect(rows.get(id)?.tier).toBe("free");
+		expect(rows.get(id)?.priority).toBe(7);
+	});
+
 	it("rejects a client claiming 'paid' with no key", async () => {
 		if (!PROVIDER_WITHOUT_KEY) return;
 		const { store } = createFakeStore();

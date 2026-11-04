@@ -192,3 +192,76 @@ describe("search tier seeding", () => {
 		expect(await setFreeSearchTiersEnabled(repository, false)).toHaveLength(0);
 	});
 });
+
+describe("updateExpectingKey (tier vs concurrent key change)", () => {
+	let db: Database;
+	let repository: SearchProviderRepository;
+
+	beforeEach(() => {
+		db = new Database(":memory:");
+		ensureSchema(db);
+		runMigrations(db);
+		repository = new SearchProviderRepository(new BunSqlAdapter(db));
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	it("writes when the key has not moved", async () => {
+		const row = await repository.create({
+			provider: "keenable",
+			label: "K",
+			apiKey: "k-old",
+			tier: "paid",
+		});
+
+		const updated = await repository.updateExpectingKey(
+			row.id,
+			{ priority: 5, tier: "paid" },
+			"k-old",
+		);
+
+		expect(updated?.priority).toBe(5);
+		expect(updated?.tier).toBe("paid");
+	});
+
+	it("refuses the write when the key changed since it was read", async () => {
+		const row = await repository.create({
+			provider: "keenable",
+			label: "K",
+			apiKey: "k-old",
+			tier: "paid",
+		});
+		// Simulate the interleaving: a tier derived from "k-old" arrives after
+		// the key was cleared (the row is free now).
+		await repository.update(row.id, { apiKey: null, tier: "free" });
+
+		const result = await repository.updateExpectingKey(
+			row.id,
+			{ tier: "paid" },
+			"k-old",
+		);
+
+		expect(result).toBeNull();
+		expect((await repository.findById(row.id))?.tier).toBe("free");
+	});
+
+	it("refuses a write derived from 'no key' once a key appears", async () => {
+		const row = await repository.create({
+			provider: "keenable",
+			label: "K",
+			tier: "free",
+		});
+		await repository.update(row.id, { apiKey: "k-new", tier: "paid" });
+
+		const result = await repository.updateExpectingKey(
+			row.id,
+			{ tier: "free" },
+			null,
+		);
+
+		expect(result).toBeNull();
+		expect((await repository.findById(row.id))?.tier).toBe("paid");
+	});
+});
