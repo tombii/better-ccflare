@@ -9,16 +9,22 @@ export interface OpenAIToolCall {
 	};
 }
 
+/**
+ * One entry of an OpenAI chat-completions content array. Text parts carry
+ * `text`; image parts carry `image_url` instead. Anthropic `image` blocks are
+ * converted into this shape so vision-capable models actually receive them.
+ */
+export interface OpenAIContentPart {
+	type: string;
+	text?: string;
+	cache_control?: { type: string };
+	/** Present when `type === "image_url"`. */
+	image_url?: { url: string };
+}
+
 export interface OpenAIMessage {
 	role: "system" | "user" | "assistant" | "tool";
-	content:
-		| string
-		| null
-		| Array<{
-				type: string;
-				text?: string;
-				cache_control?: { type: string };
-		  }>;
+	content: string | null | OpenAIContentPart[];
 	tool_calls?: OpenAIToolCall[];
 	tool_call_id?: string;
 	reasoning_content?: string;
@@ -106,7 +112,13 @@ export type AnthropicContentBlock =
 
 export interface AnthropicMessage {
 	role: "user" | "assistant";
-	content: string | AnthropicContentBlock[];
+	/**
+	 * `AnthropicContent` (not `AnthropicContentBlock`): the two differ only in
+	 * that this admits `image`, and handing images to an OpenAI-compatible
+	 * gateway is exactly what `toOpenAIImagePart` exists for. Keeping the
+	 * narrower type here would make the image branch unrepresentable.
+	 */
+	content: string | AnthropicContent[];
 }
 
 export interface AnthropicTool {

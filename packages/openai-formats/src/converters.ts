@@ -6,12 +6,14 @@ import { resolveReasoningEffort } from "./reasoning";
 import type {
 	AnthropicContent,
 	AnthropicContentBlock,
+	AnthropicImageContent,
 	AnthropicRequest,
 	AnthropicResponse,
 	AnthropicTextContent,
 	AnthropicThinkingContent,
 	AnthropicToolResult,
 	AnthropicToolUse,
+	OpenAIContentPart,
 	OpenAIMessage,
 	OpenAIRequest,
 	OpenAIResponse,
@@ -43,11 +45,44 @@ export function stripCacheControlFromOpenAIRequest(body: OpenAIRequest): void {
 		if (Array.isArray(msg.content)) {
 			for (const part of msg.content) {
 				if (typeof part === "object" && part !== null) {
-					delete (part as Record<string, unknown>).cache_control;
+					delete (part as unknown as Record<string, unknown>).cache_control;
 				}
 			}
 		}
 	}
+}
+
+/**
+ * Map an Anthropic `image` block onto an OpenAI `image_url` content part.
+ *
+ * Base64 sources become a `data:` URL because that is the only shape every
+ * OpenAI-compatible gateway understands for inline bytes; URL sources are
+ * forwarded verbatim. Media type falls back to `image/png` when the client
+ * omitted it — the field is optional on the Anthropic wire type.
+ *
+ * Returns null for malformed blocks (no data, no url) so the caller can skip
+ * them instead of emitting a part the upstream will reject.
+ */
+export function toOpenAIImagePart(
+	block: AnthropicImageContent,
+): OpenAIContentPart | null {
+	const source = block.source;
+	if (!source || typeof source !== "object") return null;
+
+	if (typeof source.url === "string" && source.url.length > 0) {
+		return { type: "image_url", image_url: { url: source.url } };
+	}
+	if (typeof source.data === "string" && source.data.length > 0) {
+		const mediaType =
+			typeof source.media_type === "string" && source.media_type.length > 0
+				? source.media_type
+				: "image/png";
+		return {
+			type: "image_url",
+			image_url: { url: `data:${mediaType};base64,${source.data}` },
+		};
+	}
+	return null;
 }
 
 /**
@@ -174,6 +209,11 @@ export function convertAnthropicRequestToOpenAI(
 		});
 	}
 
+	// Images found inside tool_result blocks. OpenAI's `tool` role is text-only,
+	// so these cannot ride along with the tool output; they are collected here
+	// and appended as one user turn after the message loop (see below).
+	const hoistedToolImages: OpenAIContentPart[] = [];
+
 	// Add user/assistant messages
 	if (anthropicData.messages && Array.isArray(anthropicData.messages)) {
 		for (const message of anthropicData.messages) {
@@ -196,14 +236,43 @@ export function convertAnthropicRequestToOpenAI(
 					(part): part is AnthropicThinkingContent => part.type === "thinking",
 				);
 
+				// Extract image blocks. These used to be dropped here with no trace
+				// left in the request, which silently turned a vision prompt into a
+				// text-only one. They are now emitted as `image_url` parts, in the
+				// same order the client sent them.
+				const convertedImages = new Map<string, OpenAIContentPart>();
+				for (let index = 0; index < message.content.length; index++) {
+					const part = message.content[index];
+					if (part?.type !== "image") continue;
+					const converted = toOpenAIImagePart(part);
+					if (converted) convertedImages.set(String(index), converted);
+				}
+
 				let content: OpenAIMessage["content"];
-				if (hasCacheControl) {
+				if (convertedImages.size > 0) {
+					const parts: OpenAIContentPart[] = [];
+					for (let index = 0; index < message.content.length; index++) {
+						const part = message.content[index];
+						if (!part) continue;
+						if (part.type === "text") {
+							const block: OpenAIContentPart = {
+								type: "text",
+								text: part.text,
+							};
+							if (part.cache_control) block.cache_control = part.cache_control;
+							parts.push(block);
+						} else {
+							const converted = convertedImages.get(String(index));
+							if (converted) parts.push(converted);
+						}
+					}
+					content = parts;
+				} else if (hasCacheControl) {
 					content = textBlocks.map((part) => {
-						const block: {
-							type: string;
-							text: string;
-							cache_control?: { type: string };
-						} = { type: "text", text: part.text };
+						const block: OpenAIContentPart = {
+							type: "text",
+							text: part.text,
+						};
 						if (part.cache_control) block.cache_control = part.cache_control;
 						return block;
 					});
@@ -253,10 +322,14 @@ export function convertAnthropicRequestToOpenAI(
 							if (block.type === "text") {
 								parts.push(block.text);
 							} else if (block.type === "image") {
-								// OpenAI tool messages don't support image content — drop with placeholder
+								// OpenAI tool messages don't support image content, so the
+								// tool output keeps a placeholder and the image itself is
+								// hoisted into a following user turn (below).
 								parts.push(
 									"[image content not supported in OpenAI tool results]",
 								);
+								const hoisted = toOpenAIImagePart(block);
+								if (hoisted) hoistedToolImages.push(hoisted);
 							} else {
 								// Other structured blocks (tool_use, tool_result, etc.) — serialize as JSON
 								parts.push(JSON.stringify(block));
@@ -298,6 +371,15 @@ export function convertAnthropicRequestToOpenAI(
 				});
 			}
 		}
+	}
+
+	// Images extracted from tool results get their own user turn. Keeping them
+	// in the `tool` message would mean JSON-stringifying binary data the model
+	// cannot see; a trailing user turn is the shape OpenAI vision models
+	// actually read. Only emitted when at least one tool result carried an
+	// image, so text-only conversations are byte-identical to before.
+	if (hoistedToolImages.length > 0) {
+		messages.push({ role: "user", content: hoistedToolImages });
 	}
 
 	openaiRequest.messages = messages;

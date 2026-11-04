@@ -502,6 +502,43 @@ describe("OpenAICompatibleProvider", () => {
 			const transformed = await provider.transformRequestBody(request);
 			const body = await transformed.json();
 
+			// Image blocks are preserved as `image_url` parts, in the order the
+			// client sent them — this used to collapse to "Helloworld!" with the
+			// image silently discarded, which broke vision prompts.
+			expect(body.messages[0].content).toEqual([
+				{ type: "text", text: "Hello" },
+				{
+					type: "image_url",
+					image_url: { url: "data:image/png;base64,..." },
+				},
+				{ type: "text", text: "world!" },
+			]);
+		});
+
+		it("should collapse text-only content arrays to a plain string", async () => {
+			const anthropicRequest = {
+				model: "claude-3-sonnet-20240229",
+				max_tokens: 1000,
+				messages: [
+					{
+						role: "user",
+						content: [
+							{ type: "text", text: "Hello" },
+							{ type: "text", text: "world!" },
+						],
+					},
+				],
+			};
+
+			const request = new Request("https://example.com/v1/messages", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(anthropicRequest),
+			});
+
+			const transformed = await provider.transformRequestBody(request);
+			const body = await transformed.json();
+
 			expect(body.messages[0].content).toBe("Helloworld!");
 		});
 

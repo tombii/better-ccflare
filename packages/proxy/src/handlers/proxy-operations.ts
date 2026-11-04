@@ -667,6 +667,115 @@ function hasCacheControlDetail(detail: unknown[]): boolean {
 }
 
 /**
+ * Phrases that name image *input* being rejected — the request carried image
+ * content the model cannot read. Deliberately excludes anything that merely
+ * mentions images (billing, content filters, output formats): those are
+ * request-specific errors a retry on another slot would not fix.
+ */
+const VISION_UNSUPPORTED_INPUT_PATTERNS = [
+	"image input",
+	"image_url",
+	"image content",
+	"images are not supported",
+	"image is not supported",
+	"does not support image",
+	"doesn't support image",
+	"image not supported",
+	"not support vision",
+	"no vision",
+	"invalid content type: image",
+] as const;
+
+/** Input-side hints required for the vaguer "vision"/"modality" phrasings. */
+const VISION_MODALITY_PATTERNS = [
+	"vision",
+	"modality",
+	"input_modalities",
+] as const;
+
+/**
+ * True when `text` names image input as unsupported.
+ *
+ * Two tiers: an explicit image-input phrase is enough on its own, while a
+ * mention of vision/modality also needs an explicit negation, so "vision is
+ * enabled for this model" or "modality: text" cannot match.
+ */
+function mentionsUnsupportedImageInput(text: string): boolean {
+	const lower = text.toLowerCase();
+	if (VISION_UNSUPPORTED_INPUT_PATTERNS.some((p) => lower.includes(p))) {
+		return true;
+	}
+	const namesModality = VISION_MODALITY_PATTERNS.some((p) => lower.includes(p));
+	if (!namesModality) return false;
+	return (
+		lower.includes("not support") ||
+		lower.includes("unsupported") ||
+		lower.includes("not supported") ||
+		lower.includes("only supports")
+	);
+}
+
+/**
+ * Checks if a 400 means the requested model cannot accept image input.
+ *
+ * better-ccflare converts Anthropic image blocks to OpenAI `image_url` parts
+ * for every account, because it has no per-model vision capability data for
+ * the gateways it fronts (most expose none). The contract is to assume vision
+ * works and fail over when an upstream says otherwise: the caller treats a
+ * match like an unavailable model, trying the next combo slot / account
+ * instead of forwarding the 400 to the client.
+ *
+ * Only 400 is considered. Other 4xx shapes are either request-wide (auth,
+ * billing) or already classified elsewhere.
+ */
+export async function isVisionUnsupportedError(
+	response: Response,
+): Promise<boolean> {
+	if (response.status !== 400) return false;
+
+	try {
+		const contentType = response.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return false;
+
+		// Cloned only after the content-type gate, for the reason spelled out in
+		// isCacheControlRejectionError: cloning earlier tees the body and strands
+		// the copy for every non-JSON error. See issue #356.
+		const json = await response.clone().json();
+
+		// Candidate strings from the shapes in use: `error.message`,
+		// `message.detail[].msg`, top-level `detail`, and `message` itself.
+		const candidates: string[] = [];
+		const push = (value: unknown) => {
+			if (typeof value === "string") candidates.push(value);
+		};
+
+		push(json.error?.message);
+		push(json.detail);
+		push(json.message);
+		const detail = Array.isArray(json.detail)
+			? json.detail
+			: Array.isArray(json.error?.message?.detail)
+				? json.error.message.detail
+				: Array.isArray(json.message?.detail)
+					? json.message.detail
+					: undefined;
+		if (Array.isArray(detail)) {
+			for (const entry of detail) {
+				if (typeof entry === "object" && entry !== null) {
+					const { msg, loc } = entry as { msg?: unknown; loc?: unknown };
+					push(msg);
+					if (Array.isArray(loc)) push(loc.join("."));
+				}
+			}
+		}
+
+		return candidates.some(mentionsUnsupportedImageInput);
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Checks if a response error indicates the requested model is unavailable.
  * Covers Anthropic (not_found_error), OpenAI-compat (model_not_found),
  * generic messages, and Bedrock (ResourceNotFoundException).
@@ -2484,6 +2593,22 @@ export async function proxyWithAccount(
 		// model_mappings arrays and legacy model_fallbacks. We already tried index 0
 		// (the primary), so start at index 1.
 		let zai1305AlreadyChecked = false;
+
+		// The request carried images and this model cannot read them. The
+		// fallback path below is entered exactly as for a rate-limited model
+		// (`isModelUnavailableError` is true for any 429 and for model-not-found
+		// 400/404s), so nothing branches here. The log line is the only extra
+		// affordance: it names the cause, which the generic rate-limit wording
+		// further down would otherwise hide.
+		if (await isVisionUnsupportedError(rawResponse)) {
+			let rejectedModel: string | null = null;
+			if (effectiveBodyBuffer) rejectedModel = effectiveBodyContext.getModel();
+			log.warn(
+				`Account ${account.name}${rejectedModel ? ` (model=${rejectedModel})` : ""} ` +
+					`rejected image input — failing over to next model/account`,
+			);
+		}
+
 		if (await isModelUnavailableError(rawResponse)) {
 			// Log 429 response headers for debugging upstream rate-limit info
 			if (rawResponse.status === 429) {
