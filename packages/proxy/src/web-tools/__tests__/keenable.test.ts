@@ -441,6 +441,37 @@ describe("keenable adapter — test()", () => {
 		expect(bodyOf(calls[0]).max_results).toBe(1);
 	});
 
+	it("sends the saved settings so Test exercises the real search path", async () => {
+		stubFetch(() =>
+			jsonResponse({ query: "q", results: [hit("https://a.b")] }),
+		);
+
+		const result = await adapter.test({
+			...keyedConfig,
+			maxResults: 50,
+			extraConfig: {
+				mode: "realtime",
+				site: "example.com",
+				published_after: "7d",
+				acquired_before: "2026-01-01",
+				snippet_max_length: 400,
+			},
+		});
+
+		expect(result.ok).toBe(true);
+		// `maxResults` is the provider cap; the probe asks for one result, so
+		// the cap must not leak into the probe body.
+		expect(bodyOf(calls[0])).toEqual({
+			query: "better-ccflare connectivity test",
+			max_results: 1,
+			mode: "realtime",
+			site: "example.com",
+			published_after: "7d",
+			acquired_before: "2026-01-01",
+			snippet_max_length: 400,
+		});
+	});
+
 	it("reports ok:false without calling out when no key is stored", async () => {
 		stubFetch(() => jsonResponse({ query: "q", results: [] }));
 

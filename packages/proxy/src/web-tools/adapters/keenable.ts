@@ -174,9 +174,15 @@ function buildSearchBody(
 	return body;
 }
 
-/** Minimal body for the dashboard's Test button. */
-function buildTestBody(): KeenableSearchBody {
-	return { query: TEST_QUERY, max_results: 1 };
+/**
+ * Probe body for the dashboard's Test button: the operator's saved settings
+ * (`mode`, `site`, date filters, …) on a one-result request, so a broken
+ * filter or an unsupported `mode` shows up in Test rather than at search time.
+ * Built from {@link buildSearchBody} — the same path a real search takes — so
+ * the two can never drift.
+ */
+function buildTestBody(config: WebToolAdapterConfig): KeenableSearchBody {
+	return buildSearchBody({ query: TEST_QUERY, maxResults: 1 }, config);
 }
 
 /** Collapse and truncate a response body so error messages stay short. */
@@ -419,7 +425,7 @@ export function createKeenableAdapter(): WebToolSearchAdapter {
 			}
 			try {
 				const data = await postSearch(
-					buildTestBody(),
+					buildTestBody(config),
 					config.apiKey,
 					undefined,
 				);
