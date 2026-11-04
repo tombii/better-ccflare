@@ -815,6 +815,44 @@ describe("free/paid tier is derived from the key, never trusted from the client"
 		expect(res.status).toBe(400);
 	});
 
+	it("adds, replaces and clears a key with no concurrent edit (no false 409)", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		// The guard must compare against the key stored NOW, not the one the
+		// patch is about to write — otherwise every key edit races itself.
+		const { store, rows } = createFakeStore([
+			{ provider: PROVIDER_WITHOUT_KEY, label: "K", tier: "free" },
+		]);
+		store.updateExpectingKey = (rowId, patch, expected) => {
+			const row = rows.get(rowId)!;
+			if ((row.apiKey ?? null) !== expected) return Promise.resolve(null);
+			return store.update(rowId, patch);
+		};
+		const handlers = createSearchProviderHandlers(store);
+		const id = [...rows.keys()][0];
+
+		const added = await handlers.update(
+			jsonRequest({ apiKey: "k-new" }, "PATCH"),
+			id,
+		);
+		expect(added.status).toBe(200);
+		expect(rows.get(id)?.tier).toBe("paid");
+
+		const replaced = await handlers.update(
+			jsonRequest({ apiKey: "k-newer" }, "PATCH"),
+			id,
+		);
+		expect(replaced.status).toBe(200);
+		expect(rows.get(id)?.tier).toBe("paid");
+
+		const cleared = await handlers.update(
+			jsonRequest({ apiKey: "" }, "PATCH"),
+			id,
+		);
+		expect(cleared.status).toBe(200);
+		expect(rows.get(id)?.tier).toBe("free");
+		expect(rows.get(id)?.apiKey).toBeNull();
+	});
+
 	it("re-derives and retries when the key moves between read and write", async () => {
 		if (!PROVIDER_WITHOUT_KEY) return;
 		const { store, rows } = createFakeStore([

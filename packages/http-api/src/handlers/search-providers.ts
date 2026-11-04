@@ -505,37 +505,39 @@ export function createSearchProviderHandlers(
 					patch.apiKey = null;
 				}
 
-				// Re-derive the tier from the key the row will HAVE after this
-				// patch (absent `apiKey` keeps the stored one — the public row
-				// is masked, so the stored key comes from `getApiKey`). Adding a
-				// key therefore turns a free row into a paid one, and clearing
-				// it turns a paid row back into the free one.
-				//
-				// The derivation is against a READ, so the write is guarded by
-				// the key it was derived from: if a concurrent PATCH changes the
-				// key in between, the write is refused and retried against the
-				// new key rather than storing a tier that no longer matches it.
-				const readKey =
-					patch.apiKey !== undefined ? patch.apiKey : await store.getApiKey(id);
-				let tier = resolveSearchProviderTier(entry, readKey);
-				if (patch.tier !== undefined && patch.tier !== tier) {
-					const conflict = tierConflict(entry, readKey, patch.tier);
+				// Two different keys are in play here and must not be confused:
+				//   - the key the row has NOW, which guards the write (it is
+				//     what a concurrent edit would change under us), and
+				//   - the key the patch LEAVES BEHIND, which the tier is derived
+				//     from (an edit that adds or clears a key changes it).
+				// The public row is masked, so the stored key comes from
+				// `getApiKey`.
+				const deriveTier = (storedKey: string | null) => {
+					const nextKey = patch.apiKey !== undefined ? patch.apiKey : storedKey;
+					return {
+						nextKey,
+						tier: resolveSearchProviderTier(entry, nextKey),
+					};
+				};
+
+				let storedKey = await store.getApiKey(id);
+				let derived = deriveTier(storedKey);
+				if (patch.tier !== undefined && patch.tier !== derived.tier) {
+					const conflict = tierConflict(entry, derived.nextKey, patch.tier);
 					if (conflict) return conflict;
 				}
 
-				let row = await writeTier(store, id, patch, readKey, tier);
+				let row = await writeTier(store, id, patch, storedKey, derived.tier);
 				if (row === "stale") {
-					// Re-derive once from the key that is actually stored now.
-					const freshKey =
-						patch.apiKey !== undefined
-							? patch.apiKey
-							: await store.getApiKey(id);
-					tier = resolveSearchProviderTier(entry, freshKey);
-					if (patch.tier !== undefined && patch.tier !== tier) {
-						const conflict = tierConflict(entry, freshKey, patch.tier);
+					// Somebody else changed the stored key: re-read it and
+					// re-derive. The patch's own key still decides the tier.
+					storedKey = await store.getApiKey(id);
+					derived = deriveTier(storedKey);
+					if (patch.tier !== undefined && patch.tier !== derived.tier) {
+						const conflict = tierConflict(entry, derived.nextKey, patch.tier);
 						if (conflict) return conflict;
 					}
-					row = await writeTier(store, id, patch, freshKey, tier);
+					row = await writeTier(store, id, patch, storedKey, derived.tier);
 				}
 				if (row === "stale") {
 					return errorResponse(
