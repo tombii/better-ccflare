@@ -2,9 +2,10 @@
  * Adapter registry for local `web_search` interception.
  *
  * Only providers with a working adapter live here — currently `tavily`,
- * `exa`, `parallel`, `deepseek`, `serper` and `brave`. The dashboard marks the
- * rest of {@link SEARCH_PROVIDER_CATALOG} as `implemented: false`, so a missing
- * entry is the expected state, not an error.
+ * `exa`, `parallel`, `deepseek`, `serper`, `brave`, `tinyfish` and
+ * `firecrawl`. The dashboard marks the rest of {@link SEARCH_PROVIDER_CATALOG}
+ * as `implemented: false`, so a missing entry is the expected state, not an
+ * error.
  */
 
 import type { SearchProviderId } from "@better-ccflare/types";
@@ -12,9 +13,11 @@ import type { WebToolAdapterRegistry, WebToolSearchAdapter } from "../types";
 import { createBraveAdapter } from "./brave";
 import { createDeepSeekAdapter } from "./deepseek";
 import { createExaAdapter } from "./exa";
+import { createFirecrawlAdapter } from "./firecrawl";
 import { createParallelAdapter } from "./parallel";
 import { createSerperAdapter } from "./serper";
 import { createTavilyAdapter } from "./tavily";
+import { createTinyfishAdapter } from "./tinyfish";
 
 const adapters: WebToolAdapterRegistry = {
 	tavily: createTavilyAdapter(),
@@ -23,6 +26,8 @@ const adapters: WebToolAdapterRegistry = {
 	deepseek: createDeepSeekAdapter(),
 	serper: createSerperAdapter(),
 	brave: createBraveAdapter(),
+	tinyfish: createTinyfishAdapter(),
+	firecrawl: createFirecrawlAdapter(),
 };
 
 /**
