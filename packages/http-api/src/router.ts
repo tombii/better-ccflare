@@ -1025,6 +1025,14 @@ export class APIRouter {
 			}
 		}
 
+		// PATCH /api/search-providers/free-tier — { enabled } bulk toggle. Must
+		// precede the :id routes below, which would read "free-tier" as an id.
+		if (path === "/api/search-providers/free-tier" && method === "PATCH") {
+			return await this.wrapHandler((req) =>
+				this.searchProviderHandlers.setFreeTier(req),
+			)(req, url);
+		}
+
 		// Check for dynamic search provider endpoints (/api/search-providers/:id)
 		if (path.startsWith("/api/search-providers/")) {
 			const parts = path.split("/");

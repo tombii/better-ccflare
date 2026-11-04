@@ -55,6 +55,11 @@ export function SearchProviderRow({
 							<Badge variant="secondary" className="font-mono text-xs">
 								{provider.provider}
 							</Badge>
+							{provider.freeTier && (
+								<Badge variant="outline" className="text-xs">
+									Free tier
+								</Badge>
+							)}
 							{disabled && (
 								<Badge variant="outline" className="text-xs">
 									Disabled
@@ -71,7 +76,8 @@ export function SearchProviderRow({
 							<span className="text-xs text-muted-foreground">
 								Key:{" "}
 								<span className="font-mono">
-									{provider.apiKeyMasked ?? "none"}
+									{provider.apiKeyMasked ??
+										(provider.freeTier ? "keyless" : "none")}
 								</span>
 							</span>
 							{provider.maxResults > 0 && (

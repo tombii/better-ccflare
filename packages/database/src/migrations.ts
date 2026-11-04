@@ -485,6 +485,7 @@ function createSearchProvidersTable(db: Database): void {
 			enabled INTEGER NOT NULL DEFAULT 1,
 			max_results INTEGER NOT NULL DEFAULT 10,
 			extra_config TEXT,
+			free_tier INTEGER NOT NULL DEFAULT 0,
 			status TEXT NOT NULL DEFAULT 'unknown',
 			status_message TEXT,
 			status_checked_at INTEGER,
@@ -1805,6 +1806,22 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		// installs). Idempotent, so fresh DBs — where ensureSchema() already
 		// created it — pay nothing.
 		createSearchProvidersTable(db);
+
+		// Additive column upgrades for search_providers. CREATE TABLE IF NOT
+		// EXISTS above is a no-op on an existing table, so columns introduced
+		// later are added here.
+		const searchProviderColumns = new Set(
+			(
+				db.prepare("PRAGMA table_info(search_providers)").all() as Array<{
+					name: string;
+				}>
+			).map((c) => c.name),
+		);
+		if (!searchProviderColumns.has("free_tier")) {
+			db.run(
+				"ALTER TABLE search_providers ADD COLUMN free_tier INTEGER NOT NULL DEFAULT 0",
+			);
+		}
 
 		// Ensure web_tool_calls exists (for upgrades from pre-web-tools
 		// installs). Idempotent, same rationale as above.

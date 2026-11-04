@@ -188,6 +188,37 @@ curl -X POST http://localhost:8080/api/search-providers \
 The dashboard's **Add provider** dialog renders the same per-provider fields
 (`extraConfig`) from the catalog, so the UI and API always agree on options.
 
+### Free tier (keyless providers)
+
+Two providers can run with **no API key at all** by calling their public
+keyless endpoints:
+
+| Provider | Keyless endpoint | Needs | Free limits |
+|----------|------------------|-------|-------------|
+| **Keenable** | `POST https://api.keenable.ai/v1/search/public` | `X-Keenable-Title: better-ccflare` app id (sent automatically) | 1,000 requests/hour, 10/s, **shared per server IP** |
+| **Firecrawl** | `POST https://api.firecrawl.dev/v2/search` | nothing | Anonymous calls are **IP-gated** — VPN, proxy and datacenter addresses (which most servers are) get a `403` asking for a key |
+
+Every install is seeded with a **Free tier** row for each of these (`Keenable
+(free)`, `Firecrawl (free)`), **disabled** and at last-resort priority (`900`,
+`901`) on first start. The free tier is deliberately off until someone asks
+for it:
+
+- Flip the **Use free tier** checkbox on the Search page (bulk-enables every
+  free-tier row), or
+- Enable a row individually.
+
+Priority is plain order: leave a free row at `900` to use it only when keyed
+providers fail or are absent, or edit it to `0` to try it first. A free row
+and a paid row for the same provider can coexist at different priorities;
+they have separate health and cooldowns. With a key stored, a row always
+calls the paid endpoint — a stored key never silently drops to the free one.
+
+The free endpoints accept the same request body and `extraConfig` as the
+keyed ones (verified against Keenable: `mode`, `site`, date filters and
+`snippet_max_length` all apply). Domain filtering still happens; a keyless
+row simply cannot push `blocked_domains` down to the vendor. Deleting a free
+row does not stick — it comes back, disabled, on the next start.
+
 ### 3. Test it
 
 The **Test** button on each row runs one real, minimal search against the
@@ -216,7 +247,8 @@ Only the query *length* is logged at info level — queries can be sensitive.
 | **DeepSeek** | — | Domain filtering is applied client-side to the returned hits |
 | **Serper** | `gl` (country), `hl` (language) | Google results |
 | **Brave Search** | `endpoint`: `llm-context` (default), `web`; `country`, `safesearch`: `off`, `moderate` (default), `strict` | Domain filtering is applied client-side. See [Brave: `web` vs `llm-context`](#brave-web-vs-llm-context) |
-| **Keenable** | `mode`: `pro` (default), `realtime`; `site`; `published_after`, `published_before`, `acquired_after` (date, ISO timestamp, or `7d`-style delta); `snippet_max_length`: 180–10000 | A single `allowed_domains` entry is pushed down as `site`; multi-domain lists and blocklists are filtered client-side |
+| **Keenable** | `mode`: `pro` (default), `realtime`; `site`; `published_after`, `published_before`, `acquired_after` (date, ISO timestamp, or `7d`-style delta); `snippet_max_length`: 180–10000 | A single `allowed_domains` entry is pushed down as `site`; multi-domain lists and blocklists are filtered client-side. Keyless-capable — see [Free tier](#free-tier-keyless-providers) |
+| **Firecrawl** | `location`; `tbs` | Uses `/v2/search`. Keyless-capable — see [Free tier](#free-tier-keyless-providers) |
 | **Perplexity** | `model` (default `sonar`) | **Listed but not implemented** — rows are accepted but the chain skips them |
 
 `maxResults` accepts 1–50 (default 10). The adapter requests
@@ -381,6 +413,7 @@ Full schemas are in [api-http.md](./api-http.md#web-search). Summary:
 | `DELETE` | `/api/search-providers/:id` | Delete |
 | `POST` | `/api/search-providers/:id/test` | Run one real test search |
 | `POST` | `/api/search-providers/:id/reorder` | Set `priority` |
+| `PATCH` | `/api/search-providers/free-tier` | `{"enabled": true\|false}` — bulk enable/disable every free-tier row; returns how many changed |
 | `GET` | `/api/web-tool-calls` | Recent traces (`limit`, `status`, `providerKind`, `since`) |
 | `GET` | `/api/web-tool-calls/summary` | Per-`(providerKind, status)` counts and latency (`hours`) |
 

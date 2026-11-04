@@ -199,7 +199,11 @@ export function ProviderFormFields({
 					onChange={(e) => set({ apiKey: e.target.value })}
 				/>
 				<p className="text-xs text-muted-foreground">
-					Stored by the proxy; it is only ever shown masked after saving.
+					{keyRequired
+						? "Stored by the proxy; it is only ever shown masked after saving."
+						: isEdit
+							? "Leave blank to keep the keyless (free) endpoint."
+							: "Leave blank to use the free public endpoint (keyless, rate-limited). Add a key for the paid API."}
 				</p>
 			</div>
 

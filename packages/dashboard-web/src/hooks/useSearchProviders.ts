@@ -11,6 +11,7 @@ import {
 	getSearchProviderCatalog,
 	listSearchProviders,
 	reorderSearchProvider,
+	setFreeTierEnabled,
 	testSearchProvider,
 	updateSearchProvider,
 } from "../lib/search-providers-api";
@@ -89,6 +90,27 @@ export const useReorderSearchProvider = () => {
 		mutationFn: ({ id, priority }: { id: string; priority: number }) =>
 			reorderSearchProvider(id, priority),
 		onSuccess: replace,
+	});
+};
+
+/**
+ * The "use free tier" toggle: bulk-enables the seeded keyless rows. The
+ * server applies it to rows, so a refetch is the source of truth (rows the
+ * operator had individually disabled flip too — that IS the toggle).
+ */
+export const useSetFreeTierEnabled = (options?: { enabled?: boolean }) => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		// The toggle only renders when free rows exist; gating keeps a server
+		// that predates seeding (and any test render without a provider) out
+		// of the query machinery entirely.
+		...options,
+		mutationFn: (enabled: boolean) => setFreeTierEnabled(enabled),
+		onSettled: () => {
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.searchProviders(),
+			});
+		},
 	});
 };
 

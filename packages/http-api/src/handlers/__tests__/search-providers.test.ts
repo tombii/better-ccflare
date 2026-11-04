@@ -48,7 +48,8 @@ function createFakeStore(seed: Partial<SearchProvider>[] = []): {
 			priority: input.priority ?? 100,
 			maxResults: input.maxResults ?? 5,
 			extraConfig: input.extraConfig ?? null,
-			enabled: true,
+			freeTier: input.freeTier === true,
+			enabled: input.enabled ?? true,
 			createdAt: new Date().toISOString(),
 			updatedAt: new Date().toISOString(),
 		}) as unknown as SearchProvider;
@@ -93,12 +94,23 @@ function createFakeStore(seed: Partial<SearchProvider>[] = []): {
 			if (patch.maxResults !== undefined) next.maxResults = patch.maxResults;
 			if (patch.extraConfig !== undefined) next.extraConfig = patch.extraConfig;
 			if (patch.enabled !== undefined) next.enabled = patch.enabled;
+			if (patch.freeTier !== undefined) next.freeTier = patch.freeTier;
 			if (patch.apiKey !== undefined) {
 				next.apiKey =
 					patch.apiKey === null || patch.apiKey === "" ? null : patch.apiKey;
 			}
 			rows.set(id, next as SearchProvider);
 			return toPublic(next as SearchProvider);
+		},
+		async setFreeTierEnabled(enabled) {
+			let changed = 0;
+			for (const row of rows.values()) {
+				if (row.freeTier && row.enabled !== enabled) {
+					row.enabled = enabled;
+					changed += 1;
+				}
+			}
+			return changed;
 		},
 		async remove(id) {
 			return rows.delete(id);
@@ -632,5 +644,104 @@ describe("search provider test — adapter delegation", () => {
 		} finally {
 			globalThis.fetch = original;
 		}
+	});
+});
+
+describe("keyless (free-tier) search providers", () => {
+	it("lets a keyless-capable provider be created without a key", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.create(
+			jsonRequest({
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "Free",
+				freeTier: true,
+			}),
+		);
+
+		expect(res.status).toBe(201);
+		const row = [...rows.values()][0];
+		expect(row.apiKey).toBeNull();
+		expect(row.freeTier).toBe(true);
+	});
+
+	it("still refuses a keyed-only provider with no key", async () => {
+		const { store } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.create(
+			jsonRequest({ provider: PROVIDER_WITH_KEY, label: "No key" }),
+		);
+
+		expect(res.status).toBe(400);
+	});
+
+	it("tests a keyless row unauthenticated instead of refusing it", async () => {
+		// A real adapter call would hit the network; assert only that the
+		// "no apiKey configured" short-circuit no longer fires.
+		const result = await runSearchProviderTest({
+			provider: "perplexity-implemented-check",
+			apiKey: null,
+		});
+		// Unknown provider → "not implemented", never "no apiKey configured".
+		expect(result.error).not.toBe("no apiKey configured");
+	});
+
+	it("toggles every free-tier row and leaves keyed rows alone", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore([
+			{
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "A (free)",
+				apiKey: null,
+				freeTier: true,
+				enabled: false,
+			},
+			{
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "B (free)",
+				apiKey: null,
+				freeTier: true,
+				enabled: false,
+			},
+			{ provider: PROVIDER_WITH_KEY, label: "Paid", apiKey: SECRET },
+		]);
+		const handlers = createSearchProviderHandlers(store);
+
+		const on = await handlers.setFreeTier(
+			jsonRequest({ enabled: true }, "PATCH"),
+		);
+		expect(on.status).toBe(200);
+		expect((await readJson(on)).data.changed).toBe(2);
+		expect(
+			[...rows.values()].filter((r) => r.freeTier).every((r) => r.enabled),
+		).toBe(true);
+		expect([...rows.values()].find((r) => r.label === "Paid")?.enabled).toBe(
+			true,
+		);
+
+		const off = await handlers.setFreeTier(
+			jsonRequest({ enabled: false }, "PATCH"),
+		);
+		expect(off.status).toBe(200);
+		expect(
+			[...rows.values()].filter((r) => r.freeTier).every((r) => !r.enabled),
+		).toBe(true);
+		expect([...rows.values()].find((r) => r.label === "Paid")?.enabled).toBe(
+			true,
+		);
+	});
+
+	it("rejects a toggle body without a boolean enabled", async () => {
+		const { store } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.setFreeTier(
+			jsonRequest({ enabled: "yes" }, "PATCH"),
+		);
+
+		expect(res.status).toBe(400);
 	});
 });

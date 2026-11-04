@@ -395,6 +395,7 @@ async function createSearchProvidersTablePg(
 			enabled INTEGER NOT NULL DEFAULT 1,
 			max_results INTEGER NOT NULL DEFAULT 10,
 			extra_config TEXT,
+			free_tier INTEGER NOT NULL DEFAULT 0,
 			status TEXT NOT NULL DEFAULT 'unknown',
 			status_message TEXT,
 			status_checked_at BIGINT,
@@ -1239,6 +1240,12 @@ export async function ensureRequestsIndexesPg(
 export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	// Add columns that might be missing from older schema versions
 	const columnsToAdd: ColumnToAdd[] = [
+		{
+			table: "search_providers",
+			column: "free_tier",
+			definition:
+				"ALTER TABLE search_providers ADD COLUMN free_tier INTEGER NOT NULL DEFAULT 0",
+		},
 		{
 			table: "accounts",
 			column: "cross_region_mode",

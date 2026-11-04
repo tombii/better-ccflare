@@ -14,6 +14,7 @@ const EXPECTED_COLUMNS = [
 	"enabled",
 	"max_results",
 	"extra_config",
+	"free_tier",
 	"status",
 	"status_message",
 	"status_checked_at",

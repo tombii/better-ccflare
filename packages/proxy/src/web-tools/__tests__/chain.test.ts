@@ -248,6 +248,68 @@ describe("runWebSearchChain — provider selection", () => {
 		expect(result?.providerLabel).toBe("Keyed");
 	});
 
+	it("attempts a keyless provider with no key stored", async () => {
+		const { deps } = makeDeps([
+			makeProvider({
+				id: "keenable-free",
+				provider: "keenable",
+				label: "Keenable (free)",
+				apiKey: null,
+				freeTier: true,
+			}),
+		]);
+		const attemptedKeys: string[] = [];
+		globalThis.fetch = (async (
+			_input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
+			attemptedKeys.push(
+				new Headers(init?.headers as HeadersInit | undefined).get(
+					"X-Keenable-Title",
+				) ?? "",
+			);
+			return results("https://free.example");
+		}) as typeof fetch;
+
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
+
+		expect(attemptedKeys).toEqual(["better-ccflare"]);
+		expect(result?.providerLabel).toBe("Keenable (free)");
+	});
+
+	it("falls through to the next provider when a keyless one fails", async () => {
+		const { deps } = makeDeps([
+			makeProvider({
+				id: "keenable-free",
+				provider: "keenable",
+				label: "Keenable (free)",
+				apiKey: null,
+				freeTier: true,
+			}),
+			makeProvider({ id: "keyed", label: "Keyed", apiKey: "key-keyed" }),
+		]);
+		let keenableCalls = 0;
+		globalThis.fetch = (async (
+			input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
+			if (String(input).includes("keenable")) {
+				keenableCalls += 1;
+				return jsonResponse({ error: "rate limited" }, 429);
+			}
+			const auth = new Headers(init?.headers as HeadersInit | undefined).get(
+				"Authorization",
+			);
+			if (auth === "Bearer key-keyed") return results("https://keyed.example");
+			throw new Error("unexpected request");
+		}) as typeof fetch;
+
+		const result = await runWebSearchChainFromModule(deps, searchRequest);
+
+		expect(keenableCalls).toBe(1);
+		expect(result?.providerLabel).toBe("Keyed");
+	});
+
 	it("returns null when no provider is eligible", async () => {
 		const { deps } = makeDeps([
 			makeProvider({ id: "keyless", apiKey: null }),

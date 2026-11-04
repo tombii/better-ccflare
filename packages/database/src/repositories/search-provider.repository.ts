@@ -53,7 +53,7 @@ function isUniqueViolation(error: unknown): boolean {
 
 const SELECT_COLUMNS = `
 	id, provider, label, api_key, priority, enabled, max_results, extra_config,
-	status, status_message, status_checked_at, cooldown_until, created_at, updated_at`;
+	free_tier, status, status_message, status_checked_at, cooldown_until, created_at, updated_at`;
 
 /**
  * Repository for the `search_providers` table.
@@ -120,9 +120,9 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 			await this.run(
 				`INSERT INTO search_providers (
 					id, provider, label, api_key, priority, enabled, max_results,
-					extra_config, status, status_message, status_checked_at,
+					extra_config, free_tier, status, status_message, status_checked_at,
 					cooldown_until, created_at, updated_at
-				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, NULL, NULL, ?, ?)`,
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, NULL, NULL, ?, ?)`,
 				[
 					id,
 					input.provider,
@@ -132,6 +132,7 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 					input.enabled === false ? 0 : 1,
 					input.maxResults ?? DEFAULT_SEARCH_MAX_RESULTS,
 					input.extraConfig ? JSON.stringify(input.extraConfig) : null,
+					input.freeTier === true ? 1 : 0,
 					now,
 					now,
 				],
@@ -192,6 +193,10 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 		if (fields.maxResults !== undefined) {
 			setClauses.push("max_results = ?");
 			params.push(fields.maxResults);
+		}
+		if (fields.freeTier !== undefined) {
+			setClauses.push("free_tier = ?");
+			params.push(fields.freeTier ? 1 : 0);
 		}
 		if (Object.hasOwn(fields, "extraConfig")) {
 			setClauses.push("extra_config = ?");

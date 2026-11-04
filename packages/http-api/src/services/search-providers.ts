@@ -29,6 +29,10 @@ export function createSearchProviderStore(
 		create: (input: SearchProviderInput) => dbOps.createSearchProvider(input),
 		update: (id: string, patch: SearchProviderUpdate) =>
 			dbOps.updateSearchProvider(id, patch),
+		setFreeTierEnabled: async (enabled: boolean): Promise<number> => {
+			const changed = await dbOps.setFreeSearchTiersEnabled(enabled);
+			return changed.length;
+		},
 		remove: (id: string) => dbOps.deleteSearchProvider(id),
 	};
 }

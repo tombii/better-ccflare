@@ -34,6 +34,8 @@ export interface SearchProviderStore {
 	/** Unmasked apiKey for the outbound /test call; never returned over HTTP. */
 	getApiKey(id: string): Promise<string | null>;
 	create(input: SearchProviderInput): Promise<SearchProviderPublic>;
+	/** Enable/disable all free-tier rows; returns how many changed. */
+	setFreeTierEnabled(enabled: boolean): Promise<number>;
 	update(
 		id: string,
 		patch: SearchProviderUpdate,
@@ -86,7 +88,20 @@ export interface SearchProviderHandlers {
 		getApiKey?: (id: string) => Promise<string | null>,
 	): Promise<Response>;
 	reorder(req: Request, id: string): Promise<Response>;
+	/** Enable or disable every free-tier row at once (the "use free tier" toggle). */
+	setFreeTier(req: Request): Promise<Response>;
 	meta(): Response;
+}
+
+/** Body of the free-tier toggle: `{ enabled: boolean }`. */
+async function readFreeTierToggle(req: Request): Promise<boolean | null> {
+	let body: Record<string, unknown>;
+	try {
+		body = await readJsonObject(req);
+	} catch {
+		return null;
+	}
+	return typeof body.enabled === "boolean" ? body.enabled : null;
 }
 
 const LABEL_MAX_LENGTH = 64;
@@ -186,6 +201,13 @@ function validateFields(
 		patch.enabled = body.enabled;
 	}
 
+	if (body.freeTier !== undefined) {
+		if (typeof body.freeTier !== "boolean") {
+			return failure("freeTier must be a boolean");
+		}
+		patch.freeTier = body.freeTier;
+	}
+
 	// apiKey is write-only. On create an empty/absent key means "none"; on
 	// update "" (or null) means "clear the stored key". Trimming avoids
 	// storing a key with a stray newline pasted from a UI.
@@ -234,7 +256,11 @@ export async function runSearchProviderTest(row: {
 	if (!adapter || adapter.implemented === false) {
 		return { ok: false, latencyMs: 0, error: "provider not implemented yet" };
 	}
-	if (!row.apiKey) {
+	// Only providers that cannot run without a key are refused here. A
+	// keyless-capable provider is tested unauthenticated, which is exactly the
+	// call a real search would make for a row with no key.
+	const entry = catalogEntry(row.provider);
+	if (!row.apiKey && entry?.requiresKey !== false) {
 		return { ok: false, latencyMs: 0, error: "no apiKey configured" };
 	}
 	try {
@@ -296,6 +322,8 @@ export function createSearchProviderHandlers(
 			const { patch } = validated;
 
 			const apiKey = patch.apiKey ?? "";
+			// `requiresKey` is false only for providers with a keyless path, so
+			// an empty key there means "use the free tier", not "incomplete".
 			if (entry.requiresKey && apiKey.length === 0) {
 				return errorResponse(
 					BadRequest(`provider '${provider}' requires an apiKey`),
@@ -311,6 +339,7 @@ export function createSearchProviderHandlers(
 				enabled: patch.enabled,
 				maxResults: patch.maxResults,
 				extraConfig: patch.extraConfig,
+				freeTier: patch.freeTier,
 			};
 
 			try {
@@ -480,6 +509,27 @@ export function createSearchProviderHandlers(
 				log.error("Search provider reorder error:", error);
 				return errorResponse(
 					InternalServerError("Failed to reorder search provider"),
+				);
+			}
+		},
+
+		setFreeTier: async (req: Request): Promise<Response> => {
+			const enabled = await readFreeTierToggle(req);
+			if (enabled === null) {
+				return errorResponse(
+					BadRequest("body must be a JSON object with a boolean 'enabled'"),
+				);
+			}
+			try {
+				// Bulk update rather than a flag: the toggle's state IS the rows'
+				// enabled column, so it survives restarts and sits in the same
+				// table the chain reads.
+				const changed = await store.setFreeTierEnabled(enabled);
+				return jsonResponse({ success: true, data: { enabled, changed } });
+			} catch (error) {
+				log.error("Search provider free-tier toggle error:", error);
+				return errorResponse(
+					InternalServerError("Failed to toggle free-tier search providers"),
 				);
 			}
 		},
