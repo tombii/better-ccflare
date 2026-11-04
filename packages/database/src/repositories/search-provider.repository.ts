@@ -53,7 +53,7 @@ function isUniqueViolation(error: unknown): boolean {
 
 const SELECT_COLUMNS = `
 	id, provider, label, api_key, priority, enabled, max_results, extra_config,
-	free_tier, status, status_message, status_checked_at, cooldown_until, created_at, updated_at`;
+	tier, status, status_message, status_checked_at, cooldown_until, created_at, updated_at`;
 
 /**
  * Repository for the `search_providers` table.
@@ -95,6 +95,26 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 		return row ? toSearchProvider(row) : null;
 	}
 
+	/**
+	 * The row currently serving a provider's FREE (keyless) endpoint, if any.
+	 *
+	 * Identity is the row's tier, not its label: a seeded free row that the
+	 * operator renamed is still "the free row for keenable". Only rows with no
+	 * key count — a free row that was given a key is a paid row now.
+	 */
+	async findFreeTierByProvider(
+		provider: SearchProviderId,
+	): Promise<SearchProvider | null> {
+		const row = await this.get<SearchProviderRow>(
+			`SELECT ${SELECT_COLUMNS} FROM search_providers
+			 WHERE provider = ? AND tier = 'free' AND (api_key IS NULL OR api_key = '')
+			 ORDER BY priority ASC, label ASC
+			 LIMIT 1`,
+			[provider],
+		);
+		return row ? toSearchProvider(row) : null;
+	}
+
 	async isLabelTaken(label: string, exceptId?: string): Promise<boolean> {
 		const row = exceptId
 			? await this.get<{ id: string }>(
@@ -120,7 +140,7 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 			await this.run(
 				`INSERT INTO search_providers (
 					id, provider, label, api_key, priority, enabled, max_results,
-					extra_config, free_tier, status, status_message, status_checked_at,
+					extra_config, tier, status, status_message, status_checked_at,
 					cooldown_until, created_at, updated_at
 				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, NULL, NULL, ?, ?)`,
 				[
@@ -132,7 +152,7 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 					input.enabled === false ? 0 : 1,
 					input.maxResults ?? DEFAULT_SEARCH_MAX_RESULTS,
 					input.extraConfig ? JSON.stringify(input.extraConfig) : null,
-					input.freeTier === true ? 1 : 0,
+					input.tier ?? "paid",
 					now,
 					now,
 				],
@@ -194,9 +214,9 @@ export class SearchProviderRepository extends BaseRepository<SearchProvider> {
 			setClauses.push("max_results = ?");
 			params.push(fields.maxResults);
 		}
-		if (fields.freeTier !== undefined) {
-			setClauses.push("free_tier = ?");
-			params.push(fields.freeTier ? 1 : 0);
+		if (fields.tier !== undefined) {
+			setClauses.push("tier = ?");
+			params.push(fields.tier);
 		}
 		if (Object.hasOwn(fields, "extraConfig")) {
 			setClauses.push("extra_config = ?");

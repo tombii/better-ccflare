@@ -31,6 +31,7 @@ function makeProvider(overrides: Partial<SearchProvider> = {}): SearchProvider {
 		enabled: true,
 		maxResults: 5,
 		extraConfig: {},
+		tier: "paid",
 		status: "unknown",
 		statusMessage: null,
 		statusCheckedAt: null,
@@ -255,7 +256,7 @@ describe("runWebSearchChain — provider selection", () => {
 				provider: "keenable",
 				label: "Keenable (free)",
 				apiKey: null,
-				freeTier: true,
+				tier: "free",
 			}),
 		]);
 		const attemptedKeys: string[] = [];
@@ -284,7 +285,7 @@ describe("runWebSearchChain — provider selection", () => {
 				provider: "keenable",
 				label: "Keenable (free)",
 				apiKey: null,
-				freeTier: true,
+				tier: "free",
 			}),
 			makeProvider({ id: "keyed", label: "Keyed", apiKey: "key-keyed" }),
 		]);

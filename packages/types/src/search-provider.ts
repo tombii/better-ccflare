@@ -102,6 +102,24 @@ export function catalogSupportsKeyless(
 	return entry.keyless !== undefined && catalogTiers(entry).includes("free");
 }
 
+/**
+ * The tier a row actually uses, derived from the provider and the stored key.
+ *
+ * A key always means the paid endpoint and no key always means the free one —
+ * there is no third state, which is what keeps the stored `tier` from ever
+ * disagreeing with the call the adapter makes. A row with no key for a
+ * provider lacking a keyless path is reported as `'paid'`: its search fails
+ * loudly (adapter requires a key) rather than silently hitting a free tier
+ * that does not exist.
+ */
+export function resolveSearchProviderTier(
+	entry: SearchProviderCatalogEntry | undefined,
+	apiKey: string | null | undefined,
+): SearchProviderTier {
+	if (apiKey) return "paid";
+	return entry && catalogSupportsKeyless(entry) ? "free" : "paid";
+}
+
 export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 	{
 		id: "tavily",
@@ -410,8 +428,8 @@ export interface SearchProviderRow {
 	enabled: DriverInteger; // 0 or 1
 	max_results: DriverInteger;
 	extra_config: string | null; // JSON object
-	/** 1 when this row is the provider's keyless (free) tier. */
-	free_tier?: DriverInteger;
+	/** `'free'` (keyless endpoint) or `'paid'` (keyed endpoint). */
+	tier?: string;
 	status: string;
 	status_message: string | null;
 	status_checked_at: DriverInteger | null;
@@ -441,8 +459,13 @@ export interface SearchProvider extends SearchProviderHealthStatus {
 	enabled: boolean;
 	maxResults: number;
 	extraConfig: Record<string, unknown>;
-	/** True when this row calls the provider's keyless free endpoint. */
-	freeTier: boolean;
+	/**
+	 * Which endpoint the row uses: `'free'` calls the provider's keyless
+	 * endpoint, `'paid'` its keyed one. Always derived at the handler boundary
+	 * from the stored key (see {@link resolveSearchProviderTier}), so it can
+	 * never disagree with what the adapter will actually call.
+	 */
+	tier: SearchProviderTier;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -458,7 +481,7 @@ export interface SearchProviderPublic extends SearchProviderHealthStatus {
 	enabled: boolean;
 	maxResults: number;
 	extraConfig: Record<string, unknown>;
-	freeTier: boolean;
+	tier: SearchProviderTier;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -471,8 +494,11 @@ export interface SearchProviderInput {
 	enabled?: boolean;
 	maxResults?: number;
 	extraConfig?: Record<string, unknown> | null;
-	/** Mark the row as the keyless (free) tier. */
-	freeTier?: boolean;
+	/**
+	 * Requested endpoint tier. The handler only accepts `'free'` for a row
+	 * with no key and `'paid'` for a row with one; it is stored as resolved.
+	 */
+	tier?: SearchProviderTier;
 }
 
 export interface SearchProviderUpdate {
@@ -484,7 +510,7 @@ export interface SearchProviderUpdate {
 	enabled?: boolean;
 	maxResults?: number;
 	extraConfig?: Record<string, unknown> | null;
-	freeTier?: boolean;
+	tier?: SearchProviderTier;
 }
 
 /**
@@ -534,7 +560,7 @@ export function toSearchProvider(row: SearchProviderRow): SearchProvider {
 		enabled: toInt(row.enabled) === 1,
 		maxResults: toInt(row.max_results),
 		extraConfig: parseExtraConfig(row.extra_config),
-		freeTier: row.free_tier === undefined ? false : toInt(row.free_tier) === 1,
+		tier: row.tier === "free" ? "free" : "paid",
 		status: row.status,
 		statusMessage: row.status_message ?? null,
 		statusCheckedAt: toNullableInt(row.status_checked_at),

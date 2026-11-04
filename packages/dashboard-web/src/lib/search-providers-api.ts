@@ -74,7 +74,7 @@ function normalizeProvider(raw: unknown): SearchProviderPublic | null {
 			extraConfig && typeof extraConfig === "object"
 				? asRecord(extraConfig)
 				: {},
-		freeTier: entry.freeTier === true,
+		tier: entry.tier === "free" ? "free" : "paid",
 		status: asStatus(entry.status),
 		statusMessage: asNullableString(entry.statusMessage),
 		statusCheckedAt: asNullableNumber(entry.statusCheckedAt),

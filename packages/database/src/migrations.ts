@@ -485,7 +485,7 @@ function createSearchProvidersTable(db: Database): void {
 			enabled INTEGER NOT NULL DEFAULT 1,
 			max_results INTEGER NOT NULL DEFAULT 10,
 			extra_config TEXT,
-			free_tier INTEGER NOT NULL DEFAULT 0,
+			tier TEXT NOT NULL DEFAULT 'paid',
 			status TEXT NOT NULL DEFAULT 'unknown',
 			status_message TEXT,
 			status_checked_at INTEGER,
@@ -1817,11 +1817,20 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				}>
 			).map((c) => c.name),
 		);
-		if (!searchProviderColumns.has("free_tier")) {
+		if (!searchProviderColumns.has("tier")) {
 			db.run(
-				"ALTER TABLE search_providers ADD COLUMN free_tier INTEGER NOT NULL DEFAULT 0",
+				"ALTER TABLE search_providers ADD COLUMN tier TEXT NOT NULL DEFAULT 'paid'",
 			);
 		}
+		// Backfill rows written before `tier` existed (including databases that
+		// briefly carried the pre-release `free_tier` flag): a row's tier is
+		// simply what its stored key says.
+		db.run(
+			"UPDATE search_providers SET tier = CASE WHEN api_key IS NULL OR api_key = '' THEN 'free' ELSE 'paid' END",
+		);
+		db.run(
+			"UPDATE search_providers SET tier = 'paid' WHERE tier NOT IN ('free', 'paid')",
+		);
 
 		// Ensure web_tool_calls exists (for upgrades from pre-web-tools
 		// installs). Idempotent, same rationale as above.

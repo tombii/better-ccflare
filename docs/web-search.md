@@ -213,11 +213,27 @@ and a paid row for the same provider can coexist at different priorities;
 they have separate health and cooldowns. With a key stored, a row always
 calls the paid endpoint — a stored key never silently drops to the free one.
 
+**Free and paid are a property of the key, not a label.** Every row carries a
+`tier` (`free` or `paid`) which the server derives on every write: no key means
+`free`, a key means `paid`. The dashboard shows it as a Free/Paid badge, and:
+
+- Adding a key to a free row turns it **paid** — "Use free tier" stops
+  touching it.
+- Clearing the key on a Keenable or Firecrawl row turns it back into a
+  **free** row (the edit dialog has a *Clear the stored key and switch this
+  row to Free* checkbox).
+- The toggle only ever acts on rows that are `free` **and** have no key, for a
+  provider that actually has a keyless endpoint. It can never enable or
+  disable a paid search.
+- A client may send `tier` for convenience, but a value that contradicts the
+  key is rejected (`400`) rather than stored.
+
 The free endpoints accept the same request body and `extraConfig` as the
 keyed ones (verified against Keenable: `mode`, `site`, date filters and
 `snippet_max_length` all apply). Domain filtering still happens; a keyless
 row simply cannot push `blocked_domains` down to the vendor. Deleting a free
-row does not stick — it comes back, disabled, on the next start.
+row does not stick — it comes back, disabled, on the next start. Renaming a
+free row is safe: seeding recognises it by tier, not by label.
 
 ### 3. Test it
 

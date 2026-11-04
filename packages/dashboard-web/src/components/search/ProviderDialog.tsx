@@ -63,7 +63,10 @@ export function ProviderDialog({
 		update.reset();
 	}, []);
 
-	const validationError = validateForm(form, catalogEntry, { isEdit });
+	const validationError = validateForm(form, catalogEntry, {
+		isEdit,
+		hasStoredKey: Boolean(provider?.apiKeyMasked),
+	});
 	const mutation = isEdit ? update : create;
 	const busy = mutation.isPending;
 
@@ -114,6 +117,7 @@ export function ProviderDialog({
 							catalog={catalog}
 							catalogEntry={catalogEntry}
 							isEdit={isEdit}
+							hasStoredKey={Boolean(provider?.apiKeyMasked)}
 						/>
 					)}
 				</div>

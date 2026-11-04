@@ -34,7 +34,11 @@ export function SearchTab() {
 	const catalogLabel = (id: string) =>
 		catalog.find((entry) => entry.id === id)?.label;
 
-	const freeRows = providers.filter((provider) => provider.freeTier);
+	// Only rows that are actually free: tier says so AND no key is stored. A
+	// free row given a key is a paid row, so it is not counted here.
+	const freeRows = providers.filter(
+		(provider) => provider.tier === "free" && !provider.apiKeyMasked,
+	);
 	const freeEnabled =
 		freeRows.length > 0 && freeRows.some((provider) => provider.enabled);
 

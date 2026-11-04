@@ -13,11 +13,13 @@ import { getWebToolAdapter } from "@better-ccflare/proxy";
 export { TAVILY_SEARCH_URL } from "@better-ccflare/proxy";
 
 import {
+	resolveSearchProviderTier,
 	SEARCH_PROVIDER_CATALOG,
 	type SearchProviderCatalogEntry,
 	type SearchProviderId,
 	type SearchProviderInput,
 	type SearchProviderPublic,
+	type SearchProviderTier,
 	type SearchProviderUpdate,
 } from "@better-ccflare/types";
 
@@ -201,11 +203,11 @@ function validateFields(
 		patch.enabled = body.enabled;
 	}
 
-	if (body.freeTier !== undefined) {
-		if (typeof body.freeTier !== "boolean") {
-			return failure("freeTier must be a boolean");
+	if (body.tier !== undefined) {
+		if (body.tier !== "free" && body.tier !== "paid") {
+			return failure("tier must be 'free' or 'paid'");
 		}
-		patch.freeTier = body.freeTier;
+		patch.tier = body.tier;
 	}
 
 	// apiKey is write-only. On create an empty/absent key means "none"; on
@@ -233,6 +235,45 @@ async function readJsonObject(req: Request): Promise<Record<string, unknown>> {
 		throw new Error("__bad_body__");
 	}
 	return body;
+}
+
+/**
+ * Reject a requested tier that the stored key cannot honour, and say what to
+ * change. Keeping this strict is the point: the toggle and the per-row badge
+ * both read `tier`, so a row whose tier disagrees with its key would let
+ * "use free tier" switch a paid search on/off (or leave a free one running).
+ */
+function tierConflict(
+	entry: SearchProviderCatalogEntry | undefined,
+	apiKey: string | null | undefined,
+	tier: SearchProviderTier,
+): Response | null {
+	if (tier === "free") {
+		if (apiKey) {
+			return errorResponse(
+				BadRequest(
+					"A search provider with an API key is the paid tier. Clear the key first to use the free (keyless) endpoint.",
+				),
+			);
+		}
+		if (!entry?.keyless) {
+			return errorResponse(
+				BadRequest(
+					"This provider has no free (keyless) endpoint; its tier is always paid.",
+				),
+			);
+		}
+		return null;
+	}
+	if (!apiKey) {
+		const freeAvailable = entry?.keyless
+			? " Omit tier to use the free endpoint, or add a key."
+			: "";
+		return errorResponse(
+			BadRequest(`The paid tier needs an API key.${freeAvailable}`),
+		);
+	}
+	return null;
 }
 
 /**
@@ -330,6 +371,16 @@ export function createSearchProviderHandlers(
 				);
 			}
 
+			// The tier is derived, never trusted from the client: a key means
+			// the paid endpoint, no key means the free one. A client may send
+			// the derived value (the dashboard round-trips rows) but not a
+			// contradictory one.
+			const tier = resolveSearchProviderTier(entry, apiKey);
+			if (patch.tier !== undefined && patch.tier !== tier) {
+				const conflict = tierConflict(entry, apiKey, patch.tier);
+				if (conflict) return conflict;
+			}
+
 			const input: SearchProviderInput = {
 				// Narrowed by the catalog lookup above.
 				provider: provider as SearchProviderId,
@@ -339,7 +390,7 @@ export function createSearchProviderHandlers(
 				enabled: patch.enabled,
 				maxResults: patch.maxResults,
 				extraConfig: patch.extraConfig,
-				freeTier: patch.freeTier,
+				tier,
 			};
 
 			try {
@@ -410,8 +461,8 @@ export function createSearchProviderHandlers(
 				if (!validated.ok) return validated.response;
 				const { patch } = validated;
 
+				const entry = catalogEntry(existing.provider);
 				if (patch.apiKey === "") {
-					const entry = catalogEntry(existing.provider);
 					if (entry?.requiresKey) {
 						return errorResponse(
 							BadRequest(
@@ -422,6 +473,21 @@ export function createSearchProviderHandlers(
 					// Explicit "" clears the stored key; absent leaves it untouched.
 					patch.apiKey = null;
 				}
+
+				// Re-derive the tier from the key the row will HAVE after this
+				// patch (absent `apiKey` keeps the stored one — the public row
+				// is masked, so the stored key comes from `getApiKey`). Adding a
+				// key therefore turns a free row into a paid one, and clearing
+				// it turns a paid row back into the free one: `tier` and the
+				// endpoint the adapter calls can never disagree.
+				const storedApiKey =
+					patch.apiKey !== undefined ? patch.apiKey : await store.getApiKey(id);
+				const tier = resolveSearchProviderTier(entry, storedApiKey);
+				if (patch.tier !== undefined && patch.tier !== tier) {
+					const conflict = tierConflict(entry, storedApiKey, patch.tier);
+					if (conflict) return conflict;
+				}
+				patch.tier = tier;
 
 				const row = await store.update(id, patch);
 				if (!row) {

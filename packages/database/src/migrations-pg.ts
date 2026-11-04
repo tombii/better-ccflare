@@ -395,7 +395,7 @@ async function createSearchProvidersTablePg(
 			enabled INTEGER NOT NULL DEFAULT 1,
 			max_results INTEGER NOT NULL DEFAULT 10,
 			extra_config TEXT,
-			free_tier INTEGER NOT NULL DEFAULT 0,
+			tier TEXT NOT NULL DEFAULT 'paid',
 			status TEXT NOT NULL DEFAULT 'unknown',
 			status_message TEXT,
 			status_checked_at BIGINT,
@@ -1242,9 +1242,9 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	const columnsToAdd: ColumnToAdd[] = [
 		{
 			table: "search_providers",
-			column: "free_tier",
+			column: "tier",
 			definition:
-				"ALTER TABLE search_providers ADD COLUMN free_tier INTEGER NOT NULL DEFAULT 0",
+				"ALTER TABLE search_providers ADD COLUMN tier TEXT NOT NULL DEFAULT 'paid'",
 		},
 		{
 			table: "accounts",
@@ -1518,6 +1518,16 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			await addColumnTolerant(adapter, col);
 		}
 	}
+
+	// search_providers.tier backfill — mirrors the SQLite migration. A row's
+	// tier is what its stored key says, so rows written before the column
+	// existed (and any rows carrying the pre-release `free_tier` flag) land
+	// on the right side. Idempotent: it never overwrites a valid tier.
+	await adapter.unsafe(
+		`UPDATE search_providers SET tier = CASE
+			WHEN api_key IS NULL OR api_key = '' THEN 'free' ELSE 'paid' END
+		 WHERE tier IS NULL OR tier NOT IN ('free', 'paid')`,
+	);
 
 	// Performance indexes — mirrors packages/database/src/performance-indexes.ts
 	// (addPerformanceIndexes) plus idx_api_keys_role, both applied to SQLite via

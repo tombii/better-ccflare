@@ -48,7 +48,7 @@ function createFakeStore(seed: Partial<SearchProvider>[] = []): {
 			priority: input.priority ?? 100,
 			maxResults: input.maxResults ?? 5,
 			extraConfig: input.extraConfig ?? null,
-			freeTier: input.freeTier === true,
+			tier: input.tier ?? "paid",
 			enabled: input.enabled ?? true,
 			createdAt: new Date().toISOString(),
 			updatedAt: new Date().toISOString(),
@@ -94,7 +94,7 @@ function createFakeStore(seed: Partial<SearchProvider>[] = []): {
 			if (patch.maxResults !== undefined) next.maxResults = patch.maxResults;
 			if (patch.extraConfig !== undefined) next.extraConfig = patch.extraConfig;
 			if (patch.enabled !== undefined) next.enabled = patch.enabled;
-			if (patch.freeTier !== undefined) next.freeTier = patch.freeTier;
+			if (patch.tier !== undefined) next.tier = patch.tier;
 			if (patch.apiKey !== undefined) {
 				next.apiKey =
 					patch.apiKey === null || patch.apiKey === "" ? null : patch.apiKey;
@@ -105,7 +105,7 @@ function createFakeStore(seed: Partial<SearchProvider>[] = []): {
 		async setFreeTierEnabled(enabled) {
 			let changed = 0;
 			for (const row of rows.values()) {
-				if (row.freeTier && row.enabled !== enabled) {
+				if (row.tier === "free" && !row.apiKey && row.enabled !== enabled) {
 					row.enabled = enabled;
 					changed += 1;
 				}
@@ -657,14 +657,14 @@ describe("keyless (free-tier) search providers", () => {
 			jsonRequest({
 				provider: PROVIDER_WITHOUT_KEY,
 				label: "Free",
-				freeTier: true,
+				tier: "free",
 			}),
 		);
 
 		expect(res.status).toBe(201);
 		const row = [...rows.values()][0];
 		expect(row.apiKey).toBeNull();
-		expect(row.freeTier).toBe(true);
+		expect(row.tier).toBe("free");
 	});
 
 	it("still refuses a keyed-only provider with no key", async () => {
@@ -696,14 +696,14 @@ describe("keyless (free-tier) search providers", () => {
 				provider: PROVIDER_WITHOUT_KEY,
 				label: "A (free)",
 				apiKey: null,
-				freeTier: true,
+				tier: "free",
 				enabled: false,
 			},
 			{
 				provider: PROVIDER_WITHOUT_KEY,
 				label: "B (free)",
 				apiKey: null,
-				freeTier: true,
+				tier: "free",
 				enabled: false,
 			},
 			{ provider: PROVIDER_WITH_KEY, label: "Paid", apiKey: SECRET },
@@ -716,7 +716,9 @@ describe("keyless (free-tier) search providers", () => {
 		expect(on.status).toBe(200);
 		expect((await readJson(on)).data.changed).toBe(2);
 		expect(
-			[...rows.values()].filter((r) => r.freeTier).every((r) => r.enabled),
+			[...rows.values()]
+				.filter((r) => r.tier === "free")
+				.every((r) => r.enabled),
 		).toBe(true);
 		expect([...rows.values()].find((r) => r.label === "Paid")?.enabled).toBe(
 			true,
@@ -727,7 +729,9 @@ describe("keyless (free-tier) search providers", () => {
 		);
 		expect(off.status).toBe(200);
 		expect(
-			[...rows.values()].filter((r) => r.freeTier).every((r) => !r.enabled),
+			[...rows.values()]
+				.filter((r) => r.tier === "free")
+				.every((r) => !r.enabled),
 		).toBe(true);
 		expect([...rows.values()].find((r) => r.label === "Paid")?.enabled).toBe(
 			true,
@@ -740,6 +744,104 @@ describe("keyless (free-tier) search providers", () => {
 
 		const res = await handlers.setFreeTier(
 			jsonRequest({ enabled: "yes" }, "PATCH"),
+		);
+
+		expect(res.status).toBe(400);
+	});
+});
+
+describe("free/paid tier is derived from the key, never trusted from the client", () => {
+	it("adding a key to a free row turns it paid, so the toggle can no longer reach it", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore([
+			{ provider: PROVIDER_WITHOUT_KEY, label: "Free", tier: "free" },
+		]);
+		const handlers = createSearchProviderHandlers(store);
+		const id = [...rows.keys()][0];
+
+		const res = await handlers.update(
+			jsonRequest({ apiKey: "k-1234" }, "PATCH"),
+			id,
+		);
+		expect(res.status).toBe(200);
+		expect(rows.get(id)?.tier).toBe("paid");
+		expect(rows.get(id)?.apiKey).toBe("k-1234");
+
+		// Disabling the free tier must not switch this (now paid) row off.
+		await handlers.setFreeTier(jsonRequest({ enabled: false }, "PATCH"));
+		expect(rows.get(id)?.enabled).toBe(true);
+	});
+
+	it("clearing the key turns a paid row back into a free row", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore([
+			{ provider: PROVIDER_WITHOUT_KEY, label: "Paid", apiKey: "k-old" },
+		]);
+		const handlers = createSearchProviderHandlers(store);
+		const id = [...rows.keys()][0];
+		expect(rows.get(id)?.tier).toBe("paid");
+
+		const res = await handlers.update(jsonRequest({ apiKey: "" }, "PATCH"), id);
+		expect(res.status).toBe(200);
+		expect(rows.get(id)?.tier).toBe("free");
+	});
+
+	it("a keyless-capable row created with no key is stored as free", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store, rows } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		await handlers.create(
+			jsonRequest({ provider: PROVIDER_WITHOUT_KEY, label: "Free" }),
+		);
+
+		expect([...rows.values()][0]?.tier).toBe("free");
+	});
+
+	it("rejects a client claiming 'free' while supplying a key", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.create(
+			jsonRequest({
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "X",
+				apiKey: "k-1",
+				tier: "free",
+			}),
+		);
+
+		expect(res.status).toBe(400);
+	});
+
+	it("rejects a client claiming 'paid' with no key", async () => {
+		if (!PROVIDER_WITHOUT_KEY) return;
+		const { store } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.create(
+			jsonRequest({
+				provider: PROVIDER_WITHOUT_KEY,
+				label: "X",
+				tier: "paid",
+			}),
+		);
+
+		expect(res.status).toBe(400);
+	});
+
+	it("refuses 'free' for a provider that has no keyless endpoint", async () => {
+		const { store } = createFakeStore();
+		const handlers = createSearchProviderHandlers(store);
+
+		const res = await handlers.create(
+			jsonRequest({
+				provider: PROVIDER_WITH_KEY,
+				label: "X",
+				apiKey: "k-1",
+				tier: "free",
+			}),
 		);
 
 		expect(res.status).toBe(400);

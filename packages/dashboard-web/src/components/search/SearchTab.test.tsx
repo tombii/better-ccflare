@@ -117,6 +117,7 @@ import { ProviderDialog } from "./ProviderDialog";
 import {
 	emptyFormState,
 	formStateToPayload,
+	formTier,
 	ProviderFormFields,
 	validateForm,
 } from "./ProviderFormFields";
@@ -634,5 +635,73 @@ describe("recent-searches helpers", () => {
 		expect(truncateQuery("short")).toBe("short");
 		expect(truncateQuery(null)).toBe("—");
 		expect(truncateQuery("a".repeat(90), 10)).toBe("aaaaaaaaaa…");
+	});
+});
+
+describe("formTier / key clearing", () => {
+	const freeEntry = catalog.find(
+		(id) => id.requiresKey === false && id.keyless,
+	) as (typeof catalog)[number] | undefined;
+	const form = (patch: Record<string, unknown> = {}) => ({
+		provider: "keenable",
+		label: "K",
+		apiKey: "",
+		priority: "0",
+		maxResults: "5",
+		extraConfig: {},
+		...patch,
+	});
+
+	it("editing a paid row keeps it paid when the key field is left blank", () => {
+		if (!freeEntry) return;
+		expect(
+			formTier(form(), freeEntry, { isEdit: true, hasStoredKey: true }),
+		).toBe("paid");
+	});
+
+	it("clearing the stored key switches the row to free", () => {
+		if (!freeEntry) return;
+		expect(
+			formTier(form({ clearKey: true }), freeEntry, {
+				isEdit: true,
+				hasStoredKey: true,
+			}),
+		).toBe("free");
+	});
+
+	it("typing a key on a keyless row makes it paid", () => {
+		if (!freeEntry) return;
+		expect(
+			formTier(form({ apiKey: "k-1" }), freeEntry, {
+				isEdit: true,
+				hasStoredKey: false,
+			}),
+		).toBe("paid");
+		expect(
+			formTier(form(), freeEntry, { isEdit: false, hasStoredKey: false }),
+		).toBe("free");
+	});
+
+	it("sends apiKey '' to clear, and omits it when merely keeping the key", () => {
+		if (!freeEntry) return;
+		expect(formStateToPayload(form({ clearKey: true }), freeEntry).apiKey).toBe(
+			"",
+		);
+		expect(formStateToPayload(form(), freeEntry).apiKey).toBeUndefined();
+		expect(
+			formStateToPayload(form({ clearKey: true, apiKey: "k-new" }), freeEntry)
+				.apiKey,
+		).toBe("k-new");
+	});
+
+	it("refuses to clear the key of a provider that cannot run keyless", () => {
+		const paidOnly = catalog.find((c) => c.requiresKey);
+		if (!paidOnly) return;
+		expect(
+			validateForm(form({ clearKey: true }), paidOnly, {
+				isEdit: true,
+				hasStoredKey: true,
+			}),
+		).toContain("cannot be cleared");
 	});
 });

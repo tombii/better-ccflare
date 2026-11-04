@@ -2,7 +2,7 @@
  * Tests for free-tier seeding and the bulk "use free tier" toggle.
  *
  * Runs against an in-memory SQLite database with the real schema and the real
- * repository, so the column plumbing (`free_tier`) is exercised end to end.
+ * repository, so the column plumbing (`tier`) is exercised end to end.
  */
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -33,7 +33,7 @@ describe("search tier seeding", () => {
 		await seedFreeSearchProviders(repository);
 
 		const rows = await repository.findAll();
-		const free = rows.filter((row) => row.freeTier);
+		const free = rows.filter((row) => row.tier === "free");
 		expect(free.map((row) => row.provider).sort()).toEqual([
 			"firecrawl",
 			"keenable",
@@ -51,14 +51,14 @@ describe("search tier seeding", () => {
 
 		expect(again).toEqual([]);
 		expect(
-			(await repository.findAll()).filter((row) => row.freeTier),
+			(await repository.findAll()).filter((row) => row.tier === "free"),
 		).toHaveLength(2);
 	});
 
 	it("never overwrites an operator edit to a seeded row", async () => {
 		await seedFreeSearchProviders(repository);
 		const keenable = (await repository.findAll()).find(
-			(row) => row.freeTier && row.provider === "keenable",
+			(row) => row.tier === "free" && row.provider === "keenable",
 		);
 		if (!keenable) throw new Error("keenable free row not seeded");
 		await repository.update(keenable.id, { priority: 0, enabled: true });
@@ -70,6 +70,60 @@ describe("search tier seeding", () => {
 		expect(after?.enabled).toBe(true);
 	});
 
+	it("recognises a renamed free row by its tier and does not duplicate it", async () => {
+		await seedFreeSearchProviders(repository);
+		const keenable = (await repository.findAll()).find(
+			(row) => row.tier === "free" && row.provider === "keenable",
+		);
+		if (!keenable) throw new Error("keenable free row not seeded");
+		await repository.update(keenable.id, { label: "My keyless Keenable" });
+
+		const created = await seedFreeSearchProviders(repository);
+
+		expect(created).toEqual([]);
+		expect(
+			(await repository.findAll()).filter(
+				(row) => row.provider === "keenable" && row.tier === "free",
+			),
+		).toHaveLength(1);
+	});
+
+	it("never toggles a free row that has been given a key (it is paid now)", async () => {
+		await seedFreeSearchProviders(repository);
+		const keenable = (await repository.findAll()).find(
+			(row) => row.tier === "free" && row.provider === "keenable",
+		);
+		if (!keenable) throw new Error("keenable free row not seeded");
+		// Simulate the handler's derivation: a key means paid.
+		await repository.update(keenable.id, {
+			apiKey: "keen-key",
+			tier: "paid",
+			enabled: true,
+		});
+
+		await setFreeSearchTiersEnabled(repository, false);
+
+		expect((await repository.findById(keenable.id))?.enabled).toBe(true);
+	});
+
+	it("never toggles a paid row", async () => {
+		await repository.create({
+			provider: "keenable",
+			label: "Keenable (paid)",
+			apiKey: "keen-key",
+			priority: 0,
+			enabled: true,
+		});
+		await seedFreeSearchProviders(repository);
+
+		await setFreeSearchTiersEnabled(repository, false);
+
+		const paid = (await repository.findAll()).find(
+			(row) => row.label === "Keenable (paid)",
+		);
+		expect(paid?.enabled).toBe(true);
+	});
+
 	it("recreates a free row the operator deleted, still disabled", async () => {
 		// Seeding is create-only and identity is the display label, so a
 		// deleted free row comes back — disabled and at its default priority,
@@ -77,7 +131,7 @@ describe("search tier seeding", () => {
 		// operator leaves it disabled rather than deleting it.
 		await seedFreeSearchProviders(repository);
 		const keenable = (await repository.findAll()).find(
-			(row) => row.freeTier && row.provider === "keenable",
+			(row) => row.tier === "free" && row.provider === "keenable",
 		);
 		if (!keenable) throw new Error("keenable free row not seeded");
 		await repository.delete(keenable.id);
@@ -86,7 +140,7 @@ describe("search tier seeding", () => {
 
 		expect(created).toEqual(["Keenable (free)"]);
 		const restored = (await repository.findAll()).find(
-			(row) => row.freeTier && row.provider === "keenable",
+			(row) => row.tier === "free" && row.provider === "keenable",
 		);
 		expect(restored?.enabled).toBe(false);
 	});
@@ -105,7 +159,7 @@ describe("search tier seeding", () => {
 			(row) => row.provider === "keenable",
 		);
 		expect(rows).toHaveLength(2);
-		expect(rows.filter((row) => row.freeTier)).toHaveLength(1);
+		expect(rows.filter((row) => row.tier === "free")).toHaveLength(1);
 		expect(await repository.isLabelTaken("Keenable (free)")).toBe(true);
 	});
 
@@ -121,9 +175,9 @@ describe("search tier seeding", () => {
 
 		expect(await setFreeSearchTiersEnabled(repository, true)).toHaveLength(2);
 		let rows = await repository.findAll();
-		expect(rows.filter((row) => row.freeTier).every((row) => row.enabled)).toBe(
-			true,
-		);
+		expect(
+			rows.filter((row) => row.tier === "free").every((row) => row.enabled),
+		).toBe(true);
 		expect(rows.find((row) => row.label === "Tavily (paid)")?.enabled).toBe(
 			false,
 		);
@@ -131,7 +185,7 @@ describe("search tier seeding", () => {
 		expect(await setFreeSearchTiersEnabled(repository, false)).toHaveLength(2);
 		rows = await repository.findAll();
 		expect(
-			rows.filter((row) => row.freeTier).every((row) => !row.enabled),
+			rows.filter((row) => row.tier === "free").every((row) => !row.enabled),
 		).toBe(true);
 
 		// Nothing left to change.
