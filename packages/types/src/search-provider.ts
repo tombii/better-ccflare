@@ -15,6 +15,8 @@ export type SearchProviderId =
 	| "deepseek"
 	| "serper"
 	| "brave"
+	| "tinyfish"
+	| "firecrawl"
 	| "perplexity";
 
 /**
@@ -175,6 +177,72 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 				type: "select",
 				options: ["off", "moderate", "strict"],
 				defaultValue: "moderate",
+			},
+		],
+	},
+	{
+		id: "tinyfish",
+		label: "Tinyfish",
+		requiresKey: true,
+		docsUrl: "https://docs.tinyfish.ai/search-api/reference",
+		implemented: true,
+		extraConfigFields: [
+			{
+				key: "location",
+				label: "Location",
+				type: "text",
+				placeholder: "US",
+				defaultValue: "US",
+				description: "Country code biasing result ranking.",
+			},
+			{
+				key: "language",
+				label: "Language",
+				type: "text",
+				placeholder: "en",
+				defaultValue: "en",
+			},
+			{
+				key: "domain_type",
+				label: "Domain type",
+				type: "select",
+				options: ["web", "news", "research_paper"],
+				description:
+					"Which index to search. Leave unset for the default web index.",
+			},
+			{
+				key: "purpose",
+				label: "Purpose",
+				type: "text",
+				placeholder: "What the search is for, e.g. 'fact-checking'",
+				description:
+					"Free text describing the search intent. Leave blank to search on the query alone.",
+			},
+		],
+	},
+	{
+		id: "firecrawl",
+		label: "Firecrawl",
+		// Firecrawl always requires an API key — keyless calls fail.
+		requiresKey: true,
+		docsUrl: "https://docs.firecrawl.dev/api-reference/v1-endpoint/search",
+		implemented: true,
+		extraConfigFields: [
+			{
+				key: "location",
+				label: "Location",
+				type: "text",
+				placeholder: "United States",
+				description:
+					"Location string biasing result ranking. Leave blank for no bias.",
+			},
+			{
+				key: "tbs",
+				label: "Time-based filter",
+				type: "text",
+				placeholder: "qdr:d",
+				description:
+					"Time filter such as `qdr:h` (past hour), `qdr:d` (past day), `qdr:w` (past week).",
 			},
 		],
 	},
