@@ -171,6 +171,9 @@ const catalog: SearchProviderCatalogEntry[] = [
 		requiresKey: false,
 		docsUrl: "https://docs.searxng.org/",
 	},
+	// A provider with a keyless tier (the shape the server sends for
+	// Keenable/Firecrawl): `requiresKey: false` AND a `keyless` block.
+	KEYLESS_TEST_ENTRY,
 ];
 
 beforeEach(() => {
@@ -640,7 +643,10 @@ describe("recent-searches helpers", () => {
 });
 
 describe("formTier / key clearing", () => {
-	const freeEntry = KEYLESS_TEST_ENTRY;
+	// Look it up in the local catalog rather than reaching for the constant:
+	// if the fixture goes missing this throws instead of silently skipping.
+	const freeEntry = catalog.find((c) => !c.requiresKey && c.keyless);
+	if (!freeEntry) throw new Error("test catalog is missing a keyless entry");
 	const form = (patch: Record<string, unknown> = {}) => ({
 		provider: "keenable",
 		label: "K",
@@ -700,13 +706,55 @@ describe("formTier / key clearing", () => {
 	});
 
 	it("refuses to clear the key of a provider that cannot run keyless", () => {
+		// Brave is a fixture in the catalog above; a missing one is a broken
+		// test setup and must fail, not skip.
 		const paidOnly = catalog.find((c) => c.requiresKey);
-		if (!paidOnly) return;
+		if (!paidOnly)
+			throw new Error("test catalog is missing a key-required entry");
 		expect(
 			validateForm(form({ clearKey: true }), paidOnly, {
 				isEdit: true,
 				hasStoredKey: true,
 			}),
 		).toContain("cannot be cleared");
+	});
+});
+
+describe("key hint depends on whether a key is stored", () => {
+	const form = {
+		provider: "keenable",
+		label: "K",
+		apiKey: "",
+		priority: "0",
+		maxResults: "5",
+		extraConfig: {},
+	};
+	const hintFor = (isEdit: boolean, hasStoredKey: boolean) =>
+		renderToStaticMarkup(
+			<ProviderFormFields
+				form={form}
+				onChange={() => {}}
+				catalog={[KEYLESS_TEST_ENTRY]}
+				catalogEntry={KEYLESS_TEST_ENTRY}
+				isEdit={isEdit}
+				hasStoredKey={hasStoredKey}
+			/>,
+		);
+
+	it("editing a row with a stored key says blank keeps the key", () => {
+		const html = hintFor(true, true);
+		expect(html).toContain("Leave blank to keep the stored key");
+		expect(html).not.toContain("free (keyless) endpoint");
+	});
+
+	it("editing a keyless row says blank keeps free searches", () => {
+		const html = hintFor(true, false);
+		expect(html).toContain("free (keyless) endpoint");
+		expect(html).not.toContain("keep the stored key");
+	});
+
+	it("creating says blank means the free endpoint", () => {
+		const html = hintFor(false, false);
+		expect(html).toContain("free (keyless) endpoint");
 	});
 });

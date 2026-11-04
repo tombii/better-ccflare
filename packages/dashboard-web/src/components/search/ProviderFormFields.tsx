@@ -242,7 +242,9 @@ export function ProviderFormFields({
 				<p className="text-xs text-muted-foreground">
 					{keyRequired
 						? "Stored by the proxy; it is only ever shown masked after saving."
-						: "A stored key always uses the paid endpoint. Leave blank for the free (keyless) endpoint, which is rate-limited and may refuse this host's address."}
+						: isEdit && hasStoredKey
+							? "Leave blank to keep the stored key (paid searches). Stored by the proxy; it is only ever shown masked after saving."
+							: "Leave blank to use this provider's free (keyless) endpoint, which is rate-limited and may refuse this host's address. Add a key for paid searches."}
 				</p>
 				{isEdit && hasStoredKey && (
 					<label className="flex items-center gap-2 text-xs text-muted-foreground">
