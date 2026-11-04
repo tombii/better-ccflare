@@ -216,6 +216,7 @@ Only the query *length* is logged at info level — queries can be sensitive.
 | **DeepSeek** | — | Domain filtering is applied client-side to the returned hits |
 | **Serper** | `gl` (country), `hl` (language) | Google results |
 | **Brave Search** | `endpoint`: `llm-context` (default), `web`; `country`, `safesearch`: `off`, `moderate` (default), `strict` | Domain filtering is applied client-side. See [Brave: `web` vs `llm-context`](#brave-web-vs-llm-context) |
+| **Keenable** | `mode`: `pro` (default), `realtime`; `site`; `published_after`, `published_before`, `acquired_after` (date, ISO timestamp, or `7d`-style delta); `snippet_max_length`: 180–10000 | A single `allowed_domains` entry is pushed down as `site`; multi-domain lists and blocklists are filtered client-side |
 | **Perplexity** | `model` (default `sonar`) | **Listed but not implemented** — rows are accepted but the chain skips them |
 
 `maxResults` accepts 1–50 (default 10). The adapter requests
@@ -357,8 +358,8 @@ default 90 days), **not** the shorter payload window. Lower
 - **One search per helper request.** `max_uses` is read but not enforced; the
   proxy does one search and returns `end_turn`.
 - **`allowed_domains` / `blocked_domains` are best-effort.** Parallel receives
-  them as `source_policy`; Serper, Brave and DeepSeek filter the returned hits
-  client-side; Tavily and Exa do not filter.
+  them as `source_policy`; Serper, Brave, Keenable and DeepSeek filter the
+  returned hits client-side; Tavily and Exa do not filter.
 - **No cost accounting.** `estimated_cost_usd` is not populated.
 - **Provider rows are not re-authenticated.** Replace a key by editing the
   provider (omitting `apiKey` keeps the stored one; `""` clears it). Keys are

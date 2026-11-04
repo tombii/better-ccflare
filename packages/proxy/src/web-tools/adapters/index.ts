@@ -2,8 +2,8 @@
  * Adapter registry for local `web_search` interception.
  *
  * Only providers with a working adapter live here — currently `tavily`,
- * `exa`, `parallel`, `deepseek`, `serper`, `brave`, `tinyfish` and
- * `firecrawl`. The dashboard marks the rest of {@link SEARCH_PROVIDER_CATALOG}
+ * `exa`, `parallel`, `deepseek`, `serper`, `brave`, `tinyfish`, `firecrawl`
+ * and `keenable`. The dashboard marks the rest of {@link SEARCH_PROVIDER_CATALOG}
  * as `implemented: false`, so a missing entry is the expected state, not an
  * error.
  */
@@ -14,6 +14,7 @@ import { createBraveAdapter } from "./brave";
 import { createDeepSeekAdapter } from "./deepseek";
 import { createExaAdapter } from "./exa";
 import { createFirecrawlAdapter } from "./firecrawl";
+import { createKeenableAdapter } from "./keenable";
 import { createParallelAdapter } from "./parallel";
 import { createSerperAdapter } from "./serper";
 import { createTavilyAdapter } from "./tavily";
@@ -28,6 +29,7 @@ const adapters: WebToolAdapterRegistry = {
 	brave: createBraveAdapter(),
 	tinyfish: createTinyfishAdapter(),
 	firecrawl: createFirecrawlAdapter(),
+	keenable: createKeenableAdapter(),
 };
 
 /**

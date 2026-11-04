@@ -17,6 +17,7 @@ export type SearchProviderId =
 	| "brave"
 	| "tinyfish"
 	| "firecrawl"
+	| "keenable"
 	| "perplexity";
 
 /**
@@ -243,6 +244,61 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 				placeholder: "qdr:d",
 				description:
 					"Time filter such as `qdr:h` (past hour), `qdr:d` (past day), `qdr:w` (past week).",
+			},
+		],
+	},
+	{
+		id: "keenable",
+		label: "Keenable",
+		// The adapter uses the keyed endpoint; the keyless `/public` twin is
+		// IP-rate-limited and unsuitable for a shared proxy.
+		requiresKey: true,
+		docsUrl: "https://docs.keenable.ai/api-reference/search",
+		implemented: true,
+		extraConfigFields: [
+			{
+				key: "mode",
+				label: "Mode",
+				type: "select",
+				options: ["pro", "realtime"],
+				description:
+					"`pro` (default) does deeper retrieval; `realtime` is fastest. Billed as separate SKUs.",
+			},
+			{
+				key: "site",
+				label: "Site",
+				type: "text",
+				placeholder: "techcrunch.com",
+				description:
+					"Restrict results to one domain. Leave blank for the whole web; a single `allowed_domains` entry from the request is applied here too.",
+			},
+			{
+				key: "published_after",
+				label: "Published after",
+				type: "text",
+				placeholder: "7d",
+				description:
+					"Date, ISO 8601 timestamp, or relative delta (`7d`, `30min`). Leave blank for no filter.",
+			},
+			{
+				key: "published_before",
+				label: "Published before",
+				type: "text",
+				placeholder: "2026-01-01",
+			},
+			{
+				key: "acquired_after",
+				label: "Indexed after",
+				type: "text",
+				placeholder: "7d",
+				description: "When the page was crawled into the index.",
+			},
+			{
+				key: "snippet_max_length",
+				label: "Snippet length",
+				type: "number",
+				placeholder: "1000",
+				description: "Characters per result snippet (180–10000).",
 			},
 		],
 	},

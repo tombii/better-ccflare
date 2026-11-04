@@ -212,8 +212,8 @@ describe("runWebSearchChain — provider selection", () => {
 
 	it("skips providers with no adapter (not yet implemented)", async () => {
 		// `perplexity` is the last catalog id without an adapter (exa,
-		// parallel, deepseek, serper, brave, tinyfish and firecrawl all
-		// gained one).
+		// parallel, deepseek, serper, brave, tinyfish, firecrawl and
+		// keenable all gained one).
 		const { deps } = makeDeps([
 			makeProvider({
 				id: "perplexity",
