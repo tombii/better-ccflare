@@ -539,8 +539,8 @@ describe("proxyWithAccount — image-input rejection failover", () => {
 	 * 400s that name one of the classifier's image nouns (`modality`, `file`,
 	 * `attachment`) together with a capability-denying phrasing, but say nothing
 	 * about the model's ability to read images. They repeat identically on every
-	 * account, so failing over only burns the pool and answers
-	 * `vision_unsupported` where the client needed the real 400.
+	 * account, so failing over only burns the pool and ends in a generic
+	 * error where the client needed the real 400.
 	 */
 	const textOnlyFalsePositives = [
 		"Unsupported parameter: 'modalities' is not supported with this model.",

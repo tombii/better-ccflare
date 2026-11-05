@@ -339,7 +339,7 @@ describe("proxyWithAccount — image rejection on an in-place retry", () => {
 	// The gate's other half. The same retried 400 on a request that carried no
 	// image is not a vision rejection: `requestCarriesImageContent` is false, so
 	// the classifier never runs and the 400 stays with the client instead of
-	// being replayed across every account and reported as `vision_unsupported`.
+	// being replayed across every account and ending in a generic pool error.
 	it("forwards the retried 400 when the request carried no image", async () => {
 		const calls = mockOverloadThenVisionRejection();
 
