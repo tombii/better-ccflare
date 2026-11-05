@@ -129,7 +129,9 @@ describe("issue #273 — Group A: helper contract", () => {
 // branch: the classifier reads a clone, so the original is discarded before
 // failing over to the next account / combo slot. 24 is the same branch on an
 // in-place retry, where the retried response is discarded before the failover
-// return.
+// return — it drains the classifier's `retried` argument rather than the
+// outer `response` binding that argument happens to alias, so the site keeps
+// draining the right body if the helper is ever called with another response.
 // ---------------------------------------------------------------------------
 
 const EXPECTED_SITE_COUNT = 24;
@@ -141,10 +143,10 @@ describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", ()
 			"utf-8",
 		);
 		// Match call sites only — exclude the import line. Each call is
-		// `cancelDiscardedResponseBody(rawResponse)` or
-		// `cancelDiscardedResponseBody(response)` on a line of its own.
+		// `cancelDiscardedResponseBody(rawResponse)`, `...(response)` or
+		// `...(retried)` on a line of its own.
 		const callMatches = source.match(
-			/^\s*cancelDiscardedResponseBody\((?:rawResponse|response)\);/gm,
+			/^\s*cancelDiscardedResponseBody\((?:rawResponse|response|retried)\);/gm,
 		);
 		const count = callMatches?.length ?? 0;
 		expect(count).toBe(EXPECTED_SITE_COUNT);

@@ -77,6 +77,31 @@ function makeRequestBody(model = "claude-sonnet-4-5") {
 	return new TextEncoder().encode(body).buffer;
 }
 
+/**
+ * Same request carrying an Anthropic image block. The vision failover path is
+ * gated on `requestCarriesImageContent`, so a fixture without an image never
+ * reaches the classifier no matter what the upstream says.
+ */
+function makeImageRequestBody(model = "claude-sonnet-4-5") {
+	const body = JSON.stringify({
+		model,
+		messages: [
+			{
+				role: "user",
+				content: [
+					{ type: "text", text: "what is in this picture" },
+					{
+						type: "image",
+						source: { type: "base64", media_type: "image/png", data: "abc" },
+					},
+				],
+			},
+		],
+		max_tokens: 10,
+	});
+	return new TextEncoder().encode(body).buffer;
+}
+
 function makeProxyContext(): ProxyContext {
 	return {
 		strategy: { getNextAccount: () => null } as never,
@@ -403,13 +428,51 @@ describe("proxyWithAccount — image-input rejection failover", () => {
 		);
 	}
 
+	/**
+	 * Runs proxyWithAccount and reports whether the upstream response reached the
+	 * client instead of triggering failover. Reaching `forwardToClient` IS the
+	 * behaviour under test; it needs UsageCollector, which unit tests do not wire,
+	 * so that specific throw counts as "forwarded". Any other error is real.
+	 */
+	async function runAndReportForwarded(
+		upstream: () => Response,
+		bodyBuffer: ArrayBuffer,
+		account: Account = makeAccount(),
+	): Promise<{ forwarded: boolean; fetchCalls: number }> {
+		let fetchCalls = 0;
+		globalThis.fetch = mock(async () => {
+			fetchCalls++;
+			return upstream();
+		});
+
+		let forwarded = false;
+		try {
+			const result = await proxyWithAccount(
+				makeRequest(bodyBuffer),
+				new URL("https://proxy.local/v1/messages"),
+				account,
+				makeRequestMeta(),
+				bodyBuffer,
+				() => undefined,
+				0,
+				makeProxyContext(),
+			);
+			forwarded = result !== null;
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			if (!msg.includes("UsageCollector not initialized")) throw e;
+			forwarded = true;
+		}
+		return { forwarded, fetchCalls };
+	}
+
 	// Regression: the vision rejection was logged but never acted on, so a 400
 	// fell through `isModelUnavailableError` (which only answers for 429s and
 	// model-not-found) and was forwarded to the client instead of failing over.
 	it("returns null (failover) when upstream rejects image input and no fallback is configured", async () => {
 		globalThis.fetch = mock(async () => visionRejection());
 
-		const bodyBuffer = makeRequestBody();
+		const bodyBuffer = makeImageRequestBody();
 		const result = await proxyWithAccount(
 			makeRequest(bodyBuffer),
 			new URL("https://proxy.local/v1/messages"),
@@ -429,7 +492,7 @@ describe("proxyWithAccount — image-input rejection failover", () => {
 	it("returns null (failover) when the account's model list has a single alias", async () => {
 		globalThis.fetch = mock(async () => visionRejection());
 
-		const bodyBuffer = makeRequestBody();
+		const bodyBuffer = makeImageRequestBody();
 		const account = makeAccount({
 			model_mappings: JSON.stringify({ sonnet: "qwen/qwen3.6-plus:free" }),
 		});
@@ -449,47 +512,80 @@ describe("proxyWithAccount — image-input rejection failover", () => {
 		expect(result).toBeNull();
 	});
 
+	// An image-carrying request, so this exercises the MATCHER: the 400 names an
+	// image but denies nothing, so it must stay with the client.
 	it("does not fail over on a 400 that merely mentions images", async () => {
-		let fetchCalls = 0;
-		globalThis.fetch = mock(async () => {
-			fetchCalls++;
-			return jsonResponse(
-				{
-					error: {
-						message:
-							"Your credit balance is too low to access this model's image features.",
+		const { forwarded, fetchCalls } = await runAndReportForwarded(
+			() =>
+				jsonResponse(
+					{
+						error: {
+							message:
+								"Your credit balance is too low to access this model's image features.",
+						},
 					},
-				},
-				400,
-			);
-		});
-
-		const bodyBuffer = makeRequestBody();
-		let forwarded = false;
-		try {
-			const result = await proxyWithAccount(
-				makeRequest(bodyBuffer),
-				new URL("https://proxy.local/v1/messages"),
-				makeAccount(),
-				makeRequestMeta(),
-				bodyBuffer,
-				() => undefined,
-				0,
-				makeProxyContext(),
-			);
-			forwarded = result !== null;
-		} catch (e) {
-			// Reaching forwardToClient is the behaviour under test: it needs
-			// UsageCollector, which unit tests do not wire. Any other error is real.
-			const msg = e instanceof Error ? e.message : String(e);
-			if (!msg.includes("UsageCollector not initialized")) throw e;
-			forwarded = true;
-		}
+					400,
+				),
+			makeImageRequestBody(),
+		);
 
 		// Forwarded to the client, not treated as failover — and therefore not
 		// retried.
 		expect(forwarded).toBe(true);
 		expect(fetchCalls).toBe(1);
+	});
+
+	/**
+	 * 400s that name one of the classifier's image nouns (`modality`, `file`,
+	 * `attachment`) together with a capability-denying phrasing, but say nothing
+	 * about the model's ability to read images. They repeat identically on every
+	 * account, so failing over only burns the pool and answers
+	 * `vision_unsupported` where the client needed the real 400.
+	 */
+	const textOnlyFalsePositives = [
+		"Unsupported parameter: 'modalities' is not supported with this model.",
+		"The file 'file-abc123' is not available for this organization.",
+		"This endpoint does not accept attachments.",
+	];
+
+	// The request gate. `isVisionUnsupportedError` reads only the upstream's
+	// wording, so without `requestCarriesImageContent` a TEXT-ONLY request would
+	// fail over on each of these. Most live traffic carries no image at all.
+	for (const message of textOnlyFalsePositives) {
+		it(`forwards a text-only request's 400: ${message.slice(0, 44)}…`, async () => {
+			const { forwarded, fetchCalls } = await runAndReportForwarded(
+				() => jsonResponse({ error: { message } }, 400),
+				makeRequestBody(),
+			);
+
+			expect(forwarded).toBe(true);
+			expect(fetchCalls).toBe(1);
+		});
+	}
+
+	// The same 400, same account, same upstream — only the request differs. Once
+	// an image really is on the wire the wording heuristic is allowed to act, and
+	// a capability-denying 400 fails over even when the upstream's actual
+	// complaint was a parameter. That residual is the accepted cost of having no
+	// per-model vision data; the gate is what keeps it off text-only traffic.
+	it("fails the same 400 over when the request really carried an image", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse({ error: { message: textOnlyFalsePositives[0] } }, 400),
+		);
+
+		const bodyBuffer = makeImageRequestBody();
+		const result = await proxyWithAccount(
+			makeRequest(bodyBuffer),
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount(),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+		);
+
+		expect(result).toBeNull();
 	});
 });
 

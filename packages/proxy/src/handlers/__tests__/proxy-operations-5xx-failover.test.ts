@@ -234,22 +234,61 @@ describe("proxyWithAccount — image rejection on an in-place retry", () => {
 		restoreForwardToClient();
 	});
 
-	// The first-pass short-circuit only sees the initial response. A retry that
-	// rejects image input used to fall through `status !== 429` in
-	// classifyRetriedUpstreamResponse and reach the client instead of the next
-	// account. An invalid-thinking-signature 400 is the simplest in-place retry
-	// a mixed provider fixture can trigger.
-	it("fails over when an in-place retry rejects image input", async () => {
+	/**
+	 * A body that reaches `classifyRetriedUpstreamResponse`: an assistant turn
+	 * carrying a thinking block is what makes `filterThinkingBlocks` strip it and
+	 * re-issue in place. `withImage` adds the image block the vision gate looks
+	 * for — without one the retried 400 is not a vision rejection at all, because
+	 * `requestCarriesImageContent` says the request never carried an image.
+	 */
+	function thinkingRetryBody(withImage: boolean): ArrayBuffer {
+		return new TextEncoder().encode(
+			JSON.stringify({
+				model: "claude-sonnet-4-5",
+				max_tokens: 10,
+				messages: [
+					{
+						role: "user",
+						content: withImage
+							? [
+									{ type: "text", text: "hello" },
+									{
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: "image/png",
+											data: "abc",
+										},
+									},
+								]
+							: "hello",
+					},
+					{
+						role: "assistant",
+						content: [
+							{ type: "thinking", thinking: "hmm", signature: "sig" },
+							{ type: "text", text: "hi" },
+						],
+					},
+				],
+			}),
+		).buffer;
+	}
+
+	/**
+	 * First attempt: Anthropic's overloaded shape as an SSE stream, which is what
+	 * the proxy synthesizes a 529 from. 529 is the retry that sets
+	 * `retriedInPlace` and hands the retried response to
+	 * `classifyRetriedUpstreamResponse` — the thinking-signature and
+	 * cache_control retries do NOT reach that classifier, so a 400 there cannot
+	 * exercise this path. Retried attempt: a 400 that denies image input.
+	 * Returns the call log.
+	 */
+	function mockOverloadThenVisionRejection(): number[] {
 		const calls: number[] = [];
 		globalThis.fetch = mock(async () => {
 			calls.push(calls.length + 1);
 			if (calls.length === 1) {
-				// 529 (overloaded) is the retry that sets `retriedInPlace` and then
-				// hands the retried response to classifyRetriedUpstreamResponse. The
-				// thinking-signature and cache_control retries do NOT reach that
-				// classifier, so a 400 there cannot exercise this path. Anthropic's
-				// overloaded shape as an SSE stream, which is what the proxy
-				// synthesizes a 529 from.
 				const sse = [
 					'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-5","usage":{"input_tokens":1,"output_tokens":0}}}\n\n',
 					'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":1}}\n\n',
@@ -266,27 +305,22 @@ describe("proxyWithAccount — image rejection on an in-place retry", () => {
 				{ status: 400, headers: { "content-type": "application/json" } },
 			);
 		});
+		return calls;
+	}
+
+	// The first-pass short-circuit only sees the initial response. A retry that
+	// rejects image input used to fall through `status !== 429` in
+	// classifyRetriedUpstreamResponse and reach the client instead of the next
+	// account. An invalid-thinking-signature 400 is the simplest in-place retry
+	// a mixed provider fixture can trigger.
+	it("fails over when an in-place retry rejects image input", async () => {
+		const calls = mockOverloadThenVisionRejection();
 
 		const ctx = makeProxyContext();
 		// filterThinkingBlocks only produces a different body when an assistant
 		// turn actually carries a thinking block; without one the retry is
 		// skipped and this path is never reached.
-		const bodyBuffer = new TextEncoder().encode(
-			JSON.stringify({
-				model: "claude-sonnet-4-5",
-				max_tokens: 10,
-				messages: [
-					{ role: "user", content: "hello" },
-					{
-						role: "assistant",
-						content: [
-							{ type: "thinking", thinking: "hmm", signature: "sig" },
-							{ type: "text", text: "hi" },
-						],
-					},
-				],
-			}),
-		).buffer;
+		const bodyBuffer = thinkingRetryBody(true);
 		const { forwarded } = await runProxy(
 			makeRequest(bodyBuffer),
 			makeAccount(),
@@ -300,6 +334,27 @@ describe("proxyWithAccount — image rejection on an in-place retry", () => {
 		// assertion above is about. The first response is a thinking-signature
 		// error, which the retry replaces without ever being classified as vision.
 		expect(capturedForward?.status ?? null).not.toBe(400);
+	});
+
+	// The gate's other half. The same retried 400 on a request that carried no
+	// image is not a vision rejection: `requestCarriesImageContent` is false, so
+	// the classifier never runs and the 400 stays with the client instead of
+	// being replayed across every account and reported as `vision_unsupported`.
+	it("forwards the retried 400 when the request carried no image", async () => {
+		const calls = mockOverloadThenVisionRejection();
+
+		const ctx = makeProxyContext();
+		const bodyBuffer = thinkingRetryBody(false);
+		const { forwarded } = await runProxy(
+			makeRequest(bodyBuffer),
+			makeAccount(),
+			bodyBuffer,
+			ctx,
+		);
+
+		expect(calls.length).toBeGreaterThanOrEqual(2);
+		expect(forwarded).toBe(true);
+		expect(capturedForward?.status).toBe(400);
 	});
 });
 

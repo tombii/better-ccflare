@@ -786,6 +786,13 @@ function mentionsUnsupportedImageInput(text: string): boolean {
  *
  * Only 400 is considered. Other 4xx shapes are either request-wide (auth,
  * billing) or already classified elsewhere.
+ *
+ * Callers MUST gate this on `requestCarriesImageContent`: the matcher reads the
+ * upstream's wording, and image nouns include `file`, `attachment` and
+ * `modality`, so a text-only request's unrelated 400 can name one of them with
+ * a negation. Without the gate that request is replayed across every account
+ * and terminates as `vision_unsupported` instead of reaching the client as the
+ * 400 that explains it.
  */
 export async function isVisionUnsupportedError(
 	response: Response,
@@ -840,6 +847,55 @@ export async function isVisionUnsupportedError(
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * True when the request body actually carries image content.
+ *
+ * The gate `isVisionUnsupportedError` needs: that classifier reads an
+ * upstream's wording, and its image nouns include `file`, `files`,
+ * `attachment`, `modality` and `visual`. A text-only request can therefore trip
+ * it on an unrelated 400 — "Unsupported parameter: 'modalities' is not supported
+ * with this model", "The file 'file-abc' is not available for this
+ * organization", "This endpoint does not accept attachments" — and would be
+ * replayed across every combo slot and account, ending as `vision_unsupported`
+ * when the client should have got the 400 that explains the failure.
+ *
+ * Walks the parsed body rather than scanning bytes: a Claude Code conversation
+ * routinely contains the literal `"type":"image"` inside a text block (source
+ * code, JSON samples, review threads), which a substring match would read as an
+ * image the request never carried.
+ *
+ * Both wire shapes count — Anthropic `image` blocks (message level, and nested
+ * in a `tool_result`, which is where a tool-produced screenshot lives) and
+ * OpenAI `image_url` parts, for a request that arrives already converted.
+ * A body that is absent or unparseable answers false: nothing was converted, so
+ * nothing image-shaped went upstream.
+ */
+export function requestCarriesImageContent(
+	context: RequestBodyContext | null | undefined,
+): boolean {
+	const body = context?.getParsedJson();
+	if (!body) return false;
+	const messages = (body as { messages?: unknown }).messages;
+	if (!Array.isArray(messages)) return false;
+
+	const blockCarriesImage = (block: unknown): boolean => {
+		if (!block || typeof block !== "object") return false;
+		const type = (block as { type?: unknown }).type;
+		if (type === "image" || type === "image_url") return true;
+		if (type === "tool_result") {
+			const nested = (block as { content?: unknown }).content;
+			return Array.isArray(nested) && nested.some(blockCarriesImage);
+		}
+		return false;
+	};
+
+	return messages.some((message) => {
+		if (!message || typeof message !== "object") return false;
+		const content = (message as { content?: unknown }).content;
+		return Array.isArray(content) && content.some(blockCarriesImage);
+	});
 }
 
 /**
@@ -2568,6 +2624,15 @@ export async function proxyWithAccount(
 		if (codeBuddyRejectionOutcome !== NOT_CLASSIFIED)
 			return codeBuddyRejectionOutcome;
 
+		// Whether THIS request actually carried image content, computed once for
+		// the first-response classification below and the retried-response one in
+		// `classifyRetriedUpstreamResponse`. `isVisionUnsupportedError` reads only
+		// the upstream's wording, so without this gate an unrelated 400 that
+		// happens to name a file, an attachment or a modality would replay a
+		// text-only request across every account. See requestCarriesImageContent.
+		const requestCarriesImages =
+			requestCarriesImageContent(effectiveBodyContext);
+
 		/**
 		 * The classification chain as a retry response has to see it: every
 		 * handler above, in the first-response order, minus the model-cycling
@@ -2616,12 +2681,16 @@ export async function proxyWithAccount(
 			// instead of the next account / combo slot. Checked before the
 			// `status !== 429` narrowing below, which exists for the 429-only
 			// handlers and would discard it.
-			if (await isVisionUnsupportedError(retried)) {
+			if (requestCarriesImages && (await isVisionUnsupportedError(retried))) {
 				log.warn(
 					`Account ${account.name} rejected image input on an in-place retry — failing over to next model/account`,
 				);
 				requestMeta.visionRejected = true;
-				cancelDiscardedResponseBody(response);
+				// Drain the response being abandoned: the `retried` argument, not the
+				// outer `response` binding it aliases at today's only call site. The
+				// classifier read a clone, so this body is still unread, and draining
+				// any other object would leave it holding native memory (#273).
+				cancelDiscardedResponseBody(retried);
 				return null;
 			}
 
@@ -2684,7 +2753,14 @@ export async function proxyWithAccount(
 		// consumed below to reach the same model/slot fallback a rate-limited
 		// model gets, so the next combo slot / account is tried and this one is
 		// not benched.
-		const visionUnsupported = await isVisionUnsupportedError(rawResponse);
+		//
+		// Gated on the request actually carrying image content: the matcher reads
+		// the upstream's wording only, so a text-only request whose 400 happens to
+		// name a file, an attachment or a modality would otherwise be replayed
+		// across every account. Short-circuiting also skips the clone and JSON
+		// parse for the traffic that has no image to reject.
+		const visionUnsupported =
+			requestCarriesImages && (await isVisionUnsupportedError(rawResponse));
 		if (visionUnsupported) {
 			let rejectedModel: string | null = null;
 			if (effectiveBodyBuffer) rejectedModel = effectiveBodyContext.getModel();
