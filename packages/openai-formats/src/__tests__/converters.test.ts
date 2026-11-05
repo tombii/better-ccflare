@@ -889,9 +889,10 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 		expect(content[1]).toEqual({ type: "text", text: "The answer is 4." });
 	});
 
-	// The live symptom: gpt-6-luna on kilo spent its whole budget reasoning and
-	// returned no `content`, which converted to an EMPTY Anthropic message with
-	// stop_reason max_tokens — 512 billed output tokens and nothing to show.
+	// The symptom this pins: a reasoning model that spends its whole budget
+	// thinking returns no `content`, which converted to an EMPTY Anthropic
+	// message with stop_reason max_tokens — 512 billed output tokens and nothing
+	// to show.
 	it("surfaces a reasoning-only response instead of an empty message", () => {
 		const result = convertOpenAIResponseToAnthropic(
 			openaiTextResponse({

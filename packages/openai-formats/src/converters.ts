@@ -483,8 +483,9 @@ export function convertOpenAIResponseToAnthropic(
 	//
 	// Missing the alias cost more than cosmetics. A reasoning model that spends
 	// its whole budget thinking returns no `content` at all, so the client saw an
-	// empty message with `stop_reason: max_tokens` (observed live on kilo
-	// `openai/gpt-6-luna`). And whenever reasoning did accompany text, dropping it
+	// empty message with `stop_reason: max_tokens` (observed live against a
+	// reasoning model on an OpenRouter-shaped gateway). And whenever reasoning did
+	// accompany text, dropping it
 	// broke the round-trip: the request side maps Anthropic thinking blocks back
 	// to `reasoning_content` for providers that require them, so a client that
 	// never receives the thinking cannot echo it on the next turn.
