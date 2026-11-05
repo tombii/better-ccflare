@@ -227,7 +227,7 @@ describe("Codex transform — subagent (Task) tool_result fidelity", () => {
 			expect((o.output as string).length).toBeGreaterThan(0);
 	});
 
-	test("non-text image tool_result uses a bounded placeholder", async () => {
+	test("non-text image tool_result keeps a bounded placeholder and hoists the image", async () => {
 		const body = await transform({
 			model: "claude-opus-4-8",
 			max_tokens: 10,
@@ -258,11 +258,27 @@ describe("Codex transform — subagent (Task) tool_result fidelity", () => {
 				},
 			],
 		});
+		// The function-call output is text-only on the Responses wire, so it
+		// still carries the placeholder and never the raw bytes...
 		const out = outputs(body.input)[0];
 		expect(out?.output).toBe(
 			"[image content not supported in Codex tool results]",
 		);
 		expect(out?.output).not.toContain("AAAA");
+
+		// ...but the image is no longer dropped: it is hoisted into a user item
+		// placed directly after the output that produced it.
+		expect(body.input.map((it) => it.type ?? it.role)).toEqual([
+			"user",
+			"function_call",
+			"function_call_output",
+			"user",
+		]);
+		const hoisted = body.input[3];
+		expect(hoisted?.role).toBe("user");
+		expect(hoisted?.content).toEqual([
+			{ type: "input_image", image_url: "data:image/png;base64,AAAA" },
+		]);
 	});
 
 	test("tool_reference result blocks are preserved as JSON", async () => {

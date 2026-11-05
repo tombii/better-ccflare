@@ -7,9 +7,11 @@ import {
 } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
+import type { AnthropicImageContent } from "@better-ccflare/openai-formats";
 import {
 	resolveReasoningEffort,
 	sanitizeSchemaForOpenAI,
+	toOpenAIImagePart,
 } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
@@ -257,6 +259,25 @@ interface CodexOutputTextItem {
 	text: string;
 }
 
+/**
+ * Responses API image input.
+ *
+ * Note the wire difference from chat completions: here `image_url` is a bare
+ * string (a fully qualified URL or a base64 `data:` URL), not the `{url}`
+ * object the chat-completions `image_url` part uses. `input_image` is valid
+ * anywhere in a message's content array alongside `input_text`.
+ *
+ * `detail` is accepted (`low`/`auto`/`high`/`original`, upstream default
+ * `auto`) but deliberately never set: Anthropic image blocks carry no detail
+ * hint, so omitting the field keeps the upstream default instead of pinning
+ * one we cannot justify.
+ */
+interface CodexInputImageItem {
+	type: "input_image";
+	image_url: string;
+	detail?: "low" | "auto" | "high" | "original";
+}
+
 interface CodexFunctionCallItem {
 	type: "function_call";
 	call_id: string;
@@ -274,6 +295,7 @@ interface CodexFunctionCallOutputItem {
 
 type CodexContentItem =
 	| CodexInputTextItem
+	| CodexInputImageItem
 	| CodexOutputTextItem
 	| CodexFunctionCallItem
 	| CodexFunctionCallOutputItem;
@@ -389,8 +411,12 @@ interface AnthropicToolResult {
 		  }>;
 }
 
+// `image` reuses the shared openai-formats block type (rather than a
+// Codex-local copy) so the image mapper below can hand the block straight to
+// `toOpenAIImagePart` without a second, drifting definition of the source shape.
 type AnthropicContentBlock =
 	| AnthropicTextContent
+	| AnthropicImageContent
 	| AnthropicToolUse
 	| AnthropicToolResult;
 
@@ -423,6 +449,31 @@ interface AnthropicRequest {
 	/** Claude Code sends a JSON-encoded object with a session_id here. */
 	metadata?: { user_id?: string };
 	[key: string]: unknown;
+}
+
+/**
+ * Map an Anthropic `image` block onto a Responses `input_image` item.
+ *
+ * Delegates to `toOpenAIImagePart` — the chat-completions mapper — and unwraps
+ * its `{url}` object into the bare string Responses expects, so the
+ * base64→`data:` URL rule, the `image/png` media-type default and the
+ * malformed-block rejection stay defined in exactly one place instead of being
+ * reimplemented here.
+ *
+ * Takes `unknown` because the two call sites see different static shapes:
+ * message content narrows to the shared block type, while tool-result content
+ * is a loose record (external input routinely violates the declared type).
+ *
+ * Returns null for a malformed block (neither data nor url) so callers skip it
+ * rather than emitting an item upstream would reject with a 400.
+ */
+function toCodexInputImageItem(block: unknown): CodexInputImageItem | null {
+	if (!block || typeof block !== "object") return null;
+	const part = toOpenAIImagePart(block as AnthropicImageContent);
+	if (!part || part.type !== "image_url") return null;
+	const url = part.image_url?.url;
+	if (typeof url !== "string" || url.length === 0) return null;
+	return { type: "input_image", image_url: url };
 }
 
 // ── SSE streaming state ───────────────────────────────────────────────────────
@@ -2136,8 +2187,19 @@ export class CodexProvider extends BaseProvider {
 		);
 	}
 
+	/**
+	 * Serialize a tool_result's content into the text-only `output` of a
+	 * function_call_output.
+	 *
+	 * Images cannot ride along — a function-call output is a plain string on the
+	 * Responses wire — so the output keeps a placeholder and the image itself is
+	 * appended to `hoistedImages` for the caller to emit as a following user
+	 * item. The collector is an out-parameter because the placeholder still has
+	 * to appear in the returned string at the image's original position.
+	 */
 	private serializeToolResultContent(
 		content: AnthropicToolResult["content"],
+		hoistedImages: CodexInputImageItem[],
 	): string {
 		if (typeof content === "string") return content;
 		// External input can violate the declared type (missing, null, object);
@@ -2154,6 +2216,8 @@ export class CodexProvider extends BaseProvider {
 			}
 			if (block.type === "image") {
 				parts.push("[image content not supported in Codex tool results]");
+				const hoisted = toCodexInputImageItem(block);
+				if (hoisted) hoistedImages.push(hoisted);
 				continue;
 			}
 			let serialized: string;
@@ -2195,28 +2259,48 @@ export class CodexProvider extends BaseProvider {
 			return items;
 		}
 
-		// Complex content array: may contain tool_use, tool_result, text.
+		// Complex content array: may contain tool_use, tool_result, text, image.
 		// Preserve source order so Codex sees the same block chronology the
-		// client sent: outputs stay adjacent to their calls, and follow-up text
-		// stays after the results it refers to. Consecutive text blocks batch
-		// into one message wrapper; function_call* are top-level items.
-		let pendingText: CodexContentItem[] = [];
-		const flushText = () => {
-			if (pendingText.length === 0) return;
-			items.push({ role, content: pendingText } as CodexMessage);
-			pendingText = [];
+		// client sent: outputs stay adjacent to their calls, images stay in the
+		// position the client put them relative to the text, and follow-up text
+		// stays after the results it refers to. Consecutive inline content blocks
+		// batch into one message wrapper; function_call* are top-level items.
+		let pendingContent: CodexContentItem[] = [];
+		// Images hoisted out of THIS message's tool results. Emitted as a user
+		// item immediately after this message's function_call_output items and
+		// before any later turn, so a screenshot stays beside the tool result
+		// that produced it instead of drifting to the end of a long conversation
+		// and being re-presented as fresh input on every subsequent request.
+		// Same ordering rule as `hoistedToolImages` in the chat-completions
+		// converter (openai-formats/converters.ts).
+		const hoistedToolImages: CodexInputImageItem[] = [];
+		const flushContent = () => {
+			if (pendingContent.length === 0) return;
+			items.push({ role, content: pendingContent } as CodexMessage);
+			pendingContent = [];
 		};
 
 		for (const block of msg.content) {
 			if (!block || typeof block !== "object") continue;
 			if (block.type === "text") {
 				const contentType = role === "assistant" ? "output_text" : "input_text";
-				pendingText.push({
+				pendingContent.push({
 					type: contentType,
 					text: block.text,
 				} as CodexContentItem);
+			} else if (block.type === "image") {
+				// Responses assistant content is `output_text` — there is no
+				// output-side image item, so an image on an assistant turn is
+				// dropped rather than emitted as something upstream would 400 on.
+				// Anthropic assistant turns don't carry images in practice, but
+				// the native-continuation replay path re-enters this method with
+				// role "assistant".
+				if (role === "assistant") continue;
+				const image = toCodexInputImageItem(block);
+				// A malformed block (neither data nor url) is skipped, not emitted.
+				if (image) pendingContent.push(image);
 			} else if (block.type === "tool_use") {
-				flushText();
+				flushContent();
 				items.push({
 					type: "function_call",
 					call_id: block.id,
@@ -2227,8 +2311,11 @@ export class CodexProvider extends BaseProvider {
 					status: "completed",
 				});
 			} else if (block.type === "tool_result") {
-				flushText();
-				const serialized = this.serializeToolResultContent(block.content);
+				flushContent();
+				const serialized = this.serializeToolResultContent(
+					block.content,
+					hoistedToolImages,
+				);
 				items.push({
 					type: "function_call_output",
 					call_id: block.tool_use_id,
@@ -2238,7 +2325,14 @@ export class CodexProvider extends BaseProvider {
 				});
 			}
 		}
-		flushText();
+		// Hoisted tool images go out before this message's trailing inline
+		// content, keeping them directly after the outputs they came from. The
+		// role is always "user": a hoisted image is fresh model input, never a
+		// claim about what the assistant said.
+		if (hoistedToolImages.length > 0) {
+			items.push({ role: "user", content: hoistedToolImages } as CodexMessage);
+		}
+		flushContent();
 
 		return items;
 	}
