@@ -125,13 +125,15 @@ describe("issue #273 — Group A: helper contract", () => {
 // the upstream_402_out_of_credits branch, which discards the 402 before
 // failing over. 22 is the combo model-scoped 429 branch: a combo-routed 429
 // that cools only its (account, model) pair still discards the response
-// before failing over to the next slot.
+// before failing over to the next slot. 23 is the image-input rejection
+// branch: the classifier reads a clone, so the original is discarded before
+// failing over to the next account / combo slot.
 // ---------------------------------------------------------------------------
 
-const EXPECTED_SITE_COUNT = 22;
+const EXPECTED_SITE_COUNT = 23;
 
 describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", () => {
-	it("proxy-operations.ts has exactly 22 cancelDiscardedResponseBody call sites", () => {
+	it("proxy-operations.ts has exactly 23 cancelDiscardedResponseBody call sites", () => {
 		const source = readFileSync(
 			"packages/proxy/src/handlers/proxy-operations.ts",
 			"utf-8",

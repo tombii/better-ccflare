@@ -666,53 +666,112 @@ function hasCacheControlDetail(detail: unknown[]): boolean {
 	});
 }
 
-/**
- * Phrases that name image *input* being rejected — the request carried image
- * content the model cannot read. Deliberately excludes anything that merely
- * mentions images (billing, content filters, output formats): those are
- * request-specific errors a retry on another slot would not fix.
- */
-const VISION_UNSUPPORTED_INPUT_PATTERNS = [
-	"image input",
+/** Words for the image input the request carried. */
+const IMAGE_INPUT_NOUNS = [
+	"image",
+	"images",
 	"image_url",
+	"image url",
+	"image input",
 	"image content",
-	"images are not supported",
-	"image is not supported",
-	"does not support image",
-	"doesn't support image",
-	"image not supported",
-	"not support vision",
-	"no vision",
-	"invalid content type: image",
-] as const;
-
-/** Input-side hints required for the vaguer "vision"/"modality" phrasings. */
-const VISION_MODALITY_PATTERNS = [
 	"vision",
+	"visual",
 	"modality",
-	"input_modalities",
+	"modalities",
+	"multimodal",
+	"file",
+	"files",
+	"attachment",
+	"attachments",
 ] as const;
 
 /**
- * True when `text` names image input as unsupported.
+ * Phrasings that state the *capability is absent*: "not supported",
+ * "unsupported", "does not accept", "doesn't work with", ...
+ */
+const CAPABILITY_ABSENT_PATTERNS = [
+	"not support",
+	"n't support",
+	// OpenRouter word order: "endpoints that support image input" (there is no
+	// "not" before "support" — the absence is in "No endpoints found").
+	"that support",
+	"unsupported",
+	"not supported",
+	// A schema that rejects the image part outright — GLM-style "unknown field"
+	// or pydantic "Extra inputs are not permitted" — means the gateway cannot
+	// represent image input at all. This is a capability limit, not a malformed
+	// payload; those are excluded earlier by NON_CAPABILITY_ERROR_PATTERNS.
+	"unknown field",
+	"extra inputs are not permitted",
+	"extra_forbidden",
+	"does not accept",
+	"doesn't accept",
+	"do not accept",
+	"cannot accept",
+	"can't accept",
+	"not accept",
+	"only supports",
+	"only support",
+	"only accepts",
+	"only accept",
+	"not available",
+	"isn't available",
+	"not enabled",
+	"no support",
+	"not a valid",
+	"invalid content type",
+] as const;
+
+/**
+ * Why a 400 is about the *content of the request*, not the model's ability.
+ * A malformed or oversized image, a bad base64 payload, a content-policy hit or
+ * an over-length conversation rejects the same way on every account, so failing
+ * over would just repeat it and end in a generic error. These are left to the
+ * client, which is the only party that can fix them.
+ */
+const NON_CAPABILITY_ERROR_PATTERNS = [
+	"invalid base64",
+	"base64",
+	"malformed",
+	"corrupt",
+	"decode",
+	"decode error",
+	"too large",
+	"too big",
+	"exceeds",
+	"maximum size",
+	"max size",
+	"file size",
+	"dimensions",
+	"resolution",
+	"policy",
+	"moderation",
+	"content filter",
+	"content_filter",
+	"safety",
+	"blocked",
+	"not allowed",
+	"too many",
+	"exceeded the maximum",
+] as const;
+
+/**
+ * True when `text` states that the model cannot accept image input.
  *
- * Two tiers: an explicit image-input phrase is enough on its own, while a
- * mention of vision/modality also needs an explicit negation, so "vision is
- * enabled for this model" or "modality: text" cannot match.
+ * Requires BOTH halves: a word naming the image input the request carried, and
+ * a phrasing that asserts the capability is missing. Requiring both is what
+ * keeps malformed-image errors ("Invalid image_url: invalid base64 data") and
+ * policy rejections from looking like "this model has no vision" — those name
+ * an image but do not deny a capability, and are excluded explicitly too.
  */
 function mentionsUnsupportedImageInput(text: string): boolean {
 	const lower = text.toLowerCase();
-	if (VISION_UNSUPPORTED_INPUT_PATTERNS.some((p) => lower.includes(p))) {
-		return true;
+	if (NON_CAPABILITY_ERROR_PATTERNS.some((p) => lower.includes(p))) {
+		return false;
 	}
-	const namesModality = VISION_MODALITY_PATTERNS.some((p) => lower.includes(p));
-	if (!namesModality) return false;
-	return (
-		lower.includes("not support") ||
-		lower.includes("unsupported") ||
-		lower.includes("not supported") ||
-		lower.includes("only supports")
-	);
+	const namesImageInput = IMAGE_INPUT_NOUNS.some((p) => lower.includes(p));
+	if (!namesImageInput) return false;
+	return CAPABILITY_ABSENT_PATTERNS.some((p) => lower.includes(p));
 }
 
 /**
@@ -2654,7 +2713,14 @@ export async function proxyWithAccount(
 			// end the request. This covers both shapes — no model on the body, and
 			// an account whose model list has a single entry (the alias case,
 			// where `modelList.length <= 1` still holds).
-			if (visionUnsupported) return null;
+			//
+			// The classifier read a clone, so this response's body is still unread;
+			// drain it before abandoning it (#273 / #382), as every other
+			// discard-then-fail-over site does.
+			if (visionUnsupported) {
+				cancelDiscardedResponseBody(rawResponse);
+				return null;
+			}
 
 			if (requestedModel) {
 				const modelList = getModelList(requestedModel, account);

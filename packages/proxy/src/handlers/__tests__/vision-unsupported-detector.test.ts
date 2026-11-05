@@ -29,8 +29,7 @@ describe("isVisionUnsupportedError", () => {
 		const res = jsonResponse({
 			error: {
 				code: 404,
-				message:
-					"No endpoints found that support image input. Try disabling it via the API.",
+				message: "No endpoints found that support image input.",
 			},
 		});
 		expect(await isVisionUnsupportedError(res)).toBe(true);
@@ -121,5 +120,60 @@ describe("isVisionUnsupportedError", () => {
 			headers: { "content-type": "text/plain" },
 		});
 		expect(await isVisionUnsupportedError(res)).toBe(false);
+	});
+
+	// ── Naming an image is not the same as denying a capability ──────────────
+	// Failing over on these would replay a broken request across every account
+	// and end in a generic error instead of the useful 400.
+
+	it("does not fail over on malformed image data", async () => {
+		const res = jsonResponse({
+			error: { message: "Invalid image_url: invalid base64 data" },
+		});
+		expect(await isVisionUnsupportedError(res)).toBe(false);
+	});
+
+	it("does not fail over on an oversized image", async () => {
+		const res = jsonResponse({
+			error: {
+				message: "Image dimensions exceed the maximum size of 8000px.",
+			},
+		});
+		expect(await isVisionUnsupportedError(res)).toBe(false);
+	});
+
+	it("does not fail over when the image decodes but is corrupt", async () => {
+		const res = jsonResponse({
+			error: { message: "Could not decode image content: corrupt PNG header" },
+		});
+		expect(await isVisionUnsupportedError(res)).toBe(false);
+	});
+
+	it("fails over when the gateway schema rejects image_url outright", async () => {
+		// A schema that cannot even represent an image part is a capability
+		// limit (GLM-style "unknown field", pydantic "Extra inputs are not
+		// permitted"), unlike a malformed payload, which is excluded above.
+		const res = jsonResponse({
+			error: {
+				message:
+					"messages.0.content.1: Extra inputs are not permitted (image_url)",
+			},
+		});
+		expect(await isVisionUnsupportedError(res)).toBe(true);
+	});
+
+	// ── Capability phrasing that must still match ────────────────────────────
+
+	it("matches capability wording that names an image noun", async () => {
+		for (const message of [
+			"The selected model does not accept image input.",
+			"Images are not supported by this model.",
+			"This endpoint only supports text; multimodal input is unavailable.",
+			"model qwen3-coder-plus does not support vision",
+		]) {
+			expect(
+				await isVisionUnsupportedError(jsonResponse({ error: { message } })),
+			).toBe(true);
+		}
 	});
 });
