@@ -2623,14 +2623,23 @@ export async function proxyWithAccount(
 		if (codeBuddyRejectionOutcome !== NOT_CLASSIFIED)
 			return codeBuddyRejectionOutcome;
 
-		// Whether THIS request actually carried image content, computed once for
-		// the first-response classification below and the retried-response one in
-		// `classifyRetriedUpstreamResponse`. `isVisionUnsupportedError` reads only
-		// the upstream's wording, so without this gate an unrelated 400 that
-		// happens to name a file, an attachment or a modality would replay a
-		// text-only request across every account. See requestCarriesImageContent.
-		const requestCarriesImages =
-			requestCarriesImageContent(effectiveBodyContext);
+		// Whether THIS request actually carried image content — resolved lazily,
+		// at most once, and shared by the first-response classification below and
+		// the retried-response one in `classifyRetriedUpstreamResponse`.
+		//
+		// `isVisionUnsupportedError` reads only the upstream's wording, so without
+		// this gate an unrelated 400 that happens to name a file, an attachment or
+		// a modality would replay a text-only request across every account. But
+		// walking the parsed body is O(messages x blocks) and this code sits on the
+		// response path of EVERY request, 200s included — a long Claude Code
+		// conversation would pay it per request for an image it never sent. So
+		// callers test the classifier first (a status comparison for anything but
+		// a JSON 400) and consult this only on a match.
+		// See requestCarriesImageContent.
+		let requestCarriesImagesResolved: boolean | null = null;
+		const requestCarriesImages = () =>
+			(requestCarriesImagesResolved ??=
+				requestCarriesImageContent(effectiveBodyContext));
 
 		/**
 		 * The classification chain as a retry response has to see it: every
@@ -2680,7 +2689,9 @@ export async function proxyWithAccount(
 			// instead of the next account / combo slot. Checked before the
 			// `status !== 429` narrowing below, which exists for the 429-only
 			// handlers and would discard it.
-			if (requestCarriesImages && (await isVisionUnsupportedError(retried))) {
+			// Classifier first: for anything but a JSON 400 it is a status
+			// comparison, whereas the gate walks the parsed request body.
+			if ((await isVisionUnsupportedError(retried)) && requestCarriesImages()) {
 				log.warn(
 					`Account ${account.name} rejected image input on an in-place retry — failing over to next model/account`,
 				);
@@ -2755,10 +2766,12 @@ export async function proxyWithAccount(
 		// Gated on the request actually carrying image content: the matcher reads
 		// the upstream's wording only, so a text-only request whose 400 happens to
 		// name a file, an attachment or a modality would otherwise be replayed
-		// across every account. Short-circuiting also skips the clone and JSON
-		// parse for the traffic that has no image to reject.
+		// across every account. The classifier is tested first — a status
+		// comparison for anything but a JSON 400 — so the gate's walk of the
+		// parsed request body runs only on a match, never on the text-only
+		// majority and never on a 200.
 		const visionUnsupported =
-			requestCarriesImages && (await isVisionUnsupportedError(rawResponse));
+			(await isVisionUnsupportedError(rawResponse)) && requestCarriesImages();
 		if (visionUnsupported) {
 			let rejectedModel: string | null = null;
 			if (effectiveBodyBuffer) rejectedModel = effectiveBodyContext.getModel();
