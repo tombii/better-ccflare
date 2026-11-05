@@ -31,6 +31,7 @@ import {
 	isForceAccountModelEnabled,
 	isInternalProbe,
 	isRefreshTokenLikelyExpired,
+	isVisionUnsupported,
 	markTrustedNativeResponses,
 	type ProxyContext,
 	prepareRequestBody,
@@ -40,6 +41,7 @@ import {
 	type RequestJsonBody,
 	recordSelectedOrder,
 	recordXaiAffinitySuccess,
+	requestCarriesImageContent,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
 	setXaiConvId,
@@ -783,6 +785,71 @@ async function handleProxyRequest(
 		: null;
 	let response: Response | null = null;
 	let anyAccountAttempted = false;
+	/**
+	 * How many candidates this request skipped because their (account, model)
+	 * pair is already known to refuse image input.
+	 *
+	 * A counter with no consumer YET, and that is deliberate rather than dead
+	 * code: the terminal `vision_unsupported` verdict that reads it — "every
+	 * route refused this image, so answer 400 instead of a retryable 503" — lands
+	 * in a follow-up. The first attempt at that verdict was reverted (e64e7f13)
+	 * because it computed permanence from the candidates that survived selection
+	 * rather than the ones that were eligible; a skip counter is the signal that
+	 * survives cooldowns, probes and capacity filters, which is what makes the
+	 * verdict sound. Counted per candidate (not per skip decision: the ungated
+	 * retries below decline to re-ask a candidate the loop already counted).
+	 */
+	let visionSkips = 0;
+
+	/**
+	 * Whether THIS request carries image content — resolved lazily, at most once
+	 * per request and shared by every candidate, mirroring the thunk
+	 * proxy-operations.ts uses on the response path.
+	 *
+	 * Walking the parsed body is O(messages x blocks) and a long conversation
+	 * makes that non-trivial, so it must never run for a request that has no
+	 * chance of being skipped. It only ever runs behind a cache hit — see
+	 * `visionSkipModel`.
+	 */
+	let requestCarriesImagesResolved: boolean | null = null;
+	const requestCarriesImages = () =>
+		(requestCarriesImagesResolved ??=
+			requestCarriesImageContent(requestBodyContext));
+
+	/**
+	 * The key model when this candidate must be skipped as known-blind, or null
+	 * when it must be attempted.
+	 *
+	 * The key is the combo slot's model override when one applied, otherwise the
+	 * request's own model, with any provider-routing suffix left intact — the
+	 * same expression `proxyWithAccount` records a refusal under (see
+	 * `visionKeyModel` there). The suffix is part of the key because it selects
+	 * which upstream answers, so the same model id pinned to two providers is two
+	 * capability questions.
+	 *
+	 * Evaluation order is the point of this function:
+	 *
+	 *     isVisionUnsupported(...)   one Map lookup — every candidate pays it
+	 *       && requestCarriesImages()  the body walk — only a hit pays it
+	 *
+	 * A cache entry can only exist for a pair that refused an *image* request, so
+	 * a hit is already strong evidence this request carries an image: the walk is
+	 * a confirmation, not a filter. Text-only traffic — the overwhelming majority
+	 * — never reaches it and pays one Map lookup per candidate, nothing else.
+	 * The confirmation is still needed because the same (account, model) pair can
+	 * serve a text-only request perfectly well, and the image gate (not this
+	 * cache) governs whether an image is forwarded at all.
+	 */
+	const visionSkipModel = (
+		candidate: Account,
+		slotModelOverride: string | null | undefined,
+	): string | null => {
+		const keyModel =
+			(slotModelOverride ? slotModelOverride : requestBodyContext.getModel()) ??
+			"";
+		if (!isVisionUnsupported(candidate.id, keyModel)) return null;
+		return requestCarriesImages() ? keyModel : null;
+	};
 
 	// A terminal CodeBuddy gateway rejection (11128) is the only failover
 	// outcome that carries a client-meaningful explanation, so it is kept
@@ -810,6 +877,22 @@ async function handleProxyRequest(
 			log.info(
 				`Attempting combo slot ${i}/${accounts.length - 1} on account ${accounts[i].name} with model "${modelOverride}"`,
 			);
+		}
+
+		// Skip a route whose upstream already refused image input for this exact
+		// model. Checked BEFORE the probe gate below, for two reasons: it is the
+		// cheaper test, and `getRateLimitProbeAdmission` takes the single-flight
+		// lease when it admits — a lease taken for a candidate we then skip would
+		// hold a recovering account's probe open for a request that was never
+		// going to be sent to it.
+		const blindModel = visionSkipModel(accounts[i], modelOverride);
+		if (blindModel !== null) {
+			visionSkips++;
+			log.debug(
+				`Skipping account ${accounts[i].name} for model "${blindModel}": ` +
+					`its upstream already refused image input for this pair, so the round-trip is not spent re-asking`,
+			);
+			continue;
 		}
 
 		const probeAdmission = getRateLimitProbeAdmission(accounts[i]);
@@ -879,38 +962,57 @@ async function handleProxyRequest(
 		if (filteredComboInfo?.slots[i]?.accountId === accounts[i].id) {
 			modelOverride = filteredComboInfo.slots[i].modelOverride;
 		}
-		log.info(
-			`All ${accounts.length} candidate account(s) were probe-gate suppressed; retrying account ${accounts[i].name} ungated`,
-		);
-		// This retry IS the request's terminal attempt by construction — the
-		// loop above already exhausted every candidate before falling through
-		// here. Unlike the loop's own `i === accounts.length - 1` check (which
-		// tracks whether the CURRENT iteration is the last one), `i` is always
-		// 0 in this block regardless of pool size, so that comparison would be
-		// a constant `false` for any pool with more than one candidate — the
-		// flag must instead depend only on whether this is combo routing.
-		response = await proxyWithAccount(
-			req,
-			url,
-			accounts[i],
-			requestMeta,
-			finalBodyBuffer,
-			finalCreateBodyStream,
-			i,
-			ctx,
-			modelOverride,
-			apiKeyId,
-			apiKeyName,
-			requestBodyContext,
-			!filteredComboInfo?.comboName,
-			(capture: () => Promise<Response | null>) => {
-				terminalRejection = capture;
-			},
-		);
+		// This retry was written for probe suppression, and it keeps that
+		// behaviour untouched: a candidate that is merely mid-recovery is still
+		// retried ungated. It must not, however, become a second door onto a route
+		// the loop just skipped as known-blind — when every candidate was skipped
+		// for refusing image input, `anyAccountAttempted` is false too, and
+		// re-issuing here would spend exactly the round-trip the skip exists to
+		// save. So the same test runs again on the one account this block would
+		// use, and a hit falls through to the normal exhaustion path instead.
+		// (`visionSkips` is not incremented: the loop already counted this
+		// candidate, since it checks vision before the probe gate.)
+		const retryBlindModel = visionSkipModel(accounts[i], modelOverride);
+		if (retryBlindModel !== null) {
+			log.debug(
+				`Not retrying account ${accounts[i].name} ungated for model "${retryBlindModel}": ` +
+					`it is known to refuse image input (${visionSkips} candidate(s) already skipped), ` +
+					`so this request falls through to the exhaustion path instead of re-asking a blind route`,
+			);
+		} else {
+			log.info(
+				`All ${accounts.length} candidate account(s) were probe-gate suppressed; retrying account ${accounts[i].name} ungated`,
+			);
+			// This retry IS the request's terminal attempt by construction — the
+			// loop above already exhausted every candidate before falling through
+			// here. Unlike the loop's own `i === accounts.length - 1` check (which
+			// tracks whether the CURRENT iteration is the last one), `i` is always
+			// 0 in this block regardless of pool size, so that comparison would be
+			// a constant `false` for any pool with more than one candidate — the
+			// flag must instead depend only on whether this is combo routing.
+			response = await proxyWithAccount(
+				req,
+				url,
+				accounts[i],
+				requestMeta,
+				finalBodyBuffer,
+				finalCreateBodyStream,
+				i,
+				ctx,
+				modelOverride,
+				apiKeyId,
+				apiKeyName,
+				requestBodyContext,
+				!filteredComboInfo?.comboName,
+				(capture: () => Promise<Response | null>) => {
+					terminalRejection = capture;
+				},
+			);
 
-		if (response) {
-			recordXaiAffinityIfServed(accounts[i]);
-			return response;
+			if (response) {
+				recordXaiAffinityIfServed(accounts[i]);
+				return response;
+			}
 		}
 	}
 
@@ -966,6 +1068,24 @@ async function handleProxyRequest(
 			);
 			let anyFallbackAttempted = false;
 			for (let i = 0; i < fallbackAccounts.length; i++) {
+				// Same known-blind skip as the main loop, and ahead of the probe gate
+				// for the same two reasons. The fallback path is never combo-routed
+				// (comboName was cleared before the re-selection), so there is no slot
+				// override and the key model is the request's own — which is a
+				// DIFFERENT key from the one a combo slot's pin produced, so a slot
+				// skipped above does not skip the same account here. Correct: without
+				// the pin a different upstream may answer, and that upstream has not
+				// refused anything yet.
+				const blindModel = visionSkipModel(fallbackAccounts[i], null);
+				if (blindModel !== null) {
+					visionSkips++;
+					log.debug(
+						`Skipping fallback account ${fallbackAccounts[i].name} for model "${blindModel}": ` +
+							`its upstream already refused image input for this pair, so the round-trip is not spent re-asking`,
+					);
+					continue;
+				}
+
 				const probeAdmission = getRateLimitProbeAdmission(fallbackAccounts[i]);
 				if (probeAdmission === "suppressed") {
 					continue;
@@ -1013,36 +1133,48 @@ async function handleProxyRequest(
 			// suppressed fallback pool must not fall through to a hard failure.
 			if (!anyFallbackAttempted && fallbackAccounts.length > 0) {
 				const i = 0;
-				log.info(
-					`All ${fallbackAccounts.length} fallback candidate(s) were probe-gate suppressed; retrying account ${fallbackAccounts[i].name} ungated`,
-				);
-				// Same rationale as the main-loop block above: this retry is the
-				// terminal attempt by construction (the fallback loop already
-				// exhausted every candidate), and the fallback path is never
-				// combo-routed (comboName was cleared before re-selection), so the
-				// flag is unconditionally true here.
-				response = await proxyWithAccount(
-					req,
-					url,
-					fallbackAccounts[i],
-					requestMeta,
-					finalBodyBuffer,
-					finalCreateBodyStream,
-					i,
-					ctx,
-					undefined,
-					apiKeyId,
-					apiKeyName,
-					requestBodyContext,
-					true,
-					(capture: () => Promise<Response | null>) => {
-						terminalRejection = capture;
-					},
-				);
+				// And the same guard as the main loop's ungated retry: it exists for
+				// probe suppression, not as a second door onto a route the fallback
+				// loop just skipped as known-blind.
+				const retryBlindModel = visionSkipModel(fallbackAccounts[i], null);
+				if (retryBlindModel !== null) {
+					log.debug(
+						`Not retrying fallback account ${fallbackAccounts[i].name} ungated for model "${retryBlindModel}": ` +
+							`it is known to refuse image input (${visionSkips} candidate(s) already skipped), ` +
+							`so this request falls through to the exhaustion path instead of re-asking a blind route`,
+					);
+				} else {
+					log.info(
+						`All ${fallbackAccounts.length} fallback candidate(s) were probe-gate suppressed; retrying account ${fallbackAccounts[i].name} ungated`,
+					);
+					// Same rationale as the main-loop block above: this retry is the
+					// terminal attempt by construction (the fallback loop already
+					// exhausted every candidate), and the fallback path is never
+					// combo-routed (comboName was cleared before re-selection), so the
+					// flag is unconditionally true here.
+					response = await proxyWithAccount(
+						req,
+						url,
+						fallbackAccounts[i],
+						requestMeta,
+						finalBodyBuffer,
+						finalCreateBodyStream,
+						i,
+						ctx,
+						undefined,
+						apiKeyId,
+						apiKeyName,
+						requestBodyContext,
+						true,
+						(capture: () => Promise<Response | null>) => {
+							terminalRejection = capture;
+						},
+					);
 
-				if (response) {
-					recordXaiAffinityIfServed(fallbackAccounts[i]);
-					return response;
+					if (response) {
+						recordXaiAffinityIfServed(fallbackAccounts[i]);
+						return response;
+					}
 				}
 			}
 		} else {

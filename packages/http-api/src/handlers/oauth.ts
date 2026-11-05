@@ -28,7 +28,10 @@ import {
 	initiateDeviceFlow as initiateQwenDeviceFlow,
 	pollForToken as pollQwenForToken,
 } from "@better-ccflare/providers/qwen";
-import { clearAccountRefreshCache } from "@better-ccflare/proxy";
+import {
+	clearAccountRefreshCache,
+	clearVisionCapability,
+} from "@better-ccflare/proxy";
 import { startUsagePollingForNewAccount } from "./usage-polling-start";
 
 const log = new Logger("OAuthHandler");
@@ -317,6 +320,10 @@ export function createQwenReauthHandler(dbOps: DatabaseOperations) {
 						],
 					);
 					clearAccountRefreshCache(account.id);
+					// Re-authenticating can land on a different upstream account, so the
+					// image refusals learned against the old credentials no longer
+					// describe this route (same rule as the account reload handler).
+					clearVisionCapability(account.id);
 
 					qwenSessions.set(sessionId, {
 						status: "complete",
@@ -581,6 +588,10 @@ export function createCodexReauthHandler(dbOps: DatabaseOperations) {
 						],
 					);
 					clearAccountRefreshCache(account.id);
+					// Re-authenticating can land on a different upstream account, so the
+					// image refusals learned against the old credentials no longer
+					// describe this route (same rule as the account reload handler).
+					clearVisionCapability(account.id);
 
 					codexSessions.set(sessionId, {
 						status: "complete",
@@ -803,6 +814,10 @@ export function createAnthropicReauthCallbackHandler(
 					flowData,
 				);
 				clearAccountRefreshCache(account.id);
+				// Re-authenticating can land on a different upstream account, so the
+				// image refusals learned against the old credentials no longer
+				// describe this route (same rule as the account reload handler).
+				clearVisionCapability(account.id);
 
 				dbOps.deleteOAuthSession(sessionId);
 
@@ -1282,6 +1297,10 @@ export function createCodeBuddyReauthHandler(dbOps: DatabaseOperations) {
 						],
 					);
 					clearAccountRefreshCache(account.id);
+					// Re-authenticating can land on a different upstream account, so the
+					// image refusals learned against the old credentials no longer
+					// describe this route (same rule as the account reload handler).
+					clearVisionCapability(account.id);
 
 					codebuddySessions.set(sessionId, {
 						status: "complete",

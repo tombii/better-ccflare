@@ -46,6 +46,7 @@ import {
 	clearModelCooldownsForAccount,
 	clearOpenAICompatibleModelCacheForAccount,
 	clearPendingRotation,
+	clearVisionCapability,
 	getPeakHoursState,
 	getUsageThrottleStatus,
 	refreshCodexUsageForAccount,
@@ -1261,6 +1262,11 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 			clearFamilyExhaustionForAccount(accountId);
 			clearModelCooldownsForAccount(accountId);
 			clearDerivedProviderModelDefaultsForAccount(accountId);
+			// The learned image refusals are the one account-keyed cache here that
+			// DOES expire on its own, so this is tidiness rather than a leak fix:
+			// they describe a route that no longer exists, and dropping them keeps
+			// the store free of entries for accounts that are gone.
+			clearVisionCapability(accountId);
 
 			return jsonResponse({
 				success: true,
@@ -3557,6 +3563,11 @@ export function createAccountCustomEndpointUpdateHandler(
 
 			log.info(`Updated custom endpoint for account ${accountId}`);
 
+			// A different endpoint is a different upstream, and "this model cannot
+			// accept image input" was learned from the old one. Drop this account's
+			// learned refusals so the new endpoint is asked rather than skipped.
+			clearVisionCapability(accountId);
+
 			return jsonResponse({
 				success: true,
 				message: "Custom endpoint updated successfully",
@@ -3670,6 +3681,13 @@ export function createAccountModelMappingsUpdateHandler(
 			]);
 
 			log.info(`Updated model mappings for account ${accountId}`);
+
+			// The learned-refusal key is the model the request ASKED for, while the
+			// mapping decides which upstream model actually serves it. Remapping
+			// therefore changes the truth behind an unchanged key: an entry learned
+			// from the old target would skip a route whose new target may read
+			// images fine. Drop this account's entries so the new mapping is asked.
+			clearVisionCapability(accountId);
 
 			return jsonResponse({
 				success: true,
@@ -3822,6 +3840,11 @@ export function createAccountModelFallbacksUpdateHandler(
 				`Merged model fallbacks into model_mappings for account ${accountId}`,
 			);
 
+			// Same invalidation as the model-mappings update above: fallbacks land in
+			// model_mappings, so they change which upstream model can end up serving a
+			// request whose learned-refusal key stays the same.
+			clearVisionCapability(accountId);
+
 			return jsonResponse({
 				success: true,
 				message: "Model fallbacks merged into model mappings",
@@ -3948,6 +3971,12 @@ export function createAccountReloadHandler(dbOps: DatabaseOperations) {
 
 			// Clear usage cache for this account to prevent memory leaks
 			usageCache.delete(accountId);
+
+			// Reload exists to pick up credentials written behind this server's back
+			// (a CLI re-authentication, a hand-edited row). New credentials can mean a
+			// different upstream account or organisation, so the image refusals
+			// learned against the old ones no longer describe this route.
+			clearVisionCapability(accountId);
 
 			log.info(`Token reload triggered for account '${account.name}'`);
 

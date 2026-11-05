@@ -67,6 +67,7 @@ import { handleProxyError, processProxyResponse } from "./response-processor";
 import { isRetryable429 } from "./retryable-429";
 import { getValidAccessToken } from "./token-manager";
 import { collectWindows } from "./usage-throttling";
+import { markVisionUnsupported } from "./vision-capability";
 import { peekSseForZai1305 } from "./zai-1305";
 
 const log = new Logger("ProxyOperations");
@@ -1519,6 +1520,38 @@ export async function proxyWithAccount(
 			}
 		}
 
+		/**
+		 * The model half of the (account, model) key this attempt's image
+		 * verdict is recorded under. It has to be the exact string proxy.ts
+		 * computes before it decides whether to skip a candidate — a write and a
+		 * read that disagree by one character are two keys for one route, and the
+		 * cache never hits.
+		 *
+		 * Both sides therefore use the same expression over the same inputs: the
+		 * combo slot's model override when one applied, otherwise the request's
+		 * own model, read from the very same `RequestBodyContext` the caller
+		 * handed in (`baseBodyContext` IS `requestBodyContext` whenever a context
+		 * is passed, which every routing call site does).
+		 *
+		 * Deliberately NOT `effectiveBodyContext.getModel()`: that is the model
+		 * AFTER `withPatchedModel` stripped a provider-routing suffix off the
+		 * override, so a suffixed slot pin would be written under the bare id and
+		 * read back under the suffixed one. The suffix stays in the key because it
+		 * selects which upstream answers, so `m {"only":["a"]}` and `m` are two
+		 * different capability questions even on the same account (see
+		 * vision-capability.ts, constraint 3).
+		 *
+		 * The truthiness test mirrors the override guard above exactly, so an
+		 * override that did NOT apply — an empty-string passthrough slot — falls
+		 * back to the body's model on both sides. With no body at all this is blank
+		 * unless a slot override named a model, and either way nothing is recorded:
+		 * a body-less request cannot carry an image, so the gate below never lets it
+		 * reach a write, and `markVisionUnsupported` treats a blank model as a no-op
+		 * anyway.
+		 */
+		const visionKeyModel =
+			(modelOverride ? modelOverride : baseBodyContext.getModel()) ?? "";
+
 		// Stage the original request body + headers for cache keepalive replay.
 		// Uses the pre-transform body (effectiveBodyBuffer may have a model override
 		// patched in, so use the original requestBodyBuffer for a faithful replay).
@@ -2642,6 +2675,22 @@ export async function proxyWithAccount(
 				requestCarriesImageContent(effectiveBodyContext));
 
 		/**
+		 * Whether the model-cycling fallback below has re-issued this attempt
+		 * against one of the account's OTHER configured models. Declared here,
+		 * before the closure that reads it, because `classifyRetriedUpstreamResponse`
+		 * is defined above that loop and invoked long after it.
+		 *
+		 * It exists to keep the vision cache honest. The cache key is the model the
+		 * request ASKED for, so a refusal is only evidence about that key when the
+		 * response being classified is a response to that model. After cycling, the
+		 * response belongs to a fallback alias reached through a transient 429/404 on
+		 * the requested one: recording it would sideline a route whose primary may
+		 * read images perfectly well the moment that transient clears — a capability
+		 * claim the evidence does not support, for up to a full TTL.
+		 */
+		let modelCycledTo = false;
+
+		/**
 		 * The classification chain as a retry response has to see it: every
 		 * handler above, in the first-response order, minus the model-cycling
 		 * fallback loop.
@@ -2695,6 +2744,20 @@ export async function proxyWithAccount(
 				log.warn(
 					`Account ${account.name} rejected image input on an in-place retry — failing over to next model/account`,
 				);
+				// Second confirmed-rejection site: an in-place retry can refuse the
+				// image just as the first attempt did, and its `return null` fails
+				// over exactly the same way, so it has to teach the cache too —
+				// otherwise a pair that only ever refuses on the retried response
+				// would be re-probed on every image request forever. Same key as the
+				// first-response site: the retry replays the same body against the
+				// same account and the same requested model, so it is the same
+				// (account, model) capability question — unless the model-cycling
+				// fallback had already swapped that model out, in which case the
+				// refusal is a fallback alias's and says nothing about the key. See
+				// `modelCycledTo`.
+				if (!modelCycledTo) {
+					markVisionUnsupported(account.id, visionKeyModel);
+				}
 				// Drain the response being abandoned: the `retried` argument, not the
 				// outer `response` binding it aliases at today's only call site. The
 				// classifier read a clone, so this body is still unread, and draining
@@ -2779,6 +2842,17 @@ export async function proxyWithAccount(
 				`Account ${account.name}${rejectedModel ? ` (model=${rejectedModel})` : ""} ` +
 					`rejected image input — failing over to next model/account`,
 			);
+			// Learn the refusal: this is the first of the two confirmed-rejection
+			// sites to run (the other is `classifyRetriedUpstreamResponse` above,
+			// which only sees a response that needed an in-place retry), and both end
+			// in the `return null` that fails the image over to the next slot /
+			// account. Recording the pair here is what lets routing skip it on the
+			// NEXT image request instead of paying the same round-trip — body
+			// uploaded, 400 read, response drained — every time. Keyed on
+			// `visionKeyModel`, not on `rejectedModel` above: the log wants the
+			// stripped model that actually went upstream, the cache wants the
+			// string the skip site computes.
+			markVisionUnsupported(account.id, visionKeyModel);
 		}
 
 		if (visionUnsupported || (await isModelUnavailableError(rawResponse))) {
@@ -2983,6 +3057,9 @@ export async function proxyWithAccount(
 							nextBareModel,
 						);
 					}
+					// From here on, every response belongs to `nextModel`, not to the
+					// model the request asked for. See `modelCycledTo`.
+					modelCycledTo = true;
 
 					rawResponse = await checkZai1305(
 						rawResponse,

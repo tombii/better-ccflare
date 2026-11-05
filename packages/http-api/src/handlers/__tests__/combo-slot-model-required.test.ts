@@ -1,4 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import {
+	clearVisionCapability,
+	isVisionUnsupported,
+	markVisionUnsupported,
+} from "@better-ccflare/proxy";
 import { createSlotAddHandler, createSlotUpdateHandler } from "../combos";
 
 /**
@@ -161,5 +166,71 @@ describe("combo slot: model required depending on the provider", () => {
 
 		expect(res.status).toBe(200);
 		expect(db.updated).toEqual([{ model: "" }]);
+	});
+});
+
+/**
+ * A slot's model pin is the model half of the (account, model) key the vision
+ * capability cache learns image refusals under, so a successful repin drops the
+ * store: what is cached was learned from the previous topology, and the new
+ * routing should be asked rather than skipped.
+ */
+describe("combo slot update: learned image refusals are dropped", () => {
+	function putSlot(body: unknown, comboId = "combo-1", slotId = "slot-1") {
+		return new Request(`http://local/api/combos/${comboId}/slots/${slotId}`, {
+			method: "PUT",
+			body: JSON.stringify(body),
+		});
+	}
+
+	afterEach(() => {
+		clearVisionCapability();
+	});
+
+	it("clears the whole cache after a successful repin", async () => {
+		const slots: Slot[] = [
+			{
+				id: "slot-1",
+				combo_id: "combo-1",
+				account_id: "acc-1",
+				model: "old-pin",
+				priority: 0,
+				enabled: true,
+			},
+		];
+		const db = makeDbOps("codex", slots);
+		markVisionUnsupported("acc-1", "old-pin");
+		markVisionUnsupported("acc-unrelated", "another-model");
+		expect(isVisionUnsupported("acc-1", "old-pin")).toBe(true);
+
+		const res = await createSlotUpdateHandler(asOps(db.ops))(
+			putSlot({ model: "new-pin" }),
+			"combo-1",
+			"slot-1",
+		);
+
+		expect(res.status).toBe(200);
+		expect(db.updated).toEqual([{ model: "new-pin" }]);
+		// Global rather than account-scoped: this handler resolves the slot by id
+		// and only loads its account on the passthrough-validation path, so the
+		// account is not always known here.
+		expect(isVisionUnsupported("acc-1", "old-pin")).toBe(false);
+		expect(isVisionUnsupported("acc-unrelated", "another-model")).toBe(false);
+	});
+
+	it("leaves the cache alone when the update is rejected", async () => {
+		// The combo in the path owns no slots, so the lookup 404s before any write.
+		const db = makeDbOps("codex", []);
+		markVisionUnsupported("acc-1", "old-pin");
+
+		const res = await createSlotUpdateHandler(asOps(db.ops))(
+			putSlot({ model: "" }, "other-combo"),
+			"other-combo",
+			"slot-1",
+		);
+
+		expect(res.status).toBe(404);
+		expect(db.updated).toHaveLength(0);
+		expect(isVisionUnsupported("acc-1", "old-pin")).toBe(true);
 	});
 });
