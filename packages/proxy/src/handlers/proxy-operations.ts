@@ -2594,13 +2594,15 @@ export async function proxyWithAccount(
 		// (the primary), so start at index 1.
 		let zai1305AlreadyChecked = false;
 
-		// The request carried images and this model cannot read them. The
-		// fallback path below is entered exactly as for a rate-limited model
-		// (`isModelUnavailableError` is true for any 429 and for model-not-found
-		// 400/404s), so nothing branches here. The log line is the only extra
-		// affordance: it names the cause, which the generic rate-limit wording
-		// further down would otherwise hide.
-		if (await isVisionUnsupportedError(rawResponse)) {
+		// The request carried images and this model cannot read them. Classified
+		// separately from `isModelUnavailableError`: that predicate answers only
+		// for 429s and model-not-found 400/404s, so an image rejection matches
+		// neither and would otherwise be forwarded to the client. The flag is
+		// consumed below to reach the same model/slot fallback a rate-limited
+		// model gets, so the next combo slot / account is tried and this one is
+		// not benched.
+		const visionUnsupported = await isVisionUnsupportedError(rawResponse);
+		if (visionUnsupported) {
 			let rejectedModel: string | null = null;
 			if (effectiveBodyBuffer) rejectedModel = effectiveBodyContext.getModel();
 			log.warn(
@@ -2609,7 +2611,7 @@ export async function proxyWithAccount(
 			);
 		}
 
-		if (await isModelUnavailableError(rawResponse)) {
+		if (visionUnsupported || (await isModelUnavailableError(rawResponse))) {
 			// Log 429 response headers for debugging upstream rate-limit info
 			if (rawResponse.status === 429) {
 				const rlHeaders: Record<string, string> = {};
@@ -2633,11 +2635,26 @@ export async function proxyWithAccount(
 			let requestedModel: string | null = null;
 			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
 
-			const outOfCreditsOutcome = await classifyOutOfCredits429(
-				rawResponse,
-				requestedModel,
-			);
-			if (outOfCreditsOutcome !== NOT_CLASSIFIED) return outOfCreditsOutcome;
+			// Quota classification reads response headers; an image rejection is a
+			// 400 with no rate-limit metadata, so skip it rather than risk a
+			// misclassification, and go straight to the fallback decision below.
+			if (!visionUnsupported) {
+				const outOfCreditsOutcome = await classifyOutOfCredits429(
+					rawResponse,
+					requestedModel,
+				);
+				if (outOfCreditsOutcome !== NOT_CLASSIFIED) return outOfCreditsOutcome;
+			}
+
+			// An image rejection always fails over to the next account / combo
+			// slot. Unlike model-not-found, there is no model-list cycling to try
+			// here: the model list is per-account and re-trying the same gateway
+			// with a different alias of the same model would just be rejected
+			// again, and `classifyNoFallback429` below would forward the 400 and
+			// end the request. This covers both shapes — no model on the body, and
+			// an account whose model list has a single entry (the alias case,
+			// where `modelList.length <= 1` still holds).
+			if (visionUnsupported) return null;
 
 			if (requestedModel) {
 				const modelList = getModelList(requestedModel, account);

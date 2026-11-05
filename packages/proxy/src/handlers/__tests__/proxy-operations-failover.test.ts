@@ -7,6 +7,7 @@ import {
 	mock,
 	spyOn,
 } from "bun:test";
+import { getModelList } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import {
@@ -381,6 +382,114 @@ describe("proxyWithAccount — 429 failover", () => {
 		);
 
 		expect(result).toBeNull();
+	});
+});
+
+describe("proxyWithAccount — image-input rejection failover", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	function visionRejection(): Response {
+		return jsonResponse(
+			{ error: { message: "This model does not support image input." } },
+			400,
+		);
+	}
+
+	// Regression: the vision rejection was logged but never acted on, so a 400
+	// fell through `isModelUnavailableError` (which only answers for 429s and
+	// model-not-found) and was forwarded to the client instead of failing over.
+	it("returns null (failover) when upstream rejects image input and no fallback is configured", async () => {
+		globalThis.fetch = mock(async () => visionRejection());
+
+		const bodyBuffer = makeRequestBody();
+		const result = await proxyWithAccount(
+			makeRequest(bodyBuffer),
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount(), // openai-compatible, no model_fallbacks
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+		);
+
+		expect(result).toBeNull();
+	});
+
+	// Same outcome for the alias shape: a single-entry model list (the alias is
+	// the only entry) must fail over rather than forward the 400.
+	it("returns null (failover) when the account's model list has a single alias", async () => {
+		globalThis.fetch = mock(async () => visionRejection());
+
+		const bodyBuffer = makeRequestBody();
+		const account = makeAccount({
+			model_mappings: JSON.stringify({ sonnet: "qwen/qwen3.6-plus:free" }),
+		});
+		expect(getModelList("claude-sonnet-4-5", account)).toHaveLength(1);
+
+		const result = await proxyWithAccount(
+			makeRequest(bodyBuffer),
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+		);
+
+		expect(result).toBeNull();
+	});
+
+	it("does not fail over on a 400 that merely mentions images", async () => {
+		let fetchCalls = 0;
+		globalThis.fetch = mock(async () => {
+			fetchCalls++;
+			return jsonResponse(
+				{
+					error: {
+						message:
+							"Your credit balance is too low to access this model's image features.",
+					},
+				},
+				400,
+			);
+		});
+
+		const bodyBuffer = makeRequestBody();
+		let forwarded = false;
+		try {
+			const result = await proxyWithAccount(
+				makeRequest(bodyBuffer),
+				new URL("https://proxy.local/v1/messages"),
+				makeAccount(),
+				makeRequestMeta(),
+				bodyBuffer,
+				() => undefined,
+				0,
+				makeProxyContext(),
+			);
+			forwarded = result !== null;
+		} catch (e) {
+			// Reaching forwardToClient is the behaviour under test: it needs
+			// UsageCollector, which unit tests do not wire. Any other error is real.
+			const msg = e instanceof Error ? e.message : String(e);
+			if (!msg.includes("UsageCollector not initialized")) throw e;
+			forwarded = true;
+		}
+
+		// Forwarded to the client, not treated as failover — and therefore not
+		// retried.
+		expect(forwarded).toBe(true);
+		expect(fetchCalls).toBe(1);
 	});
 });
 

@@ -210,9 +210,7 @@ export function convertAnthropicRequestToOpenAI(
 	}
 
 	// Images found inside tool_result blocks. OpenAI's `tool` role is text-only,
-	// so these cannot ride along with the tool output; they are collected here
-	// and appended as one user turn after the message loop (see below).
-	const hoistedToolImages: OpenAIContentPart[] = [];
+	// so these cannot ride along with the tool output.
 
 	// Add user/assistant messages
 	if (anthropicData.messages && Array.isArray(anthropicData.messages)) {
@@ -311,6 +309,11 @@ export function convertAnthropicRequestToOpenAI(
 				const toolResults = message.content.filter(
 					(item): item is AnthropicToolResult => item.type === "tool_result",
 				);
+				// Images hoisted out of THIS message's tool results. Emitted as a
+				// user turn immediately after the tool messages and before any later
+				// turn, so a screenshot stays beside the tool result that produced it
+				// instead of drifting to the end of a long conversation.
+				const hoistedToolImages: OpenAIContentPart[] = [];
 				for (const toolResult of toolResults) {
 					let toolContent: string;
 					if (typeof toolResult.content === "string") {
@@ -346,6 +349,15 @@ export function convertAnthropicRequestToOpenAI(
 					});
 				}
 
+				// Emit this message's hoisted tool images now — right after its tool
+				// messages, before any later turn. Adding them to the end of the
+				// conversation instead would re-present every historical screenshot
+				// as fresh input on each subsequent request, detached from the tool
+				// result that produced it.
+				if (hoistedToolImages.length > 0) {
+					messages.push({ role: "user", content: hoistedToolImages });
+				}
+
 				if (
 					openaiMessage.content === null &&
 					!openaiMessage.tool_calls &&
@@ -371,15 +383,6 @@ export function convertAnthropicRequestToOpenAI(
 				});
 			}
 		}
-	}
-
-	// Images extracted from tool results get their own user turn. Keeping them
-	// in the `tool` message would mean JSON-stringifying binary data the model
-	// cannot see; a trailing user turn is the shape OpenAI vision models
-	// actually read. Only emitted when at least one tool result carried an
-	// image, so text-only conversations are byte-identical to before.
-	if (hoistedToolImages.length > 0) {
-		messages.push({ role: "user", content: hoistedToolImages });
 	}
 
 	openaiRequest.messages = messages;

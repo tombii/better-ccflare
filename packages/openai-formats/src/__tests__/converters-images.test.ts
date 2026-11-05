@@ -198,6 +198,84 @@ describe("convertAnthropicRequestToOpenAI — images in tool results", () => {
 		]);
 	});
 
+	it("keeps each screenshot next to its own tool result across rounds", () => {
+		const screenshotRound = (id: string, data: string) => [
+			{
+				role: "assistant" as const,
+				content: [
+					{
+						type: "tool_use" as const,
+						id,
+						name: "Read",
+						input: { path: `${id}.png` },
+					},
+				],
+			},
+			{
+				role: "user" as const,
+				content: [
+					{
+						type: "tool_result" as const,
+						tool_use_id: id,
+						content: [
+							{
+								type: "image" as const,
+								source: {
+									type: "base64" as const,
+									media_type: "image/png",
+									data,
+								},
+							},
+						],
+					},
+				],
+			},
+		];
+
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{ role: "user", content: "first" },
+					...screenshotRound("t1", "FIRST"),
+					{ role: "assistant", content: "looked at first" },
+					...screenshotRound("t2", "SECOND"),
+					{ role: "user", content: [{ type: "text", text: "compare" }] },
+				],
+			}),
+		);
+
+		// Roles must read: user, assistant(tool_calls), tool, user(image),
+		// assistant, assistant(tool_calls), tool, user(image), user("compare").
+		// The image turn must follow its OWN tool message, never trail the
+		// conversation.
+		expect(result.messages.map((m) => m.role)).toEqual([
+			"user",
+			"assistant",
+			"tool",
+			"user",
+			"assistant",
+			"assistant",
+			"tool",
+			"user",
+			"user",
+		]);
+
+		expect(result.messages[3]?.content).toEqual([
+			{
+				type: "image_url",
+				image_url: { url: "data:image/png;base64,FIRST" },
+			},
+		]);
+		expect(result.messages[7]?.content).toEqual([
+			{
+				type: "image_url",
+				image_url: { url: "data:image/png;base64,SECOND" },
+			},
+		]);
+		// The final turn is the client's own text, not a trailing image blob.
+		expect(result.messages[8]?.content).toBe("compare");
+	});
+
 	it("does not add a user turn when no tool result carries an image", () => {
 		const before = convertAnthropicRequestToOpenAI(
 			anthropicRequest({
