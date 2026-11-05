@@ -34,6 +34,13 @@ export interface RequestMeta {
 	comboName?: string | null;
 	/** Combo slot index being attempted (set per-iteration in proxy loop) */
 	comboSlotIndex?: number | null;
+	/**
+	 * Set by `proxyWithAccount` when this attempt failed because the upstream
+	 * rejected the request's image input. Reset before each attempt by the
+	 * caller loop, which counts the trues: every attempt rejecting on vision is
+	 * a request-level 400, not an exhausted pool.
+	 */
+	visionRejected?: boolean;
 	/** Per-client session id (from request body metadata.user_id) for session-affinity routing. */
 	clientSessionId?: string | null;
 	/** Model the client originally requested, before any agent-preference rewrite. */

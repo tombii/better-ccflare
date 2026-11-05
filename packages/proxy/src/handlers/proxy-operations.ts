@@ -2620,6 +2620,7 @@ export async function proxyWithAccount(
 				log.warn(
 					`Account ${account.name} rejected image input on an in-place retry — failing over to next model/account`,
 				);
+				requestMeta.visionRejected = true;
 				cancelDiscardedResponseBody(response);
 				return null;
 			}
@@ -2741,6 +2742,7 @@ export async function proxyWithAccount(
 			// drain it before abandoning it (#273 / #382), as every other
 			// discard-then-fail-over site does.
 			if (visionUnsupported) {
+				requestMeta.visionRejected = true;
 				cancelDiscardedResponseBody(rawResponse);
 				return null;
 			}
@@ -3598,8 +3600,23 @@ export const POOL_EXHAUSTED_MAX_RETRY_AFTER_SECONDS = 3600;
  * differ — so SDK clients keep treating the response as a 503 transient.
  * Downstream consumers that need to differentiate (e.g. the AO fleet reaper)
  * read the JSON body.
+ *
+ * `vision_unsupported` means every candidate rejected the request's image
+ * input. It is NOT an exhaustion state: no account is benched, nothing is
+ * cooling down, and retrying the same request cannot succeed, so the wait
+ * signals are omitted. It rides the same envelope because that is what tells
+ * a client "this is a routing outcome, not a mid-stream failure", but it is
+ * a 400 subclass by nature.
  */
-export type PoolExhaustionKind = "pool_exhausted" | "circuit_open";
+export type PoolExhaustionKind =
+	| "pool_exhausted"
+	| "circuit_open"
+	| "vision_unsupported";
+
+/** Client-facing message for the one cause that retrying cannot fix. */
+export const VISION_UNSUPPORTED_MESSAGE =
+	"Image input is not supported by any model eligible for this request. " +
+	"Remove the image, or route the request to a model that accepts image input.";
 
 /**
  * Per-account reason values emitted in `accounts[].reason`.
@@ -3615,6 +3632,7 @@ export type PoolExhaustionAccountReason =
 	| "usage_exhausted"
 	| "rate_limited"
 	| "circuit_open"
+	| "vision_unsupported"
 	| "unavailable";
 
 /**
@@ -3661,6 +3679,7 @@ export function createPoolExhaustedResponse(
 ): Response {
 	const now = Date.now();
 	const isCircuitOpen = kind === "circuit_open";
+	const isVisionUnsupported = kind === "vision_unsupported";
 
 	// Build account info list — usage-exhausted outranks cooldown because the
 	// client needs the longer reset horizon (weekly vs minutes-long cooldowns)
@@ -3678,17 +3697,22 @@ export function createPoolExhaustedResponse(
 				usage.extraUsageAvailable,
 			);
 
-		const reason: PoolExhaustionAccountReason = isCircuitOpen
-			? "circuit_open"
-			: account.requires_reauth
-				? "requires_reauth"
-				: account.paused
-					? "paused"
-					: usageExhausted
-						? "usage_exhausted"
-						: account.rate_limited_until && account.rate_limited_until > now
-							? "rate_limited"
-							: "unavailable";
+		const reason: PoolExhaustionAccountReason = isVisionUnsupported
+			? // The account is healthy and was tried; it simply could not read the
+				// image. Reporting a cooldown reason here would send the fleet reaper
+				// off to pause session spawns for something that will not recover.
+				"vision_unsupported"
+			: isCircuitOpen
+				? "circuit_open"
+				: account.requires_reauth
+					? "requires_reauth"
+					: account.paused
+						? "paused"
+						: usageExhausted
+							? "usage_exhausted"
+							: account.rate_limited_until && account.rate_limited_until > now
+								? "rate_limited"
+								: "unavailable";
 
 		let availableAt: string | null = null;
 		if (!isCircuitOpen) {
@@ -3741,7 +3765,7 @@ export function createPoolExhaustedResponse(
 		recoveryCandidates.length > 0 ? Math.min(...recoveryCandidates) : null;
 
 	const nextAvailableAt =
-		!isCircuitOpen && earliestRecoveryMs !== null
+		!isCircuitOpen && !isVisionUnsupported && earliestRecoveryMs !== null
 			? new Date(earliestRecoveryMs).toISOString()
 			: null;
 
@@ -3772,26 +3796,37 @@ export function createPoolExhaustedResponse(
 			: CIRCUIT_OPEN_RETRY_AFTER_SECONDS
 		: usageAwareRetryAfterSeconds;
 
+	// vision_unsupported is the one kind a wait cannot fix, so it carries no
+	// Retry-After and no next_available_at. Everything else keeps the 503
+	// transient shape SDK clients already treat as retryable.
+	const headers: Record<string, string> = {
+		"Content-Type": "application/json",
+		// Wire shape stays identical regardless of kind — the cause lives
+		// in `error.type`. Downstream consumers that need to differentiate
+		// (fleet reaper, capacity-state consumers) read the JSON body.
+		"x-better-ccflare-pool-status": isVisionUnsupported
+			? "vision_unsupported"
+			: "exhausted",
+	};
+	if (!isVisionUnsupported) {
+		headers["Retry-After"] = String(retryAfterSeconds);
+	}
+
 	return new Response(
 		JSON.stringify({
 			type: "error",
 			error: {
 				type: kind,
-				message: ERROR_MESSAGES.POOL_EXHAUSTED,
+				message: isVisionUnsupported
+					? VISION_UNSUPPORTED_MESSAGE
+					: ERROR_MESSAGES.POOL_EXHAUSTED,
 				next_available_at: nextAvailableAt,
 				accounts: accountInfos,
 			},
 		}),
 		{
-			status: 503,
-			headers: {
-				"Content-Type": "application/json",
-				"Retry-After": String(retryAfterSeconds),
-				// Wire shape stays identical regardless of kind — the cause lives
-				// in `error.type`. Downstream consumers that need to differentiate
-				// (fleet reaper, capacity-state consumers) read the JSON body.
-				"x-better-ccflare-pool-status": "exhausted",
-			},
+			status: isVisionUnsupported ? 400 : 503,
+			headers,
 		},
 	);
 }

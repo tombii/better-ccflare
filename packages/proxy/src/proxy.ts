@@ -528,7 +528,7 @@ async function handleProxyRequest(
 				project: project ?? null,
 				projectAttributionSource: projectAttributionSource ?? "none",
 				agentAttributionSource: agentAttributionSource ?? "none",
-				responseStatus: 503,
+				responseStatus: disabledFallbackResponse.status,
 				responseHeaders: Object.fromEntries(
 					disabledFallbackResponse.headers.entries(),
 				),
@@ -794,6 +794,15 @@ async function handleProxyRequest(
 	// erase the explanation.
 	let terminalRejection: (() => Promise<Response | null>) | undefined;
 
+	// Why the loop is ending, when no account produced a response. `attempted`
+	// counts candidate accounts the loop actually handed to proxyWithAccount
+	// (probe-gate `continue`s are skipped, not attempted), and
+	// `visionRejections` counts those whose upstream rejected image input.
+	// Equal non-zero counts mean the client's image could not be served by any
+	// eligible route — a 400, not an exhausted pool.
+	let attempted = 0;
+	let visionRejections = 0;
+
 	for (let i = 0; i < accounts.length; i++) {
 		// For combo routing: enrich metadata with slot index and look up model override
 		let modelOverride: string | null = null;
@@ -821,6 +830,9 @@ async function handleProxyRequest(
 		}
 
 		anyAccountAttempted = true;
+		attempted++;
+		// proxyWithAccount stamps this per attempt; read it back after the call.
+		requestMeta.visionRejected = false;
 		// The last actually-attempted candidate is not always the last pool
 		// index: a probe-suppressed tail account gets skipped via `continue`
 		// above rather than attempted. Look ahead at the remaining candidates'
@@ -858,6 +870,8 @@ async function handleProxyRequest(
 			recordXaiAffinityIfServed(accounts[i]);
 			return response;
 		}
+
+		if (requestMeta.visionRejected) visionRejections++;
 
 		// Log combo slot failure
 		if (filteredComboInfo) {
@@ -972,6 +986,8 @@ async function handleProxyRequest(
 				}
 
 				anyFallbackAttempted = true;
+				attempted++;
+				requestMeta.visionRejected = false;
 				// Same rationale as the main loop above: a probe-suppressed tail
 				// candidate is skipped via `continue`, so the last pool index is
 				// not necessarily the last one actually attempted.
@@ -1007,6 +1023,7 @@ async function handleProxyRequest(
 					recordXaiAffinityIfServed(fallbackAccounts[i]);
 					return response;
 				}
+				if (requestMeta.visionRejected) visionRejections++;
 			}
 
 			// Same rationale as the main account loop above: an entirely
@@ -1021,6 +1038,8 @@ async function handleProxyRequest(
 				// exhausted every candidate), and the fallback path is never
 				// combo-routed (comboName was cleared before re-selection), so the
 				// flag is unconditionally true here.
+				attempted++;
+				requestMeta.visionRejected = false;
 				response = await proxyWithAccount(
 					req,
 					url,
@@ -1044,6 +1063,7 @@ async function handleProxyRequest(
 					recordXaiAffinityIfServed(fallbackAccounts[i]);
 					return response;
 				}
+				if (requestMeta.visionRejected) visionRejections++;
 			}
 		} else {
 			// Same no-accounts resolver order as the initial selection (Step 7):
@@ -1069,6 +1089,23 @@ async function handleProxyRequest(
 	const needsReauth = oauthAccounts.filter((acc) =>
 		isRefreshTokenLikelyExpired(acc),
 	);
+
+	// Every candidate that was actually tried rejected the request's image
+	// input. No account is benched and nothing is cooling down, so answering as
+	// an exhausted pool ("503, come back later") would be wrong twice over: the
+	// same image fails the same way forever. Answer 400 and name the cause.
+	// Placed before the needsReauth throw and terminalRejection — both would
+	// otherwise claim an all-vision-rejected request with a less accurate cause.
+	if (attempted > 0 && visionRejections === attempted) {
+		return await returnRefusal(
+			createPoolExhaustedResponse([], undefined, "vision_unsupported"),
+			"vision_unsupported",
+			// Attempts past the first are failovers; the dashboard reads this to
+			// show how far down the combo/pool the request got.
+			Math.max(0, attempted - 1),
+			requestMeta.comboName ?? null,
+		);
+	}
 
 	if (needsReauth.length > 0) {
 		// Quote account names to prevent command injection (defense-in-depth)

@@ -96,6 +96,10 @@ export const ERROR_MESSAGES = {
 export const LOCAL_REFUSAL_ERROR_TYPES: ReadonlySet<string> = new Set([
 	"pool_exhausted",
 	"circuit_open",
+	// Also this package's own refusal (createPoolExhaustedResponse with kind
+	// "vision_unsupported"): a request-level 400, not an upstream failure, so
+	// the auto-refresh scheduler must not count it against the endpoint.
+	"vision_unsupported",
 	"service_unavailable_error",
 ] as const satisfies readonly (
 	| PoolExhaustionKind

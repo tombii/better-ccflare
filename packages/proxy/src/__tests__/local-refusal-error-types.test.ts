@@ -22,7 +22,11 @@ import { LOCAL_REFUSAL_ERROR_TYPES } from "../handlers/proxy-types";
 
 type RefusalBody = { type?: unknown; error?: { type?: unknown } };
 
-const KINDS: readonly PoolExhaustionKind[] = ["pool_exhausted", "circuit_open"];
+const KINDS: readonly PoolExhaustionKind[] = [
+	"pool_exhausted",
+	"circuit_open",
+	"vision_unsupported",
+];
 
 describe("LOCAL_REFUSAL_ERROR_TYPES — pinned to its producers", () => {
 	for (const kind of KINDS) {
@@ -30,7 +34,8 @@ describe("LOCAL_REFUSAL_ERROR_TYPES — pinned to its producers", () => {
 			const response = createPoolExhaustedResponse([], undefined, kind);
 			const body = (await response.json()) as RefusalBody;
 
-			expect(response.status).toBe(503);
+			// vision_unsupported is a request-level 400; the rest are 503.
+			expect(response.status).toBe(kind === "vision_unsupported" ? 400 : 503);
 			expect(body.type).toBe("error");
 			expect(typeof body.error?.type).toBe("string");
 			expect(LOCAL_REFUSAL_ERROR_TYPES).toContain(body.error?.type as string);
@@ -52,6 +57,7 @@ describe("LOCAL_REFUSAL_ERROR_TYPES — pinned to its producers", () => {
 			"circuit_open",
 			"pool_exhausted",
 			"service_unavailable_error",
+			"vision_unsupported",
 		]);
 	});
 });
