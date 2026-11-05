@@ -792,7 +792,8 @@ function mentionsUnsupportedImageInput(text: string): boolean {
  * upstream's wording, and image nouns include `file`, `attachment` and
  * `modality`, so a text-only request's unrelated 400 can name one of them with
  * a negation. Without the gate that request is replayed across every account
- * and ends in a generic pool error instead of the 400 that explains it.
+ * and terminates as `vision_unsupported` instead of reaching the client as the
+ * 400 that explains it.
  */
 export async function isVisionUnsupportedError(
 	response: Response,
@@ -858,7 +859,7 @@ export async function isVisionUnsupportedError(
  * it on an unrelated 400 — "Unsupported parameter: 'modalities' is not supported
  * with this model", "The file 'file-abc' is not available for this
  * organization", "This endpoint does not accept attachments" — and would be
- * replayed across every combo slot and account, ending in a generic pool error
+ * replayed across every combo slot and account, ending as `vision_unsupported`
  * when the client should have got the 400 that explains the failure.
  *
  * Walks the parsed body rather than scanning bytes: a Claude Code conversation
@@ -2755,7 +2756,16 @@ export async function proxyWithAccount(
 				// fallback had already swapped that model out, in which case the
 				// refusal is a fallback alias's and says nothing about the key. See
 				// `modelCycledTo`.
+				//
+				// `visionRejected` is suppressed by the same guard, and for the same
+				// reason: it is the per-attempt half of the terminal verdict proxy.ts
+				// computes, and a refusal that is not evidence about the requested
+				// (account, model) pair must not be counted as one. Leaving it unset
+				// makes this attempt count as "capability unknown", which blocks the
+				// verdict and keeps the request retryable — the correct answer when
+				// the alias that refused may clear the moment the transient does.
 				if (!modelCycledTo) {
+					requestMeta.visionRejected = true;
 					markVisionUnsupported(account.id, visionKeyModel);
 				}
 				// Drain the response being abandoned: the `retried` argument, not the
@@ -2852,6 +2862,12 @@ export async function proxyWithAccount(
 			// `visionKeyModel`, not on `rejectedModel` above: the log wants the
 			// stripped model that actually went upstream, the cache wants the
 			// string the skip site computes.
+			//
+			// Also stamp the per-attempt signal the caller loop reads back: this
+			// site always answers for the model that was asked for (the
+			// model-cycling fallback runs later), so it needs none of the
+			// `modelCycledTo` guard the retried-response site above carries.
+			requestMeta.visionRejected = true;
 			markVisionUnsupported(account.id, visionKeyModel);
 		}
 
@@ -3758,13 +3774,31 @@ export const POOL_EXHAUSTED_MAX_RETRY_AFTER_SECONDS = 3600;
  *
  * `pool_exhausted` means "every account is genuinely exhausted (rate-limited,
  * usage-capped, paused, requires reauth, or otherwise filtered out)".
- * `circuit_open` means "the circuit breaker is refusing this account". The
- * wire shape stays identical — only `error.type` and `accounts[].reason`
- * differ — so SDK clients keep treating the response as a 503 transient.
- * Downstream consumers that need to differentiate (e.g. the AO fleet reaper)
- * read the JSON body.
+ * `circuit_open` means "the circuit breaker is refusing this account". For
+ * those two the wire shape stays identical — only `error.type` and
+ * `accounts[].reason` differ — so SDK clients keep treating the response as a
+ * 503 transient. Downstream consumers that need to differentiate (e.g. the AO
+ * fleet reaper) read the JSON body.
+ *
+ * `vision_unsupported` means every candidate ELIGIBLE for this request is known
+ * unable to serve its image: each was either attempted and refused, or is
+ * recorded in the vision capability cache as blind. It is NOT an exhaustion
+ * state — no account is benched, nothing is cooling down, and retrying the same
+ * request cannot succeed — so it is a 400 and carries no `Retry-After` and no
+ * `next_available_at`. It rides this envelope because that is what tells a
+ * client "this is a routing outcome, not a mid-stream failure". The caller that
+ * decides when the predicate holds is proxy.ts; see `everyEligibleRouteIsBlind`
+ * there for why it is built on the cache rather than on availability.
  */
-export type PoolExhaustionKind = "pool_exhausted" | "circuit_open";
+export type PoolExhaustionKind =
+	| "pool_exhausted"
+	| "circuit_open"
+	| "vision_unsupported";
+
+/** Client-facing message for the one cause a wait cannot fix. */
+export const VISION_UNSUPPORTED_MESSAGE =
+	"Image input is not supported by any model eligible for this request. " +
+	"Remove the image, or route the request to a model that accepts image input.";
 
 /**
  * Per-account reason values emitted in `accounts[].reason`.
@@ -3773,6 +3807,11 @@ export type PoolExhaustionKind = "pool_exhausted" | "circuit_open";
  * refused this account, NOT that the account's cooldown is expired. Reporting
  * a circuit-open account as `rate_limited` would mislead the reaper into
  * pausing session spawns for the wrong reason.
+ *
+ * `vision_unsupported` is distinct for the same kind of reason: the account is
+ * healthy and either was tried or is already known blind. Reporting a cooldown
+ * reason there would send the reaper off to pause session spawns for a state
+ * that will not recover.
  */
 export type PoolExhaustionAccountReason =
 	| "requires_reauth"
@@ -3780,6 +3819,7 @@ export type PoolExhaustionAccountReason =
 	| "usage_exhausted"
 	| "rate_limited"
 	| "circuit_open"
+	| "vision_unsupported"
 	| "unavailable";
 
 /**
@@ -3812,12 +3852,20 @@ const CIRCUIT_OPEN_RETRY_AFTER_SECONDS = 30;
  * also usage-capped for hours would otherwise lie to the client about when
  * capacity actually returns.
  *
+ * `kind: "vision_unsupported"` overrides every per-account reason the same way
+ * and additionally drops BOTH wait signals — `Retry-After` and
+ * `next_available_at` — and answers 400 instead of 503. There is nothing to
+ * wait for: the accounts listed are not recovering, they simply cannot read the
+ * image, and a client that respects `Retry-After` would sleep and then fail
+ * identically forever.
+ *
  * @param accounts - All accounts that were considered but are unavailable
  * @param usageSnapshots - Per-account usage telemetry (id → snapshot), used
  *   to identify usage_exhausted accounts and to derive `next_available_at` /
  *   `Retry-After` when an upstream reset time is known.
  * @param kind - Which top-level cause to report. Defaults to `"pool_exhausted"`.
- * @returns 503 response with the pool-exhausted JSON shape and Retry-After header
+ * @returns 503 response with the pool-exhausted JSON shape and Retry-After
+ *   header, or a 400 with neither for `"vision_unsupported"`.
  */
 export function createPoolExhaustedResponse(
 	accounts: Account[],
@@ -3826,6 +3874,7 @@ export function createPoolExhaustedResponse(
 ): Response {
 	const now = Date.now();
 	const isCircuitOpen = kind === "circuit_open";
+	const isVisionUnsupported = kind === "vision_unsupported";
 
 	// Build account info list — usage-exhausted outranks cooldown because the
 	// client needs the longer reset horizon (weekly vs minutes-long cooldowns)
@@ -3843,20 +3892,28 @@ export function createPoolExhaustedResponse(
 				usage.extraUsageAvailable,
 			);
 
-		const reason: PoolExhaustionAccountReason = isCircuitOpen
-			? "circuit_open"
-			: account.requires_reauth
-				? "requires_reauth"
-				: account.paused
-					? "paused"
-					: usageExhausted
-						? "usage_exhausted"
-						: account.rate_limited_until && account.rate_limited_until > now
-							? "rate_limited"
-							: "unavailable";
+		const reason: PoolExhaustionAccountReason = isVisionUnsupported
+			? // The account is healthy; it simply could not read the image. It was
+				// either attempted and refused, or is already recorded as blind.
+				"vision_unsupported"
+			: isCircuitOpen
+				? "circuit_open"
+				: account.requires_reauth
+					? "requires_reauth"
+					: account.paused
+						? "paused"
+						: usageExhausted
+							? "usage_exhausted"
+							: account.rate_limited_until && account.rate_limited_until > now
+								? "rate_limited"
+								: "unavailable";
 
 		let availableAt: string | null = null;
-		if (!isCircuitOpen) {
+		// Neither override kind advertises a recovery time: the breaker's own
+		// cooldown floors `Retry-After` instead, and a blind route has no recovery
+		// at all — pairing a `vision_unsupported` reason with an `available_at`
+		// would contradict the reason in the same object.
+		if (!isCircuitOpen && !isVisionUnsupported) {
 			if (usageExhausted && usage?.resetMs && usage.resetMs > now) {
 				availableAt = new Date(usage.resetMs).toISOString();
 			} else if (
@@ -3906,7 +3963,7 @@ export function createPoolExhaustedResponse(
 		recoveryCandidates.length > 0 ? Math.min(...recoveryCandidates) : null;
 
 	const nextAvailableAt =
-		!isCircuitOpen && earliestRecoveryMs !== null
+		!isCircuitOpen && !isVisionUnsupported && earliestRecoveryMs !== null
 			? new Date(earliestRecoveryMs).toISOString()
 			: null;
 
@@ -3937,26 +3994,37 @@ export function createPoolExhaustedResponse(
 			: CIRCUIT_OPEN_RETRY_AFTER_SECONDS
 		: usageAwareRetryAfterSeconds;
 
+	// vision_unsupported is the one kind a wait cannot fix, so it carries no
+	// Retry-After and no next_available_at and answers 400. Everything else keeps
+	// the 503 transient shape SDK clients already treat as retryable.
+	const headers: Record<string, string> = {
+		"Content-Type": "application/json",
+		// Wire shape stays identical regardless of kind — the cause lives
+		// in `error.type`. Downstream consumers that need to differentiate
+		// (fleet reaper, capacity-state consumers) read the JSON body.
+		"x-better-ccflare-pool-status": isVisionUnsupported
+			? "vision_unsupported"
+			: "exhausted",
+	};
+	if (!isVisionUnsupported) {
+		headers["Retry-After"] = String(retryAfterSeconds);
+	}
+
 	return new Response(
 		JSON.stringify({
 			type: "error",
 			error: {
 				type: kind,
-				message: ERROR_MESSAGES.POOL_EXHAUSTED,
+				message: isVisionUnsupported
+					? VISION_UNSUPPORTED_MESSAGE
+					: ERROR_MESSAGES.POOL_EXHAUSTED,
 				next_available_at: nextAvailableAt,
 				accounts: accountInfos,
 			},
 		}),
 		{
-			status: 503,
-			headers: {
-				"Content-Type": "application/json",
-				"Retry-After": String(retryAfterSeconds),
-				// Wire shape stays identical regardless of kind — the cause lives
-				// in `error.type`. Downstream consumers that need to differentiate
-				// (fleet reaper, capacity-state consumers) read the JSON body.
-				"x-better-ccflare-pool-status": "exhausted",
-			},
+			status: isVisionUnsupported ? 400 : 503,
+			headers,
 		},
 	);
 }

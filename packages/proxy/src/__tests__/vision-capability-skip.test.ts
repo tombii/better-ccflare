@@ -499,12 +499,18 @@ describe("vision capability cache — an all-skipped pool does not re-ask a blin
 
 		// Every candidate was skipped, so `anyAccountAttempted` is false and the
 		// probe-gate ungated retry would otherwise re-issue the image request to
-		// the one account we already know refuses it. The request must fall
-		// through to the normal exhaustion path with ZERO upstream calls.
+		// the one account we already know refuses it. ZERO upstream calls.
+		//
+		// The fall-through is now a 400 `vision_unsupported` rather than the
+		// retryable 503 this asserted before: the sole eligible candidate is known
+		// blind, so "come back later" was the wrong answer and the terminal verdict
+		// (see vision-unsupported-verdict.test.ts) claims the request instead. What
+		// this test is about — the skip, and no round-trip spent re-asking — is
+		// unchanged.
 		const result = await run(ctx, imageRequest(), ["blind"]);
 		expect(result.fetched).toEqual([]);
-		expect(result.threw).toBe(true);
-		expect(result.status).toBe(503);
+		expect(result.threw).toBe(false);
+		expect(result.status).toBe(400);
 	});
 
 	it("skips the combo-fallback pool's ungated retry too", async () => {
@@ -530,7 +536,10 @@ describe("vision capability cache — an all-skipped pool does not re-ask a blin
 
 		const result = await run(ctx, imageRequest(FAMILY_MODEL), ["blind"]);
 		expect(result.fetched).toEqual([]);
-		expect(result.threw).toBe(true);
-		expect(result.status).toBe(503);
+		// As above: both pools skipped the only candidate, so the terminal verdict
+		// now answers 400 instead of a retryable 503. The assertion this test exists
+		// for — neither ungated retry re-asks a blind route — is the empty `fetched`.
+		expect(result.threw).toBe(false);
+		expect(result.status).toBe(400);
 	});
 });

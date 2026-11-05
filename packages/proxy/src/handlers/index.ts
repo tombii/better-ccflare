@@ -3,7 +3,10 @@ export {
 	type RequestJsonBody,
 } from "../request-body-context";
 export {
+	addDeferredCandidates,
+	type DeferredVisionCandidate,
 	getComboSlotInfo,
+	getDeferredCandidates,
 	getModelFamilyExhaustionInfo,
 	getXaiConvId,
 	isComboSessionFallbackDisabled,

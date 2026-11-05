@@ -183,15 +183,22 @@ async function runProxy(
 	ctx: ProxyContext,
 	isLastAccount = false,
 	failoverAttempts = 0,
-): Promise<{ result: Response | null; forwarded: boolean }> {
+): Promise<{
+	result: Response | null;
+	forwarded: boolean;
+	meta: RequestMeta;
+}> {
 	let forwarded = false;
 	let result: Response | null = null;
+	// Returned so a test can read back the per-attempt signals proxyWithAccount
+	// stamps on it (`visionRejected`), which the caller loop in proxy.ts consumes.
+	const meta = makeRequestMeta();
 	try {
 		result = await proxyWithAccount(
 			req,
 			new URL("https://proxy.local/v1/messages"),
 			account,
-			makeRequestMeta(),
+			meta,
 			bodyBuffer,
 			() => undefined,
 			failoverAttempts,
@@ -213,7 +220,7 @@ async function runProxy(
 	// exception from an uninitialised singleton. This is the whole point of the
 	// seam: it is deterministic regardless of what other test files ran first.
 	forwarded = forwarded || capturedForward !== null;
-	return { result, forwarded };
+	return { result, forwarded, meta };
 }
 
 /**
@@ -345,7 +352,7 @@ describe("proxyWithAccount — image rejection on an in-place retry", () => {
 	// The gate's other half. The same retried 400 on a request that carried no
 	// image is not a vision rejection: `requestCarriesImageContent` is false, so
 	// the classifier never runs and the 400 stays with the client instead of
-	// being replayed across every account and ending in a generic pool error.
+	// being replayed across every account and reported as `vision_unsupported`.
 	it("forwards the retried 400 when the request carried no image", async () => {
 		const calls = mockOverloadThenVisionRejection();
 
@@ -476,7 +483,7 @@ describe("proxyWithAccount — image rejection on an in-place retry", () => {
 				sonnet: ["primary-target-model", "fallback-target-model"],
 			}),
 		});
-		const { result, forwarded } = await runProxy(
+		const { result, forwarded, meta } = await runProxy(
 			makeRequest(bodyBuffer),
 			account,
 			bodyBuffer,
@@ -497,6 +504,36 @@ describe("proxyWithAccount — image rejection on an in-place retry", () => {
 		// and the alias that did refuse is never a lookup key.
 		expect(isVisionUnsupported("acc-1", "claude-sonnet-4-5")).toBe(false);
 		expect(isVisionUnsupported("acc-1", "fallback-target-model")).toBe(false);
+		// And the per-attempt signal stays unset for the same reason. It is the
+		// other half of what the terminal verdict in proxy.ts counts, so a refusal
+		// that is not evidence about the requested pair must not be counted as one:
+		// leaving it unset makes this attempt read as "capability unknown", which
+		// keeps an image request retryable instead of answering a permanent 400 on
+		// the strength of a fallback alias's opinion.
+		expect(meta.visionRejected).toBeFalsy();
+	});
+
+	// The other half of the same guard: when the model-cycling fallback did NOT
+	// run, the retried refusal is the requested model's own and the signal is
+	// stamped, so the caller loop can count it.
+	it("stamps visionRejected when the retried refusal belongs to the requested model", async () => {
+		const calls = mockOverloadThenVisionRejection();
+
+		const ctx = makeProxyContext();
+		const bodyBuffer = thinkingRetryBody(true);
+		const { result, meta } = await runProxy(
+			makeRequest(bodyBuffer),
+			makeAccount(),
+			bodyBuffer,
+			ctx,
+		);
+
+		expect(calls.length).toBeGreaterThanOrEqual(2);
+		expect(result).toBeNull();
+		expect(meta.visionRejected).toBe(true);
+		// Same evidence, recorded on both sides: the cache entry a later request
+		// skips on, and the per-attempt flag this request's verdict counts.
+		expect(isVisionUnsupported("acc-1", "claude-sonnet-4-5")).toBe(true);
 	});
 });
 

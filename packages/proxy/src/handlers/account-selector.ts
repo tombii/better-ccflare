@@ -43,6 +43,83 @@ export function getComboSlotInfo(meta: RequestMeta): ComboSlotInfo | null {
 	return comboSlotInfoMap.get(meta) ?? null;
 }
 
+/**
+ * A candidate this request could have been routed to, but that the selector
+ * dropped for a reason that clears on its own — a usage cap, a rate-limit
+ * cooldown, a pause, an expired credential, a model-scoped capacity exclusion.
+ *
+ * proxy.ts reads the list before it answers an image request terminally: a
+ * deferred candidate whose capability is still unknown means the request might
+ * have succeeded once the deferral cleared, so the answer has to stay
+ * retryable. Only a candidate the vision capability cache already knows to be
+ * blind stops blocking, which is the whole reason the verdict is built on the
+ * cache — knowledge survives cooldowns, probes and capacity filters, and
+ * availability does not.
+ *
+ * `modelOverride` is shaped exactly like {@link ComboSlotInfo}'s entry: the
+ * model this candidate WOULD have been asked for, or null when it would have
+ * carried the request's own model. The pool path always records null rather
+ * than the routing model the selector was handed, because the vision cache is
+ * keyed on the request body's own model string and an agent-preference rewrite
+ * makes the two differ. Resolving null against the body in proxy.ts is what
+ * keeps this read key byte-identical to the write key — see `visionKeyModel` in
+ * proxy-operations.ts and `visionSkipModel` in proxy.ts.
+ */
+export interface DeferredVisionCandidate {
+	accountId: string;
+	modelOverride: string | null;
+}
+
+// Module-level WeakMap, mirroring comboSlotInfoMap above rather than widening
+// RequestMeta's shape with a field only one consumer reads.
+const deferredCandidatesMap = new WeakMap<
+	RequestMeta,
+	DeferredVisionCandidate[]
+>();
+
+/**
+ * Records candidates a selection dropped, ADDING to whatever is already
+ * recorded and ignoring duplicates.
+ *
+ * Additive rather than a replacement because one request can select twice: a
+ * combo whose slots all failed re-selects for SessionStrategy fallback (proxy.ts
+ * Step 10), and a candidate the first selection deferred is still deferred
+ * afterwards. Deduplicated because the two selections overlap heavily, and a
+ * pair counted twice would be a pair whose capability is checked twice for one
+ * candidate.
+ */
+export function addDeferredCandidates(
+	meta: RequestMeta,
+	candidates: readonly DeferredVisionCandidate[],
+): void {
+	if (candidates.length === 0) return;
+	const existing = deferredCandidatesMap.get(meta);
+	const seen = new Set(
+		existing?.map((c) => `${c.accountId}\u0000${c.modelOverride ?? ""}`) ?? [],
+	);
+	const merged = existing ? existing.slice() : [];
+	for (const candidate of candidates) {
+		const key = `${candidate.accountId}\u0000${candidate.modelOverride ?? ""}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		merged.push({ ...candidate });
+	}
+	deferredCandidatesMap.set(meta, merged);
+}
+
+/**
+ * The candidates every selection for this request deferred, in the order they
+ * were recorded. Empty when nothing was deferred — including for a request that
+ * pinned one account with `x-better-ccflare-account-id`, where every other
+ * account is permanently ineligible for THIS request rather than deferred, and
+ * so correctly does not hold the verdict open.
+ */
+export function getDeferredCandidates(
+	meta: RequestMeta,
+): DeferredVisionCandidate[] {
+	return deferredCandidatesMap.get(meta) ?? [];
+}
+
 // Canonical definition lives in model-capacity.ts (single source of truth —
 // a structurally-identical local copy could silently drift).
 export type { ModelFamilyExhaustionInfo } from "./model-capacity";
@@ -910,6 +987,79 @@ export async function selectAccountsForRequest(
 		}
 	}
 
+	/**
+	 * Records the accounts this selection dropped but that could route again
+	 * later, so proxy.ts's terminal vision verdict cannot claim a permanence the
+	 * fleet has not earned.
+	 *
+	 * The universe is `allAccounts` — the raw DB read — minus the two drops that
+	 * are permanent FOR THIS REQUEST and therefore are not deferrals: the
+	 * providers the client excluded with `x-better-ccflare-exclude-providers`, and
+	 * an account that cannot serve the requested model as written while "force
+	 * account model" forbids substituting one. Neither can ever answer this
+	 * request however long the client waits, so neither can rescue it.
+	 *
+	 * Everything else missing from `selected` is a deferral. That is computed as a
+	 * set difference rather than a per-reason list on purpose. Some of the drops
+	 * happen in this file (the usage-cap pre-filter in getOrderedAccounts, the
+	 * model-scoped capacity filter below) but the availability drop — paused,
+	 * rate_limited_until, requires_reauth — happens inside
+	 * `ctx.strategy.select()`, in the load-balancer package, where this function
+	 * cannot see it. Enumerating only the local reasons would repeat exactly the
+	 * mistake that got the first attempt at the verdict reverted (e64e7f13):
+	 * computing permanence from the candidates that survived selection instead of
+	 * the candidates that were eligible.
+	 *
+	 * Deliberately conservative about what counts as eligible. An auto-resuming
+	 * pause (overage, peak-hours, failure-threshold) is recorded as deferred:
+	 * the account returns to rotation by itself with the image unchanged, so it
+	 * must hold the verdict open. A MANUAL pause and a `requires_reauth` account
+	 * are filtered out before recording instead — see the comment on the filter
+	 * below.
+	 *
+	 * Only called on the paths that return a non-empty selection: an empty one
+	 * makes proxy.ts answer at its Step 7 (model-family exhaustion, usage
+	 * throttling, pool_exhausted) before any candidate loop runs, so the verdict
+	 * that reads this list is never reached.
+	 */
+	const notePoolDeferrals = (selected: Account[]): void => {
+		// Every filter between `allAccounts` and `selected` only ever removes, so
+		// equal lengths means nothing was dropped. That is the healthy-fleet case
+		// and this runs on the selection path of every request, so it returns
+		// before allocating anything.
+		if (selected.length === allAccounts.length) return;
+
+		const selectedIds = new Set(selected.map((account) => account.id));
+		const forcedModel = model && isForceAccountModelEnabled(ctx) ? model : null;
+		const deferred = applyExclusions(allAccounts)
+			.filter((account) => !selectedIds.has(account.id))
+			// An operator's hold-out, not a deferral: a manual pause and a dead
+			// refresh token both return to rotation only by human action. The
+			// strategy's auto-unpause deliberately skips manual pauses, and
+			// `needsReauth` names only accounts the selector actually selected,
+			// so an account dropped here is never the one that message asks for.
+			// A candidate only holds the vision verdict open when waiting could
+			// plausibly make it serve the image; an account that comes back only
+			// when a human acts is not a candidate at all — recording it as
+			// deferred would make the verdict unreachable on any fleet with one
+			// such account, which is inertness, not conservatism.
+			.filter(
+				(account) =>
+					!(account.paused && account.pause_reason === "manual") &&
+					!account.requires_reauth,
+			)
+			.filter(
+				(account) =>
+					forcedModel === null || accountServesModel(account, forcedModel),
+			)
+			// null, not `model`: the cache key is the request body's own model
+			// string, which an agent-preference rewrite can make differ from the
+			// routing model. proxy.ts resolves null against the body so the key
+			// matches the one a refusal would have been written under.
+			.map((account) => ({ accountId: account.id, modelOverride: null }));
+		addDeferredCandidates(meta, deferred);
+	};
+
 	// Model-scoped capacity filter for the non-combo (or combo-inactive/
 	// combo-exhausted-fallthrough) path: drop accounts whose weekly per-model
 	// cap for this model's family is exhausted. Only when the filter empties
@@ -1017,9 +1167,11 @@ export async function selectAccountsForRequest(
 				});
 				return [];
 			}
+			notePoolDeferrals(available);
 			return applyXaiCacheAffinity(available, meta);
 		}
 	}
 
+	notePoolDeferrals(orderedAccounts);
 	return applyXaiCacheAffinity(orderedAccounts, meta);
 }
