@@ -475,11 +475,24 @@ export function convertOpenAIResponseToAnthropic(
 
 	// Add thinking content first (Anthropic ordering) — DeepSeek/reasoning
 	// providers return reasoning_content on the message in non-streaming responses.
-	// Some gateways (Mistral/GLM) instead return `content` as an array of
-	// thinking + text blocks; reasoning_content wins when both carry thinking.
+	// OpenRouter-shaped gateways (kilo, openrouter, nanogpt) use `reasoning`
+	// instead and document `reasoning_content` as the alias, so accept both in the
+	// same precedence as the streaming transform (stream.ts:546). Some gateways
+	// (Mistral/GLM) instead return `content` as an array of thinking + text
+	// blocks; an explicit reasoning field wins when both carry thinking.
+	//
+	// Missing the alias cost more than cosmetics. A reasoning model that spends
+	// its whole budget thinking returns no `content` at all, so the client saw an
+	// empty message with `stop_reason: max_tokens` (observed live on kilo
+	// `openai/gpt-6-luna`). And whenever reasoning did accompany text, dropping it
+	// broke the round-trip: the request side maps Anthropic thinking blocks back
+	// to `reasoning_content` for providers that require them, so a client that
+	// never receives the thinking cannot echo it on the next turn.
 	const normalizedContent = normalizeOpenAIContent(choice.message?.content);
 	const thinking =
-		choice.message?.reasoning_content || normalizedContent.thinking;
+		choice.message?.reasoning_content ||
+		choice.message?.reasoning ||
+		normalizedContent.thinking;
 	if (thinking) {
 		content.push({
 			type: "thinking",

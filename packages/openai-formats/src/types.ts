@@ -237,6 +237,14 @@ export interface OpenAIResponse {
 			role?: string;
 			tool_calls?: OpenAIToolCall[];
 			reasoning_content?: string;
+			/**
+			 * OpenRouter-shaped gateways (kilo, openrouter, nanogpt) return
+			 * reasoning here rather than in `reasoning_content`; the docs name
+			 * `reasoning` as the field and `reasoning_content` as an alias. The
+			 * streaming transform already accepts both (stream.ts) — this keeps
+			 * the non-streaming path from silently dropping the thinking.
+			 */
+			reasoning?: string;
 		};
 		delta?: OpenAIStreamDelta;
 		finish_reason?: string;

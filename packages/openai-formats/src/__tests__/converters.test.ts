@@ -861,6 +861,78 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 		expect(content.some((c) => c.type === "thinking")).toBe(false);
 	});
 
+	// OpenRouter-shaped gateways (kilo, openrouter, nanogpt) put reasoning in
+	// `message.reasoning` and document `reasoning_content` as the alias. The
+	// streaming transform accepts both; the non-streaming path did not, so the
+	// thinking vanished.
+	it("converts message.reasoning to a leading thinking block (OpenRouter shape)", () => {
+		const result = convertOpenAIResponseToAnthropic(
+			openaiTextResponse({
+				choices: [
+					{
+						index: 0,
+						message: {
+							role: "assistant",
+							content: "The answer is 4.",
+							reasoning: "2 + 2 = 4, so the answer is 4.",
+						},
+						finish_reason: "stop",
+					},
+				],
+			}),
+		);
+		const content = result.content ?? [];
+		expect(content[0]).toEqual({
+			type: "thinking",
+			thinking: "2 + 2 = 4, so the answer is 4.",
+		});
+		expect(content[1]).toEqual({ type: "text", text: "The answer is 4." });
+	});
+
+	// The live symptom: gpt-6-luna on kilo spent its whole budget reasoning and
+	// returned no `content`, which converted to an EMPTY Anthropic message with
+	// stop_reason max_tokens — 512 billed output tokens and nothing to show.
+	it("surfaces a reasoning-only response instead of an empty message", () => {
+		const result = convertOpenAIResponseToAnthropic(
+			openaiTextResponse({
+				choices: [
+					{
+						index: 0,
+						message: { role: "assistant", reasoning: "Still thinking…" },
+						finish_reason: "length",
+					},
+				],
+			}),
+		);
+		expect(result.content).toEqual([
+			{ type: "thinking", thinking: "Still thinking…" },
+		]);
+		expect(result.stop_reason).toBe("max_tokens");
+	});
+
+	it("prefers reasoning_content when a gateway sends both fields", () => {
+		const result = convertOpenAIResponseToAnthropic(
+			openaiTextResponse({
+				choices: [
+					{
+						index: 0,
+						message: {
+							role: "assistant",
+							content: "Done.",
+							reasoning_content: "from reasoning_content",
+							reasoning: "from reasoning",
+						},
+						finish_reason: "stop",
+					},
+				],
+			}),
+		);
+		expect((result.content ?? [])[0]).toEqual({
+			type: "thinking",
+			thinking: "from reasoning_content",
+		});
+	});
+
 	it("maps an array-shaped message.content with thinking + text blocks (e.g. Mistral/GLM)", () => {
 		const result = convertOpenAIResponseToAnthropic(
 			openaiTextResponse({
