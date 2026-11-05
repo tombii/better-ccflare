@@ -221,6 +221,88 @@ const saveCalls = (ctx: ProxyContext) =>
 	(ctx.dbOps.saveRequest as ReturnType<typeof mock>).mock
 		.calls as unknown as unknown[][];
 
+describe("proxyWithAccount — image rejection on an in-place retry", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+		resetRateLimitProbeGatesForTests();
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+		restoreForwardToClient();
+	});
+
+	// The first-pass short-circuit only sees the initial response. A retry that
+	// rejects image input used to fall through `status !== 429` in
+	// classifyRetriedUpstreamResponse and reach the client instead of the next
+	// account. An invalid-thinking-signature 400 is the simplest in-place retry
+	// a mixed provider fixture can trigger.
+	it("fails over when an in-place retry rejects image input", async () => {
+		const calls: number[] = [];
+		globalThis.fetch = mock(async () => {
+			calls.push(calls.length + 1);
+			if (calls.length === 1) {
+				// 529 (overloaded) is the retry that sets `retriedInPlace` and then
+				// hands the retried response to classifyRetriedUpstreamResponse. The
+				// thinking-signature and cache_control retries do NOT reach that
+				// classifier, so a 400 there cannot exercise this path. Anthropic's
+				// overloaded shape as an SSE stream, which is what the proxy
+				// synthesizes a 529 from.
+				const sse = [
+					'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-5","usage":{"input_tokens":1,"output_tokens":0}}}\n\n',
+					'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":1}}\n\n',
+				].join("");
+				return new Response(sse, {
+					status: 529,
+					headers: { "content-type": "text/event-stream" },
+				});
+			}
+			return new Response(
+				JSON.stringify({
+					error: { message: "This model does not support image input." },
+				}),
+				{ status: 400, headers: { "content-type": "application/json" } },
+			);
+		});
+
+		const ctx = makeProxyContext();
+		// filterThinkingBlocks only produces a different body when an assistant
+		// turn actually carries a thinking block; without one the retry is
+		// skipped and this path is never reached.
+		const bodyBuffer = new TextEncoder().encode(
+			JSON.stringify({
+				model: "claude-sonnet-4-5",
+				max_tokens: 10,
+				messages: [
+					{ role: "user", content: "hello" },
+					{
+						role: "assistant",
+						content: [
+							{ type: "thinking", thinking: "hmm", signature: "sig" },
+							{ type: "text", text: "hi" },
+						],
+					},
+				],
+			}),
+		).buffer;
+		const { forwarded } = await runProxy(
+			makeRequest(bodyBuffer),
+			makeAccount(),
+			bodyBuffer,
+			ctx,
+		);
+
+		expect(calls.length).toBeGreaterThanOrEqual(2);
+		expect(forwarded).toBe(false);
+		// The LAST upstream response is the retried 400; it must be the one the
+		// assertion above is about. The first response is a thinking-signature
+		// error, which the retry replaces without ever being classified as vision.
+		expect(capturedForward?.status ?? null).not.toBe(400);
+	});
+});
+
 describe("proxyWithAccount — transient upstream 5xx retry and failover", () => {
 	let originalFetch: typeof globalThis.fetch;
 

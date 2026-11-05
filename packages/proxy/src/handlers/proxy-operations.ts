@@ -2609,6 +2609,21 @@ export async function proxyWithAccount(
 			);
 			if (codeBuddyRejected !== NOT_CLASSIFIED) return codeBuddyRejected;
 
+			// An in-place retry can reject image input just as the first attempt
+			// did (a 429 that later answers 400, say). The first-pass short-circuit
+			// only covers the initial response, so without this the retried 400
+			// falls through to `processProxyResponse` and reaches the client
+			// instead of the next account / combo slot. Checked before the
+			// `status !== 429` narrowing below, which exists for the 429-only
+			// handlers and would discard it.
+			if (await isVisionUnsupportedError(retried)) {
+				log.warn(
+					`Account ${account.name} rejected image input on an in-place retry — failing over to next model/account`,
+				);
+				cancelDiscardedResponseBody(response);
+				return null;
+			}
+
 			// Everything below lived under `isModelUnavailableError`, which is
 			// unconditionally true for a 429 and only reachable for 404/400
 			// otherwise — and 404/400 is the fallback loop's business, not ours.

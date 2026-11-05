@@ -127,13 +127,15 @@ describe("issue #273 — Group A: helper contract", () => {
 // that cools only its (account, model) pair still discards the response
 // before failing over to the next slot. 23 is the image-input rejection
 // branch: the classifier reads a clone, so the original is discarded before
-// failing over to the next account / combo slot.
+// failing over to the next account / combo slot. 24 is the same branch on an
+// in-place retry, where the retried response is discarded before the failover
+// return.
 // ---------------------------------------------------------------------------
 
-const EXPECTED_SITE_COUNT = 23;
+const EXPECTED_SITE_COUNT = 24;
 
 describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", () => {
-	it("proxy-operations.ts has exactly 23 cancelDiscardedResponseBody call sites", () => {
+	it("proxy-operations.ts has exactly 24 cancelDiscardedResponseBody call sites", () => {
 		const source = readFileSync(
 			"packages/proxy/src/handlers/proxy-operations.ts",
 			"utf-8",
