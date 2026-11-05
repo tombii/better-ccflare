@@ -125,22 +125,28 @@ describe("issue #273 — Group A: helper contract", () => {
 // the upstream_402_out_of_credits branch, which discards the 402 before
 // failing over. 22 is the combo model-scoped 429 branch: a combo-routed 429
 // that cools only its (account, model) pair still discards the response
-// before failing over to the next slot.
+// before failing over to the next slot. 23 is the image-input rejection
+// branch: the classifier reads a clone, so the original is discarded before
+// failing over to the next account / combo slot. 24 is the same branch on an
+// in-place retry, where the retried response is discarded before the failover
+// return — it drains the classifier's `retried` argument rather than the
+// outer `response` binding that argument happens to alias, so the site keeps
+// draining the right body if the helper is ever called with another response.
 // ---------------------------------------------------------------------------
 
-const EXPECTED_SITE_COUNT = 22;
+const EXPECTED_SITE_COUNT = 24;
 
 describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", () => {
-	it("proxy-operations.ts has exactly 22 cancelDiscardedResponseBody call sites", () => {
+	it("proxy-operations.ts has exactly 24 cancelDiscardedResponseBody call sites", () => {
 		const source = readFileSync(
 			"packages/proxy/src/handlers/proxy-operations.ts",
 			"utf-8",
 		);
 		// Match call sites only — exclude the import line. Each call is
-		// `cancelDiscardedResponseBody(rawResponse)` or
-		// `cancelDiscardedResponseBody(response)` on a line of its own.
+		// `cancelDiscardedResponseBody(rawResponse)`, `...(response)` or
+		// `...(retried)` on a line of its own.
 		const callMatches = source.match(
-			/^\s*cancelDiscardedResponseBody\((?:rawResponse|response)\);/gm,
+			/^\s*cancelDiscardedResponseBody\((?:rawResponse|response|retried)\);/gm,
 		);
 		const count = callMatches?.length ?? 0;
 		expect(count).toBe(EXPECTED_SITE_COUNT);

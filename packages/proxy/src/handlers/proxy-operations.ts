@@ -666,6 +666,237 @@ function hasCacheControlDetail(detail: unknown[]): boolean {
 	});
 }
 
+/** Words for the image input the request carried. */
+const IMAGE_INPUT_NOUNS = [
+	"image",
+	"images",
+	"image_url",
+	"image url",
+	"image input",
+	"image content",
+	"vision",
+	"visual",
+	"modality",
+	"modalities",
+	"multimodal",
+	"file",
+	"files",
+	"attachment",
+	"attachments",
+] as const;
+
+/**
+ * Phrasings that state the *capability is absent*: "not supported",
+ * "unsupported", "does not accept", "doesn't work with", ...
+ */
+const CAPABILITY_ABSENT_PATTERNS = [
+	"not support",
+	"n't support",
+	// OpenRouter word order: "endpoints that support image input" (there is no
+	// "not" before "support" — the absence is in "No endpoints found").
+	"that support",
+	"unsupported",
+	"not supported",
+	// A schema that rejects the image part outright — GLM-style "unknown field"
+	// or pydantic "Extra inputs are not permitted" — means the gateway cannot
+	// represent image input at all. This is a capability limit, not a malformed
+	// payload; those are excluded earlier by NON_CAPABILITY_ERROR_PATTERNS.
+	"unknown field",
+	"extra inputs are not permitted",
+	"extra_forbidden",
+	"does not accept",
+	"doesn't accept",
+	"do not accept",
+	"cannot accept",
+	"can't accept",
+	"not accept",
+	"only supports",
+	"only support",
+	"only accepts",
+	"only accept",
+	"not available",
+	"isn't available",
+	"not enabled",
+	"no support",
+	"not a valid",
+	"invalid content type",
+] as const;
+
+/**
+ * Why a 400 is about the *content of the request*, not the model's ability.
+ * A malformed or oversized image, a bad base64 payload, a content-policy hit or
+ * an over-length conversation rejects the same way on every account, so failing
+ * over would just repeat it and end in a generic error. These are left to the
+ * client, which is the only party that can fix them.
+ */
+const NON_CAPABILITY_ERROR_PATTERNS = [
+	"invalid base64",
+	"base64",
+	"malformed",
+	"corrupt",
+	"decode",
+	"decode error",
+	"too large",
+	"too big",
+	"exceeds",
+	"maximum size",
+	"max size",
+	"file size",
+	"dimensions",
+	"resolution",
+	"policy",
+	"moderation",
+	"content filter",
+	"content_filter",
+	"safety",
+	"blocked",
+	"not allowed",
+	"too many",
+	"exceeded the maximum",
+] as const;
+
+/**
+ * True when `text` states that the model cannot accept image input.
+ *
+ * Requires BOTH halves: a word naming the image input the request carried, and
+ * a phrasing that asserts the capability is missing. Requiring both is what
+ * keeps malformed-image errors ("Invalid image_url: invalid base64 data") and
+ * policy rejections from looking like "this model has no vision" — those name
+ * an image but do not deny a capability, and are excluded explicitly too.
+ */
+function mentionsUnsupportedImageInput(text: string): boolean {
+	const lower = text.toLowerCase();
+	if (NON_CAPABILITY_ERROR_PATTERNS.some((p) => lower.includes(p))) {
+		return false;
+	}
+	const namesImageInput = IMAGE_INPUT_NOUNS.some((p) => lower.includes(p));
+	if (!namesImageInput) return false;
+	return CAPABILITY_ABSENT_PATTERNS.some((p) => lower.includes(p));
+}
+
+/**
+ * Checks if a 400 means the requested model cannot accept image input.
+ *
+ * better-ccflare converts Anthropic image blocks to OpenAI `image_url` parts
+ * for every account, because it has no per-model vision capability data for
+ * the gateways it fronts (most expose none). The contract is to assume vision
+ * works and fail over when an upstream says otherwise: the caller treats a
+ * match like an unavailable model, trying the next combo slot / account
+ * instead of forwarding the 400 to the client.
+ *
+ * Only 400 is considered. Other 4xx shapes are either request-wide (auth,
+ * billing) or already classified elsewhere.
+ *
+ * Callers MUST gate this on `requestCarriesImageContent`: the matcher reads the
+ * upstream's wording, and image nouns include `file`, `attachment` and
+ * `modality`, so a text-only request's unrelated 400 can name one of them with
+ * a negation. Without the gate that request is replayed across every account
+ * and ends in a generic pool error instead of the 400 that explains it.
+ */
+export async function isVisionUnsupportedError(
+	response: Response,
+): Promise<boolean> {
+	if (response.status !== 400) return false;
+
+	try {
+		const contentType = response.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return false;
+
+		// Cloned only after the content-type gate, for the reason spelled out in
+		// isCacheControlRejectionError: cloning earlier tees the body and strands
+		// the copy for every non-JSON error. See issue #356.
+		const json = await response.clone().json();
+
+		// Candidate strings from the shapes in use: `error.message`,
+		// `message.detail[].msg`, top-level `detail`, and `message` itself.
+		const candidates: string[] = [];
+		const push = (value: unknown) => {
+			if (typeof value === "string") candidates.push(value);
+		};
+
+		push(json.error?.message);
+		push(json.detail);
+		push(json.message);
+		const detail = Array.isArray(json.detail)
+			? json.detail
+			: Array.isArray(json.error?.message?.detail)
+				? json.error.message.detail
+				: Array.isArray(json.message?.detail)
+					? json.message.detail
+					: undefined;
+		if (Array.isArray(detail)) {
+			for (const entry of detail) {
+				if (typeof entry === "object" && entry !== null) {
+					const { msg, loc } = entry as { msg?: unknown; loc?: unknown };
+					const msgText = typeof msg === "string" ? msg : "";
+					const locText = Array.isArray(loc) ? loc.join(".") : "";
+					// Each entry is scored on its OWN combined text, not as two
+					// separate candidates: pydantic splits the two halves the matcher
+					// needs — `loc` names `image_url`, `msg` says "Extra inputs are
+					// not permitted" — so neither string alone can ever match. Joined,
+					// the malformed-payload exclusion still applies per entry, since
+					// "invalid base64" in one entry's msg is not rescued by another
+					// entry naming an image.
+					candidates.push(`${locText} ${msgText}`);
+				}
+			}
+		}
+
+		return candidates.some(mentionsUnsupportedImageInput);
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * True when the request body actually carries image content.
+ *
+ * The gate `isVisionUnsupportedError` needs: that classifier reads an
+ * upstream's wording, and its image nouns include `file`, `files`,
+ * `attachment`, `modality` and `visual`. A text-only request can therefore trip
+ * it on an unrelated 400 — "Unsupported parameter: 'modalities' is not supported
+ * with this model", "The file 'file-abc' is not available for this
+ * organization", "This endpoint does not accept attachments" — and would be
+ * replayed across every combo slot and account, ending in a generic pool error
+ * when the client should have got the 400 that explains the failure.
+ *
+ * Walks the parsed body rather than scanning bytes: a Claude Code conversation
+ * routinely contains the literal `"type":"image"` inside a text block (source
+ * code, JSON samples, review threads), which a substring match would read as an
+ * image the request never carried.
+ *
+ * Both wire shapes count — Anthropic `image` blocks (message level, and nested
+ * in a `tool_result`, which is where a tool-produced screenshot lives) and
+ * OpenAI `image_url` parts, for a request that arrives already converted.
+ * A body that is absent or unparseable answers false: nothing was converted, so
+ * nothing image-shaped went upstream.
+ */
+export function requestCarriesImageContent(
+	context: RequestBodyContext | null | undefined,
+): boolean {
+	const body = context?.getParsedJson();
+	if (!body) return false;
+	const messages = (body as { messages?: unknown }).messages;
+	if (!Array.isArray(messages)) return false;
+
+	const blockCarriesImage = (block: unknown): boolean => {
+		if (!block || typeof block !== "object") return false;
+		const type = (block as { type?: unknown }).type;
+		if (type === "image" || type === "image_url") return true;
+		if (type === "tool_result") {
+			const nested = (block as { content?: unknown }).content;
+			return Array.isArray(nested) && nested.some(blockCarriesImage);
+		}
+		return false;
+	};
+
+	return messages.some((message) => {
+		if (!message || typeof message !== "object") return false;
+		const content = (message as { content?: unknown }).content;
+		return Array.isArray(content) && content.some(blockCarriesImage);
+	});
+}
+
 /**
  * Checks if a response error indicates the requested model is unavailable.
  * Covers Anthropic (not_found_error), OpenAI-compat (model_not_found),
@@ -2392,6 +2623,24 @@ export async function proxyWithAccount(
 		if (codeBuddyRejectionOutcome !== NOT_CLASSIFIED)
 			return codeBuddyRejectionOutcome;
 
+		// Whether THIS request actually carried image content — resolved lazily,
+		// at most once, and shared by the first-response classification below and
+		// the retried-response one in `classifyRetriedUpstreamResponse`.
+		//
+		// `isVisionUnsupportedError` reads only the upstream's wording, so without
+		// this gate an unrelated 400 that happens to name a file, an attachment or
+		// a modality would replay a text-only request across every account. But
+		// walking the parsed body is O(messages x blocks) and this code sits on the
+		// response path of EVERY request, 200s included — a long Claude Code
+		// conversation would pay it per request for an image it never sent. So
+		// callers test the classifier first (a status comparison for anything but
+		// a JSON 400) and consult this only on a match.
+		// See requestCarriesImageContent.
+		let requestCarriesImagesResolved: boolean | null = null;
+		const requestCarriesImages = () =>
+			(requestCarriesImagesResolved ??=
+				requestCarriesImageContent(effectiveBodyContext));
+
 		/**
 		 * The classification chain as a retry response has to see it: every
 		 * handler above, in the first-response order, minus the model-cycling
@@ -2432,6 +2681,27 @@ export async function proxyWithAccount(
 				returnRateLimitedResponseOnExhaustion,
 			);
 			if (codeBuddyRejected !== NOT_CLASSIFIED) return codeBuddyRejected;
+
+			// An in-place retry can reject image input just as the first attempt
+			// did (a 429 that later answers 400, say). The first-pass short-circuit
+			// only covers the initial response, so without this the retried 400
+			// falls through to `processProxyResponse` and reaches the client
+			// instead of the next account / combo slot. Checked before the
+			// `status !== 429` narrowing below, which exists for the 429-only
+			// handlers and would discard it.
+			// Classifier first: for anything but a JSON 400 it is a status
+			// comparison, whereas the gate walks the parsed request body.
+			if ((await isVisionUnsupportedError(retried)) && requestCarriesImages()) {
+				log.warn(
+					`Account ${account.name} rejected image input on an in-place retry — failing over to next model/account`,
+				);
+				// Drain the response being abandoned: the `retried` argument, not the
+				// outer `response` binding it aliases at today's only call site. The
+				// classifier read a clone, so this body is still unread, and draining
+				// any other object would leave it holding native memory (#273).
+				cancelDiscardedResponseBody(retried);
+				return null;
+			}
 
 			// Everything below lived under `isModelUnavailableError`, which is
 			// unconditionally true for a 429 and only reachable for 404/400
@@ -2484,7 +2754,34 @@ export async function proxyWithAccount(
 		// model_mappings arrays and legacy model_fallbacks. We already tried index 0
 		// (the primary), so start at index 1.
 		let zai1305AlreadyChecked = false;
-		if (await isModelUnavailableError(rawResponse)) {
+
+		// The request carried images and this model cannot read them. Classified
+		// separately from `isModelUnavailableError`: that predicate answers only
+		// for 429s and model-not-found 400/404s, so an image rejection matches
+		// neither and would otherwise be forwarded to the client. The flag is
+		// consumed below to reach the same model/slot fallback a rate-limited
+		// model gets, so the next combo slot / account is tried and this one is
+		// not benched.
+		//
+		// Gated on the request actually carrying image content: the matcher reads
+		// the upstream's wording only, so a text-only request whose 400 happens to
+		// name a file, an attachment or a modality would otherwise be replayed
+		// across every account. The classifier is tested first — a status
+		// comparison for anything but a JSON 400 — so the gate's walk of the
+		// parsed request body runs only on a match, never on the text-only
+		// majority and never on a 200.
+		const visionUnsupported =
+			(await isVisionUnsupportedError(rawResponse)) && requestCarriesImages();
+		if (visionUnsupported) {
+			let rejectedModel: string | null = null;
+			if (effectiveBodyBuffer) rejectedModel = effectiveBodyContext.getModel();
+			log.warn(
+				`Account ${account.name}${rejectedModel ? ` (model=${rejectedModel})` : ""} ` +
+					`rejected image input — failing over to next model/account`,
+			);
+		}
+
+		if (visionUnsupported || (await isModelUnavailableError(rawResponse))) {
 			// Log 429 response headers for debugging upstream rate-limit info
 			if (rawResponse.status === 429) {
 				const rlHeaders: Record<string, string> = {};
@@ -2508,11 +2805,33 @@ export async function proxyWithAccount(
 			let requestedModel: string | null = null;
 			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
 
-			const outOfCreditsOutcome = await classifyOutOfCredits429(
-				rawResponse,
-				requestedModel,
-			);
-			if (outOfCreditsOutcome !== NOT_CLASSIFIED) return outOfCreditsOutcome;
+			// Quota classification reads response headers; an image rejection is a
+			// 400 with no rate-limit metadata, so skip it rather than risk a
+			// misclassification, and go straight to the fallback decision below.
+			if (!visionUnsupported) {
+				const outOfCreditsOutcome = await classifyOutOfCredits429(
+					rawResponse,
+					requestedModel,
+				);
+				if (outOfCreditsOutcome !== NOT_CLASSIFIED) return outOfCreditsOutcome;
+			}
+
+			// An image rejection always fails over to the next account / combo
+			// slot. Unlike model-not-found, there is no model-list cycling to try
+			// here: the model list is per-account and re-trying the same gateway
+			// with a different alias of the same model would just be rejected
+			// again, and `classifyNoFallback429` below would forward the 400 and
+			// end the request. This covers both shapes — no model on the body, and
+			// an account whose model list has a single entry (the alias case,
+			// where `modelList.length <= 1` still holds).
+			//
+			// The classifier read a clone, so this response's body is still unread;
+			// drain it before abandoning it (#273 / #382), as every other
+			// discard-then-fail-over site does.
+			if (visionUnsupported) {
+				cancelDiscardedResponseBody(rawResponse);
+				return null;
+			}
 
 			if (requestedModel) {
 				const modelList = getModelList(requestedModel, account);
