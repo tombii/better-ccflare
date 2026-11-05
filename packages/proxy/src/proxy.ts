@@ -802,6 +802,33 @@ async function handleProxyRequest(
 	// eligible route — a 400, not an exhausted pool.
 	let attempted = 0;
 	let visionRejections = 0;
+	// Candidates the probe gate skipped instead of attempting. A skipped account
+	// is only *temporarily* unavailable — another request is probing whether its
+	// cooldown has lifted — so it may well serve the image later. Claiming "no
+	// eligible model can read this image" while one was never tried would turn a
+	// retryable situation into a permanent 400 that clients stop retrying.
+	// Decremented when an ungated retry does end up attempting one of them.
+	let probeSuppressed = 0;
+
+	/**
+	 * True only when every eligible candidate was attempted AND every attempt
+	 * rejected the request's image input — the one state in which "no model can
+	 * serve this image" is a permanent fact rather than a snapshot of who
+	 * happened to be available.
+	 */
+	const everyAttemptRejectedVision = () =>
+		attempted > 0 && probeSuppressed === 0 && visionRejections === attempted;
+
+	/** The permanent, non-retryable answer for an image no route can read. */
+	const visionRefusal = () =>
+		returnRefusal(
+			createPoolExhaustedResponse([], undefined, "vision_unsupported"),
+			"vision_unsupported",
+			// Attempts past the first are failovers; the dashboard reads this to
+			// show how far down the combo/pool the request got.
+			Math.max(0, attempted - 1),
+			requestMeta.comboName ?? null,
+		);
 
 	for (let i = 0; i < accounts.length; i++) {
 		// For combo routing: enrich metadata with slot index and look up model override
@@ -826,6 +853,7 @@ async function handleProxyRequest(
 			// A mature cooldown just expired for this account and another
 			// concurrent request is already probing it. Skip straight to the
 			// next account instead of stampeding the recovering account.
+			probeSuppressed++;
 			continue;
 		}
 
@@ -903,6 +931,13 @@ async function handleProxyRequest(
 		// 0 in this block regardless of pool size, so that comparison would be
 		// a constant `false` for any pool with more than one candidate — the
 		// flag must instead depend only on whether this is combo routing.
+		attempted++;
+		requestMeta.visionRejected = false;
+		// This retry does attempt one of the suppressed candidates, so that one is
+		// no longer "never tried" for the permanence check below. Any that remain
+		// suppressed still are — which is what keeps a single rejected account from
+		// declaring the image unservable while others were never asked.
+		probeSuppressed = Math.max(0, probeSuppressed - 1);
 		response = await proxyWithAccount(
 			req,
 			url,
@@ -926,6 +961,7 @@ async function handleProxyRequest(
 			recordXaiAffinityIfServed(accounts[i]);
 			return response;
 		}
+		if (requestMeta.visionRejected) visionRejections++;
 	}
 
 	// 10. Combo fallback: if combo routing was active and all slots failed,
@@ -936,6 +972,13 @@ async function handleProxyRequest(
 			log.warn(
 				`All combo slots failed for combo "${filteredComboInfo.comboName}", session fallback disabled by the Combo Session Fallback setting (Settings → Advanced)`,
 			);
+			// When every slot that was tried rejected the image and none was
+			// skipped, the image-specific cause outranks the config-level one:
+			// this response is a 503 "please try again later", which would have
+			// the client retry an image no slot in the combo can ever read. The
+			// WARN above still tells the operator which setting kept the pool
+			// from being tried.
+			if (everyAttemptRejectedVision()) return await visionRefusal();
 			return await returnComboSessionFallbackDisabled(
 				filteredComboInfo.comboName,
 				accounts.length,
@@ -982,6 +1025,7 @@ async function handleProxyRequest(
 			for (let i = 0; i < fallbackAccounts.length; i++) {
 				const probeAdmission = getRateLimitProbeAdmission(fallbackAccounts[i]);
 				if (probeAdmission === "suppressed") {
+					probeSuppressed++;
 					continue;
 				}
 
@@ -1040,6 +1084,9 @@ async function handleProxyRequest(
 				// flag is unconditionally true here.
 				attempted++;
 				requestMeta.visionRejected = false;
+				// As in the main-loop ungated retry: this attempt covers one of the
+				// suppressed candidates, so it stops counting as "never tried".
+				probeSuppressed = Math.max(0, probeSuppressed - 1);
 				response = await proxyWithAccount(
 					req,
 					url,
@@ -1091,21 +1138,13 @@ async function handleProxyRequest(
 	);
 
 	// Every candidate that was actually tried rejected the request's image
-	// input. No account is benched and nothing is cooling down, so answering as
-	// an exhausted pool ("503, come back later") would be wrong twice over: the
-	// same image fails the same way forever. Answer 400 and name the cause.
+	// input, and none was left untried. No account is benched and nothing is
+	// cooling down, so answering as an exhausted pool ("503, come back later")
+	// would be wrong twice over: the same image fails the same way forever.
+	// Answer 400 and name the cause.
 	// Placed before the needsReauth throw and terminalRejection — both would
 	// otherwise claim an all-vision-rejected request with a less accurate cause.
-	if (attempted > 0 && visionRejections === attempted) {
-		return await returnRefusal(
-			createPoolExhaustedResponse([], undefined, "vision_unsupported"),
-			"vision_unsupported",
-			// Attempts past the first are failovers; the dashboard reads this to
-			// show how far down the combo/pool the request got.
-			Math.max(0, attempted - 1),
-			requestMeta.comboName ?? null,
-		);
-	}
+	if (everyAttemptRejectedVision()) return await visionRefusal();
 
 	if (needsReauth.length > 0) {
 		// Quote account names to prevent command injection (defense-in-depth)
