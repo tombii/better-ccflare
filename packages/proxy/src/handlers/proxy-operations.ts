@@ -822,8 +822,16 @@ export async function isVisionUnsupportedError(
 			for (const entry of detail) {
 				if (typeof entry === "object" && entry !== null) {
 					const { msg, loc } = entry as { msg?: unknown; loc?: unknown };
-					push(msg);
-					if (Array.isArray(loc)) push(loc.join("."));
+					const msgText = typeof msg === "string" ? msg : "";
+					const locText = Array.isArray(loc) ? loc.join(".") : "";
+					// Each entry is scored on its OWN combined text, not as two
+					// separate candidates: pydantic splits the two halves the matcher
+					// needs — `loc` names `image_url`, `msg` says "Extra inputs are
+					// not permitted" — so neither string alone can ever match. Joined,
+					// the malformed-payload exclusion still applies per entry, since
+					// "invalid base64" in one entry's msg is not rescued by another
+					// entry naming an image.
+					candidates.push(`${locText} ${msgText}`);
 				}
 			}
 		}

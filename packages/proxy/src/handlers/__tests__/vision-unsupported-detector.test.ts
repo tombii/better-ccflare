@@ -76,6 +76,57 @@ describe("isVisionUnsupportedError", () => {
 		expect(await isVisionUnsupportedError(res)).toBe(true);
 	});
 
+	// The image noun lives in `loc` while the rejection lives in `msg`. Testing
+	// them as separate strings can never match, because the matcher requires
+	// both halves together — so each entry is scored on its combined text.
+	it("matches a pydantic entry whose loc and msg split the two halves", async () => {
+		const res = jsonResponse({
+			object: "error",
+			message: {
+				detail: [
+					{
+						type: "extra_forbidden",
+						loc: ["body", "messages", 0, "content", 1, "image_url"],
+						msg: "Extra inputs are not permitted",
+					},
+				],
+			},
+		});
+		expect(await isVisionUnsupportedError(res)).toBe(true);
+	});
+
+	it("matches an unknown-field entry that names image_url only in loc", async () => {
+		const res = jsonResponse({
+			error: {
+				message: {
+					detail: [
+						{
+							loc: ["messages", 0, "content", 2, "image_url"],
+							msg: "unknown field",
+						},
+					],
+				},
+			},
+		});
+		expect(await isVisionUnsupportedError(res)).toBe(true);
+	});
+
+	it("still excludes a malformed-payload entry when loc names image_url", async () => {
+		const res = jsonResponse({
+			error: {
+				message: {
+					detail: [
+						{
+							loc: ["messages", 0, "content", 1, "image_url"],
+							msg: "invalid base64 data",
+						},
+					],
+				},
+			},
+		});
+		expect(await isVisionUnsupportedError(res)).toBe(false);
+	});
+
 	it("ignores non-400 statuses", async () => {
 		const body = { error: { message: "model does not support image input" } };
 		expect(await isVisionUnsupportedError(jsonResponse(body, 429))).toBe(false);
