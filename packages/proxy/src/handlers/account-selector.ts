@@ -693,21 +693,29 @@ export async function selectAccountsForRequest(
 			.map((p) => p.trim())
 			.filter(Boolean) ?? [];
 
+	/**
+	 * Whether `account`'s provider is excluded for this request. Split out of
+	 * `applyExclusions` so a caller can test membership WITHOUT emitting that
+	 * function's warning: the warning counts the list it was handed, and the
+	 * combo path hands it the whole fleet while caring only about the slots it
+	 * actually skips.
+	 */
+	const isProviderExcluded = (a: Account): boolean => {
+		for (const ex of excludeProviders) {
+			// "anthropic-oauth" targets only Anthropic OAuth accounts (refresh_token present),
+			// leaving Anthropic API key accounts (console mode) eligible.
+			if (ex === "anthropic-oauth") {
+				if (a.provider === "anthropic" && a.refresh_token != null) return true;
+			} else if (a.provider === ex) {
+				return true;
+			}
+		}
+		return false;
+	};
+
 	const applyExclusions = (accounts: Account[]): Account[] => {
 		if (excludeProviders.length === 0) return accounts;
-		const filtered = accounts.filter((a) => {
-			for (const ex of excludeProviders) {
-				// "anthropic-oauth" targets only Anthropic OAuth accounts (refresh_token present),
-				// leaving Anthropic API key accounts (console mode) eligible.
-				if (ex === "anthropic-oauth") {
-					if (a.provider === "anthropic" && a.refresh_token != null)
-						return false;
-				} else {
-					if (a.provider === ex) return false;
-				}
-			}
-			return true;
-		});
+		const filtered = accounts.filter((a) => !isProviderExcluded(a));
 		const skipped = accounts.length - filtered.length;
 		if (skipped > 0) {
 			log.warn(
@@ -770,9 +778,18 @@ export async function selectAccountsForRequest(
 					// `slots` and the returned accounts stay index-aligned by
 					// construction, which proxy.ts relies on when it pairs
 					// accounts[i] with slots[i].
+					//
+					// Built from the predicate rather than `applyExclusions`: that
+					// function warns about everything it filtered, and `accountMap`
+					// is the whole fleet, so using it here would log exclusions for
+					// accounts that were never combo candidates. The slots actually
+					// skipped are counted in the loop and logged once after it.
 					const permittedAccountIds = new Set(
-						applyExclusions([...accountMap.values()]).map((a) => a.id),
+						[...accountMap.values()]
+							.filter((a) => !isProviderExcluded(a))
+							.map((a) => a.id),
 					);
+					let excludedSlots = 0;
 					const availableAccounts: Account[] = [];
 					const slotEntries: Array<{
 						accountId: string;
@@ -833,16 +850,25 @@ export async function selectAccountsForRequest(
 							continue;
 						}
 
-						// Membership check against the one hoisted applyExclusions
-						// call over the candidate list (repeated per-slot calls would
-						// repeat its "Skipping N account(s)" log line).
-						if (!permittedAccountIds.has(account.id)) continue;
+						// Membership check against the exclusion set resolved once
+						// above (a per-slot `applyExclusions` call would repeat its
+						// warning once per slot).
+						if (!permittedAccountIds.has(account.id)) {
+							excludedSlots++;
+							continue;
+						}
 
 						availableAccounts.push(account);
 						slotEntries.push({
 							accountId: slot.account_id,
 							modelOverride: slot.model,
 						});
+					}
+
+					if (excludedSlots > 0) {
+						log.warn(
+							`Skipping ${excludedSlots} combo slot(s) whose account is excluded for this request type (Codex CLI traffic must not use Anthropic OAuth accounts)`,
+						);
 					}
 
 					if (availableAccounts.length > 0) {

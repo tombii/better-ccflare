@@ -409,4 +409,45 @@ describe("combo slots stay index-aligned with provider exclusions", () => {
 			);
 		}
 	});
+
+	// The exclusion membership set is resolved over the WHOLE fleet (that is what
+	// makes the slot list index-aligned), so it must not reuse `applyExclusions`'
+	// warning, which counts the list it was handed. A combo whose slots are all
+	// permitted used to log fleet-wide exclusions on every request.
+	it("does not warn about excluded accounts that were never combo candidates", async () => {
+		const meta = makeMeta("req-no-excluded-slots");
+		const returned = await selectAccountsForRequest(
+			meta,
+			// The fleet still holds two excluded-provider accounts; the combo uses
+			// neither.
+			makeContext(mixedAccounts(), makeCombo(["acc-shared-1", "acc-shared-2"])),
+			REQUEST_MODEL,
+		);
+
+		expect(returned.map((a) => a.id)).toEqual(["acc-shared-1", "acc-shared-2"]);
+		expect(
+			messages.filter((m) => m.includes("excluded for this request type")),
+		).toEqual([]);
+	});
+
+	it("warns once, counting only the combo slots it actually skipped", async () => {
+		const meta = makeMeta("req-one-excluded-slot");
+		const returned = await selectAccountsForRequest(
+			meta,
+			// One excluded slot, plus an excluded account that is not a combo
+			// candidate at all: the count must be 1 slot, not 2 accounts.
+			makeContext(
+				mixedAccounts(),
+				makeCombo(["acc-private-1", "acc-shared-1"]),
+			),
+			REQUEST_MODEL,
+		);
+
+		expect(returned.map((a) => a.id)).toEqual(["acc-shared-1"]);
+		const warnings = messages.filter((m) =>
+			m.includes("excluded for this request type"),
+		);
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain("Skipping 1 combo slot(s)");
+	});
 });
