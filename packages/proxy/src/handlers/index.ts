@@ -40,6 +40,7 @@ export {
 } from "./model-capacity";
 export {
 	clearModelCooldownsForAccount,
+	getModelCooldownUntil,
 	isModelCooling,
 	markModelCooling,
 } from "./model-cooldown";

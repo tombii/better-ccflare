@@ -25,7 +25,7 @@ import {
 	isAccountExhaustedForModel,
 	type ModelFamilyExhaustionInfo,
 } from "./model-capacity";
-import { isModelCooling } from "./model-cooldown";
+import { getModelCooldownUntil } from "./model-cooldown";
 import { isInternalProbe, type ProxyContext } from "./proxy-types";
 
 const log = new Logger("AccountSelector");
@@ -928,9 +928,12 @@ export async function selectAccountsForRequest(
 						// effective upstream model is the one that cools: a passthrough
 						// slot (empty model) sends the request's own model.
 						const slotModel = slot.model?.trim() ? slot.model : model;
-						if (slotModel && isModelCooling(account.id, slotModel)) {
+						const cooldownUntil = slotModel
+							? getModelCooldownUntil(account.id, slotModel)
+							: null;
+						if (cooldownUntil !== null) {
 							log.info(
-								`Combo slot ${slot.account_id}/${slotModel} for ${combo.name} is in a model-scoped cooldown — skipping (account stays eligible for its other slots)`,
+								`Combo slot ${slot.account_id}/${slotModel} for ${combo.name} is in a model-scoped cooldown until ${new Date(cooldownUntil).toISOString()} — skipping (account stays eligible for its other slots)`,
 							);
 							continue;
 						}

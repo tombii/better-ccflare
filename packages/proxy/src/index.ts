@@ -56,6 +56,7 @@ export {
 	createUsageThrottledResponse,
 	formatTokenHealthReport,
 	getAccountsNeedingReauth,
+	getModelCooldownUntil,
 	getRoutingObservations,
 	getUsageThrottleStatus,
 	getUsageThrottleUntil,
@@ -81,6 +82,10 @@ export {
 	unregisterPollingRestarter,
 	unregisterRefreshClearer,
 } from "./handlers";
+export {
+	markModelCooling,
+	resetModelCooldownsForTests,
+} from "./handlers/model-cooldown";
 export {
 	runIntegrityCheckOnDemand,
 	startFullIntegrityCheckBackground,

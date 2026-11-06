@@ -84,23 +84,39 @@ export function markModelCooling(
 }
 
 /**
+ * The epoch-ms instant (accountId, model) stops cooling, or null when the pair
+ * is not cooling. Callers that surface the deadline to an operator — the combo
+ * skip log line and the combo detail API — need the timestamp itself, not just
+ * the yes/no answer `isModelCooling` gives: "skipped" without "until when" is
+ * what made a cooling slot look permanently dead. An expired entry is deleted
+ * on read, matching the negative cache in model-capacity.ts.
+ */
+export function getModelCooldownUntil(
+	accountId: string,
+	model: string,
+	now: number = Date.now(),
+): number | null {
+	const key = cooldownKey(accountId, model);
+	const until = cooldowns.get(key);
+	if (until === undefined) return null;
+	if (until <= now) {
+		cooldowns.delete(key);
+		return null;
+	}
+	return until;
+}
+
+/**
  * Whether (accountId, model) was recently marked cooling and hasn't expired.
- * An expired entry is deleted on read, matching the negative cache in
- * model-capacity.ts.
+ * Delegates to {@link getModelCooldownUntil} so the two can never disagree
+ * about when an entry lapses.
  */
 export function isModelCooling(
 	accountId: string,
 	model: string,
 	now: number = Date.now(),
 ): boolean {
-	const key = cooldownKey(accountId, model);
-	const until = cooldowns.get(key);
-	if (until === undefined) return false;
-	if (until <= now) {
-		cooldowns.delete(key);
-		return false;
-	}
-	return true;
+	return getModelCooldownUntil(accountId, model, now) !== null;
 }
 
 /**
