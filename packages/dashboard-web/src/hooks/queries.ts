@@ -688,6 +688,22 @@ export const useGetCombo = (id: string | null) => {
 		// biome-ignore lint/style/noNonNullAssertion: queryFn only runs when `enabled: !!id` is true, so id is guaranteed non-null here — TS can't see the enabled/queryFn connection.
 		queryFn: () => api.getCombo(id!),
 		enabled: !!id,
+		// Cadence boost while a slot is cooling: the cooldown deadline is held
+		// in proxy memory and only reaches the client through this endpoint, so
+		// a slot would otherwise keep showing "Cooling" after it returned (and
+		// stay missing a badge when it newly cooled) until the next refetch.
+		// Poll every 10s while any slot's deadline is in the future; idle
+		// otherwise (the normal staleTime rules apply).
+		refetchInterval: (query) => {
+			const slots = query.state.data?.combo.slots;
+			if (!slots) return false;
+			const now = Date.now();
+			return slots.some(
+				(s) => s.cooldown_until !== null && s.cooldown_until > now,
+			)
+				? 10_000
+				: false;
+		},
 	});
 };
 

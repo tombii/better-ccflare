@@ -55,6 +55,15 @@ export interface ComboWithSlots extends Combo {
 	slots: ComboSlot[];
 }
 
+/** A combo slot as read for display: `cooldown_until` is the epoch-ms instant a
+ * model-scoped cooldown ends, or null. Read-only view — never written back. */
+export interface ComboSlotWithCooldown extends ComboSlot {
+	cooldown_until: number | null;
+}
+export interface ComboWithSlotsWithCooldown extends Combo {
+	slots: ComboSlotWithCooldown[];
+}
+
 // Converter functions (Row -> Domain)
 export function toCombo(row: ComboRow): Combo {
 	return {

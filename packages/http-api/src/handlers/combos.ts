@@ -1,11 +1,14 @@
 import { providerAcceptsClientModel } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { BadRequest, Conflict, NotFound } from "@better-ccflare/errors";
-import { clearVisionCapability } from "@better-ccflare/proxy";
+import {
+	clearVisionCapability,
+	getModelCooldownUntil,
+} from "@better-ccflare/proxy";
 import type {
 	ComboFamily,
 	ComboFamilyAssignment,
-	ComboWithSlots,
+	ComboWithSlotsWithCooldown,
 } from "@better-ccflare/types";
 import { errorResponse } from "../utils/http-error";
 
@@ -127,7 +130,18 @@ export function createComboGetHandler(dbOps: DatabaseOperations) {
 			}
 
 			const slots = await dbOps.getComboSlots(id);
-			const data: ComboWithSlots = { ...combo, slots };
+			// Decorates each slot with its live (account, model) cooldown deadline
+			// so the dashboard can show when a skipped slot returns. A passthrough
+			// slot's effective model is the request's, which is unknown here, so
+			// `s.model` is used as-is (an empty model simply never matches an
+			// entry). Read-only: the deadline is never persisted.
+			const data: ComboWithSlotsWithCooldown = {
+				...combo,
+				slots: slots.map((s) => ({
+					...s,
+					cooldown_until: getModelCooldownUntil(s.account_id, s.model),
+				})),
+			};
 			const response = {
 				success: true,
 				data,

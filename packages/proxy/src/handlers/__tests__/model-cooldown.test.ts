@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import {
 	clearModelCooldownsForAccount,
 	DEFAULT_MODEL_COOLDOWN_TTL_MS,
+	getModelCooldownUntil,
 	isModelCooling,
 	MAX_MODEL_COOLDOWN_MS,
 	markModelCooling,
@@ -118,6 +119,45 @@ describe("markModelCooling / isModelCooling", () => {
 				NOW,
 			),
 		).toBe(true);
+	});
+});
+
+describe("getModelCooldownUntil", () => {
+	it("returns the exact deadline for a marked future cooldown", () => {
+		const until = NOW + 10 * MINUTE;
+		markModelCooling("accountA", "m", until, NOW);
+
+		expect(getModelCooldownUntil("accountA", "m", NOW)).toBe(until);
+		expect(getModelCooldownUntil("accountA", "m", until - 1)).toBe(until);
+	});
+
+	it("returns null and removes the entry once expired", () => {
+		const until = NOW + MINUTE;
+		markModelCooling("accountA", "m", until, NOW);
+
+		expect(getModelCooldownUntil("accountA", "m", until)).toBeNull();
+		// The expired entry was deleted, not merely hidden: re-reading after a
+		// clock rollback must not resurrect the old deadline.
+		expect(getModelCooldownUntil("accountA", "m", NOW)).toBeNull();
+	});
+
+	it("respects the default 5-min TTL when marked with no until", () => {
+		markModelCooling("accountA", "m", undefined, NOW);
+
+		expect(getModelCooldownUntil("accountA", "m", NOW)).toBe(
+			NOW + DEFAULT_MODEL_COOLDOWN_TTL_MS,
+		);
+		expect(
+			getModelCooldownUntil(
+				"accountA",
+				"m",
+				NOW + DEFAULT_MODEL_COOLDOWN_TTL_MS,
+			),
+		).toBeNull();
+	});
+
+	it("returns null for a model that was never marked", () => {
+		expect(getModelCooldownUntil("accountA", "never-seen", NOW)).toBeNull();
 	});
 });
 

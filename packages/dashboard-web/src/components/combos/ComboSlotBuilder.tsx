@@ -1,5 +1,8 @@
 import { splitModelRouting } from "@better-ccflare/core";
-import type { ComboSlot, ComboWithSlots } from "@better-ccflare/types";
+import type {
+	ComboSlot,
+	ComboWithSlotsWithCooldown,
+} from "@better-ccflare/types";
 import {
 	closestCenter,
 	DndContext,
@@ -75,6 +78,7 @@ function SlotModelLabel({ model }: { model?: string | null }) {
 
 interface SortableSlotRowProps {
 	slot: ComboSlot;
+	cooldownUntil: number | null;
 	comboId: string;
 	index: number;
 	accountName: string;
@@ -85,6 +89,7 @@ interface SortableSlotRowProps {
 
 function SortableSlotRow({
 	slot,
+	cooldownUntil,
 	index,
 	accountName,
 	provider,
@@ -137,6 +142,17 @@ function SortableSlotRow({
 				>
 					{accountName}
 				</span>
+				{/* Cooldowns are per (account, model): a badge on the slot row, not
+				    the account, since the account's other slots stay routable. */}
+				{isFutureCooldown(cooldownUntil) && (
+					<Badge
+						variant="destructive"
+						className="shrink-0 text-[10px] font-normal"
+						title={`Cooling until ${new Date(cooldownUntil).toISOString()}`}
+					>
+						Cooling · {new Date(cooldownUntil).toISOString().slice(11, 19)}Z
+					</Badge>
+				)}
 			</div>
 
 			<SlotModelLabel model={slot.model} />
@@ -173,7 +189,12 @@ function modelFieldHint(
 }
 
 interface ComboSlotBuilderProps {
-	combo: ComboWithSlots;
+	combo: ComboWithSlotsWithCooldown;
+}
+
+/** The badge is live state: an expired deadline must not render as "Cooling". */
+function isFutureCooldown(until: number | null): until is number {
+	return until !== null && until > Date.now();
 }
 
 export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
@@ -383,6 +404,7 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 										<SortableSlotRow
 											key={slot.id}
 											slot={slot}
+											cooldownUntil={slot.cooldown_until ?? null}
 											comboId={combo.id}
 											accountName={name}
 											provider={provider}
