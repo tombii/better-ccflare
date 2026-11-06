@@ -208,7 +208,7 @@ describe("Codex transform — images inside tool_result", () => {
 
 		const output = body.input.find((i) => i.type === "function_call_output");
 		expect(output?.output).toBe(
-			"Here is the image:\n[image content not supported in Codex tool results]",
+			"Here is the image:\n[image attached in the following message]",
 		);
 		expect(String(output?.output)).not.toContain("EEEE");
 
@@ -316,9 +316,7 @@ describe("Codex transform — images inside tool_result", () => {
 		]);
 
 		const output = body.input.find((i) => i.type === "function_call_output");
-		expect(output?.output).toBe(
-			"[image content not supported in Codex tool results]",
-		);
+		expect(output?.output).toBe("[image attached in the following message]");
 		// Nothing to hoist, so no empty user item is invented.
 		expect(imageItems(body.input)).toEqual([]);
 		expect(itemShape(body.input)).toEqual([

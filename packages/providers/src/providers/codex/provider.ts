@@ -2215,7 +2215,11 @@ export class CodexProvider extends BaseProvider {
 				continue;
 			}
 			if (block.type === "image") {
-				parts.push("[image content not supported in Codex tool results]");
+				// Same wording as the chat-completions converter: the image is
+				// hoisted to the user item that follows, so a placeholder claiming
+				// it is unsupported would tell the model not to look at something
+				// it can actually see.
+				parts.push("[image attached in the following message]");
 				const hoisted = toCodexInputImageItem(block);
 				if (hoisted) hoistedImages.push(hoisted);
 				continue;

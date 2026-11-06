@@ -319,7 +319,7 @@ export function convertAnthropicRequestToOpenAI(
 					if (typeof toolResult.content === "string") {
 						toolContent = toolResult.content;
 					} else if (Array.isArray(toolResult.content)) {
-						// Array content: serialize non-image items; drop images (not supported in OpenAI tool messages)
+						// Array content: serialize non-image text; images are hoisted out (see below)
 						const parts: string[] = [];
 						for (const block of toolResult.content as AnthropicContent[]) {
 							if (block.type === "text") {
@@ -327,10 +327,11 @@ export function convertAnthropicRequestToOpenAI(
 							} else if (block.type === "image") {
 								// OpenAI tool messages don't support image content, so the
 								// tool output keeps a placeholder and the image itself is
-								// hoisted into a following user turn (below).
-								parts.push(
-									"[image content not supported in OpenAI tool results]",
-								);
+								// hoisted into a following user turn (below). The placeholder
+								// must not read as "you cannot see this": the model CAN, in
+								// the turn that follows, so telling it otherwise invites it to
+								// answer "the image is unavailable" without looking.
+								parts.push("[image attached in the following message]");
 								const hoisted = toOpenAIImagePart(block);
 								if (hoisted) hoistedToolImages.push(hoisted);
 							} else {

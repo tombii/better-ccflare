@@ -261,9 +261,7 @@ describe("Codex transform — subagent (Task) tool_result fidelity", () => {
 		// The function-call output is text-only on the Responses wire, so it
 		// still carries the placeholder and never the raw bytes...
 		const out = outputs(body.input)[0];
-		expect(out?.output).toBe(
-			"[image content not supported in Codex tool results]",
-		);
+		expect(out?.output).toBe("[image attached in the following message]");
 		expect(out?.output).not.toContain("AAAA");
 
 		// ...but the image is no longer dropped: it is hoisted into a user item
