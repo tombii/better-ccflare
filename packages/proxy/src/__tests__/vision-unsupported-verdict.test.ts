@@ -1256,6 +1256,118 @@ describe("vision_unsupported — an indefinite hold-out is not a deferred COMBO 
 	});
 });
 
+describe("vision_unsupported — a combo whose every slot is cooling still defers its pins", () => {
+	// The combo branch has three exits: return the routable slots, return [] when
+	// session fallback is disabled, and fall through to SessionStrategy when it
+	// is enabled. Only the first recorded the dropped slots, so a combo whose
+	// pins were ALL cooling fell through with its pins unrecorded, the pool
+	// routes refused the image, and the verdict saw nothing deferred — a
+	// permanent 400 about a combo pin that could read the image once its
+	// cooldown lifted. Same defect class as the reverted first attempt: the
+	// verdict needs every ELIGIBLE candidate, not just the selected ones.
+
+	it("stays retryable when every combo slot is cooling and the fallback pool refuses", async () => {
+		markModelCooling("acc-1", "slot-model-one");
+		markModelCooling("acc-2", "slot-model-two");
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({ id: "acc-2", name: "two", priority: 1 }),
+			],
+			{ combo },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		// No combo slot was routable, so both accounts are asked only in the
+		// Step-10 fallback pool, under the request's own model, and both refuse.
+		// The two pinned (account, pin) pairs were never asked and their
+		// capability is unknown, so the answer stays retryable.
+		expect(result.fetched).toEqual(["one", "two"]);
+		expectRetryable(result);
+	});
+
+	it("answers 400 when those cooling combo pins are already known blind", async () => {
+		// Knowledge outranks availability — the property the cache exists for. The
+		// pins are cooling, but the cache already knows each of them refuses the
+		// image, so nothing that could serve it was deferred.
+		markModelCooling("acc-1", "slot-model-one");
+		markModelCooling("acc-2", "slot-model-two");
+		markVisionUnsupported("acc-1", "slot-model-one");
+		markVisionUnsupported("acc-2", "slot-model-two");
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({ id: "acc-2", name: "two", priority: 1 }),
+			],
+			{ combo },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		expect(result.fetched).toEqual(["one", "two"]);
+		expectVisionUnsupported(result);
+	});
+
+	it("still answers combo_session_fallback_disabled when every combo slot is cooling", async () => {
+		// With fallback disabled the second exit returns [] without routing a
+		// pool at all. The verdict must not claim permanence there either: the
+		// cooling pins are deferred and their capability unknown, so the config
+		// 503 — not a vision_unsupported 400 — is the honest answer.
+		markModelCooling("acc-1", "slot-model-one");
+		markModelCooling("acc-2", "slot-model-two");
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({ id: "acc-2", name: "two", priority: 1 }),
+			],
+			{ combo, sessionFallback: false },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		expect(result.fetched).toEqual([]);
+		expect(result.status).toBe(503);
+		expect(result.code).toBe("combo_session_fallback_disabled");
+		expect(result.errorType).not.toBe("vision_unsupported");
+	});
+
+	it("treats a cooling slot beside a surviving one as the unknown pair it is", async () => {
+		// The mixed shape the initial-selection tests above cover, restated here
+		// only as a control for the all-cooling cases: one slot routes, refuses,
+		// and the cooling sibling keeps the answer retryable.
+		markModelCooling("acc-2", "slot-model-two");
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({ id: "acc-2", name: "two", priority: 1 }),
+			],
+			{ combo, sessionFallback: false },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		expect(result.fetched).toEqual(["one"]);
+		expectRetryable(result);
+	});
+});
+
 describe("vision_unsupported — the cache does not prove a deferred pair blind under a client provider", () => {
 	// The verdict's deferred-pair check reads the same cache the skip does, so
 	// it owes the same honesty: an entry learned under routing this request does
