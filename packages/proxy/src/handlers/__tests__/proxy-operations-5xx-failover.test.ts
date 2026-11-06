@@ -254,7 +254,10 @@ describe("proxyWithAccount — image rejection on an in-place retry", () => {
 	 * for — without one the retried 400 is not a vision rejection at all, because
 	 * `requestCarriesImageContent` says the request never carried an image.
 	 */
-	function thinkingRetryBody(withImage: boolean): ArrayBuffer {
+	function thinkingRetryBody(
+		withImage: boolean,
+		extra: Record<string, unknown> = {},
+	): ArrayBuffer {
 		return new TextEncoder().encode(
 			JSON.stringify({
 				model: "claude-sonnet-4-5",
@@ -284,6 +287,7 @@ describe("proxyWithAccount — image rejection on an in-place retry", () => {
 						],
 					},
 				],
+				...extra,
 			}),
 		).buffer;
 	}
@@ -534,6 +538,36 @@ describe("proxyWithAccount — image rejection on an in-place retry", () => {
 		// Same evidence, recorded on both sides: the cache entry a later request
 		// skips on, and the per-attempt flag this request's verdict counts.
 		expect(isVisionUnsupported("acc-1", "claude-sonnet-4-5")).toBe(true);
+	});
+
+	// The routing guard's asymmetry, and the one that matters: a refusal under a
+	// client-supplied `provider` is still first-hand evidence for THIS request —
+	// a retry would carry the same provider — so the per-attempt flag counts,
+	// while the cross-request cache write is withheld because the key does not
+	// represent the routing the refusal arrived under. Suppressing the flag too
+	// turned a confirmed refusal into "capability unknown", so a request every
+	// eligible route had refused still answered a retryable 503.
+	it("stamps visionRejected on a retried refusal under a client provider, but records nothing", async () => {
+		const calls = mockOverloadThenVisionRejection();
+
+		const ctx = makeProxyContext();
+		const bodyBuffer = thinkingRetryBody(true, {
+			provider: { only: ["client-picked-upstream"] },
+		});
+		const { result, meta } = await runProxy(
+			makeRequest(bodyBuffer),
+			makeAccount(),
+			bodyBuffer,
+			ctx,
+		);
+
+		expect(calls.length).toBeGreaterThanOrEqual(2);
+		expect(result).toBeNull();
+		// This request's verdict may count the refusal...
+		expect(meta.visionRejected).toBe(true);
+		// ...but no other request may inherit it: the bare pair says nothing about
+		// the provider this refusal arrived under.
+		expect(isVisionUnsupported("acc-1", "claude-sonnet-4-5")).toBe(false);
 	});
 });
 

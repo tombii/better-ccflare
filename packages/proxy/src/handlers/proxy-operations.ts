@@ -2784,22 +2784,30 @@ export async function proxyWithAccount(
 				// refusal is a fallback alias's and says nothing about the key. See
 				// `modelCycledTo`.
 				//
-				// `visionRejected` is suppressed by the same guard, and for the same
-				// reason: it is the per-attempt half of the terminal verdict proxy.ts
-				// computes, and a refusal that is not evidence about the requested
-				// (account, model) pair must not be counted as one. Leaving it unset
-				// makes this attempt count as "capability unknown", which blocks the
-				// verdict and keeps the request retryable — the correct answer when
-				// the alias that refused may clear the moment the transient does.
+				// `visionRejected` is guarded by `modelCycledTo` and by nothing
+				// else, matching the first-response site: it is first-hand evidence
+				// about THIS request, which asked under its own routing, so it
+				// counts toward this request's verdict whatever the body carried.
+				// A cycled alias's refusal is the one thing that must not count —
+				// it is not evidence about the requested pair, and leaving the flag
+				// unset makes this attempt read as "capability unknown", which keeps
+				// the request retryable instead of answering a permanent 400 on the
+				// strength of an alias's opinion.
 				//
-				// `visionRoutingUnrepresentedInKey` composes with `modelCycledTo`
-				// rather than replacing it: a refusal under a client-supplied
-				// `provider` is no more evidence about the bare (account, model)
-				// pair than a fallback alias's refusal is about the requested model
-				// — see the declaration above `visionKeyModel`.
-				if (!modelCycledTo && !visionRoutingUnrepresentedInKey) {
+				// The CACHE write is the half that `visionRoutingUnrepresentedInKey`
+				// gates, and only that half: a refusal under a client-supplied
+				// `provider` says nothing about the bare (account, model) pair, so
+				// recording it would suppress a different provider's route on every
+				// later request for a whole TTL. Suppressing the flag too — the bug
+				// this replaces — cost the opposite error: a confirmed refusal on an
+				// in-place retry under a client `provider` left the route counted as
+				// unknown, so a request every eligible route had refused still
+				// answered a retryable 503.
+				if (!modelCycledTo) {
 					requestMeta.visionRejected = true;
-					markVisionUnsupported(account.id, visionKeyModel);
+					if (!visionRoutingUnrepresentedInKey) {
+						markVisionUnsupported(account.id, visionKeyModel);
+					}
 				}
 				// Drain the response being abandoned: the `retried` argument, not the
 				// outer `response` binding it aliases at today's only call site. The
