@@ -228,11 +228,16 @@ function makeContext(
  */
 function imageRequest(
 	model: string = REQUEST_MODEL,
-	opts: { provider?: unknown } = {},
+	opts: { provider?: unknown; excludeProviders?: string } = {},
 ): Request {
 	return new Request("https://proxy.local/v1/messages", {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: {
+			"Content-Type": "application/json",
+			...(opts.excludeProviders
+				? { "x-better-ccflare-exclude-providers": opts.excludeProviders }
+				: {}),
+		},
 		body: JSON.stringify({
 			model,
 			...(opts.provider === undefined ? {} : { provider: opts.provider }),
@@ -1046,6 +1051,71 @@ describe("vision_unsupported — an indefinite hold-out is not a deferred COMBO 
 
 		expect(result.fetched).toEqual(["one", "one"]);
 		expectVisionUnsupported(result);
+	});
+
+	it("answers 400 when the only untried combo slot's provider is header-excluded", async () => {
+		// The third exclusion class the original review finding named, alongside a
+		// manual pause and a dead token. A provider excluded for THIS request is
+		// permanently ineligible for it rather than temporarily unavailable, so it
+		// must not hold the verdict open either.
+		//
+		// This pins the OUTCOME, not the `excludedAccountIds` filter in the
+		// selector: `slotEntries` is built before `applyExclusions` runs, so an
+		// excluded slot is still present in `filteredComboInfo.slots` and the
+		// definition-slot diff never reaches that filter. The outcome is right
+		// either way — an excluded slot is not deferred, so it cannot block the
+		// verdict — but it arrives by a different route than the filter suggests.
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({
+					id: "acc-2",
+					name: "two",
+					priority: 1,
+					provider: "header-excluded-provider",
+				}),
+			],
+			{ combo },
+		);
+
+		const result = await run(
+			ctx,
+			imageRequest(FAMILY_MODEL, {
+				excludeProviders: "header-excluded-provider",
+			}),
+		);
+
+		// `two` is excluded on both the combo path and the fallback re-selection,
+		// so only `one` is ever asked — and it refuses both times.
+		expect(result.fetched).toEqual(["one", "one"]);
+		expectVisionUnsupported(result);
+	});
+
+	it("stays retryable when a combo slot points at an account that no longer exists", async () => {
+		// Deliberate and conservative, pinned so the choice is visible: a
+		// definition slot whose account row is gone means a broken combo, and its
+		// capability is unknowable, so it holds the verdict open rather than
+		// letting a permanent 400 rest on a guess about a route that no longer
+		// exists. Fixing the combo is the operator's action, and a retryable
+		// answer is the honest one until then.
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-ghost", "slot-model-two", 1),
+		]);
+		const ctx = makeContext([makeAccount({ id: "acc-1", name: "one" })], {
+			combo,
+		});
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		// `one` is asked twice: once for its combo slot, then again by the
+		// session-fallback re-selection. The ghost slot is never askable.
+		expect(result.fetched).toEqual(["one", "one"]);
+		expectRetryable(result);
 	});
 
 	it("stays retryable when the combo slot's pause is one that auto-resumes", async () => {

@@ -1005,6 +1005,17 @@ export async function selectAccountsForRequest(
 						// slot filter. Derived from the two lists already in hand rather
 						// than re-running `applyExclusions` per slot, so an excluded
 						// account does not log the exclusion a second time.
+						//
+						// Currently UNREACHABLE, and kept as defence rather than
+						// deleted: `slotEntries` above is populated before
+						// `applyExclusions` runs, so an excluded slot is still present
+						// in `routableSlots` and the diff loop `continue`s before it
+						// gets here. The verdict is correct without this — an excluded
+						// slot is simply never recorded as deferred — but the ordering
+						// that makes this dead also misaligns `slots` against the
+						// returned accounts (see the "index-aligned" claim below it),
+						// and if that ordering is ever fixed this filter is what keeps
+						// excluded slots out of the deferral list.
 						const filteredComboAccountIds = new Set(
 							filteredComboAccounts.map((account) => account.id),
 						);
