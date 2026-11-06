@@ -25,6 +25,7 @@ import {
 	getProviderModelDefaultOverrides,
 	setProviderModelDefaultOverrides,
 } from "@better-ccflare/providers";
+import { clearVisionCapability } from "@better-ccflare/proxy";
 import type { APIContext } from "@better-ccflare/types";
 import {
 	allowedModelErrorMessage,
@@ -328,6 +329,11 @@ export function createConfigHandlers(
 			// listing, or after one stops answering.
 			const knownFamilies = new Set<string>(KNOWN_PATTERNS);
 			const next = config.getProviderModelDefaultOverrides();
+			// Whether this payload alters any effective override. Entries that
+			// merely restate the current value (or clear an already-absent one) do
+			// not: nothing goes upstream differently, so nothing learned about the
+			// upstream has gone stale.
+			let changed = false;
 			for (const entry of entries) {
 				const value = entry as {
 					provider?: unknown;
@@ -359,8 +365,10 @@ export function createConfigHandlers(
 					return errorResponse(BadRequest("model must be a string"));
 				const model = value.model.trim();
 				if (model) {
+					if (next[provider]?.[family] !== model) changed = true;
 					next[provider] = { ...next[provider], [family]: model };
 				} else if (next[provider]) {
+					if (family in next[provider]) changed = true;
 					delete next[provider][family];
 					if (Object.keys(next[provider]).length === 0) delete next[provider];
 				}
@@ -369,6 +377,21 @@ export function createConfigHandlers(
 			setProviderModelDefaultOverrides(
 				filterEnabledProviderModelDefaultOverrides(enabledProviders, next),
 			);
+			// The vision capability cache is keyed on the model the request ASKED
+			// for (or the combo slot's pin), while the model that actually goes
+			// upstream can come from a provider family default. Changing that
+			// default changes the truth behind a key that stays the same: a pair
+			// marked blind because the old default refused image input would keep
+			// its route skipped without ever asking the new model, for up to the
+			// full TTL. Same invalidation as a model-mappings or model-fallbacks
+			// change, which also alters what answers an unchanged key.
+			//
+			// Global rather than account-scoped: a provider default is not scoped
+			// to one account, and the affected pairs span every account of that
+			// provider. Rejected payloads return above without reaching this
+			// point, and a payload that changes nothing leaves the cache alone —
+			// the rule the model-mappings handler follows.
+			if (changed) clearVisionCapability();
 			return jsonResponse({
 				providers: Object.entries(factories)
 					.filter(([provider]) => enabledProviders.has(provider))
