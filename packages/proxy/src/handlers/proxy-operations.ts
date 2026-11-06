@@ -1553,6 +1553,33 @@ export async function proxyWithAccount(
 		const visionKeyModel =
 			(modelOverride ? modelOverride : baseBodyContext.getModel()) ?? "";
 
+		/**
+		 * Whether this attempt's image refusal must NOT reach the vision
+		 * capability cache: the effective outgoing body carries a `provider`
+		 * routing object that did not come from the slot's routing suffix.
+		 *
+		 * The cache key is the (account, model) pair — suffix included — and
+		 * represents provider routing ONLY through that suffix. Routing can also
+		 * travel as a body field: on the anthropic-compatible family a
+		 * client-supplied `provider` passes through untouched, so the same key
+		 * would serve two different upstream choices, and a refusal learned
+		 * under one would sideline the other for a full TTL.
+		 *
+		 * Suppression rather than widening the key: a `provider` value is an
+		 * arbitrarily shaped object, and normalising it into a key string is
+		 * more surface than declining to use the cache when the routing is not
+		 * represented in it. `slotRouting` is non-null exactly when the suffix
+		 * in `visionKeyModel` produced the body's `provider` (the
+		 * `resolveSlotRouting` acceptance above), so a slot-pinned routing IS
+		 * represented in the key and still learns; only a provider the client
+		 * sent suppresses the write. Read at `visionKeyModel` time — the
+		 * model-cycling fallback below patches a fresh context and never
+		 * mutates this one, so the answer cannot go stale between here and the
+		 * two call sites that consume it.
+		 */
+		const visionRoutingUnrepresentedInKey =
+			effectiveBodyContext.getParsedJson()?.provider != null && !slotRouting;
+
 		// Stage the original request body + headers for cache keepalive replay.
 		// Uses the pre-transform body (effectiveBodyBuffer may have a model override
 		// patched in, so use the original requestBodyBuffer for a faithful replay).
@@ -2764,7 +2791,13 @@ export async function proxyWithAccount(
 				// makes this attempt count as "capability unknown", which blocks the
 				// verdict and keeps the request retryable — the correct answer when
 				// the alias that refused may clear the moment the transient does.
-				if (!modelCycledTo) {
+				//
+				// `visionRoutingUnrepresentedInKey` composes with `modelCycledTo`
+				// rather than replacing it: a refusal under a client-supplied
+				// `provider` is no more evidence about the bare (account, model)
+				// pair than a fallback alias's refusal is about the requested model
+				// — see the declaration above `visionKeyModel`.
+				if (!modelCycledTo && !visionRoutingUnrepresentedInKey) {
 					requestMeta.visionRejected = true;
 					markVisionUnsupported(account.id, visionKeyModel);
 				}
@@ -2867,8 +2900,17 @@ export async function proxyWithAccount(
 			// site always answers for the model that was asked for (the
 			// model-cycling fallback runs later), so it needs none of the
 			// `modelCycledTo` guard the retried-response site above carries.
+			//
+			// `visionRejected` is stamped unconditionally — the refusal happened
+			// under THIS request's own routing, so it is first-hand evidence for
+			// this request's verdict whatever the body carried. The cache write
+			// is not: an entry keyed on the bare pair would suppress a different
+			// provider's route on every later request for a whole TTL. See
+			// `visionRoutingUnrepresentedInKey`.
 			requestMeta.visionRejected = true;
-			markVisionUnsupported(account.id, visionKeyModel);
+			if (!visionRoutingUnrepresentedInKey) {
+				markVisionUnsupported(account.id, visionKeyModel);
+			}
 		}
 
 		if (visionUnsupported || (await isModelUnavailableError(rawResponse))) {

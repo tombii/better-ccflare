@@ -3,6 +3,7 @@ import {
 	requestEvents,
 	runForceAccountModelExempt,
 	ServiceUnavailableError,
+	splitModelRouting,
 	trackClientVersion,
 } from "@better-ccflare/core";
 import { DatabaseFactory } from "@better-ccflare/database";
@@ -833,6 +834,43 @@ async function handleProxyRequest(
 			requestCarriesImageContent(requestBodyContext));
 
 	/**
+	 * Whether the request's own body carries a `provider` routing object.
+	 * Resolved at most once, like {@link requestCarriesImages}: the parsed body
+	 * is already standing by then (`visionKeyModelFor` reads the model off it),
+	 * so this is one property read.
+	 *
+	 * The body is UNPATCHED here — slot overrides patch a copy inside
+	 * `proxyWithAccount` — so a `provider` on it is the client's, not routing
+	 * the selector applied.
+	 */
+	let clientProviderRoutingResolved: boolean | null = null;
+	const clientProviderRouting = () =>
+		(clientProviderRoutingResolved ??=
+			requestBodyContext.getParsedJson()?.provider != null);
+
+	/**
+	 * Whether the vision capability cache may speak for a (account, keyModel)
+	 * pair ON THIS REQUEST. It may not when the request carries a client
+	 * `provider` the key does not represent: the key is the (account, model)
+	 * pair, suffix included, so a key model WITHOUT a routing suffix says
+	 * nothing about which upstream the client's `provider` selects — an entry
+	 * under it was learned under some other routing (or none) and must neither
+	 * skip a candidate nor prove a deferred one blind.
+	 *
+	 * A key model WITH a suffix is the opposite case: when a slot override
+	 * carries one, `resolveSlotRouting` overwrites `body.provider` from it, so
+	 * the effective routing IS the suffix already in the key, and the cache
+	 * speaks for the pair exactly as it does without a client `provider`.
+	 *
+	 * The write side suppresses the mark under the same condition (see
+	 * `visionRoutingUnrepresentedInKey` in proxy-operations.ts), so learn and
+	 * skip stay symmetric: a suffixed slot pin learns and skips normally under
+	 * a client `provider`, and a client `provider` with no suffix does neither.
+	 */
+	const cacheSpeaksForKeyModel = (keyModel: string): boolean =>
+		!clientProviderRouting() || splitModelRouting(keyModel).routing != null;
+
+	/**
 	 * The model half of the vision capability key for a candidate: its combo
 	 * slot's model override when one applied, otherwise the request's own model,
 	 * with any provider-routing suffix left intact.
@@ -925,45 +963,42 @@ async function handleProxyRequest(
 	): string | null => {
 		const keyModel = visionKeyModelFor(slotModelOverride);
 		if (!isVisionUnsupported(candidate.id, keyModel)) return null;
+		// A client `provider` the key does not represent (see
+		// `cacheSpeaksForKeyModel`): still cheaper than the body walk below, and
+		// the pair must be asked, not skipped.
+		if (!cacheSpeaksForKeyModel(keyModel)) return null;
 		return requestCarriesImages() ? keyModel : null;
 	};
 
 	/**
-	 * Selector-level deferrals, recorded once here rather than at each loop.
+	 * Usage throttling — applied here, AFTER selection — is the one deferral the
+	 * selector cannot see, so it is recorded here: an account held back for a
+	 * usage window is out for minutes, not for good, which is exactly the
+	 * time-bound kind of deferral that needs no eligibility filter.
 	 *
-	 * Combo routing can be enumerated exactly: `definitionSlots` is every ENABLED
-	 * slot in the combo definition, `slots` is the subset the selector could route
-	 * this request, and their difference is precisely the slots it dropped — for a
-	 * cooldown on the slot's own model, an unavailable account, or a per-slot
-	 * capacity exclusion. Each carries the (accountId, modelOverride) pair the
-	 * verdict needs. That enumeration is what the first attempt at this verdict
-	 * lacked: it could only see the slots that survived, so one blind slot plus one
-	 * cooling slot read as "every candidate refused" and answered a permanent 400
-	 * for a request that would have succeeded once the cooldown lifted.
+	 * Keyed by what that account would have been asked for: under combo routing,
+	 * its own slot's pin — an account can hold several slots, each pin is its own
+	 * capability question, and deferring the request's own model instead would
+	 * record a pair that was never on offer. Under pool routing, the request's
+	 * own model (null resolves against the body in the verdict).
 	 *
-	 * Comparing against `filteredComboInfo.slots` rather than `comboInfo.slots`
-	 * also picks up a combo account that usage throttling held back, which the
-	 * selector never saw.
-	 *
-	 * Pool routing has no per-request definition to diff against, so the selector
-	 * records its own drops on `requestMeta` (see `notePoolDeferrals` in
-	 * account-selector.ts). Only usage throttling — applied here, after selection —
-	 * needs recording in this branch, and only when NOT combo-routed: under combo
-	 * routing a throttled account would have been asked for its slot's pin, which
-	 * the diff above already recorded, and adding the request's own model would
-	 * defer a pair that was never on offer.
+	 * The selector's own drops — pool accounts the strategy benched and combo
+	 * slots it could not route — are recorded THERE, in account-selector.ts
+	 * (`notePoolDeferrals` and the combo-slot recording beside it), where the
+	 * account rows already live and the indefinite hold-out filter
+	 * (`isIndefinitelyHeldOut`) can be applied without a DB read on this path.
+	 * That filter is why the recording moved out of proxy.ts: a combo diff
+	 * computed here sees only (accountId, modelOverride), so a manually paused
+	 * or dead-token slot was indistinguishable from a cooling one and held the
+	 * verdict open forever.
 	 */
 	if (comboInfo?.definitionSlots) {
-		const routable = new Set(
-			(filteredComboInfo?.slots ?? []).map((slot) =>
-				candidatePairKey(slot.accountId, slot.modelOverride),
-			),
-		);
-		for (const slot of comboInfo.definitionSlots) {
-			if (routable.has(candidatePairKey(slot.accountId, slot.modelOverride))) {
-				continue;
+		for (const account of throttledAccounts) {
+			for (const slot of comboInfo.slots) {
+				if (slot.accountId === account.id) {
+					noteDeferred(slot.accountId, slot.modelOverride);
+				}
 			}
-			noteDeferred(slot.accountId, slot.modelOverride);
 		}
 	} else {
 		for (const account of throttledAccounts) {
@@ -1010,11 +1045,17 @@ async function handleProxyRequest(
 		const isKnownBlind = (deferred: {
 			accountId: string;
 			modelOverride: string | null;
-		}): boolean =>
-			isVisionUnsupported(
-				deferred.accountId,
-				visionKeyModelFor(deferred.modelOverride),
+		}): boolean => {
+			const keyModel = visionKeyModelFor(deferred.modelOverride);
+			// Same gate as the skip read: an entry the key does not represent
+			// cannot prove a deferred pair blind either, or a client `provider`
+			// would let a refusal learned under other routing answer a permanent
+			// 400 for a pair that was never asked under this routing.
+			return (
+				cacheSpeaksForKeyModel(keyModel) &&
+				isVisionUnsupported(deferred.accountId, keyModel)
 			);
+		};
 
 		let eligible = attempted + visionSkips;
 		let knownBlind = visionRejections + visionSkips;
@@ -1080,6 +1121,20 @@ async function handleProxyRequest(
 	// erase the explanation.
 	let terminalRejection: (() => Promise<Response | null>) | undefined;
 
+	/**
+	 * How the combo loop resolves the model override for index `index`: the
+	 * slot's pin when the slot exists and its account matches the candidate at
+	 * that index, null otherwise — the loop body's own expression, minus its
+	 * desync log, factored out so the last-attempt look-ahead below can resolve
+	 * a TAIL candidate's key the same way the loop will when it gets there.
+	 */
+	const slotOverrideFor = (index: number): string | null => {
+		const slot = filteredComboInfo?.slots[index];
+		return slot && slot.accountId === accounts[index].id
+			? slot.modelOverride
+			: null;
+	};
+
 	for (let i = 0; i < accounts.length; i++) {
 		// For combo routing: enrich metadata with slot index and look up model override
 		let modelOverride: string | null = null;
@@ -1131,13 +1186,23 @@ async function handleProxyRequest(
 		anyAccountAttempted = true;
 		noteAttempted(accounts[i].id, modelOverride);
 		// The last actually-attempted candidate is not always the last pool
-		// index: a probe-suppressed tail account gets skipped via `continue`
-		// above rather than attempted. Look ahead at the remaining candidates'
-		// CURRENT suppression state (without taking a lease) to find out
-		// whether any of them would still be attempted after this one.
+		// index: a probe-suppressed OR vision-skipped tail account gets skipped
+		// via `continue` above rather than attempted. Look ahead at the
+		// remaining candidates' CURRENT suppression state (without taking a
+		// lease) to find out whether any of them would still be attempted after
+		// this one. `visionSkipModel` is memoised and side-effect free, so
+		// asking it here is safe — and necessary: a cached-blind tail that the
+		// probe gate would happily admit used to read as "still to come", so
+		// this account looked non-terminal, its persistent 502/529 was
+		// discarded for a failover that then skipped the tail, and the client
+		// got a generic 503 instead of the upstream's own status.
 		const isLastAttemptedCandidate = accounts
 			.slice(i + 1)
-			.every((candidate) => wouldSuppressProbe(candidate));
+			.every(
+				(candidate, offset) =>
+					wouldSuppressProbe(candidate) ||
+					visionSkipModel(candidate, slotOverrideFor(i + 1 + offset)) !== null,
+			);
 		try {
 			response = await proxyWithAccount(
 				req,
@@ -1354,10 +1419,18 @@ async function handleProxyRequest(
 				noteAttempted(fallbackAccounts[i].id, null);
 				// Same rationale as the main loop above: a probe-suppressed tail
 				// candidate is skipped via `continue`, so the last pool index is
-				// not necessarily the last one actually attempted.
+				// not necessarily the last one actually attempted — and the same
+				// goes for a tail the vision cache will skip. The fallback path is
+				// never combo-routed (comboName was cleared before the
+				// re-selection), so there is no slot pin to resolve: the key model
+				// is the request's own.
 				const isLastAttemptedFallback = fallbackAccounts
 					.slice(i + 1)
-					.every((candidate) => wouldSuppressProbe(candidate));
+					.every(
+						(candidate) =>
+							wouldSuppressProbe(candidate) ||
+							visionSkipModel(candidate, null) !== null,
+					);
 				try {
 					response = await proxyWithAccount(
 						req,

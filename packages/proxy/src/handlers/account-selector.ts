@@ -70,6 +70,32 @@ export interface DeferredVisionCandidate {
 	modelOverride: string | null;
 }
 
+/**
+ * Whether an account is OUT of rotation indefinitely — a state that waiting
+ * cannot clear: a MANUAL pause (the strategy's auto-unpause deliberately skips
+ * reason "manual"; overage, peak-hours and failure-threshold pauses lift
+ * themselves) or a dead refresh token (`requires_reauth` needs a human to
+ * re-authenticate).
+ *
+ * A candidate only holds the terminal vision verdict open when waiting could
+ * plausibly make it serve the image, so an indefinitely held-out account is not
+ * a deferred candidate at all — recording one would make the verdict
+ * unreachable on any fleet with one such account. `needsReauth` names only
+ * accounts the selector actually SELECTED, so an account dropped here is never
+ * the one that message asks for.
+ *
+ * Shared by both deferral recording sites — the pool path (`notePoolDeferrals`
+ * below) and the combo-slot recording in the combo branch — so the two cannot
+ * drift: any future drop-recording site must apply the same hold-out filter or
+ * the verdict silently regresses to inertness on that path.
+ */
+export function isIndefinitelyHeldOut(account: Account): boolean {
+	return Boolean(
+		(account.paused && account.pause_reason === "manual") ||
+			account.requires_reauth,
+	);
+}
+
 // Module-level WeakMap, mirroring comboSlotInfoMap above rather than widening
 // RequestMeta's shape with a field only one consumer reads.
 const deferredCandidatesMap = new WeakMap<
@@ -931,6 +957,86 @@ export async function selectAccountsForRequest(
 						};
 						setComboSlotInfo(meta, slotInfo);
 						meta.comboName = combo.name;
+
+						/**
+						 * Record the definition slots this request could not route as
+						 * deferred vision candidates — the combo counterpart of
+						 * `notePoolDeferrals` below.
+						 *
+						 * Recorded HERE rather than in proxy.ts, which until now computed
+						 * `definitionSlots` minus the routable slots with no eligibility
+						 * filter: the combo loop there has only (accountId,
+						 * modelOverride) per slot, no `Account` row, so one manually
+						 * paused or dead-token slot was indistinguishable from a cooling
+						 * one and held the terminal vision verdict open forever — a
+						 * combo whose every USABLE slot refuses an image answered a
+						 * retryable 503 instead of the permanent 400. Same defect the
+						 * pool path was fixed for, on the path that was missed. Moving
+						 * the recording here gives both the filter and the account rows
+						 * for free — `allAccounts` and the dropping code already live in
+						 * this function — without adding a DB read to proxy.ts's
+						 * per-request path, which is what a `getAllAccounts()` there
+						 * would have cost.
+						 *
+						 * A dropped slot is deferred unless it is out for good, by the
+						 * same rules the pool path applies:
+						 * - header-excluded providers
+						 *   (`x-better-ccflare-exclude-providers`) are permanently
+						 *   ineligible for THIS request, not deferred;
+						 * - an indefinite hold-out — see `isIndefinitelyHeldOut` —
+						 *   returns only by operator action, so waiting cannot rescue
+						 *   the request.
+						 * "Force account model" cannot apply here: combo routing is
+						 * skipped entirely when that setting is on, so every slot's
+						 * account was already free to serve the slot's pin.
+						 *
+						 * A slot whose account is GONE from the fleet (the "references
+						 * unknown account" drop above) has no row to filter on and stays
+						 * deferred: its capability is unknowable, and the conservative
+						 * retryable answer is the honest one for a broken combo.
+						 */
+						const routableSlots = new Set(
+							slotEntries.map(
+								(entry) =>
+									`${entry.accountId}\u0000${entry.modelOverride ?? ""}`,
+							),
+						);
+						// Accounts the header exclusion removed after they survived every
+						// slot filter. Derived from the two lists already in hand rather
+						// than re-running `applyExclusions` per slot, so an excluded
+						// account does not log the exclusion a second time.
+						const filteredComboAccountIds = new Set(
+							filteredComboAccounts.map((account) => account.id),
+						);
+						const excludedAccountIds = new Set(
+							availableAccounts
+								.filter((account) => !filteredComboAccountIds.has(account.id))
+								.map((account) => account.id),
+						);
+						const deferredComboSlots: DeferredVisionCandidate[] = [];
+						for (const definitionSlot of definitionSlots) {
+							if (
+								routableSlots.has(
+									`${definitionSlot.accountId}\u0000${definitionSlot.modelOverride ?? ""}`,
+								)
+							) {
+								continue;
+							}
+							const account = accountMap.get(definitionSlot.accountId);
+							if (
+								account &&
+								(excludedAccountIds.has(account.id) ||
+									isIndefinitelyHeldOut(account))
+							) {
+								continue;
+							}
+							deferredComboSlots.push({
+								accountId: definitionSlot.accountId,
+								modelOverride: definitionSlot.modelOverride,
+							});
+						}
+						addDeferredCandidates(meta, deferredComboSlots);
+
 						return filteredComboAccounts;
 					}
 
@@ -1033,21 +1139,10 @@ export async function selectAccountsForRequest(
 		const forcedModel = model && isForceAccountModelEnabled(ctx) ? model : null;
 		const deferred = applyExclusions(allAccounts)
 			.filter((account) => !selectedIds.has(account.id))
-			// An operator's hold-out, not a deferral: a manual pause and a dead
-			// refresh token both return to rotation only by human action. The
-			// strategy's auto-unpause deliberately skips manual pauses, and
-			// `needsReauth` names only accounts the selector actually selected,
-			// so an account dropped here is never the one that message asks for.
-			// A candidate only holds the vision verdict open when waiting could
-			// plausibly make it serve the image; an account that comes back only
-			// when a human acts is not a candidate at all — recording it as
-			// deferred would make the verdict unreachable on any fleet with one
-			// such account, which is inertness, not conservatism.
-			.filter(
-				(account) =>
-					!(account.paused && account.pause_reason === "manual") &&
-					!account.requires_reauth,
-			)
+			// An operator's hold-out, not a deferral: see
+			// {@link isIndefinitelyHeldOut}, shared with the combo-slot recording
+			// below so the two paths cannot drift.
+			.filter((account) => !isIndefinitelyHeldOut(account))
 			.filter(
 				(account) =>
 					forcedModel === null || accountServesModel(account, forcedModel),

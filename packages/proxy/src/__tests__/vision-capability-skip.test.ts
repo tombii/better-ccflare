@@ -111,7 +111,7 @@ function makeCombo(slots: ComboWithSlots["slots"]): ComboWithSlots {
 
 function makeContext(
 	accounts: Account[],
-	opts: { combo?: ComboWithSlots | null } = {},
+	opts: { combo?: ComboWithSlots | null; providerRouting?: boolean } = {},
 ): ProxyContext {
 	return {
 		strategy: {
@@ -158,6 +158,11 @@ function makeContext(
 			prepareHeaders: () => new Headers(),
 			transformRequestBody: undefined,
 			processResponse: async (r: Response) => r,
+			// `providerRouting` arms `supportsProviderRoutingFor`, the instance hook
+			// `resolveSlotRouting` consults first: without it the unregistered
+			// "test-provider" answers no, and a slot's routing suffix never becomes
+			// `body.provider`.
+			supportsProviderRoutingFor: () => opts.providerRouting === true,
 			parseRateLimit: () => ({
 				isRateLimited: false,
 				resetTime: undefined,
@@ -171,13 +176,23 @@ function makeContext(
 	};
 }
 
-/** An image on the wire is what arms the vision classifier at all. */
-function imageRequest(model: string = REQUEST_MODEL): Request {
+/**
+ * An image on the wire is what arms the vision classifier at all.
+ *
+ * `opts.provider` adds a CLIENT-supplied `provider` routing object to the body
+ * — the field the (account, model) cache key cannot represent. On the
+ * anthropic-compatible family it passes through to the upstream untouched.
+ */
+function imageRequest(
+	model: string = REQUEST_MODEL,
+	opts: { provider?: unknown } = {},
+): Request {
 	return new Request("https://proxy.local/v1/messages", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
 			model,
+			...(opts.provider === undefined ? {} : { provider: opts.provider }),
 			messages: [
 				{
 					role: "user",
@@ -541,5 +556,130 @@ describe("vision capability cache — an all-skipped pool does not re-ask a blin
 		// for — neither ungated retry re-asks a blind route — is the empty `fetched`.
 		expect(result.threw).toBe(false);
 		expect(result.status).toBe(400);
+	});
+});
+
+describe("vision capability cache — provider routing the key cannot represent", () => {
+	// The key is the (account, model) pair, and it represents provider routing
+	// ONLY through a suffix on the model. Routing can also travel as a
+	// `provider` object on the body, which the key has no place for — and on the
+	// anthropic-compatible family a client-supplied `provider` passes through to
+	// the upstream untouched. One key therefore cannot cover two provider
+	// choices: a refusal learned under one would sideline the other for a whole
+	// TTL. Both sides decline to use the cache when the routing is not
+	// represented in the key.
+	const CLIENT_PROVIDER = { only: ["client-upstream"] };
+	const OTHER_CLIENT_PROVIDER = { only: ["other-upstream"] };
+
+	it("records nothing when the refusal arrived under a client-supplied provider", async () => {
+		const blind = makeAccount({ id: "acc-blind", name: "blind" });
+		const serving = makeAccount({
+			id: "acc-serving",
+			name: "serving",
+			priority: 1,
+		});
+		const ctx = makeContext([blind, serving]);
+
+		const first = await run(
+			ctx,
+			imageRequest(REQUEST_MODEL, { provider: CLIENT_PROVIDER }),
+			["blind"],
+		);
+		expect(first.status).toBe(200);
+		expect(first.fetched).toEqual(["blind", "serving"]);
+
+		// The pair was refused under routing the key cannot name, so nothing is
+		// learned under it...
+		expect(isVisionUnsupported("acc-blind", REQUEST_MODEL)).toBe(false);
+
+		// ...and the next image request still asks it, whatever provider it
+		// carries: a refusal under one upstream choice says nothing about another.
+		const second = await run(
+			ctx,
+			imageRequest(REQUEST_MODEL, { provider: OTHER_CLIENT_PROVIDER }),
+			["blind"],
+		);
+		expect(second.fetched).toEqual(["blind", "serving"]);
+	});
+
+	it("does not skip a pre-marked pair when the request carries a client provider", async () => {
+		markVisionUnsupported("acc-blind", REQUEST_MODEL);
+		const blind = makeAccount({ id: "acc-blind", name: "blind" });
+		const serving = makeAccount({
+			id: "acc-serving",
+			name: "serving",
+			priority: 1,
+		});
+		const ctx = makeContext([blind, serving]);
+
+		// The cached refusal was learned under a routing this request does not
+		// carry: the pair must be asked, not skipped, and it serves.
+		const withProvider = await run(
+			ctx,
+			imageRequest(REQUEST_MODEL, { provider: CLIENT_PROVIDER }),
+		);
+		expect(withProvider.fetched).toEqual(["blind"]);
+		expect(withProvider.status).toBe(200);
+
+		// Control: the identical pool WITHOUT the provider field skips as before
+		// (serving a pre-mark is untouched by a skip), so the suppression above is
+		// the client provider's doing, not the mark's.
+		const withoutProvider = await run(ctx, imageRequest());
+		expect(withoutProvider.fetched).toEqual(["serving"]);
+		expect(withoutProvider.status).toBe(200);
+	});
+
+	it("learns and skips normally when the slot override carries the routing suffix", async () => {
+		// The symmetric case. A slot pin WITH a routing suffix IS represented in
+		// the key, even when the client also sent a `provider`: `resolveSlotRouting`
+		// overwrites `body.provider` from the pin, so the effective routing is the
+		// suffix the key already carries. Learning and skipping both keep working.
+		const pinnedModel = 'pinned-model {"only":["upstream-one"]}';
+		const blind = makeAccount({ id: "acc-blind", name: "blind" });
+		const serving = makeAccount({
+			id: "acc-serving",
+			name: "serving",
+			priority: 1,
+		});
+		const combo = makeCombo([
+			{
+				id: "slot-0",
+				combo_id: "combo-test",
+				account_id: "acc-blind",
+				model: pinnedModel,
+				priority: 0,
+				enabled: true,
+			},
+			{
+				id: "slot-1",
+				combo_id: "combo-test",
+				account_id: "acc-serving",
+				model: "second-pinned-model",
+				priority: 1,
+				enabled: true,
+			},
+		]);
+		const ctx = makeContext([blind, serving], { combo, providerRouting: true });
+
+		const first = await run(
+			ctx,
+			imageRequest(FAMILY_MODEL, { provider: CLIENT_PROVIDER }),
+			["blind"],
+		);
+		expect(first.status).toBe(200);
+		expect(first.fetched).toEqual(["blind", "serving"]);
+
+		// The refusal under the pinned routing IS learned, keyed on the suffixed
+		// pin.
+		expect(isVisionUnsupported("acc-blind", pinnedModel)).toBe(true);
+
+		// And the next request under the same pin — client provider included — is
+		// skipped off it.
+		const second = await run(
+			ctx,
+			imageRequest(FAMILY_MODEL, { provider: CLIENT_PROVIDER }),
+			["blind"],
+		);
+		expect(second.fetched).toEqual(["serving"]);
 	});
 });

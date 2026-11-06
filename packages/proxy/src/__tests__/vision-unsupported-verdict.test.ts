@@ -147,6 +147,14 @@ function makeContext(
 		sessionFallback?: boolean;
 		throttling?: boolean;
 		capacityRouting?: boolean;
+		/**
+		 * Classify a 529 as a rate limit, the way a real anthropic-shaped
+		 * provider does when the upstream's overload response carries the
+		 * rate-limit status headers. Only with this is the terminal-attempt flag
+		 * observable on a 529: an unclassified one is forwarded to the client on
+		 * any attempt, terminal or not.
+		 */
+		rateLimitOn529?: boolean;
 	} = {},
 ): ProxyContext {
 	return {
@@ -199,8 +207,8 @@ function makeContext(
 			prepareHeaders: () => new Headers(),
 			transformRequestBody: undefined,
 			processResponse: async (r: Response) => r,
-			parseRateLimit: () => ({
-				isRateLimited: false,
+			parseRateLimit: (response: Response) => ({
+				isRateLimited: opts.rateLimitOn529 === true && response.status === 529,
 				resetTime: undefined,
 				statusHeader: undefined,
 				remaining: undefined,
@@ -212,13 +220,22 @@ function makeContext(
 	};
 }
 
-/** An image on the wire is what arms the vision classifier at all. */
-function imageRequest(model: string = REQUEST_MODEL): Request {
+/**
+ * An image on the wire is what arms the vision classifier at all.
+ *
+ * `opts.provider` adds a CLIENT-supplied `provider` routing object — routing
+ * the (account, model) capability key cannot represent.
+ */
+function imageRequest(
+	model: string = REQUEST_MODEL,
+	opts: { provider?: unknown } = {},
+): Request {
 	return new Request("https://proxy.local/v1/messages", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
 			model,
+			...(opts.provider === undefined ? {} : { provider: opts.provider }),
 			messages: [
 				{
 					role: "user",
@@ -265,6 +282,22 @@ function serverError(): Response {
 			error: { type: "api_error", message: "Internal server error" },
 		}),
 		{ status: 500, headers: { "content-type": "application/json" } },
+	);
+}
+
+/**
+ * A persistent upstream overload. The terminal-attempt flag exists for exactly
+ * this status: on the LAST candidate a classified 529 is forwarded to the
+ * client — its own status and explanation — while on any earlier candidate it
+ * is discarded so failover can continue.
+ */
+function overloaded529(): Response {
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: { type: "overloaded_error", message: "Upstream at capacity" },
+		}),
+		{ status: 529, headers: { "content-type": "application/json" } },
 	);
 }
 
@@ -950,5 +983,344 @@ describe("vision_unsupported — outranks the combo session-fallback-disabled 50
 		expect(result.status).toBe(503);
 		expect(result.code).toBe("combo_session_fallback_disabled");
 		expect(result.errorType).not.toBe("vision_unsupported");
+	});
+});
+
+describe("vision_unsupported — an indefinite hold-out is not a deferred COMBO SLOT", () => {
+	// The combo counterpart of the pool tests above. A combo slot dropped by the
+	// selector's own availability check was recorded as deferred with no
+	// eligibility filter — the pool path applies one, the combo path did not —
+	// so one manually paused or dead-token slot held the verdict open forever:
+	// a combo whose every USABLE slot refuses the image answered a retryable 503
+	// instead of the permanent 400. The recording now lives in the selector,
+	// beside the account rows and the shared hold-out filter.
+
+	it("answers 400 when the only untried combo slot is a MANUAL pause", async () => {
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({
+					id: "acc-2",
+					name: "two",
+					priority: 1,
+					paused: true,
+					pause_reason: "manual",
+				}),
+			],
+			{ combo },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		// `two` is never asked on either path: the selector drops its slot
+		// (isAccountAvailable fails a manual pause) and the fallback re-selection's
+		// strategy drops the account. `one` is asked under its slot pin and again
+		// under the request's own model, and both refuse.
+		expect(result.fetched).toEqual(["one", "one"]);
+		expectVisionUnsupported(result);
+	});
+
+	it("answers 400 when the only untried combo slot needs re-authentication", async () => {
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({
+					id: "acc-2",
+					name: "two",
+					priority: 1,
+					requires_reauth: true,
+				}),
+			],
+			{ combo },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		expect(result.fetched).toEqual(["one", "one"]);
+		expectVisionUnsupported(result);
+	});
+
+	it("stays retryable when the combo slot's pause is one that auto-resumes", async () => {
+		// The boundary, for the combo path: a peak-hours, overage or
+		// failure-threshold pause lifts itself, so that slot IS a deferred
+		// candidate and does hold the verdict open.
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({
+					id: "acc-2",
+					name: "two",
+					priority: 1,
+					paused: true,
+					pause_reason: "peak_hours",
+				}),
+			],
+			{ combo },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		expect(result.fetched).toEqual(["one", "one"]);
+		expectRetryable(result);
+	});
+
+	it("stays retryable when an auto-resuming pause holds a combo slot back and no fallback pool exists", async () => {
+		// Isolates the SELECTOR-side combo recording: with session fallback off
+		// there is no pool re-selection to defer `two` a second time, so the only
+		// thing holding the verdict open is the selector's own record of the
+		// dropped slot. A peak-hours pause auto-resumes, so it is a deferral and
+		// not a hold-out.
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({
+					id: "acc-2",
+					name: "two",
+					priority: 1,
+					paused: true,
+					pause_reason: "peak_hours",
+				}),
+			],
+			{ combo, sessionFallback: false },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		expect(result.fetched).toEqual(["one"]);
+		expectRetryable(result);
+	});
+
+	it("answers 400 when that auto-resuming combo slot is already known blind under its pin", async () => {
+		// The mirror: knowledge survives the auto-resuming pause, so the same
+		// shape with the pin marked blind is permanent rather than retryable.
+		markVisionUnsupported("acc-2", "slot-model-two");
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({
+					id: "acc-2",
+					name: "two",
+					priority: 1,
+					paused: true,
+					pause_reason: "peak_hours",
+				}),
+			],
+			{ combo, sessionFallback: false },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		expect(result.fetched).toEqual(["one"]);
+		expectVisionUnsupported(result);
+	});
+
+	it("stays retryable when usage throttling held a combo slot back", async () => {
+		// Throttling is applied in proxy.ts AFTER selection, so it is the one
+		// combo deferral the selector cannot record — and it is time-bound, so it
+		// holds the verdict open without any eligibility question. Session
+		// fallback is off to keep the verdict down to the combo's own slots.
+		armUsageThrottle("acc-2");
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({ id: "acc-2", name: "two", priority: 1 }),
+			],
+			{ combo, throttling: true, sessionFallback: false },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		expect(result.fetched).toEqual(["one"]);
+		expectRetryable(result);
+	});
+
+	it("answers 400 when the throttled combo slot is already known blind under its pin", async () => {
+		// The pin is what the throttled deferral is recorded under — NOT the
+		// request's own model, which under combo routing was never on offer for
+		// that account. The entry below is keyed on the slot's pin, so it clears
+		// the deferral; had the recording used the request's model, this would
+		// still be retryable.
+		markVisionUnsupported("acc-2", "slot-model-two");
+		armUsageThrottle("acc-2");
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({ id: "acc-2", name: "two", priority: 1 }),
+			],
+			{ combo, throttling: true, sessionFallback: false },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL));
+
+		expect(result.fetched).toEqual(["one"]);
+		expectVisionUnsupported(result);
+	});
+});
+
+describe("vision_unsupported — the cache does not prove a deferred pair blind under a client provider", () => {
+	// The verdict's deferred-pair check reads the same cache the skip does, so
+	// it owes the same honesty: an entry learned under routing this request does
+	// not carry cannot prove a DEFERRED pair blind either, or a client `provider`
+	// would let a refusal learned under other routing answer a permanent 400 for
+	// a pair that was never asked under this routing. First-hand refusals still
+	// count — they happened under this request's own routing.
+
+	it("stays retryable when the deferred pair's cached blindness was learned under other routing", async () => {
+		// `two` is rate-limited, so the selector drops it and records it as
+		// deferred under the request's own model — and that exact pair is
+		// cached-blind. Without the client `provider` this answers 400 (the
+		// mirror test in the deferred-candidate describe above); with it, the
+		// entry says nothing about the upstream the client's provider selects.
+		markVisionUnsupported("acc-2", REQUEST_MODEL);
+		const ctx = makeContext([
+			makeAccount({ id: "acc-1", name: "one" }),
+			makeAccount({
+				id: "acc-2",
+				name: "two",
+				priority: 1,
+				rate_limited_until: Date.now() + 600_000,
+			}),
+		]);
+
+		const result = await run(
+			ctx,
+			imageRequest(REQUEST_MODEL, { provider: { only: ["client-upstream"] } }),
+		);
+
+		expect(result.fetched).toEqual(["one"]);
+		expectRetryable(result);
+	});
+});
+
+describe("vision_unsupported — the last-attempt look-ahead counts a vision-skipped tail", () => {
+	// `proxyWithAccount`'s terminal-attempt flag decides whether a persistent
+	// upstream 502/529 is FORWARDED to the client or discarded so failover can
+	// continue. The loops computed it from the probe gate alone: a tail
+	// candidate the vision cache will skip is not probe-suppressed, so the
+	// preceding account looked non-terminal, its 529 was discarded, the tail was
+	// skipped, and the client got a generic 503 instead of the upstream's own
+	// status and explanation.
+
+	it("forwards the head's terminal 529 when the tail is cached-blind", async () => {
+		markVisionUnsupported("acc-2", REQUEST_MODEL);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({ id: "acc-2", name: "two", priority: 1 }),
+			],
+			{ rateLimitOn529: true },
+		);
+
+		const result = await run(ctx, imageRequest(), (accountName) =>
+			accountName === "one" ? overloaded529() : served(),
+		);
+
+		// `two` is never fetched — skipped from the cache — and because the
+		// look-ahead counted that skip, `one` was the last attempted candidate:
+		// the client gets the upstream's own 529 and explanation.
+		expect(result.fetched).not.toContain("two");
+		expect(result.threw).toBe(false);
+		expect(result.status).toBe(529);
+		expect(result.errorType).toBe("overloaded_error");
+	});
+
+	it("still forwards the terminal 529 when the tail is probe-suppressed", async () => {
+		// The control: a probe-suppressed tail already made the head terminal
+		// before the look-ahead learned about vision skips, and it must keep
+		// doing so.
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				suppress(makeAccount({ id: "acc-2", name: "two", priority: 1 })),
+			],
+			{ rateLimitOn529: true },
+		);
+
+		const result = await run(ctx, imageRequest(), (accountName) =>
+			accountName === "one" ? overloaded529() : served(),
+		);
+
+		expect(result.fetched).not.toContain("two");
+		expect(result.threw).toBe(false);
+		expect(result.status).toBe(529);
+		expect(result.errorType).toBe("overloaded_error");
+	});
+
+	it("forwards the fallback pool's terminal 529 when its tail is cached-blind", async () => {
+		// Same defect on the Step-10 fallback loop's own look-ahead. The combo
+		// slot's pin is cached-blind, so the main loop never asks `one` and falls
+		// through to the fallback pool, which re-selects both accounts: `one` is
+		// asked under the request's own model (not marked), and `two` under that
+		// same key is marked blind, so the tail will be skipped and `one` is
+		// terminal.
+		markVisionUnsupported("acc-1", "slot-model-one");
+		markVisionUnsupported("acc-2", FAMILY_MODEL);
+		const combo = makeCombo([slot("slot-0", "acc-1", "slot-model-one", 0)]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({ id: "acc-2", name: "two", priority: 1 }),
+			],
+			{ combo, rateLimitOn529: true },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL), (accountName) =>
+			accountName === "one" ? overloaded529() : served(),
+		);
+
+		expect(result.fetched).not.toContain("two");
+		expect(result.threw).toBe(false);
+		expect(result.status).toBe(529);
+		expect(result.errorType).toBe("overloaded_error");
+	});
+
+	it("still forwards the fallback pool's terminal 529 when its tail is probe-suppressed", async () => {
+		// The fallback loop's control.
+		markVisionUnsupported("acc-1", "slot-model-one");
+		const combo = makeCombo([slot("slot-0", "acc-1", "slot-model-one", 0)]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				suppress(makeAccount({ id: "acc-2", name: "two", priority: 1 })),
+			],
+			{ combo, rateLimitOn529: true },
+		);
+
+		const result = await run(ctx, imageRequest(FAMILY_MODEL), (accountName) =>
+			accountName === "one" ? overloaded529() : served(),
+		);
+
+		expect(result.fetched).not.toContain("two");
+		expect(result.threw).toBe(false);
+		expect(result.status).toBe(529);
+		expect(result.errorType).toBe("overloaded_error");
 	});
 });
