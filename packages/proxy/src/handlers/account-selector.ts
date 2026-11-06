@@ -764,6 +764,15 @@ export async function selectAccountsForRequest(
 						accountMap.set(account.id, account);
 					}
 
+					// Provider exclusions are resolved ONCE up front and each
+					// candidate is checked against them before it is pushed into the
+					// slot list, so an excluded slot never reaches slotEntries:
+					// `slots` and the returned accounts stay index-aligned by
+					// construction, which proxy.ts relies on when it pairs
+					// accounts[i] with slots[i].
+					const permittedAccountIds = new Set(
+						applyExclusions([...accountMap.values()]).map((a) => a.id),
+					);
 					const availableAccounts: Account[] = [];
 					const slotEntries: Array<{
 						accountId: string;
@@ -824,6 +833,11 @@ export async function selectAccountsForRequest(
 							continue;
 						}
 
+						// Membership check against the one hoisted applyExclusions
+						// call over the candidate list (repeated per-slot calls would
+						// repeat its "Skipping N account(s)" log line).
+						if (!permittedAccountIds.has(account.id)) continue;
+
 						availableAccounts.push(account);
 						slotEntries.push({
 							accountId: slot.account_id,
@@ -831,16 +845,19 @@ export async function selectAccountsForRequest(
 						});
 					}
 
-					const filteredComboAccounts = applyExclusions(availableAccounts);
-					if (filteredComboAccounts.length > 0) {
+					if (availableAccounts.length > 0) {
 						// Only mark this request as combo-routed once combo accounts are
 						// actually being returned — setting this earlier (even when every
 						// slot ends up unavailable/filtered) would leave stale combo state
 						// on `meta` for the normal-routing fallthrough below.
-						// `slots` is the per-request routable subset (index-aligned
-						// with the returned accounts); `definitionSlots` is the
-						// stable combo definition, so an account's sibling-model
-						// check survives its own slots cooling down.
+						// `slots` is the per-request routable subset and MUST stay
+						// index-aligned with the returned accounts: the same length,
+						// with slots[i].accountId === returned[i].id. proxy.ts looks
+						// up the model override by position, so anything that filters
+						// one without the other silently sends the wrong model pin.
+						// `definitionSlots` is the stable combo definition, so an
+						// account's sibling-model check survives its own slots
+						// cooling down.
 						const definitionSlots = combo.slots
 							.filter((s) => s.enabled)
 							.map((s) => ({
@@ -854,7 +871,9 @@ export async function selectAccountsForRequest(
 						};
 						setComboSlotInfo(meta, slotInfo);
 						meta.comboName = combo.name;
-						return filteredComboAccounts;
+						// Already exclusion-filtered inside the loop, so this is
+						// index-aligned with `slots`.
+						return availableAccounts;
 					}
 
 					// All slots unavailable — fall back to normal routing. Combo state
