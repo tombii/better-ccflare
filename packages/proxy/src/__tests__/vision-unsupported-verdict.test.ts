@@ -1059,12 +1059,13 @@ describe("vision_unsupported — an indefinite hold-out is not a deferred COMBO 
 		// permanently ineligible for it rather than temporarily unavailable, so it
 		// must not hold the verdict open either.
 		//
-		// This pins the OUTCOME, not the `excludedAccountIds` filter in the
-		// selector: `slotEntries` is built before `applyExclusions` runs, so an
-		// excluded slot is still present in `filteredComboInfo.slots` and the
-		// definition-slot diff never reaches that filter. The outcome is right
-		// either way — an excluded slot is not deferred, so it cannot block the
-		// verdict — but it arrives by a different route than the filter suggests.
+		// This now exercises the selector's exclusion filter directly: since the
+		// slot/account alignment fix, an excluded slot never reaches
+		// `slotEntries`, so it DOES appear in the definition-slot diff and must be
+		// recognised there as permanently ineligible. Removing that filter fails
+		// this test. (Before the alignment fix the filter was unreachable and the
+		// right outcome arrived by a different route — an excluded slot was still
+		// listed as routable, so the diff never saw it.)
 		const combo = makeCombo([
 			slot("slot-0", "acc-1", "slot-model-one", 0),
 			slot("slot-1", "acc-2", "slot-model-two", 1),
