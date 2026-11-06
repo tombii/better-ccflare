@@ -2215,9 +2215,18 @@ export class CodexProvider extends BaseProvider {
 				continue;
 			}
 			if (block.type === "image") {
-				parts.push("[image content not supported in Codex tool results]");
+				// Same rule as the chat-completions converter: the placeholder is
+				// chosen after the mapping, because it has to describe what actually
+				// happened. A hoisted image follows in a user item (so do not claim
+				// it is unsupported); a block with no usable source produces none,
+				// and promising one would point the model at a sibling's image.
 				const hoisted = toCodexInputImageItem(block);
 				if (hoisted) hoistedImages.push(hoisted);
+				parts.push(
+					hoisted
+						? "[image attached in the following message]"
+						: "[image unavailable: the tool result carried none]",
+				);
 				continue;
 			}
 			let serialized: string;

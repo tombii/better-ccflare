@@ -185,7 +185,7 @@ describe("convertAnthropicRequestToOpenAI — images in tool results", () => {
 		const toolMsg = result.messages.find((m) => m.role === "tool");
 		expect(toolMsg?.content).toContain("Here is the image:");
 		expect(toolMsg?.content).toContain(
-			"[image content not supported in OpenAI tool results]",
+			"[image attached in the following message]",
 		);
 
 		const last = result.messages[result.messages.length - 1];
@@ -274,6 +274,127 @@ describe("convertAnthropicRequestToOpenAI — images in tool results", () => {
 		]);
 		// The final turn is the client's own text, not a trailing image blob.
 		expect(result.messages[8]?.content).toBe("compare");
+	});
+
+	it("keeps every tool message adjacent when several results carry images", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							{ type: "tool_use", id: "t1", name: "Read", input: {} },
+							{ type: "tool_use", id: "t2", name: "Read", input: {} },
+						],
+					},
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "t1",
+								content: [
+									{
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: "image/png",
+											data: "FIRST",
+										},
+									},
+								],
+							},
+							{
+								type: "tool_result",
+								tool_use_id: "t2",
+								content: [
+									{
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: "image/png",
+											data: "SECOND",
+										},
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		);
+
+		// Both `tool` messages answer the same assistant turn, so they must stay
+		// adjacent. A user turn between them would answer t1 to the tool_calls
+		// message and orphan t2's tool_call_id.
+		expect(result.messages.map((m) => m.role)).toEqual([
+			"assistant",
+			"tool",
+			"tool",
+			"user",
+		]);
+		// The single hoisted turn carries both images, in tool_result order.
+		expect(result.messages[3]?.content).toEqual([
+			{
+				type: "image_url",
+				image_url: { url: "data:image/png;base64,FIRST" },
+			},
+			{
+				type: "image_url",
+				image_url: { url: "data:image/png;base64,SECOND" },
+			},
+		]);
+	});
+
+	// The mapper returns null for a block with no data and no url, so nothing is
+	// hoisted. The placeholder must then say the image is missing rather than
+	// point at a following message that carries somebody else's image (or none).
+	it("says the image is unavailable when its block has no usable source", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "t1",
+								content: [{ type: "image", source: {} }],
+							},
+							{
+								type: "tool_result",
+								tool_use_id: "t2",
+								content: [
+									{
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: "image/png",
+											data: "REAL",
+										},
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		);
+
+		const toolMsgs = result.messages.filter((m) => m.role === "tool");
+		expect(toolMsgs[0]?.content).toBe(
+			"[image unavailable: the tool result carried none]",
+		);
+		// The real image still points correctly and is the only thing hoisted.
+		expect(toolMsgs[1]?.content).toBe(
+			"[image attached in the following message]",
+		);
+		expect(result.messages[result.messages.length - 1]?.content).toEqual([
+			{
+				type: "image_url",
+				image_url: { url: "data:image/png;base64,REAL" },
+			},
+		]);
 	});
 
 	it("does not add a user turn when no tool result carries an image", () => {

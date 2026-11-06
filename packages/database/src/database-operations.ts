@@ -2856,8 +2856,12 @@ OAuth tokens will need to be re-authenticated.
 		return this.combo.updateSlot(slotId, fields);
 	}
 
-	async removeComboSlot(slotId: string): Promise<void> {
-		await this.combo.removeSlot(slotId);
+	/**
+	 * Deletes a combo slot; resolves to the removed slot's account id, or null
+	 * when no such slot existed.
+	 */
+	async removeComboSlot(slotId: string): Promise<string | null> {
+		return this.combo.removeSlot(slotId);
 	}
 
 	async getComboSlots(comboId: string): Promise<ComboSlot[]> {

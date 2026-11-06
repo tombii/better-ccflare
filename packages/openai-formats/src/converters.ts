@@ -319,7 +319,7 @@ export function convertAnthropicRequestToOpenAI(
 					if (typeof toolResult.content === "string") {
 						toolContent = toolResult.content;
 					} else if (Array.isArray(toolResult.content)) {
-						// Array content: serialize non-image items; drop images (not supported in OpenAI tool messages)
+						// Array content: serialize non-image text; images are hoisted out (see below)
 						const parts: string[] = [];
 						for (const block of toolResult.content as AnthropicContent[]) {
 							if (block.type === "text") {
@@ -328,11 +328,20 @@ export function convertAnthropicRequestToOpenAI(
 								// OpenAI tool messages don't support image content, so the
 								// tool output keeps a placeholder and the image itself is
 								// hoisted into a following user turn (below).
-								parts.push(
-									"[image content not supported in OpenAI tool results]",
-								);
 								const hoisted = toOpenAIImagePart(block);
 								if (hoisted) hoistedToolImages.push(hoisted);
+								// The placeholder must describe what actually happened, so
+								// it is chosen after the mapping. A block with no usable
+								// source produces no part: claiming the image follows would
+								// point the model at a turn that either holds a sibling
+								// tool result's image or nothing at all. And when an image
+								// DOES follow, the placeholder must not read as "you cannot
+								// see this" — the model can, in the next turn.
+								parts.push(
+									hoisted
+										? "[image attached in the following message]"
+										: "[image unavailable: the tool result carried none]",
+								);
 							} else {
 								// Other structured blocks (tool_use, tool_result, etc.) — serialize as JSON
 								parts.push(JSON.stringify(block));

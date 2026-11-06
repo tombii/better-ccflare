@@ -1051,7 +1051,11 @@ describe.skipIf(!livePgAvailable)(
 
 				await dbOps.updateComboSlot(slotA.id, { priority: 5, enabled: false });
 				await dbOps.reorderComboSlots(combo.id, [slotB.id, slotA.id]);
-				await dbOps.removeComboSlot(slotA.id);
+				// removeComboSlot resolves to the removed slot's account via
+				// DELETE ... RETURNING (one statement, so a concurrent delete cannot
+				// race the read), and to null when there was nothing to delete.
+				expect(await dbOps.removeComboSlot(slotA.id)).toBe("acct-1");
+				expect(await dbOps.removeComboSlot(slotA.id)).toBeNull();
 				expect(await dbOps.getComboSlots(combo.id)).toHaveLength(1);
 
 				await dbOps.setFamilyCombo("sonnet", combo.id, true);

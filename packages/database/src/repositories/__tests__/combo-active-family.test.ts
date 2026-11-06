@@ -230,3 +230,30 @@ describe("ComboRepository.getActiveComboForFamily", () => {
 		db.close();
 	});
 });
+
+/**
+ * removeSlot resolves to the removed slot's account id (via DELETE ... RETURNING)
+ * so the caller can scope a cache invalidation to that account, and to null when
+ * nothing matched so a repeated delete changes nothing.
+ */
+describe("ComboRepository.removeSlot", () => {
+	it("returns the removed slot's account id, then null on a repeat", async () => {
+		const db = makeDb();
+		const repo = makeRepo(db);
+
+		await insertCombo(db, "combo-1", "combo-one", 1);
+		await insertSlot(db, "slot-a", "combo-1", "acct-a", "m-a", 0, 1);
+		await insertSlot(db, "slot-b", "combo-1", "acct-b", "m-b", 1, 1);
+
+		expect(await repo.removeSlot("slot-a")).toBe("acct-a");
+		// The second delete matches no row — a stale dashboard row or a retried
+		// request must not look like a topology change.
+		expect(await repo.removeSlot("slot-a")).toBeNull();
+
+		// Only the deleted slot is gone.
+		const slots = await repo.getSlots("combo-1");
+		expect(slots.map((s) => s.id)).toEqual(["slot-b"]);
+
+		db.close();
+	});
+});
