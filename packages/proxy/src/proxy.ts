@@ -3,6 +3,7 @@ import {
 	requestEvents,
 	runForceAccountModelExempt,
 	ServiceUnavailableError,
+	splitModelRouting,
 	trackClientVersion,
 } from "@better-ccflare/core";
 import { DatabaseFactory } from "@better-ccflare/database";
@@ -25,12 +26,14 @@ import {
 	ERROR_MESSAGES,
 	getAccountUsageThrottleUntil,
 	getComboSlotInfo,
+	getDeferredCandidates,
 	getModelFamilyExhaustionInfo,
 	interceptAndModifyRequest,
 	isComboSessionFallbackDisabled,
 	isForceAccountModelEnabled,
 	isInternalProbe,
 	isRefreshTokenLikelyExpired,
+	isVisionUnsupported,
 	markTrustedNativeResponses,
 	type ProxyContext,
 	prepareRequestBody,
@@ -40,6 +43,7 @@ import {
 	type RequestJsonBody,
 	recordSelectedOrder,
 	recordXaiAffinitySuccess,
+	requestCarriesImageContent,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
 	setXaiConvId,
@@ -528,7 +532,11 @@ async function handleProxyRequest(
 				project: project ?? null,
 				projectAttributionSource: projectAttributionSource ?? "none",
 				agentAttributionSource: agentAttributionSource ?? "none",
-				responseStatus: 503,
+				// The refusal's own status, not a hard-coded 503: every other refusal
+				// routed through here is a 503, but `vision_unsupported` is a
+				// request-level 400, and recording a 503 would put a status in the
+				// request log that the client never received.
+				responseStatus: refusalResponse.status,
 				responseHeaders: Object.fromEntries(
 					disabledFallbackResponse.headers.entries(),
 				),
@@ -783,6 +791,325 @@ async function handleProxyRequest(
 		: null;
 	let response: Response | null = null;
 	let anyAccountAttempted = false;
+	/**
+	 * How many candidates this request skipped because their (account, model)
+	 * pair is already known to refuse image input.
+	 *
+	 * Read by `everyEligibleRouteIsBlind` below, which is what makes the terminal
+	 * `vision_unsupported` verdict possible at all: a skip is proof that a
+	 * candidate is blind WITHOUT an attempt, so a pool where every route was
+	 * skipped from the cache — zero upstream calls, zero refusals to count — is
+	 * still a pool where nothing can read the image. Counting attempts alone, the
+	 * way the reverted first attempt did, sees `0 === 0` there and has nothing to
+	 * say. Counted per candidate (not per skip decision: the ungated retries below
+	 * decline to re-ask a candidate the loop already counted).
+	 */
+	let visionSkips = 0;
+
+	/**
+	 * Candidates this request actually handed to `proxyWithAccount`, and how many
+	 * of those had their upstream refuse the image.
+	 *
+	 * An attempt that refused is the other way a route becomes *known* blind —
+	 * the first-hand way, and the one that writes the cache entry a later request
+	 * skips on. An attempt that failed for any other reason proves nothing about
+	 * the image, so it must hold the verdict open.
+	 */
+	let attempted = 0;
+	let visionRejections = 0;
+
+	/**
+	 * Whether THIS request carries image content — resolved lazily, at most once
+	 * per request and shared by every candidate, mirroring the thunk
+	 * proxy-operations.ts uses on the response path.
+	 *
+	 * Walking the parsed body is O(messages x blocks) and a long conversation
+	 * makes that non-trivial, so it must never run for a request that has no
+	 * chance of being skipped. It only ever runs behind a cache hit — see
+	 * `visionSkipModel`.
+	 */
+	let requestCarriesImagesResolved: boolean | null = null;
+	const requestCarriesImages = () =>
+		(requestCarriesImagesResolved ??=
+			requestCarriesImageContent(requestBodyContext));
+
+	/**
+	 * Whether the request's own body carries a `provider` routing object.
+	 * Resolved at most once, like {@link requestCarriesImages}: the parsed body
+	 * is already standing by then (`visionKeyModelFor` reads the model off it),
+	 * so this is one property read.
+	 *
+	 * The body is UNPATCHED here — slot overrides patch a copy inside
+	 * `proxyWithAccount` — so a `provider` on it is the client's, not routing
+	 * the selector applied.
+	 */
+	let clientProviderRoutingResolved: boolean | null = null;
+	const clientProviderRouting = () =>
+		(clientProviderRoutingResolved ??=
+			requestBodyContext.getParsedJson()?.provider != null);
+
+	/**
+	 * Whether the vision capability cache may speak for a (account, keyModel)
+	 * pair ON THIS REQUEST. It may not when the request carries a client
+	 * `provider` the key does not represent: the key is the (account, model)
+	 * pair, suffix included, so a key model WITHOUT a routing suffix says
+	 * nothing about which upstream the client's `provider` selects — an entry
+	 * under it was learned under some other routing (or none) and must neither
+	 * skip a candidate nor prove a deferred one blind.
+	 *
+	 * A key model WITH a suffix is the opposite case: when a slot override
+	 * carries one, `resolveSlotRouting` overwrites `body.provider` from it, so
+	 * the effective routing IS the suffix already in the key, and the cache
+	 * speaks for the pair exactly as it does without a client `provider`.
+	 *
+	 * The write side suppresses the mark under the same condition (see
+	 * `visionRoutingUnrepresentedInKey` in proxy-operations.ts), so learn and
+	 * skip stay symmetric: a suffixed slot pin learns and skips normally under
+	 * a client `provider`, and a client `provider` with no suffix does neither.
+	 */
+	const cacheSpeaksForKeyModel = (keyModel: string): boolean =>
+		!clientProviderRouting() || splitModelRouting(keyModel).routing != null;
+
+	/**
+	 * The model half of the vision capability key for a candidate: its combo
+	 * slot's model override when one applied, otherwise the request's own model,
+	 * with any provider-routing suffix left intact.
+	 *
+	 * ONE expression, shared by the skip decision, by the deferred-candidate
+	 * check and by the attempted-pair key, because it has to be byte-identical to
+	 * the one `proxyWithAccount` records a refusal under (`visionKeyModel` in
+	 * proxy-operations.ts). A read that differs from the write by one character is
+	 * a different key: the cache never hits, and the verdict silently loses every
+	 * piece of evidence the cache was supposed to supply. The suffix stays in the
+	 * key because it selects which upstream answers, so the same model id pinned to
+	 * two providers is two capability questions.
+	 */
+	const visionKeyModelFor = (
+		slotModelOverride: string | null | undefined,
+	): string =>
+		(slotModelOverride ? slotModelOverride : requestBodyContext.getModel()) ??
+		"";
+
+	/** Identity of an (account, model) capability question, for the sets below. */
+	const candidatePairKey = (
+		accountId: string,
+		slotModelOverride: string | null | undefined,
+	): string => `${accountId}\u0000${visionKeyModelFor(slotModelOverride)}`;
+
+	/**
+	 * Candidates that were eligible for this request but never reached an attempt,
+	 * keyed by {@link candidatePairKey}: probe-gate suppressions in the loops
+	 * below, combo slots the selector dropped, and accounts usage throttling held
+	 * back. The selector's own drops are recorded separately, on `requestMeta` —
+	 * see {@link getDeferredCandidates}, read at verdict time because the Step-10
+	 * fallback re-selects and appends to that list.
+	 *
+	 * Each is a reason the verdict must stay retryable UNLESS the cache already
+	 * knows the pair blind, which is checked in `everyEligibleRouteIsBlind`.
+	 */
+	const deferredCandidates = new Map<
+		string,
+		{ accountId: string; modelOverride: string | null }
+	>();
+
+	/**
+	 * Pairs actually handed to `proxyWithAccount`. A deferred pair that was later
+	 * attempted is no longer deferred — which is what keeps the ungated retries
+	 * honest: they cover exactly one suppressed candidate, so a pool of two
+	 * suppressed candidates still has one that was never asked.
+	 */
+	const attemptedPairs = new Set<string>();
+
+	const noteDeferred = (
+		accountId: string,
+		modelOverride: string | null,
+	): void => {
+		deferredCandidates.set(candidatePairKey(accountId, modelOverride), {
+			accountId,
+			modelOverride,
+		});
+	};
+
+	const noteAttempted = (
+		accountId: string,
+		modelOverride: string | null,
+	): void => {
+		attempted++;
+		attemptedPairs.add(candidatePairKey(accountId, modelOverride));
+		// proxyWithAccount stamps visionRejected per attempt; read it back after.
+		requestMeta.visionRejected = false;
+	};
+
+	/**
+	 * The key model when this candidate must be skipped as known-blind, or null
+	 * when it must be attempted.
+	 *
+	 * Evaluation order is the point of this function:
+	 *
+	 *     isVisionUnsupported(...)   one Map lookup — every candidate pays it
+	 *       && requestCarriesImages()  the body walk — only a hit pays it
+	 *
+	 * A cache entry can only exist for a pair that refused an *image* request, so
+	 * a hit is already strong evidence this request carries an image: the walk is
+	 * a confirmation, not a filter. Text-only traffic — the overwhelming majority
+	 * — never reaches it and pays one Map lookup per candidate, nothing else.
+	 * The confirmation is still needed because the same (account, model) pair can
+	 * serve a text-only request perfectly well, and the image gate (not this
+	 * cache) governs whether an image is forwarded at all.
+	 */
+	const visionSkipModel = (
+		candidate: Account,
+		slotModelOverride: string | null | undefined,
+	): string | null => {
+		const keyModel = visionKeyModelFor(slotModelOverride);
+		if (!isVisionUnsupported(candidate.id, keyModel)) return null;
+		// A client `provider` the key does not represent (see
+		// `cacheSpeaksForKeyModel`): still cheaper than the body walk below, and
+		// the pair must be asked, not skipped.
+		if (!cacheSpeaksForKeyModel(keyModel)) return null;
+		return requestCarriesImages() ? keyModel : null;
+	};
+
+	/**
+	 * Usage throttling — applied here, AFTER selection — is the one deferral the
+	 * selector cannot see, so it is recorded here: an account held back for a
+	 * usage window is out for minutes, not for good, which is exactly the
+	 * time-bound kind of deferral that needs no eligibility filter.
+	 *
+	 * Keyed by what that account would have been asked for: under combo routing,
+	 * its own slot's pin — an account can hold several slots, each pin is its own
+	 * capability question, and deferring the request's own model instead would
+	 * record a pair that was never on offer. Under pool routing, the request's
+	 * own model (null resolves against the body in the verdict).
+	 *
+	 * The selector's own drops — pool accounts the strategy benched and combo
+	 * slots it could not route — are recorded THERE, in account-selector.ts
+	 * (`notePoolDeferrals` and the combo-slot recording beside it), where the
+	 * account rows already live and the indefinite hold-out filter
+	 * (`isIndefinitelyHeldOut`) can be applied without a DB read on this path.
+	 * That filter is why the recording moved out of proxy.ts: a combo diff
+	 * computed here sees only (accountId, modelOverride), so a manually paused
+	 * or dead-token slot was indistinguishable from a cooling one and held the
+	 * verdict open forever.
+	 */
+	if (comboInfo?.definitionSlots) {
+		for (const account of throttledAccounts) {
+			for (const slot of comboInfo.slots) {
+				if (slot.accountId === account.id) {
+					noteDeferred(slot.accountId, slot.modelOverride);
+				}
+			}
+		}
+	} else {
+		for (const account of throttledAccounts) {
+			noteDeferred(account.id, null);
+		}
+	}
+
+	/**
+	 * True only when every candidate that was ELIGIBLE for this request is known
+	 * unable to serve its image — which is the one state in which "no model can
+	 * read this image" is a permanent fact rather than a snapshot of who happened
+	 * to be available.
+	 *
+	 * "Known" is either of:
+	 *
+	 *   - it was attempted and its upstream refused the image (`visionRejections`);
+	 *   - it was never attempted because the capability cache already records it
+	 *     blind (`visionSkips`) — the case availability-counting cannot see, and
+	 *     the reason this predicate is built on the cache.
+	 *
+	 * and there is nothing left over. A candidate deferred for a temporary reason —
+	 * probe-suppressed in a loop, dropped by the selector for a cooldown, a
+	 * rate-limit window, a usage or capacity cap, or held back by usage throttling
+	 * — blocks the verdict UNLESS the cache already knows that exact pair blind.
+	 * The consequence is the point of the design: a cooling slot that is known
+	 * blind no longer holds the verdict open, because knowledge survives cooldowns,
+	 * probes and capacity filters and availability does not.
+	 *
+	 * A refusal the model-cycling fallback suppressed never reaches
+	 * `visionRejections` (see `modelCycledTo` in proxy-operations.ts), so an attempt
+	 * whose refusal belongs to a fallback alias counts as unknown capability and
+	 * keeps the request retryable.
+	 *
+	 * Expressed as two sums rather than a chain of early returns so that the
+	 * partition is the code: the three groups are disjoint by construction, since a
+	 * candidate the loop reached was either skipped from the cache, suppressed by
+	 * the probe gate, or handed to proxyWithAccount, and a candidate the selector
+	 * dropped never reached the loop at all. `visionSkips` cancels out of the
+	 * equality but not out of `eligible > 0`, which is exactly the case it exists
+	 * for — an all-skipped pool has no attempts and no refusals to compare, so
+	 * without those skips counted there is nothing to say the verdict is about.
+	 */
+	const everyEligibleRouteIsBlind = (): boolean => {
+		const isKnownBlind = (deferred: {
+			accountId: string;
+			modelOverride: string | null;
+		}): boolean => {
+			const keyModel = visionKeyModelFor(deferred.modelOverride);
+			// Same gate as the skip read: an entry the key does not represent
+			// cannot prove a deferred pair blind either, or a client `provider`
+			// would let a refusal learned under other routing answer a permanent
+			// 400 for a pair that was never asked under this routing.
+			return (
+				cacheSpeaksForKeyModel(keyModel) &&
+				isVisionUnsupported(deferred.accountId, keyModel)
+			);
+		};
+
+		let eligible = attempted + visionSkips;
+		let knownBlind = visionRejections + visionSkips;
+
+		// A deferred pair that WAS attempted later in the same request is not
+		// deferred at all — that is what each ungated retry does to exactly one
+		// suppressed candidate. Skipping it here is what keeps the two sums over a
+		// disjoint partition. It is deliberately not left to the cache: a refusal
+		// writes the same pair a moment earlier, so the two usually agree, but the
+		// first-hand fact is that this request asked, and that must not depend on
+		// the entry still being there when the verdict runs (an invalidation or a
+		// TTL expiry can land in between).
+		const count = (
+			deferred: { accountId: string; modelOverride: string | null },
+			key: string,
+		): void => {
+			if (attemptedPairs.has(key)) return;
+			eligible++;
+			if (isKnownBlind(deferred)) knownBlind++;
+		};
+
+		for (const [key, deferred] of deferredCandidates) {
+			count(deferred, key);
+		}
+		// The selector's own drops, read here rather than before the loops: the
+		// Step-10 fallback re-selects and appends to that list.
+		for (const deferred of getDeferredCandidates(requestMeta)) {
+			count(
+				deferred,
+				candidatePairKey(deferred.accountId, deferred.modelOverride),
+			);
+		}
+
+		// `eligible > 0` is what stops a request with no evidence at all from
+		// satisfying the equality at zero and answering a permanent 400 about an
+		// image no upstream was ever asked to read. `knownBlind === eligible`
+		// subsumes "every attempt refused": with visionRejections <= attempted and
+		// the blind deferrals <= all of them, the equality can only hold when both
+		// are tight.
+		return eligible > 0 && knownBlind === eligible;
+	};
+
+	/** The permanent, non-retryable answer for an image no eligible route can read. */
+	const visionRefusal = () =>
+		returnRefusal(
+			createPoolExhaustedResponse([], undefined, "vision_unsupported"),
+			"vision_unsupported",
+			// Attempts past the first are failovers; the dashboard reads this to
+			// show how far down the combo/pool the request got. Zero when every
+			// candidate was skipped from the cache, which is honest — no upstream
+			// was contacted at all.
+			Math.max(0, attempted - 1),
+			requestMeta.comboName ?? null,
+		);
 
 	// A terminal CodeBuddy gateway rejection (11128) is the only failover
 	// outcome that carries a client-meaningful explanation, so it is kept
@@ -793,6 +1120,20 @@ async function handleProxyRequest(
 	// later attempt failing for an unrelated reason (429, 5xx) must not
 	// erase the explanation.
 	let terminalRejection: (() => Promise<Response | null>) | undefined;
+
+	/**
+	 * How the combo loop resolves the model override for index `index`: the
+	 * slot's pin when the slot exists and its account matches the candidate at
+	 * that index, null otherwise — the loop body's own expression, minus its
+	 * desync log, factored out so the last-attempt look-ahead below can resolve
+	 * a TAIL candidate's key the same way the loop will when it gets there.
+	 */
+	const slotOverrideFor = (index: number): string | null => {
+		const slot = filteredComboInfo?.slots[index];
+		return slot && slot.accountId === accounts[index].id
+			? slot.modelOverride
+			: null;
+	};
 
 	for (let i = 0; i < accounts.length; i++) {
 		// For combo routing: enrich metadata with slot index and look up model override
@@ -812,23 +1153,56 @@ async function handleProxyRequest(
 			);
 		}
 
+		// Skip a route whose upstream already refused image input for this exact
+		// model. Checked BEFORE the probe gate below, for two reasons: it is the
+		// cheaper test, and `getRateLimitProbeAdmission` takes the single-flight
+		// lease when it admits — a lease taken for a candidate we then skip would
+		// hold a recovering account's probe open for a request that was never
+		// going to be sent to it.
+		const blindModel = visionSkipModel(accounts[i], modelOverride);
+		if (blindModel !== null) {
+			visionSkips++;
+			log.debug(
+				`Skipping account ${accounts[i].name} for model "${blindModel}": ` +
+					`its upstream already refused image input for this pair, so the round-trip is not spent re-asking`,
+			);
+			continue;
+		}
+
 		const probeAdmission = getRateLimitProbeAdmission(accounts[i]);
 		if (probeAdmission === "suppressed") {
 			// A mature cooldown just expired for this account and another
 			// concurrent request is already probing it. Skip straight to the
 			// next account instead of stampeding the recovering account.
+			//
+			// Record it as deferred: a suppressed account is only *temporarily*
+			// unavailable, so unless the cache already knows this pair blind it
+			// could read the image the moment the other request's probe finishes,
+			// and the terminal verdict below must not claim otherwise.
+			noteDeferred(accounts[i].id, modelOverride);
 			continue;
 		}
 
 		anyAccountAttempted = true;
+		noteAttempted(accounts[i].id, modelOverride);
 		// The last actually-attempted candidate is not always the last pool
-		// index: a probe-suppressed tail account gets skipped via `continue`
-		// above rather than attempted. Look ahead at the remaining candidates'
-		// CURRENT suppression state (without taking a lease) to find out
-		// whether any of them would still be attempted after this one.
+		// index: a probe-suppressed OR vision-skipped tail account gets skipped
+		// via `continue` above rather than attempted. Look ahead at the
+		// remaining candidates' CURRENT suppression state (without taking a
+		// lease) to find out whether any of them would still be attempted after
+		// this one. `visionSkipModel` is memoised and side-effect free, so
+		// asking it here is safe — and necessary: a cached-blind tail that the
+		// probe gate would happily admit used to read as "still to come", so
+		// this account looked non-terminal, its persistent 502/529 was
+		// discarded for a failover that then skipped the tail, and the client
+		// got a generic 503 instead of the upstream's own status.
 		const isLastAttemptedCandidate = accounts
 			.slice(i + 1)
-			.every((candidate) => wouldSuppressProbe(candidate));
+			.every(
+				(candidate, offset) =>
+					wouldSuppressProbe(candidate) ||
+					visionSkipModel(candidate, slotOverrideFor(i + 1 + offset)) !== null,
+			);
 		try {
 			response = await proxyWithAccount(
 				req,
@@ -859,6 +1233,8 @@ async function handleProxyRequest(
 			return response;
 		}
 
+		if (requestMeta.visionRejected) visionRejections++;
+
 		// Log combo slot failure
 		if (filteredComboInfo) {
 			log.info(
@@ -879,38 +1255,65 @@ async function handleProxyRequest(
 		if (filteredComboInfo?.slots[i]?.accountId === accounts[i].id) {
 			modelOverride = filteredComboInfo.slots[i].modelOverride;
 		}
-		log.info(
-			`All ${accounts.length} candidate account(s) were probe-gate suppressed; retrying account ${accounts[i].name} ungated`,
-		);
-		// This retry IS the request's terminal attempt by construction — the
-		// loop above already exhausted every candidate before falling through
-		// here. Unlike the loop's own `i === accounts.length - 1` check (which
-		// tracks whether the CURRENT iteration is the last one), `i` is always
-		// 0 in this block regardless of pool size, so that comparison would be
-		// a constant `false` for any pool with more than one candidate — the
-		// flag must instead depend only on whether this is combo routing.
-		response = await proxyWithAccount(
-			req,
-			url,
-			accounts[i],
-			requestMeta,
-			finalBodyBuffer,
-			finalCreateBodyStream,
-			i,
-			ctx,
-			modelOverride,
-			apiKeyId,
-			apiKeyName,
-			requestBodyContext,
-			!filteredComboInfo?.comboName,
-			(capture: () => Promise<Response | null>) => {
-				terminalRejection = capture;
-			},
-		);
+		// This retry was written for probe suppression, and it keeps that
+		// behaviour untouched: a candidate that is merely mid-recovery is still
+		// retried ungated. It must not, however, become a second door onto a route
+		// the loop just skipped as known-blind — when every candidate was skipped
+		// for refusing image input, `anyAccountAttempted` is false too, and
+		// re-issuing here would spend exactly the round-trip the skip exists to
+		// save. So the same test runs again on the one account this block would
+		// use, and a hit falls through to the normal exhaustion path instead.
+		// (`visionSkips` is not incremented: the loop already counted this
+		// candidate, since it checks vision before the probe gate.)
+		const retryBlindModel = visionSkipModel(accounts[i], modelOverride);
+		if (retryBlindModel !== null) {
+			log.debug(
+				`Not retrying account ${accounts[i].name} ungated for model "${retryBlindModel}": ` +
+					`it is known to refuse image input (${visionSkips} candidate(s) already skipped), ` +
+					`so this request falls through to the exhaustion path instead of re-asking a blind route`,
+			);
+		} else {
+			log.info(
+				`All ${accounts.length} candidate account(s) were probe-gate suppressed; retrying account ${accounts[i].name} ungated`,
+			);
+			// This retry IS the request's terminal attempt by construction — the
+			// loop above already exhausted every candidate before falling through
+			// here. Unlike the loop's own `i === accounts.length - 1` check (which
+			// tracks whether the CURRENT iteration is the last one), `i` is always
+			// 0 in this block regardless of pool size, so that comparison would be
+			// a constant `false` for any pool with more than one candidate — the
+			// flag must instead depend only on whether this is combo routing.
+			//
+			// Counted like any other attempt, and the pair marked attempted so it
+			// stops counting as deferred: this block covers exactly ONE of the
+			// suppressed candidates, so a pool of two suppressed candidates still
+			// leaves one that was never asked, and the verdict below stays
+			// retryable for it.
+			noteAttempted(accounts[i].id, modelOverride);
+			response = await proxyWithAccount(
+				req,
+				url,
+				accounts[i],
+				requestMeta,
+				finalBodyBuffer,
+				finalCreateBodyStream,
+				i,
+				ctx,
+				modelOverride,
+				apiKeyId,
+				apiKeyName,
+				requestBodyContext,
+				!filteredComboInfo?.comboName,
+				(capture: () => Promise<Response | null>) => {
+					terminalRejection = capture;
+				},
+			);
 
-		if (response) {
-			recordXaiAffinityIfServed(accounts[i]);
-			return response;
+			if (response) {
+				recordXaiAffinityIfServed(accounts[i]);
+				return response;
+			}
+			if (requestMeta.visionRejected) visionRejections++;
 		}
 	}
 
@@ -922,6 +1325,19 @@ async function handleProxyRequest(
 			log.warn(
 				`All combo slots failed for combo "${filteredComboInfo.comboName}", session fallback disabled by the Combo Session Fallback setting (Settings → Advanced)`,
 			);
+			// When every eligible route is known blind, the image-specific cause
+			// outranks the config-level one: this response is a 503 saying "please
+			// try again later", which is wrong when no slot can ever read the image
+			// and would have the client retry forever. The WARN above still tells
+			// the operator which setting kept the pool untried, so nothing is lost
+			// by answering the more accurate cause.
+			//
+			// Note what makes this safe where the reverted first attempt was not:
+			// the untried pool is not assumed blind, it is checked. Its candidates
+			// are in `deferredCandidates` / `getDeferredCandidates` unless the
+			// capability cache already knows them blind, so a pool that might have
+			// served the image keeps the retryable config-level answer.
+			if (everyEligibleRouteIsBlind()) return await visionRefusal();
 			return await returnComboSessionFallbackDisabled(
 				filteredComboInfo.comboName,
 				accounts.length,
@@ -951,6 +1367,13 @@ async function handleProxyRequest(
 			throttled: throttledFallbackAccounts,
 		} = applyUsageThrottling(selectedFallbackAccounts);
 		fallbackAccounts = filteredFallbackAccounts;
+		// Same usage-throttling deferral as the initial selection. This one is
+		// unconditional: the fallback re-selection cleared comboName and passed
+		// skipCombo, so it is pool routing and every candidate here would have been
+		// asked for the request's own model.
+		for (const account of throttledFallbackAccounts) {
+			noteDeferred(account.id, null);
+		}
 		// This re-selection is what actually serves the request when a combo
 		// falls back to SessionStrategy routing, so it must overwrite the
 		// dashboard's "observed routing order" entry the initial selection
@@ -966,18 +1389,48 @@ async function handleProxyRequest(
 			);
 			let anyFallbackAttempted = false;
 			for (let i = 0; i < fallbackAccounts.length; i++) {
+				// Same known-blind skip as the main loop, and ahead of the probe gate
+				// for the same two reasons. The fallback path is never combo-routed
+				// (comboName was cleared before the re-selection), so there is no slot
+				// override and the key model is the request's own — which is a
+				// DIFFERENT key from the one a combo slot's pin produced, so a slot
+				// skipped above does not skip the same account here. Correct: without
+				// the pin a different upstream may answer, and that upstream has not
+				// refused anything yet.
+				const blindModel = visionSkipModel(fallbackAccounts[i], null);
+				if (blindModel !== null) {
+					visionSkips++;
+					log.debug(
+						`Skipping fallback account ${fallbackAccounts[i].name} for model "${blindModel}": ` +
+							`its upstream already refused image input for this pair, so the round-trip is not spent re-asking`,
+					);
+					continue;
+				}
+
 				const probeAdmission = getRateLimitProbeAdmission(fallbackAccounts[i]);
 				if (probeAdmission === "suppressed") {
+					// As in the main loop: temporarily unavailable, so it holds the
+					// terminal verdict open unless the cache already knows it blind.
+					noteDeferred(fallbackAccounts[i].id, null);
 					continue;
 				}
 
 				anyFallbackAttempted = true;
+				noteAttempted(fallbackAccounts[i].id, null);
 				// Same rationale as the main loop above: a probe-suppressed tail
 				// candidate is skipped via `continue`, so the last pool index is
-				// not necessarily the last one actually attempted.
+				// not necessarily the last one actually attempted — and the same
+				// goes for a tail the vision cache will skip. The fallback path is
+				// never combo-routed (comboName was cleared before the
+				// re-selection), so there is no slot pin to resolve: the key model
+				// is the request's own.
 				const isLastAttemptedFallback = fallbackAccounts
 					.slice(i + 1)
-					.every((candidate) => wouldSuppressProbe(candidate));
+					.every(
+						(candidate) =>
+							wouldSuppressProbe(candidate) ||
+							visionSkipModel(candidate, null) !== null,
+					);
 				try {
 					response = await proxyWithAccount(
 						req,
@@ -1007,42 +1460,61 @@ async function handleProxyRequest(
 					recordXaiAffinityIfServed(fallbackAccounts[i]);
 					return response;
 				}
+				if (requestMeta.visionRejected) visionRejections++;
 			}
 
 			// Same rationale as the main account loop above: an entirely
 			// suppressed fallback pool must not fall through to a hard failure.
 			if (!anyFallbackAttempted && fallbackAccounts.length > 0) {
 				const i = 0;
-				log.info(
-					`All ${fallbackAccounts.length} fallback candidate(s) were probe-gate suppressed; retrying account ${fallbackAccounts[i].name} ungated`,
-				);
-				// Same rationale as the main-loop block above: this retry is the
-				// terminal attempt by construction (the fallback loop already
-				// exhausted every candidate), and the fallback path is never
-				// combo-routed (comboName was cleared before re-selection), so the
-				// flag is unconditionally true here.
-				response = await proxyWithAccount(
-					req,
-					url,
-					fallbackAccounts[i],
-					requestMeta,
-					finalBodyBuffer,
-					finalCreateBodyStream,
-					i,
-					ctx,
-					undefined,
-					apiKeyId,
-					apiKeyName,
-					requestBodyContext,
-					true,
-					(capture: () => Promise<Response | null>) => {
-						terminalRejection = capture;
-					},
-				);
+				// And the same guard as the main loop's ungated retry: it exists for
+				// probe suppression, not as a second door onto a route the fallback
+				// loop just skipped as known-blind.
+				const retryBlindModel = visionSkipModel(fallbackAccounts[i], null);
+				if (retryBlindModel !== null) {
+					log.debug(
+						`Not retrying fallback account ${fallbackAccounts[i].name} ungated for model "${retryBlindModel}": ` +
+							`it is known to refuse image input (${visionSkips} candidate(s) already skipped), ` +
+							`so this request falls through to the exhaustion path instead of re-asking a blind route`,
+					);
+				} else {
+					log.info(
+						`All ${fallbackAccounts.length} fallback candidate(s) were probe-gate suppressed; retrying account ${fallbackAccounts[i].name} ungated`,
+					);
+					// Same rationale as the main-loop block above: this retry is the
+					// terminal attempt by construction (the fallback loop already
+					// exhausted every candidate), and the fallback path is never
+					// combo-routed (comboName was cleared before re-selection), so the
+					// flag is unconditionally true here.
+					//
+					// Counted, and its pair marked attempted so it stops counting as
+					// deferred — as in the main loop's ungated retry, this covers one
+					// suppressed candidate and no more.
+					noteAttempted(fallbackAccounts[i].id, null);
+					response = await proxyWithAccount(
+						req,
+						url,
+						fallbackAccounts[i],
+						requestMeta,
+						finalBodyBuffer,
+						finalCreateBodyStream,
+						i,
+						ctx,
+						undefined,
+						apiKeyId,
+						apiKeyName,
+						requestBodyContext,
+						true,
+						(capture: () => Promise<Response | null>) => {
+							terminalRejection = capture;
+						},
+					);
 
-				if (response) {
-					recordXaiAffinityIfServed(fallbackAccounts[i]);
-					return response;
+					if (response) {
+						recordXaiAffinityIfServed(fallbackAccounts[i]);
+						return response;
+					}
+					if (requestMeta.visionRejected) visionRejections++;
 				}
 			}
 		} else {
@@ -1069,6 +1541,23 @@ async function handleProxyRequest(
 	const needsReauth = oauthAccounts.filter((acc) =>
 		isRefreshTokenLikelyExpired(acc),
 	);
+
+	// Every candidate eligible for this request is known unable to serve its
+	// image: each was either attempted and refused, or is recorded in the
+	// capability cache as blind, and nothing was deferred for a temporary reason
+	// with its capability still unknown. No account is benched and nothing is
+	// cooling down, so answering as an exhausted pool ("503, come back later")
+	// would be wrong twice over — the same image fails the same way forever, and
+	// nothing here is actually exhausted.
+	//
+	// Placed before the needsReauth throw and terminalRejection: both would
+	// otherwise claim the request with a less accurate cause. An account needing
+	// re-authentication cannot rescue an image no route can read, and a sticky
+	// gateway rejection is an explanation of one attempt, not of the image.
+	// `everyEligibleRouteIsBlind` already keeps a reauth-needing account it never
+	// asked holding the verdict open, so this cannot pre-empt a reauth message
+	// that would actually have been the actionable one.
+	if (everyEligibleRouteIsBlind()) return await visionRefusal();
 
 	if (needsReauth.length > 0) {
 		// Quote account names to prevent command injection (defense-in-depth)

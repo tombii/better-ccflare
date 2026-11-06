@@ -6,6 +6,11 @@ import {
 	setDerivedProviderModelDefaults,
 	setProviderModelDefaultOverrides,
 } from "@better-ccflare/providers";
+import {
+	clearVisionCapability,
+	isVisionUnsupported,
+	markVisionUnsupported,
+} from "@better-ccflare/proxy";
 import { createConfigHandlers } from "../config";
 
 function makeConfig(initial: Record<string, Record<string, string>> = {}) {
@@ -284,5 +289,103 @@ describe("provider model defaults", () => {
 		);
 		expect(response.status).toBe(400);
 		expect(resolveProviderModelDefault("codex", "opus")).toBe("gpt-5.6-sol");
+	});
+});
+
+describe("provider model defaults change the vision cache's upstream", () => {
+	// The vision capability cache is keyed on the model the request ASKED for,
+	// while the model that actually goes upstream can come from a provider
+	// family default. A defaults change therefore changes the truth behind a key
+	// that stays the same, exactly like a model-mappings change does — and it is
+	// not scoped to one account, so the invalidation is global.
+
+	/** A stand-in account id: the cache is keyed by string, nothing more. */
+	const ACCOUNT = "acc-defaults-vision";
+	/** A stand-in model id. Invented, not a real pin. */
+	const ASKED_MODEL = "defaults-requested-model";
+
+	beforeEach(() => {
+		clearVisionCapability();
+	});
+
+	afterEach(() => {
+		clearVisionCapability();
+	});
+
+	it("drops the learned image refusals when a defaults change succeeds", async () => {
+		const handlers = createConfigHandlers(makeConfig());
+		markVisionUnsupported(ACCOUNT, ASKED_MODEL);
+		expect(isVisionUnsupported(ACCOUNT, ASKED_MODEL)).toBe(true);
+
+		const response = await handlers.setProviderModelDefaults(
+			request([{ provider: "codex", family: "opus", model: "gpt-custom" }]),
+		);
+
+		expect(response.status).toBe(200);
+		expect(isVisionUnsupported(ACCOUNT, ASKED_MODEL)).toBe(false);
+	});
+
+	it("drops them for EVERY account, because a provider default is not account-scoped", async () => {
+		const handlers = createConfigHandlers(makeConfig());
+		markVisionUnsupported("acc-vision-a", ASKED_MODEL);
+		markVisionUnsupported("acc-vision-b", ASKED_MODEL);
+
+		const response = await handlers.setProviderModelDefaults(
+			request([{ provider: "codex", family: "opus", model: "gpt-custom" }]),
+		);
+
+		expect(response.status).toBe(200);
+		expect(isVisionUnsupported("acc-vision-a", ASKED_MODEL)).toBe(false);
+		expect(isVisionUnsupported("acc-vision-b", ASKED_MODEL)).toBe(false);
+	});
+
+	it("drops them when an override is cleared back to the provider default", async () => {
+		setProviderModelDefaultOverrides({ codex: { opus: "gpt-custom" } });
+		const handlers = createConfigHandlers(
+			makeConfig({ codex: { opus: "gpt-custom" } }),
+		);
+		markVisionUnsupported(ACCOUNT, ASKED_MODEL);
+
+		const response = await handlers.setProviderModelDefaults(
+			request([{ provider: "codex", family: "opus", model: "" }]),
+		);
+
+		// Clearing an override is still a change of the model that goes upstream.
+		expect(response.status).toBe(200);
+		expect(isVisionUnsupported(ACCOUNT, ASKED_MODEL)).toBe(false);
+	});
+
+	it("keeps them when the change is rejected", async () => {
+		const handlers = createConfigHandlers(makeConfig());
+		markVisionUnsupported(ACCOUNT, ASKED_MODEL);
+
+		// A provider that is not editable is a 400: nothing was written, so
+		// nothing learned has gone stale and the entry must survive.
+		const response = await handlers.setProviderModelDefaults(
+			request([{ provider: "nope", family: "opus", model: "x" }]),
+		);
+
+		expect(response.status).toBe(400);
+		expect(isVisionUnsupported(ACCOUNT, ASKED_MODEL)).toBe(true);
+	});
+
+	it("keeps them when the payload changes nothing", async () => {
+		setProviderModelDefaultOverrides({ codex: { opus: "gpt-custom" } });
+		const handlers = createConfigHandlers(
+			makeConfig({ codex: { opus: "gpt-custom" } }),
+		);
+		markVisionUnsupported(ACCOUNT, ASKED_MODEL);
+
+		// Restating the value already in force, and clearing an override that is
+		// already absent, both send the same model upstream as before.
+		const response = await handlers.setProviderModelDefaults(
+			request([
+				{ provider: "codex", family: "opus", model: "gpt-custom" },
+				{ provider: "codex", family: "haiku", model: "" },
+			]),
+		);
+
+		expect(response.status).toBe(200);
+		expect(isVisionUnsupported(ACCOUNT, ASKED_MODEL)).toBe(true);
 	});
 });

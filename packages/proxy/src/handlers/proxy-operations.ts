@@ -67,6 +67,7 @@ import { handleProxyError, processProxyResponse } from "./response-processor";
 import { isRetryable429 } from "./retryable-429";
 import { getValidAccessToken } from "./token-manager";
 import { collectWindows } from "./usage-throttling";
+import { markVisionUnsupported } from "./vision-capability";
 import { peekSseForZai1305 } from "./zai-1305";
 
 const log = new Logger("ProxyOperations");
@@ -791,7 +792,8 @@ function mentionsUnsupportedImageInput(text: string): boolean {
  * upstream's wording, and image nouns include `file`, `attachment` and
  * `modality`, so a text-only request's unrelated 400 can name one of them with
  * a negation. Without the gate that request is replayed across every account
- * and ends in a generic pool error instead of the 400 that explains it.
+ * and terminates as `vision_unsupported` instead of reaching the client as the
+ * 400 that explains it.
  */
 export async function isVisionUnsupportedError(
 	response: Response,
@@ -857,7 +859,7 @@ export async function isVisionUnsupportedError(
  * it on an unrelated 400 — "Unsupported parameter: 'modalities' is not supported
  * with this model", "The file 'file-abc' is not available for this
  * organization", "This endpoint does not accept attachments" — and would be
- * replayed across every combo slot and account, ending in a generic pool error
+ * replayed across every combo slot and account, ending as `vision_unsupported`
  * when the client should have got the 400 that explains the failure.
  *
  * Walks the parsed body rather than scanning bytes: a Claude Code conversation
@@ -1518,6 +1520,65 @@ export async function proxyWithAccount(
 				effectiveBodyBuffer = baseBodyContext.getBuffer();
 			}
 		}
+
+		/**
+		 * The model half of the (account, model) key this attempt's image
+		 * verdict is recorded under. It has to be the exact string proxy.ts
+		 * computes before it decides whether to skip a candidate — a write and a
+		 * read that disagree by one character are two keys for one route, and the
+		 * cache never hits.
+		 *
+		 * Both sides therefore use the same expression over the same inputs: the
+		 * combo slot's model override when one applied, otherwise the request's
+		 * own model, read from the very same `RequestBodyContext` the caller
+		 * handed in (`baseBodyContext` IS `requestBodyContext` whenever a context
+		 * is passed, which every routing call site does).
+		 *
+		 * Deliberately NOT `effectiveBodyContext.getModel()`: that is the model
+		 * AFTER `withPatchedModel` stripped a provider-routing suffix off the
+		 * override, so a suffixed slot pin would be written under the bare id and
+		 * read back under the suffixed one. The suffix stays in the key because it
+		 * selects which upstream answers, so `m {"only":["a"]}` and `m` are two
+		 * different capability questions even on the same account (see
+		 * vision-capability.ts, constraint 3).
+		 *
+		 * The truthiness test mirrors the override guard above exactly, so an
+		 * override that did NOT apply — an empty-string passthrough slot — falls
+		 * back to the body's model on both sides. With no body at all this is blank
+		 * unless a slot override named a model, and either way nothing is recorded:
+		 * a body-less request cannot carry an image, so the gate below never lets it
+		 * reach a write, and `markVisionUnsupported` treats a blank model as a no-op
+		 * anyway.
+		 */
+		const visionKeyModel =
+			(modelOverride ? modelOverride : baseBodyContext.getModel()) ?? "";
+
+		/**
+		 * Whether this attempt's image refusal must NOT reach the vision
+		 * capability cache: the effective outgoing body carries a `provider`
+		 * routing object that did not come from the slot's routing suffix.
+		 *
+		 * The cache key is the (account, model) pair — suffix included — and
+		 * represents provider routing ONLY through that suffix. Routing can also
+		 * travel as a body field: on the anthropic-compatible family a
+		 * client-supplied `provider` passes through untouched, so the same key
+		 * would serve two different upstream choices, and a refusal learned
+		 * under one would sideline the other for a full TTL.
+		 *
+		 * Suppression rather than widening the key: a `provider` value is an
+		 * arbitrarily shaped object, and normalising it into a key string is
+		 * more surface than declining to use the cache when the routing is not
+		 * represented in it. `slotRouting` is non-null exactly when the suffix
+		 * in `visionKeyModel` produced the body's `provider` (the
+		 * `resolveSlotRouting` acceptance above), so a slot-pinned routing IS
+		 * represented in the key and still learns; only a provider the client
+		 * sent suppresses the write. Read at `visionKeyModel` time — the
+		 * model-cycling fallback below patches a fresh context and never
+		 * mutates this one, so the answer cannot go stale between here and the
+		 * two call sites that consume it.
+		 */
+		const visionRoutingUnrepresentedInKey =
+			effectiveBodyContext.getParsedJson()?.provider != null && !slotRouting;
 
 		// Stage the original request body + headers for cache keepalive replay.
 		// Uses the pre-transform body (effectiveBodyBuffer may have a model override
@@ -2642,6 +2703,22 @@ export async function proxyWithAccount(
 				requestCarriesImageContent(effectiveBodyContext));
 
 		/**
+		 * Whether the model-cycling fallback below has re-issued this attempt
+		 * against one of the account's OTHER configured models. Declared here,
+		 * before the closure that reads it, because `classifyRetriedUpstreamResponse`
+		 * is defined above that loop and invoked long after it.
+		 *
+		 * It exists to keep the vision cache honest. The cache key is the model the
+		 * request ASKED for, so a refusal is only evidence about that key when the
+		 * response being classified is a response to that model. After cycling, the
+		 * response belongs to a fallback alias reached through a transient 429/404 on
+		 * the requested one: recording it would sideline a route whose primary may
+		 * read images perfectly well the moment that transient clears — a capability
+		 * claim the evidence does not support, for up to a full TTL.
+		 */
+		let modelCycledTo = false;
+
+		/**
 		 * The classification chain as a retry response has to see it: every
 		 * handler above, in the first-response order, minus the model-cycling
 		 * fallback loop.
@@ -2695,6 +2772,43 @@ export async function proxyWithAccount(
 				log.warn(
 					`Account ${account.name} rejected image input on an in-place retry — failing over to next model/account`,
 				);
+				// Second confirmed-rejection site: an in-place retry can refuse the
+				// image just as the first attempt did, and its `return null` fails
+				// over exactly the same way, so it has to teach the cache too —
+				// otherwise a pair that only ever refuses on the retried response
+				// would be re-probed on every image request forever. Same key as the
+				// first-response site: the retry replays the same body against the
+				// same account and the same requested model, so it is the same
+				// (account, model) capability question — unless the model-cycling
+				// fallback had already swapped that model out, in which case the
+				// refusal is a fallback alias's and says nothing about the key. See
+				// `modelCycledTo`.
+				//
+				// `visionRejected` is guarded by `modelCycledTo` and by nothing
+				// else, matching the first-response site: it is first-hand evidence
+				// about THIS request, which asked under its own routing, so it
+				// counts toward this request's verdict whatever the body carried.
+				// A cycled alias's refusal is the one thing that must not count —
+				// it is not evidence about the requested pair, and leaving the flag
+				// unset makes this attempt read as "capability unknown", which keeps
+				// the request retryable instead of answering a permanent 400 on the
+				// strength of an alias's opinion.
+				//
+				// The CACHE write is the half that `visionRoutingUnrepresentedInKey`
+				// gates, and only that half: a refusal under a client-supplied
+				// `provider` says nothing about the bare (account, model) pair, so
+				// recording it would suppress a different provider's route on every
+				// later request for a whole TTL. Suppressing the flag too — the bug
+				// this replaces — cost the opposite error: a confirmed refusal on an
+				// in-place retry under a client `provider` left the route counted as
+				// unknown, so a request every eligible route had refused still
+				// answered a retryable 503.
+				if (!modelCycledTo) {
+					requestMeta.visionRejected = true;
+					if (!visionRoutingUnrepresentedInKey) {
+						markVisionUnsupported(account.id, visionKeyModel);
+					}
+				}
 				// Drain the response being abandoned: the `retried` argument, not the
 				// outer `response` binding it aliases at today's only call site. The
 				// classifier read a clone, so this body is still unread, and draining
@@ -2779,6 +2893,32 @@ export async function proxyWithAccount(
 				`Account ${account.name}${rejectedModel ? ` (model=${rejectedModel})` : ""} ` +
 					`rejected image input — failing over to next model/account`,
 			);
+			// Learn the refusal: this is the first of the two confirmed-rejection
+			// sites to run (the other is `classifyRetriedUpstreamResponse` above,
+			// which only sees a response that needed an in-place retry), and both end
+			// in the `return null` that fails the image over to the next slot /
+			// account. Recording the pair here is what lets routing skip it on the
+			// NEXT image request instead of paying the same round-trip — body
+			// uploaded, 400 read, response drained — every time. Keyed on
+			// `visionKeyModel`, not on `rejectedModel` above: the log wants the
+			// stripped model that actually went upstream, the cache wants the
+			// string the skip site computes.
+			//
+			// Also stamp the per-attempt signal the caller loop reads back: this
+			// site always answers for the model that was asked for (the
+			// model-cycling fallback runs later), so it needs none of the
+			// `modelCycledTo` guard the retried-response site above carries.
+			//
+			// `visionRejected` is stamped unconditionally — the refusal happened
+			// under THIS request's own routing, so it is first-hand evidence for
+			// this request's verdict whatever the body carried. The cache write
+			// is not: an entry keyed on the bare pair would suppress a different
+			// provider's route on every later request for a whole TTL. See
+			// `visionRoutingUnrepresentedInKey`.
+			requestMeta.visionRejected = true;
+			if (!visionRoutingUnrepresentedInKey) {
+				markVisionUnsupported(account.id, visionKeyModel);
+			}
 		}
 
 		if (visionUnsupported || (await isModelUnavailableError(rawResponse))) {
@@ -2983,6 +3123,9 @@ export async function proxyWithAccount(
 							nextBareModel,
 						);
 					}
+					// From here on, every response belongs to `nextModel`, not to the
+					// model the request asked for. See `modelCycledTo`.
+					modelCycledTo = true;
 
 					rawResponse = await checkZai1305(
 						rawResponse,
@@ -3681,13 +3824,31 @@ export const POOL_EXHAUSTED_MAX_RETRY_AFTER_SECONDS = 3600;
  *
  * `pool_exhausted` means "every account is genuinely exhausted (rate-limited,
  * usage-capped, paused, requires reauth, or otherwise filtered out)".
- * `circuit_open` means "the circuit breaker is refusing this account". The
- * wire shape stays identical — only `error.type` and `accounts[].reason`
- * differ — so SDK clients keep treating the response as a 503 transient.
- * Downstream consumers that need to differentiate (e.g. the AO fleet reaper)
- * read the JSON body.
+ * `circuit_open` means "the circuit breaker is refusing this account". For
+ * those two the wire shape stays identical — only `error.type` and
+ * `accounts[].reason` differ — so SDK clients keep treating the response as a
+ * 503 transient. Downstream consumers that need to differentiate (e.g. the AO
+ * fleet reaper) read the JSON body.
+ *
+ * `vision_unsupported` means every candidate ELIGIBLE for this request is known
+ * unable to serve its image: each was either attempted and refused, or is
+ * recorded in the vision capability cache as blind. It is NOT an exhaustion
+ * state — no account is benched, nothing is cooling down, and retrying the same
+ * request cannot succeed — so it is a 400 and carries no `Retry-After` and no
+ * `next_available_at`. It rides this envelope because that is what tells a
+ * client "this is a routing outcome, not a mid-stream failure". The caller that
+ * decides when the predicate holds is proxy.ts; see `everyEligibleRouteIsBlind`
+ * there for why it is built on the cache rather than on availability.
  */
-export type PoolExhaustionKind = "pool_exhausted" | "circuit_open";
+export type PoolExhaustionKind =
+	| "pool_exhausted"
+	| "circuit_open"
+	| "vision_unsupported";
+
+/** Client-facing message for the one cause a wait cannot fix. */
+export const VISION_UNSUPPORTED_MESSAGE =
+	"Image input is not supported by any model eligible for this request. " +
+	"Remove the image, or route the request to a model that accepts image input.";
 
 /**
  * Per-account reason values emitted in `accounts[].reason`.
@@ -3696,6 +3857,11 @@ export type PoolExhaustionKind = "pool_exhausted" | "circuit_open";
  * refused this account, NOT that the account's cooldown is expired. Reporting
  * a circuit-open account as `rate_limited` would mislead the reaper into
  * pausing session spawns for the wrong reason.
+ *
+ * `vision_unsupported` is distinct for the same kind of reason: the account is
+ * healthy and either was tried or is already known blind. Reporting a cooldown
+ * reason there would send the reaper off to pause session spawns for a state
+ * that will not recover.
  */
 export type PoolExhaustionAccountReason =
 	| "requires_reauth"
@@ -3703,6 +3869,7 @@ export type PoolExhaustionAccountReason =
 	| "usage_exhausted"
 	| "rate_limited"
 	| "circuit_open"
+	| "vision_unsupported"
 	| "unavailable";
 
 /**
@@ -3735,12 +3902,20 @@ const CIRCUIT_OPEN_RETRY_AFTER_SECONDS = 30;
  * also usage-capped for hours would otherwise lie to the client about when
  * capacity actually returns.
  *
+ * `kind: "vision_unsupported"` overrides every per-account reason the same way
+ * and additionally drops BOTH wait signals — `Retry-After` and
+ * `next_available_at` — and answers 400 instead of 503. There is nothing to
+ * wait for: the accounts listed are not recovering, they simply cannot read the
+ * image, and a client that respects `Retry-After` would sleep and then fail
+ * identically forever.
+ *
  * @param accounts - All accounts that were considered but are unavailable
  * @param usageSnapshots - Per-account usage telemetry (id → snapshot), used
  *   to identify usage_exhausted accounts and to derive `next_available_at` /
  *   `Retry-After` when an upstream reset time is known.
  * @param kind - Which top-level cause to report. Defaults to `"pool_exhausted"`.
- * @returns 503 response with the pool-exhausted JSON shape and Retry-After header
+ * @returns 503 response with the pool-exhausted JSON shape and Retry-After
+ *   header, or a 400 with neither for `"vision_unsupported"`.
  */
 export function createPoolExhaustedResponse(
 	accounts: Account[],
@@ -3749,6 +3924,7 @@ export function createPoolExhaustedResponse(
 ): Response {
 	const now = Date.now();
 	const isCircuitOpen = kind === "circuit_open";
+	const isVisionUnsupported = kind === "vision_unsupported";
 
 	// Build account info list — usage-exhausted outranks cooldown because the
 	// client needs the longer reset horizon (weekly vs minutes-long cooldowns)
@@ -3766,20 +3942,28 @@ export function createPoolExhaustedResponse(
 				usage.extraUsageAvailable,
 			);
 
-		const reason: PoolExhaustionAccountReason = isCircuitOpen
-			? "circuit_open"
-			: account.requires_reauth
-				? "requires_reauth"
-				: account.paused
-					? "paused"
-					: usageExhausted
-						? "usage_exhausted"
-						: account.rate_limited_until && account.rate_limited_until > now
-							? "rate_limited"
-							: "unavailable";
+		const reason: PoolExhaustionAccountReason = isVisionUnsupported
+			? // The account is healthy; it simply could not read the image. It was
+				// either attempted and refused, or is already recorded as blind.
+				"vision_unsupported"
+			: isCircuitOpen
+				? "circuit_open"
+				: account.requires_reauth
+					? "requires_reauth"
+					: account.paused
+						? "paused"
+						: usageExhausted
+							? "usage_exhausted"
+							: account.rate_limited_until && account.rate_limited_until > now
+								? "rate_limited"
+								: "unavailable";
 
 		let availableAt: string | null = null;
-		if (!isCircuitOpen) {
+		// Neither override kind advertises a recovery time: the breaker's own
+		// cooldown floors `Retry-After` instead, and a blind route has no recovery
+		// at all — pairing a `vision_unsupported` reason with an `available_at`
+		// would contradict the reason in the same object.
+		if (!isCircuitOpen && !isVisionUnsupported) {
 			if (usageExhausted && usage?.resetMs && usage.resetMs > now) {
 				availableAt = new Date(usage.resetMs).toISOString();
 			} else if (
@@ -3829,7 +4013,7 @@ export function createPoolExhaustedResponse(
 		recoveryCandidates.length > 0 ? Math.min(...recoveryCandidates) : null;
 
 	const nextAvailableAt =
-		!isCircuitOpen && earliestRecoveryMs !== null
+		!isCircuitOpen && !isVisionUnsupported && earliestRecoveryMs !== null
 			? new Date(earliestRecoveryMs).toISOString()
 			: null;
 
@@ -3860,26 +4044,37 @@ export function createPoolExhaustedResponse(
 			: CIRCUIT_OPEN_RETRY_AFTER_SECONDS
 		: usageAwareRetryAfterSeconds;
 
+	// vision_unsupported is the one kind a wait cannot fix, so it carries no
+	// Retry-After and no next_available_at and answers 400. Everything else keeps
+	// the 503 transient shape SDK clients already treat as retryable.
+	const headers: Record<string, string> = {
+		"Content-Type": "application/json",
+		// Wire shape stays identical regardless of kind — the cause lives
+		// in `error.type`. Downstream consumers that need to differentiate
+		// (fleet reaper, capacity-state consumers) read the JSON body.
+		"x-better-ccflare-pool-status": isVisionUnsupported
+			? "vision_unsupported"
+			: "exhausted",
+	};
+	if (!isVisionUnsupported) {
+		headers["Retry-After"] = String(retryAfterSeconds);
+	}
+
 	return new Response(
 		JSON.stringify({
 			type: "error",
 			error: {
 				type: kind,
-				message: ERROR_MESSAGES.POOL_EXHAUSTED,
+				message: isVisionUnsupported
+					? VISION_UNSUPPORTED_MESSAGE
+					: ERROR_MESSAGES.POOL_EXHAUSTED,
 				next_available_at: nextAvailableAt,
 				accounts: accountInfos,
 			},
 		}),
 		{
-			status: 503,
-			headers: {
-				"Content-Type": "application/json",
-				"Retry-After": String(retryAfterSeconds),
-				// Wire shape stays identical regardless of kind — the cause lives
-				// in `error.type`. Downstream consumers that need to differentiate
-				// (fleet reaper, capacity-state consumers) read the JSON body.
-				"x-better-ccflare-pool-status": "exhausted",
-			},
+			status: isVisionUnsupported ? 400 : 503,
+			headers,
 		},
 	);
 }

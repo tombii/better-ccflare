@@ -12,6 +12,7 @@ import type { Provider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
 import { INTERNAL_PROBE_SECRET_HEADER } from "../handlers/proxy-types";
+import { clearVisionCapability } from "../handlers/vision-capability";
 import { handleProxy } from "../proxy";
 import * as usageCollectorModule from "../usage-collector";
 
@@ -114,10 +115,15 @@ let savedPassthrough: string | undefined;
 beforeEach(() => {
 	savedPassthrough = process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL;
 	delete process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL;
+	// The vision capability cache is process-global module state, and a refusal
+	// learned by an earlier test in this file would make a later one skip the
+	// candidate instead of attempting it.
+	clearVisionCapability();
 	stubUsageCollector();
 });
 
 afterEach(() => {
+	clearVisionCapability();
 	if (savedPassthrough === undefined) {
 		delete process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL;
 	} else {
@@ -495,4 +501,101 @@ it("records a joined local refusal without inventing an upstream attempt", async
 		else process.env.CCFLARE_CODEX_CACHE_DIAGNOSTICS = saved;
 		logBus.off("log", listener);
 	}
+});
+
+describe("pool exhausted — every candidate rejected image input", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	// openai-compatible takes the API key from `api_key`; the Anthropic-shaped
+	// fixture has neither token nor key and dies in TokenRefresh before the
+	// request is ever issued (a swallowed TokenRefreshError, not a 200-path bug).
+	function apiKeyAccount(): Account {
+		return makeAccount({ provider: "openai-compatible", api_key: "test-key" });
+	}
+
+	function visionRejection(): Response {
+		return new Response(
+			JSON.stringify({
+				error: { message: "This model does not support image input." },
+			}),
+			{ status: 400, headers: { "content-type": "application/json" } },
+		);
+	}
+
+	function imageRequest(): Request {
+		return new Request("https://proxy.local/v1/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-sonnet-4-5",
+				messages: [
+					{
+						role: "user",
+						content: [
+							{ type: "text", text: "what is this" },
+							{
+								type: "image",
+								source: {
+									type: "base64",
+									media_type: "image/png",
+									data: "abc",
+								},
+							},
+						],
+					},
+				],
+				max_tokens: 16,
+			}),
+		});
+	}
+
+	it("answers 400 vision_unsupported when every attempted account rejected the image", async () => {
+		globalThis.fetch = mock(async () => visionRejection());
+
+		const ctx = makeContext([apiKeyAccount()]);
+		const response = await handleProxy(
+			imageRequest(),
+			new URL("https://proxy.local/v1/messages"),
+			ctx,
+		);
+
+		expect(response.status).toBe(400);
+		expect(response.headers.get("Retry-After")).toBeNull();
+		expect(response.headers.get("x-better-ccflare-pool-status")).toBe(
+			"vision_unsupported",
+		);
+		const body = (await response.json()) as { error: { type: string } };
+		expect(body.error.type).toBe("vision_unsupported");
+	});
+
+	it("still answers pool_exhausted when the account fails for another reason", async () => {
+		// A non-image 400 is forwarded, not counted as a vision rejection, so the
+		// all-rejected summary must not claim vision_unsupported.
+		globalThis.fetch = mock(
+			async () =>
+				new Response(JSON.stringify({ error: { code: "model_not_found" } }), {
+					status: 400,
+					headers: { "content-type": "application/json" },
+				}),
+		);
+
+		const ctx = makeContext([apiKeyAccount()]);
+		const response = await handleProxy(
+			imageRequest(),
+			new URL("https://proxy.local/v1/messages"),
+			ctx,
+		);
+
+		expect(response.headers.get("x-better-ccflare-pool-status")).not.toBe(
+			"vision_unsupported",
+		);
+	});
 });

@@ -74,8 +74,11 @@ export const ERROR_MESSAGES = {
  * The `error.type` values better-ccflare puts in a refusal it generates
  * ITSELF, as opposed to anything an upstream provider ever sends:
  *
- * - `pool_exhausted` / `circuit_open` — {@link createPoolExhaustedResponse}
- *   (`error.type = kind`) in proxy-operations.ts;
+ * - `pool_exhausted` / `circuit_open` / `vision_unsupported` —
+ *   {@link createPoolExhaustedResponse} (`error.type = kind`) in
+ *   proxy-operations.ts. `vision_unsupported` is the one request-level 400
+ *   among them rather than a 503, but it is still generated here and never
+ *   sent by an upstream, which is the distinction this set exists to make;
  * - `service_unavailable_error` — the refusal helpers at the top of proxy.ts
  *   (which add a `code`) and the server's catch-all for
  *   {@link ERROR_MESSAGES.ALL_ACCOUNTS_FAILED} (which does not).
@@ -96,6 +99,10 @@ export const ERROR_MESSAGES = {
 export const LOCAL_REFUSAL_ERROR_TYPES: ReadonlySet<string> = new Set([
 	"pool_exhausted",
 	"circuit_open",
+	// Also this package's own refusal (createPoolExhaustedResponse with kind
+	// "vision_unsupported"): a request-level 400, not an upstream failure, so
+	// the auto-refresh scheduler must not count it against the endpoint.
+	"vision_unsupported",
 	"service_unavailable_error",
 ] as const satisfies readonly (
 	| PoolExhaustionKind

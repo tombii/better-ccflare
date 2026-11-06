@@ -9,6 +9,11 @@ import {
 import { existsSync, unlinkSync } from "node:fs";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { DatabaseFactory } from "@better-ccflare/database";
+import {
+	clearVisionCapability,
+	isVisionUnsupported,
+	markVisionUnsupported,
+} from "@better-ccflare/proxy";
 import { createAccountModelMappingsUpdateHandler } from "../accounts";
 
 const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-model-mappings-update.db`;
@@ -81,6 +86,8 @@ describe("createAccountModelMappingsUpdateHandler — replace semantics", () => 
 	beforeEach(async () => {
 		// Wipe all accounts between tests for isolation.
 		await dbOps.getAdapter().run("DELETE FROM accounts", []);
+		// The learned image-refusal cache is process-global module state.
+		clearVisionCapability();
 	});
 
 	it("empty payload {} clears all existing mappings", async () => {
@@ -201,5 +208,58 @@ describe("createAccountModelMappingsUpdateHandler — replace semantics", () => 
 			"nonexistent-id",
 		);
 		expect(response.status).toBe(404);
+	});
+
+	it("drops the account's learned image refusals, because a remap changes what serves an unchanged key", async () => {
+		const id = await insertAccount(dbOps, "acc-vision", {
+			sonnet: "old-target-model",
+		});
+
+		// The vision capability cache is keyed on the model the request ASKED for,
+		// while model_mappings decides which upstream model actually answers it.
+		// Remapping therefore changes the truth behind a key that stays the same:
+		// the entry learned from "old-target-model" would keep a route skipped whose
+		// new target may read images fine.
+		markVisionUnsupported(id, "requested-model");
+		expect(isVisionUnsupported(id, "requested-model")).toBe(true);
+
+		const response = await handler(
+			makeRequest({ modelMappings: { sonnet: "new-target-model" } }),
+			id,
+		);
+
+		expect(response.status).toBe(200);
+		expect(isVisionUnsupported(id, "requested-model")).toBe(false);
+	});
+
+	it("leaves another account's learned image refusals alone", async () => {
+		const remapped = await insertAccount(dbOps, "acc-remapped", null);
+		const untouched = await insertAccount(dbOps, "acc-untouched", null);
+		markVisionUnsupported(remapped, "requested-model");
+		markVisionUnsupported(untouched, "requested-model");
+
+		const response = await handler(
+			makeRequest({ modelMappings: { sonnet: "new-target-model" } }),
+			remapped,
+		);
+
+		expect(response.status).toBe(200);
+		expect(isVisionUnsupported(remapped, "requested-model")).toBe(false);
+		expect(isVisionUnsupported(untouched, "requested-model")).toBe(true);
+	});
+
+	it("does not drop anything when the update is rejected", async () => {
+		const id = await insertAccount(dbOps, "acc-rejected", null);
+		markVisionUnsupported(id, "requested-model");
+
+		// A whitespace-only value is a 400: nothing was written, so nothing learned
+		// has gone stale and the entry must survive.
+		const response = await handler(
+			makeRequest({ modelMappings: { sonnet: "   " } }),
+			id,
+		);
+
+		expect(response.status).toBe(400);
+		expect(isVisionUnsupported(id, "requested-model")).toBe(true);
 	});
 });

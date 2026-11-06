@@ -1,6 +1,7 @@
 import { providerAcceptsClientModel } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { BadRequest, Conflict, NotFound } from "@better-ccflare/errors";
+import { clearVisionCapability } from "@better-ccflare/proxy";
 import type {
 	ComboFamily,
 	ComboFamilyAssignment,
@@ -359,6 +360,18 @@ export function createSlotUpdateHandler(dbOps: DatabaseOperations) {
 				}
 				throw error;
 			}
+
+			// A slot's model pin is the model half of the (account, model) key the
+			// vision capability cache learns refusals under, and repinning a slot is
+			// how an operator changes which upstream answers an image request. What is
+			// cached was learned from the previous topology, so drop it and let the
+			// new routing be asked instead of skipped.
+			//
+			// Global rather than account-scoped: this handler resolves the slot by id
+			// and only loads its account on the passthrough-validation path above, so
+			// the account is not always known here — and a slot edit is rare and
+			// operator-driven, so the cost is one re-learn round-trip per blind pair.
+			clearVisionCapability();
 
 			return new Response(
 				JSON.stringify({ success: true, data: updatedSlot }),

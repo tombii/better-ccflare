@@ -3,7 +3,10 @@ export {
 	type RequestJsonBody,
 } from "../request-body-context";
 export {
+	addDeferredCandidates,
+	type DeferredVisionCandidate,
 	getComboSlotInfo,
+	getDeferredCandidates,
 	getModelFamilyExhaustionInfo,
 	getXaiConvId,
 	isComboSessionFallbackDisabled,
@@ -54,6 +57,7 @@ export {
 	type PoolExhaustionKind,
 	proxyUnauthenticated,
 	proxyWithAccount,
+	requestCarriesImageContent,
 } from "./proxy-operations";
 export {
 	ERROR_MESSAGES,
@@ -119,3 +123,14 @@ export {
 	getUsageThrottleStatus,
 	getUsageThrottleUntil,
 } from "./usage-throttling";
+export {
+	clearVisionCapability,
+	DEFAULT_VISION_CAPABILITY_TTL_MS,
+	isVisionUnsupported,
+	MAX_VISION_CAPABILITY_ENTRIES,
+	markVisionUnsupported,
+	VISION_CAPABILITY_TTL_MS,
+	type VisionCapabilityEntry,
+	visionCapabilitySnapshot,
+	visionCapabilityTtlMs,
+} from "./vision-capability";
