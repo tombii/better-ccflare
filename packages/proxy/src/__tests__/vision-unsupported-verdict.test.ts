@@ -1096,6 +1096,44 @@ describe("vision_unsupported — an indefinite hold-out is not a deferred COMBO 
 		expectVisionUnsupported(result);
 	});
 
+	it("answers 400 when the untried combo slot is BOTH excluded and cooling", async () => {
+		// Order dependence: the slot loop drops a slot for model cooldown BEFORE it
+		// checks the header exclusion, so an excluded-and-cooling slot never reached
+		// the excluded-id set and was recorded as a merely-temporary deferral —
+		// holding the verdict open for a route that is permanently ineligible for
+		// THIS request. Exclusion has to win over cooldown, because a cooldown ends
+		// and an exclusion for this request does not.
+		markModelCooling("acc-2", "slot-model-two");
+		const combo = makeCombo([
+			slot("slot-0", "acc-1", "slot-model-one", 0),
+			slot("slot-1", "acc-2", "slot-model-two", 1),
+		]);
+		const ctx = makeContext(
+			[
+				makeAccount({ id: "acc-1", name: "one" }),
+				makeAccount({
+					id: "acc-2",
+					name: "two",
+					priority: 1,
+					provider: "header-excluded-provider",
+				}),
+			],
+			{ combo },
+		);
+
+		const result = await run(
+			ctx,
+			imageRequest(FAMILY_MODEL, {
+				excludeProviders: "header-excluded-provider",
+			}),
+		);
+
+		// `two` is excluded on the combo path and on the fallback re-selection, so
+		// only `one` is ever asked — and it refuses both times.
+		expect(result.fetched).toEqual(["one", "one"]);
+		expectVisionUnsupported(result);
+	});
+
 	it("stays retryable when a combo slot points at an account that no longer exists", async () => {
 		// Deliberate and conservative, pinned so the choice is visible: a
 		// definition slot whose account row is gone means a broken combo, and its

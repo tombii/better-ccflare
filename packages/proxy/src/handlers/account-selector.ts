@@ -893,12 +893,6 @@ export async function selectAccountsForRequest(
 							.map((a) => a.id),
 					);
 					let excludedSlots = 0;
-					// Which accounts the header exclusion removed, for the vision
-					// deferral recording below: an excluded slot never reaches
-					// `slotEntries`, so it shows up in the definition-slot diff and
-					// has to be recognised there as permanently ineligible rather
-					// than deferred.
-					const excludedSlotAccountIds = new Set<string>();
 					const availableAccounts: Account[] = [];
 					const slotEntries: Array<{
 						accountId: string;
@@ -964,7 +958,6 @@ export async function selectAccountsForRequest(
 						// warning once per slot).
 						if (!permittedAccountIds.has(account.id)) {
 							excludedSlots++;
-							excludedSlotAccountIds.add(account.id);
 							continue;
 						}
 
@@ -1044,9 +1037,6 @@ export async function selectAccountsForRequest(
 							(entry) => `${entry.accountId}\u0000${entry.modelOverride ?? ""}`,
 						),
 					);
-					// Accounts the header exclusion removed from this request's
-					// candidates, collected by the loop above at the moment it
-					// skips them.
 					const deferredComboSlots: DeferredVisionCandidate[] = [];
 					for (const definitionSlot of definitionSlots) {
 						if (
@@ -1057,9 +1047,19 @@ export async function selectAccountsForRequest(
 							continue;
 						}
 						const account = accountMap.get(definitionSlot.accountId);
+						// Eligibility is tested against `permittedAccountIds` and the account
+						// row directly, NOT against a set collected in the loop above: that
+						// loop drops a slot for unavailability, cooldown or capacity BEFORE it
+						// checks the exclusion, so an excluded-AND-cooling slot would never be
+						// recorded there and would be deferred as merely temporary — holding the
+						// terminal vision verdict open for a route that is permanently
+						// ineligible for this request. The permit set is computed from the whole
+						// fleet before the loop, so it answers "eligible for this request at
+						// all" whatever else dropped the slot. Exclusion outranks cooldown here:
+						// a cooldown ends, an exclusion for this request does not.
 						if (
 							account &&
-							(excludedSlotAccountIds.has(account.id) ||
+							(!permittedAccountIds.has(account.id) ||
 								isIndefinitelyHeldOut(account))
 						) {
 							continue;
