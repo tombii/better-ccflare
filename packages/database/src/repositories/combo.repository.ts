@@ -171,8 +171,28 @@ export class ComboRepository extends BaseRepository<Combo> {
 		return toComboSlot(row);
 	}
 
-	async removeSlot(slotId: string): Promise<void> {
-		await this.run(`DELETE FROM combo_slots WHERE id = ?`, [slotId]);
+	/**
+	 * Deletes a slot and reports the removed slot's account id, or null when no
+	 * row matched.
+	 *
+	 * One statement rather than a read followed by a delete, because the read
+	 * and the delete are not atomic: a concurrent delete landing in between
+	 * would make the caller believe it removed a slot that was already gone.
+	 * RETURNING is supported by both engines this repo runs on (PostgreSQL and
+	 * the bundled SQLite), so the row that was actually deleted is the row the
+	 * caller is told about.
+	 *
+	 * The account id (not a row count) is what the caller needs: learned image
+	 * refusals are keyed per account, so a real delete can clear just that
+	 * account's entries, while a repeated delete returns null and changes
+	 * nothing.
+	 */
+	async removeSlot(slotId: string): Promise<string | null> {
+		const rows = await this.query<{ account_id: string }>(
+			"DELETE FROM combo_slots WHERE id = ? RETURNING account_id",
+			[slotId],
+		);
+		return rows[0]?.account_id ?? null;
 	}
 
 	async getSlots(comboId: string): Promise<ComboSlot[]> {

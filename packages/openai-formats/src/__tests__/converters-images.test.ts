@@ -346,6 +346,57 @@ describe("convertAnthropicRequestToOpenAI — images in tool results", () => {
 		]);
 	});
 
+	// The mapper returns null for a block with no data and no url, so nothing is
+	// hoisted. The placeholder must then say the image is missing rather than
+	// point at a following message that carries somebody else's image (or none).
+	it("says the image is unavailable when its block has no usable source", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "t1",
+								content: [{ type: "image", source: {} }],
+							},
+							{
+								type: "tool_result",
+								tool_use_id: "t2",
+								content: [
+									{
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: "image/png",
+											data: "REAL",
+										},
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		);
+
+		const toolMsgs = result.messages.filter((m) => m.role === "tool");
+		expect(toolMsgs[0]?.content).toBe(
+			"[image unavailable: the tool result carried none]",
+		);
+		// The real image still points correctly and is the only thing hoisted.
+		expect(toolMsgs[1]?.content).toBe(
+			"[image attached in the following message]",
+		);
+		expect(result.messages[result.messages.length - 1]?.content).toEqual([
+			{
+				type: "image_url",
+				image_url: { url: "data:image/png;base64,REAL" },
+			},
+		]);
+	});
+
 	it("does not add a user turn when no tool result carries an image", () => {
 		const before = convertAnthropicRequestToOpenAI(
 			anthropicRequest({

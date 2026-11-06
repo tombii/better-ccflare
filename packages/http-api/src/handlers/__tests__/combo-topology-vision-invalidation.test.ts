@@ -66,8 +66,13 @@ function makeDbOps(
 			deleteCombo: async (id: string) => {
 				deleted.push(id);
 			},
+			// Mirrors the real repository: a DELETE resolves to the removed slot's
+			// account id, or null when it matched no row.
 			removeComboSlot: async (id: string) => {
+				const slot = (opts.slots ?? []).find((s) => s.id === id);
+				if (!slot) return null;
 				removed.push(id);
+				return slot.account_id;
 			},
 		},
 	};
@@ -190,9 +195,10 @@ describe("updating a combo's enabled flag", () => {
 });
 
 describe("removing a combo slot", () => {
-	it("drops the cache", async () => {
+	it("drops the cache when a slot was actually removed", async () => {
 		const db = makeDbOps({ slots: [pinnedSlot] });
 		markVisionUnsupported("acc-1", "old-pin");
+		markVisionUnsupported("acc-unrelated", "old-pin");
 
 		const res = await createSlotRemoveHandler(asOps(db.ops))(
 			"combo-1",
@@ -202,6 +208,27 @@ describe("removing a combo slot", () => {
 		expect(res.status).toBe(200);
 		expect(db.removed).toEqual(["slot-1"]);
 		expect(isVisionUnsupported("acc-1", "old-pin")).toBe(false);
+		// Scoped to the removed slot's account: another account's learned
+		// refusal is still true and survives.
+		expect(isVisionUnsupported("acc-unrelated", "old-pin")).toBe(true);
+	});
+
+	// A repeated DELETE (double-click, retried request, stale dashboard row)
+	// matches no slot, so no route changed and the unrelated learned refusals
+	// must survive: clearing them would make every blind pair pay a fresh
+	// re-learn round-trip for nothing.
+	it("leaves the cache alone when the slot was already gone", async () => {
+		const db = makeDbOps({ slots: [] });
+		markVisionUnsupported("acc-1", "old-pin");
+
+		const res = await createSlotRemoveHandler(asOps(db.ops))(
+			"combo-1",
+			"slot-gone",
+		);
+
+		expect(res.status).toBe(200);
+		expect(db.removed).toEqual([]);
+		expect(isVisionUnsupported("acc-1", "old-pin")).toBe(true);
 	});
 });
 

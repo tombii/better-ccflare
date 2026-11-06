@@ -305,7 +305,11 @@ describe("Codex transform — images inside tool_result", () => {
 		expect(imageItems(body.input)).toEqual([]);
 	});
 
-	test("skips a malformed tool_result image but keeps the placeholder", async () => {
+	// A block with no usable source is dropped by the mapper, so nothing is
+	// hoisted. The placeholder must not promise an image that never arrives —
+	// with several tool results the model would credit a sibling's image to this
+	// one.
+	test("skips a malformed tool_result image and says the image is unavailable", async () => {
 		const body = await transform([
 			{ role: "user", content: "go" },
 			{ role: "assistant", content: [toolUse("t1")] },
@@ -316,7 +320,9 @@ describe("Codex transform — images inside tool_result", () => {
 		]);
 
 		const output = body.input.find((i) => i.type === "function_call_output");
-		expect(output?.output).toBe("[image attached in the following message]");
+		expect(output?.output).toBe(
+			"[image unavailable: the tool result carried none]",
+		);
 		// Nothing to hoist, so no empty user item is invented.
 		expect(imageItems(body.input)).toEqual([]);
 		expect(itemShape(body.input)).toEqual([

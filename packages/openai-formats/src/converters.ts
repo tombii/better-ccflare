@@ -327,13 +327,21 @@ export function convertAnthropicRequestToOpenAI(
 							} else if (block.type === "image") {
 								// OpenAI tool messages don't support image content, so the
 								// tool output keeps a placeholder and the image itself is
-								// hoisted into a following user turn (below). The placeholder
-								// must not read as "you cannot see this": the model CAN, in
-								// the turn that follows, so telling it otherwise invites it to
-								// answer "the image is unavailable" without looking.
-								parts.push("[image attached in the following message]");
+								// hoisted into a following user turn (below).
 								const hoisted = toOpenAIImagePart(block);
 								if (hoisted) hoistedToolImages.push(hoisted);
+								// The placeholder must describe what actually happened, so
+								// it is chosen after the mapping. A block with no usable
+								// source produces no part: claiming the image follows would
+								// point the model at a turn that either holds a sibling
+								// tool result's image or nothing at all. And when an image
+								// DOES follow, the placeholder must not read as "you cannot
+								// see this" — the model can, in the next turn.
+								parts.push(
+									hoisted
+										? "[image attached in the following message]"
+										: "[image unavailable: the tool result carried none]",
+								);
 							} else {
 								// Other structured blocks (tool_use, tool_result, etc.) — serialize as JSON
 								parts.push(JSON.stringify(block));

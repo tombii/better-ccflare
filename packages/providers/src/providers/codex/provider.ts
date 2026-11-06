@@ -2215,13 +2215,18 @@ export class CodexProvider extends BaseProvider {
 				continue;
 			}
 			if (block.type === "image") {
-				// Same wording as the chat-completions converter: the image is
-				// hoisted to the user item that follows, so a placeholder claiming
-				// it is unsupported would tell the model not to look at something
-				// it can actually see.
-				parts.push("[image attached in the following message]");
+				// Same rule as the chat-completions converter: the placeholder is
+				// chosen after the mapping, because it has to describe what actually
+				// happened. A hoisted image follows in a user item (so do not claim
+				// it is unsupported); a block with no usable source produces none,
+				// and promising one would point the model at a sibling's image.
 				const hoisted = toCodexInputImageItem(block);
 				if (hoisted) hoistedImages.push(hoisted);
+				parts.push(
+					hoisted
+						? "[image attached in the following message]"
+						: "[image unavailable: the tool result carried none]",
+				);
 				continue;
 			}
 			let serialized: string;

@@ -428,10 +428,18 @@ export function createSlotUpdateHandler(dbOps: DatabaseOperations) {
 export function createSlotRemoveHandler(dbOps: DatabaseOperations) {
 	return async (_comboId: string, slotId: string): Promise<Response> => {
 		try {
-			await dbOps.removeComboSlot(slotId);
+			const removedAccountId = await dbOps.removeComboSlot(slotId);
 			// See the delete handler above: the slot's pin is gone, so what was
-			// learned under it describes routing that no longer exists.
-			clearVisionCapability();
+			// learned through it describes routing that no longer exists. Scoped to
+			// the removed slot's account, which is the only one whose entries can
+			// have changed — unlike the combo delete handler, the account is known
+			// here, and a slot removal leaves every other account's learned
+			// refusals perfectly true.
+			//
+			// And only when a slot was actually removed: a repeated DELETE matches
+			// nothing, so no route changed, and wiping the store would make every
+			// blind pair pay a re-learn round-trip for nothing.
+			if (removedAccountId !== null) clearVisionCapability(removedAccountId);
 
 			return new Response(
 				JSON.stringify({ success: true, message: "Slot removed" }),
