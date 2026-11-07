@@ -1,7 +1,8 @@
 node_modules/
 .bun-cache/
-.env
-.env.local
+.env*
+# ...but keep the committed template
+!.env.example
 .claude/
 .planning/
 .codex

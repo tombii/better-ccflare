@@ -286,10 +286,11 @@ export class APIRouter {
 		const apiKeysStatsHandler = createApiKeysStatsHandler(dbOps);
 
 		// Web-search provider handlers (store adapted from dbOps)
-		const searchProviderHandlers = createSearchProviderHandlers(
+		// Read via the instance below, so no route depends on a constructor
+		// local biome would strip the field out from under.
+		this.searchProviderHandlers = createSearchProviderHandlers(
 			createSearchProviderStore(dbOps),
 		);
-		this.searchProviderHandlers = searchProviderHandlers;
 
 		// Web tool call traces (read-only; rows are written by the proxy)
 		this.webToolCallHandlers = createWebToolCallHandlers(dbOps);
@@ -587,13 +588,13 @@ export class APIRouter {
 		// Search provider routes. /meta is a static route registered before
 		// the dynamic /:id block later in handleRequest so it is never treated as an id.
 		this.handlers.set("GET:/api/search-providers", () =>
-			searchProviderHandlers.list(),
+			this.searchProviderHandlers.list(),
 		);
 		this.handlers.set("POST:/api/search-providers", (req) =>
-			searchProviderHandlers.create(req),
+			this.searchProviderHandlers.create(req),
 		);
 		this.handlers.set("GET:/api/search-providers/meta", () =>
-			searchProviderHandlers.meta(),
+			this.searchProviderHandlers.meta(),
 		);
 
 		// Web tool call traces. Both are static paths, so no dynamic route can
