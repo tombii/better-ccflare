@@ -2,10 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import {
-	BUILD_SUFFIX_ERROR_MESSAGE,
-	BUILD_SUFFIX_PATTERN,
-} from "./version-define";
+import { buildVersionString } from "./version-define";
 
 interface Platform {
 	target: string;
@@ -224,13 +221,10 @@ async function buildPlatform(platform: Platform) {
 
 	// Get version from package.json, optionally suffixed for patched builds
 	const packageJson = await Bun.file("./package.json").json();
-	const suffix = process.env.CCFLARE_BUILD_SUFFIX;
-	if (suffix && !BUILD_SUFFIX_PATTERN.test(suffix)) {
-		throw new Error(BUILD_SUFFIX_ERROR_MESSAGE);
-	}
-	const version = suffix
-		? `${packageJson.version}+${suffix}`
-		: packageJson.version;
+	const version = buildVersionString(
+		process.env.CCFLARE_BUILD_SUFFIX,
+		packageJson.version,
+	);
 
 	// --outfile and --define use the --flag=value form; bun 1.4.4 drops a
 	// space-separated --define passed through execFileSync and then writes the
@@ -257,6 +251,10 @@ async function main() {
 	console.log("🚀 Starting multi-architecture build...\n");
 
 	assertBunVersion();
+
+	// Validate the suffix up front: buildPlatform also checks it, but only after
+	// buildWorker has rewritten the auto-generated inline-worker files.
+	buildVersionString(process.env.CCFLARE_BUILD_SUFFIX, "0.0.0");
 
 	// Create dist directory
 	mkdirSync("dist", { recursive: true });
