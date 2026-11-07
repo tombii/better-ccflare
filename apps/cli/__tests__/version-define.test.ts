@@ -27,6 +27,15 @@ const APP_DIR = join(import.meta.dir, "..");
 // resolves package.json relative to itself, not to process.cwd().
 const REPO_ROOT = join(import.meta.dir, "..", "..", "..");
 
+// Read, never hardcode: the release workflow bumps apps/cli/package.json on
+// every release, and a pinned version here would fail the next one.
+async function readAppVersion(): Promise<string> {
+	const pkg = (await Bun.file(join(APP_DIR, "package.json")).json()) as {
+		version: string;
+	};
+	return pkg.version;
+}
+
 async function runScript(args: string[], env: Record<string, string> = {}) {
 	const proc = Bun.spawn(["bun", "run", SCRIPT_PATH, ...args], {
 		cwd: REPO_ROOT,
@@ -121,7 +130,7 @@ describe("version-define.ts CLI entry", () => {
 		const { stdout, stderr, exitCode } = await runScript([]);
 		expect(exitCode).toBe(0);
 		expect(stderr).toBe("");
-		expect(stdout).toBe(`${DEFINE_PREFIX}"3.6.4"\n`);
+		expect(stdout).toBe(`${DEFINE_PREFIX}"${await readAppVersion()}"\n`);
 	});
 
 	it("appends an env suffix", async () => {
@@ -129,7 +138,7 @@ describe("version-define.ts CLI entry", () => {
 			CCFLARE_BUILD_SUFFIX: "abc",
 		});
 		expect(exitCode).toBe(0);
-		expect(stdout).toBe(`${DEFINE_PREFIX}"3.6.4+abc"\n`);
+		expect(stdout).toBe(`${DEFINE_PREFIX}"${await readAppVersion()}+abc"\n`);
 	});
 
 	it("--check prints nothing and exits 0 for a valid or absent suffix", async () => {
@@ -166,9 +175,7 @@ describe("version-define.ts CLI entry", () => {
 	it("reads its own package.json, not ./package.json in the cwd", async () => {
 		// Run the real script from a directory whose ./package.json has a
 		// different version: the output must still be apps/cli's version.
-		const appPkg = (await Bun.file(join(APP_DIR, "package.json")).json()) as {
-			version: string;
-		};
+		const appVersion = await readAppVersion();
 		const decoyDir = mkdtempSync(join(tmpdir(), "version-define-decoy-"));
 		try {
 			writeFileSync(
@@ -183,7 +190,7 @@ describe("version-define.ts CLI entry", () => {
 			});
 			const stdout = await new Response(proc.stdout).text();
 			expect(await proc.exited).toBe(0);
-			expect(stdout).toBe(`${DEFINE_PREFIX}"${appPkg.version}"\n`);
+			expect(stdout).toBe(`${DEFINE_PREFIX}"${appVersion}"\n`);
 			expect(stdout).not.toContain("decoy");
 		} finally {
 			rmSync(decoyDir, { recursive: true, force: true });
