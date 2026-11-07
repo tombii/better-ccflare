@@ -292,8 +292,7 @@ export class APIRouter {
 		this.searchProviderHandlers = searchProviderHandlers;
 
 		// Web tool call traces (read-only; rows are written by the proxy)
-		const webToolCallHandlers = createWebToolCallHandlers(dbOps);
-		this.webToolCallHandlers = webToolCallHandlers;
+		this.webToolCallHandlers = createWebToolCallHandlers(dbOps);
 
 		// Register routes
 		this.handlers.set("GET:/health", (_req, url) => healthHandler(url));
@@ -600,10 +599,10 @@ export class APIRouter {
 		// Web tool call traces. Both are static paths, so no dynamic route can
 		// shadow them.
 		this.handlers.set("GET:/api/web-tool-calls", (_req, url) =>
-			webToolCallHandlers.list(url.searchParams),
+			this.webToolCallHandlers.list(url.searchParams),
 		);
 		this.handlers.set("GET:/api/web-tool-calls/summary", (_req, url) =>
-			webToolCallHandlers.summary(url.searchParams),
+			this.webToolCallHandlers.summary(url.searchParams),
 		);
 	}
 
