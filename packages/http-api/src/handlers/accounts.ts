@@ -5,6 +5,7 @@ import { join } from "node:path";
 import * as cliCommands from "@better-ccflare/cli-commands";
 import type { Config } from "@better-ccflare/config";
 import {
+	isUsageExhausted,
 	parseUsagePauseThreshold,
 	patterns,
 	sanitizers,
@@ -426,6 +427,28 @@ export function createAccountsListHandler(
 			[now, now, now, sessionDuration],
 		);
 
+		// The proxy drops usage-capped accounts before strategy.select() sees
+		// them (getOrderedAccounts in proxy/src/handlers/account-selector.ts).
+		// peek() has no usage data, so it gets the same filtered list here.
+		// Without this, a capped account that the router skips is reported as
+		// primary. Same snapshot and predicate as the router, so the staleness
+		// guard and the extra-usage exception match too.
+		const peekCandidates = accounts.filter((a) => {
+			const usage = getRepresentativeUsageSnapshotForProvider(
+				usageCache.get(a.id),
+				a.provider ?? "anthropic",
+			);
+			return (
+				usage === null ||
+				!isUsageExhausted(
+					usage.utilization,
+					usage.resetMs,
+					now,
+					usage.extraUsageAvailable,
+				)
+			);
+		});
+
 		// Ask the active load-balancing strategy which account it would pick
 		// next from the same in-memory snapshot we use to build the response —
 		// querying again would open a race window where isPrimary could land
@@ -434,7 +457,7 @@ export function createAccountsListHandler(
 		// the Account interface is unused at peek time.
 		const primaryId = strategy
 			? strategy.peek(
-					accounts.map(
+					peekCandidates.map(
 						(a) =>
 							({
 								id: a.id,
