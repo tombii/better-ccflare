@@ -111,8 +111,6 @@ jobs:
           set -euo pipefail
           branch="chore/bun-version-${LATEST}"
 
-          branch="chore/bun-version-${LATEST}"
-
           cat > body.md <<EOF
           Automated daily check from \`bun-version-check\`.
 
