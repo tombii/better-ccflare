@@ -28,10 +28,14 @@ jobs:
         with:
           ref: main
 
-      - name: Set up pinned Bun
+      # `latest`, installed through the same action CI uses — not a URL from a
+      # `curl … | bash` installer. The lockfile in the bump PR is re-resolved by
+      # exactly this binary. `bun -e` only needs a working runtime, so the
+      # pinned version does not have to be on PATH for the advisory checks.
+      - name: Set up latest Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version-file: .bun-version
+          bun-version: latest
 
       - name: Check latest Bun release and advisories
         id: bun
@@ -111,8 +115,6 @@ jobs:
           set -euo pipefail
           branch="chore/bun-version-${LATEST}"
 
-          branch="chore/bun-version-${LATEST}"
-
           cat > body.md <<EOF
           Automated daily check from \`bun-version-check\`.
 
@@ -164,9 +166,8 @@ jobs:
 
             # Re-resolve the lockfile with the new Bun so the transitive `bun`
             # package (pulled in as a peer of bun-plugin-tailwind) follows the
-            # override.
-            curl -fsSL https://bun.com/install | bash
-            export PATH="$HOME/.bun/bin:$PATH"
+            # override. The "Set up latest Bun" step already put `latest` on
+            # PATH, so this is the same binary CI uses — no `curl … | bash`.
             bun --version
             bun install
 
