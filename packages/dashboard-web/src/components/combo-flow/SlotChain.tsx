@@ -30,9 +30,23 @@ export function SlotChain({ slots, lastPickedAccountId, now }: SlotChainProps) {
 		<div className="flex flex-wrap items-center gap-1">
 			{slots.map((slot, index) => {
 				const cooling = slot.cooldownUntil !== null && slot.cooldownUntil > now;
-				const degraded = cooling || !slot.available || !slot.enabled;
+				// A passthrough slot (no model of its own) can still be skipped
+				// for whatever model the client requested — that shows up as
+				// per-model cooldowns on the account rather than `cooldownUntil`.
+				const passthroughCooldowns = slot.passthrough
+					? (slot.cooldowns ?? [])
+					: [];
+				const degraded =
+					cooling ||
+					passthroughCooldowns.length > 0 ||
+					!slot.available ||
+					!slot.enabled;
 				const isLastPicked =
 					!!lastPickedAccountId && slot.accountId === lastPickedAccountId;
+				const passthroughNote =
+					passthroughCooldowns.length > 0
+						? " · availability depends on the requested model"
+						: "";
 				return (
 					<Fragment key={slot.id}>
 						{index > 0 && (
@@ -49,7 +63,7 @@ export function SlotChain({ slots, lastPickedAccountId, now }: SlotChainProps) {
 									: "border-border text-muted-foreground",
 								degraded && "border-yellow-500/60 ring-1 ring-yellow-500/40",
 							)}
-							title={`Priority ${slot.priority} of ${slots.length}${slot.enabled ? "" : " (disabled)"}`}
+							title={`Priority ${slot.priority} of ${slots.length}${slot.enabled ? "" : " (disabled)"}${passthroughNote}`}
 						>
 							<span
 								className={cn(
@@ -73,6 +87,29 @@ export function SlotChain({ slots, lastPickedAccountId, now }: SlotChainProps) {
 							{cooling && slot.cooldownUntil !== null && (
 								<Badge variant="warning" className="px-1.5 py-0 text-[10px]">
 									Cooling · {formatClockUtc(slot.cooldownUntil)}
+								</Badge>
+							)}
+							{passthroughCooldowns.slice(0, 2).map((cooldown) => (
+								<Badge
+									key={`${cooldown.model}|${cooldown.until}`}
+									variant="warning"
+									className="px-1.5 py-0 text-[10px]"
+									title="This account is cooling for a specific model; whether the slot is skipped depends on the model the client requested"
+								>
+									Cooling (model-dependent) · {cooldown.model} ·{" "}
+									{formatClockUtc(cooldown.until)}
+								</Badge>
+							))}
+							{passthroughCooldowns.length > 2 && (
+								<Badge
+									variant="warning"
+									className="px-1.5 py-0 text-[10px]"
+									title={passthroughCooldowns
+										.slice(2)
+										.map((c) => `${c.model} until ${formatClockUtc(c.until)}`)
+										.join(", ")}
+								>
+									+{passthroughCooldowns.length - 2}
 								</Badge>
 							)}
 							{!slot.enabled && (

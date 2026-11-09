@@ -606,6 +606,22 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	/**
+	 * Re-points every request tagged with `oldComboName` at `newComboName`.
+	 * Called after a combo rename so the flow view's 24h totals survive it —
+	 * stats are derived from the `combo_name` tag, not from a combo id.
+	 * Dialect-neutral single UPDATE; resolves to the number of affected rows.
+	 */
+	async updateComboTags(
+		oldComboName: string,
+		newComboName: string,
+	): Promise<number> {
+		return this.runWithChanges(
+			"UPDATE requests SET combo_name = ? WHERE combo_name = ?",
+			[newComboName, oldComboName],
+		);
+	}
+
+	/**
 	 * Aggregate statistics with optional time range
 	 * Consolidates duplicate SQL queries from stats handlers
 	 */

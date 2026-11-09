@@ -170,10 +170,17 @@ client <family> models → assigned combo → slots in priority order
 The slot chain shows, per slot, the account, the model it pins (or
 `passthrough` when the slot sends the client's own model), the provider, and
 whether the slot is currently routable. A slot that the selector would skip is
-marked `unavailable` (paused, needs re-auth, rate-limited) or `Cooling` with its
-cooldown deadline; a slot pointing at a deleted account is marked
-`account missing`. The account the proxy last actually picked for that family
-is highlighted, with how long ago it happened.
+marked `unavailable` (paused, needs re-auth, rate-limited, or usage-exhausted)
+or `Cooling` with its cooldown deadline; a slot pointing at a deleted account is
+marked `account missing`. A passthrough slot has no model of its own, so its
+cooldown depends on the model a client requests — active per-model cooldowns
+are listed as `Cooling (model-dependent)`. The account the proxy last actually
+picked for that family is highlighted, with how long ago it happened.
+
+If the global combo switch is off, or "force account model" is on, the proxy is
+not consulting combos at all. The page says so in a banner and marks each
+family card `routing off`, so the chains are read as "what would route" rather
+than as live behaviour.
 
 Each combo that appears expands to two tabs:
 
@@ -184,10 +191,16 @@ Each combo that appears expands to two tabs:
   (client model → served model → account, with counts), the slot definition in
   priority order, and the top error groups.
 
-Two limits worth knowing:
+The page is cheap to leave open: recent requests arrive live over the same
+pooled server-sent-events stream the Requests tab uses (no polling), and the
+flow payload itself refreshes once a minute for topology, stats and cooldown
+state — and not at all while the tab is hidden.
 
-- Statistics come only from requests whose `combo_name` tag was recorded, so a
-  combo that has not served traffic in the last 24 hours shows zeroes.
+Notes worth knowing:
+
+- Statistics come only from requests whose `combo_name` tag was recorded.
+  Renaming a combo re-tags its stored requests so the totals follow it; a combo
+  that has not served traffic in the last 24 hours shows zeroes.
 - The "last picked account" comes from in-process routing telemetry, so it is
   empty right after a restart until the proxy routes that family again.
 

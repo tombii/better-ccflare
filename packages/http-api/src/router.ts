@@ -967,6 +967,12 @@ export class APIRouter {
 			const flowHandler = createComboFlowHandler(
 				this.context.dbOps,
 				getRoutingObservations,
+				{
+					getRoutingFlags: () => ({
+						combosEnabled: this.context.config.getCombosEnabled(),
+						forceAccountModel: this.context.config.getForceAccountModel(),
+					}),
+				},
 			);
 			return await this.wrapHandler(() => flowHandler())(req, url);
 		}

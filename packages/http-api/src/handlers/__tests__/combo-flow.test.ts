@@ -7,6 +7,7 @@ import {
 	RequestRepository,
 	runMigrations,
 } from "@better-ccflare/database";
+import { usageCache } from "@better-ccflare/providers";
 import {
 	markModelCooling,
 	resetModelCooldownsForTests,
@@ -148,11 +149,21 @@ const ACCOUNTS = [
 async function getFlow(
 	opts: FakeOpts,
 	observations: Record<string, unknown> = {},
+	options: {
+		getRoutingFlags?: () => {
+			combosEnabled: boolean;
+			forceAccountModel: boolean;
+		};
+	} = {},
 ): Promise<ComboFlowResponse> {
-	const handler = createComboFlowHandler(asOps(makeOps(opts)), () => {
-		// biome-ignore lint/suspicious/noExplicitAny: test shape
-		return observations as any;
-	});
+	const handler = createComboFlowHandler(
+		asOps(makeOps(opts)),
+		() => {
+			// biome-ignore lint/suspicious/noExplicitAny: test shape
+			return observations as any;
+		},
+		options,
+	);
 	const res = await handler();
 	expect(res.status).toBe(200);
 	const body = (await res.json()) as {
@@ -242,6 +253,7 @@ describe("GET /api/combos/flow", () => {
 		expect(slots[1]).toMatchObject({
 			accountName: "beta",
 			model: "",
+			passthrough: true,
 			cooldownUntil: null,
 			available: true,
 		});
@@ -251,6 +263,35 @@ describe("GET /api/combos/flow", () => {
 			cooldownUntil: null,
 			available: false,
 		});
+	});
+
+	it("enumerates model cooldowns on a passthrough slot", async () => {
+		const untilA = Date.now() + 5 * 60 * 1000;
+		const untilB = Date.now() + 15 * 60 * 1000;
+		markModelCooling("acc-2", "glm-4.5", untilB);
+		markModelCooling("acc-2", "glm-4.5-air", untilA);
+		const data = await getFlow({
+			combos: [combo("c1", "Main")],
+			slots: {
+				c1: [
+					slot("s1", "c1", "acc-2", "", 0),
+					// A non-passthrough slot on the same account only carries its
+					// own (account, model) deadline.
+					slot("s2", "c1", "acc-2", "glm-4.5", 1),
+				],
+			},
+			accounts: ACCOUNTS,
+		});
+		// The passthrough slot's "" model never matches a cooldown key, but the
+		// account's model cooldowns are surfaced so the UI can explain that its
+		// availability is model-dependent.
+		expect(data.combos[0].slots[0].cooldownUntil).toBeNull();
+		expect(data.combos[0].slots[0].cooldowns).toEqual([
+			{ model: "glm-4.5-air", until: untilA },
+			{ model: "glm-4.5", until: untilB },
+		]);
+		expect(data.combos[0].slots[1].cooldownUntil).toBe(untilB);
+		expect(data.combos[0].slots[1].cooldowns).toBeUndefined();
 	});
 
 	it("marks a paused slot unavailable even without a model cooldown", async () => {
@@ -265,6 +306,31 @@ describe("GET /api/combos/flow", () => {
 			cooldownUntil: null,
 			available: false,
 		});
+	});
+
+	it("marks a usage-exhausted slot unavailable", async () => {
+		// The selector gates on the representative usage snapshot, so 100%
+		// utilization with a future reset means the slot cannot be routed to
+		// even though the account itself is neither paused nor rate-limited.
+		usageCache.set("acc-1", {
+			five_hour: {
+				utilization: 100,
+				resets_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+			},
+		} as never);
+		try {
+			const data = await getFlow({
+				combos: [combo("c1", "Main")],
+				slots: { c1: [slot("s1", "c1", "acc-1", "m", 0)] },
+				accounts: ACCOUNTS,
+			});
+			expect(data.combos[0].slots[0]).toMatchObject({
+				cooldownUntil: null,
+				available: false,
+			});
+		} finally {
+			usageCache.delete("acc-1");
+		}
 	});
 
 	it("returns zeroed stats with a null success rate when there are no rows", async () => {
@@ -481,6 +547,149 @@ describe("GET /api/combos/flow", () => {
 				count: 3,
 			},
 		]);
+	});
+
+	it("groups errors per account instead of blaming one account", async () => {
+		// Same status + message from two accounts: these are two distinct
+		// problem rows, not one row carrying a MIN()-picked account.
+		for (let j = 0; j < 3; j++) {
+			insertRequest({
+				id: `e-a-${j}`,
+				comboName: "Main",
+				timestamp: NOW,
+				accountUsed: "acc-1",
+				success: false,
+				statusCode: 429,
+				errorMessage: "rate limited",
+			});
+		}
+		for (let j = 0; j < 2; j++) {
+			insertRequest({
+				id: `e-b-${j}`,
+				comboName: "Main",
+				timestamp: NOW,
+				accountUsed: "acc-2",
+				success: false,
+				statusCode: 429,
+				errorMessage: "rate limited",
+			});
+		}
+		const data = await getFlow({
+			combos: [combo("c1", "Main")],
+			accounts: ACCOUNTS,
+		});
+		expect(data.combos[0].stats.errorTop).toEqual([
+			{
+				status: 429,
+				error: "rate limited",
+				accountId: "acc-1",
+				count: 3,
+			},
+			{
+				status: 429,
+				error: "rate limited",
+				accountId: "acc-2",
+				count: 2,
+			},
+		]);
+	});
+
+	it("returns the newest requests tagged with the combo, account names resolved", async () => {
+		insertRequest({
+			id: "old",
+			comboName: "Main",
+			timestamp: NOW - 60_000,
+			accountUsed: "acc-1",
+			originalModel: "claude-sonnet-4-5",
+			servedModel: "glm-4.5",
+			success: true,
+			responseTimeMs: 900,
+			failoverAttempts: 1,
+		});
+		insertRequest({
+			id: "new",
+			comboName: "Main",
+			timestamp: NOW,
+			accountUsed: "acc-2",
+			originalModel: "claude-sonnet-4-5",
+			appliedModel: "glm-4.5",
+			success: false,
+			statusCode: 500,
+			errorMessage: "boom",
+			responseTimeMs: 1200,
+		});
+		// Other combo and untagged rows must never leak into this list.
+		insertRequest({
+			id: "other",
+			comboName: "Other",
+			timestamp: NOW + 1,
+			accountUsed: "acc-1",
+			success: true,
+		});
+
+		const data = await getFlow({
+			combos: [combo("c1", "Main"), combo("c2", "Other")],
+			accounts: ACCOUNTS,
+		});
+		const recent = data.combos.find((c) => c.name === "Main")?.recentRequests;
+		expect(recent?.map((r) => r.id)).toEqual(["new", "old"]);
+		expect(recent?.[0]).toEqual({
+			id: "new",
+			timestamp: NOW,
+			originalModel: "claude-sonnet-4-5",
+			appliedModel: "glm-4.5",
+			servedModel: null,
+			account: "beta",
+			statusCode: 500,
+			success: false,
+			failoverAttempts: 0,
+			responseTimeMs: 1200,
+		});
+		expect(recent?.[1]).toMatchObject({
+			servedModel: "glm-4.5",
+			account: "alpha",
+			success: true,
+			failoverAttempts: 1,
+		});
+		// A combo with no rows gets an empty list without an extra query.
+		expect(
+			data.combos.find((c) => c.name === "Other")?.recentRequests,
+		).toHaveLength(1);
+	});
+
+	it("returns an empty recent list for a combo with no rows", async () => {
+		const data = await getFlow({
+			combos: [combo("c1", "Main")],
+			accounts: ACCOUNTS,
+		});
+		expect(data.combos[0].recentRequests).toEqual([]);
+	});
+
+	it("reports the routing switches and whether combo routing is active", async () => {
+		const data = await getFlow(
+			{ combos: [combo("c1", "Main")] },
+			{},
+			{
+				getRoutingFlags: () => ({
+					combosEnabled: true,
+					forceAccountModel: true,
+				}),
+			},
+		);
+		expect(data.routing).toEqual({
+			combosEnabled: true,
+			forceAccountModel: true,
+			comboRoutingActive: false,
+		});
+	});
+
+	it("defaults to combo routing active when no flag reader is supplied", async () => {
+		const data = await getFlow({ combos: [combo("c1", "Main")] });
+		expect(data.routing).toEqual({
+			combosEnabled: true,
+			forceAccountModel: false,
+			comboRoutingActive: true,
+		});
 	});
 
 	it("surfaces the last observed order per family, or null when absent", async () => {

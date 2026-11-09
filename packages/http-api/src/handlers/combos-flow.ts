@@ -1,6 +1,13 @@
 import { isAccountAvailable } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
-import { getModelCooldownUntil } from "@better-ccflare/proxy";
+import {
+	getRepresentativeUsageSnapshotForProvider,
+	usageCache,
+} from "@better-ccflare/providers";
+import {
+	getModelCooldownsForAccount,
+	getModelCooldownUntil,
+} from "@better-ccflare/proxy";
 import {
 	type Account,
 	COMBO_FLOW_FAMILIES,
@@ -9,6 +16,7 @@ import {
 	type ComboFlowCombo,
 	type ComboFlowFamily,
 	type ComboFlowPairing,
+	type ComboFlowRecentRequest,
 	type ComboFlowResponse,
 	type ComboFlowSlot,
 	type ComboFlowStats,
@@ -28,6 +36,8 @@ import { errorResponse } from "../utils/http-error";
 
 const REQUESTS_WINDOW_MS = 24 * 60 * 60 * 1000;
 const TOP_PAIRINGS = 5;
+/** Newest rows shown per combo in the flow view's "recent requests" tab. */
+const RECENT_REQUESTS_LIMIT = 15;
 
 type AggregateRow = Awaited<
 	ReturnType<DatabaseOperations["getComboRoutingAggregates"]>
@@ -38,6 +48,19 @@ interface ErrorCountRow {
 	status: unknown;
 	error: string | null;
 	count: number;
+}
+
+interface RecentRequestRow {
+	id: string;
+	timestamp: unknown;
+	original_model: string | null;
+	applied_model: string | null;
+	model: string | null;
+	account_used: string | null;
+	status_code: unknown;
+	success: unknown;
+	failover_attempts: unknown;
+	response_time_ms: unknown;
 }
 
 interface ObservationsShape {
@@ -97,10 +120,24 @@ function buildStats(
 	};
 }
 
+/** Global routing switches, read live so the dashboard can flag when the
+ * chains it shows are not what the proxy actually consults. */
+export interface ComboFlowRoutingFlags {
+	combosEnabled: boolean;
+	forceAccountModel: boolean;
+}
+
 export interface ComboFlowOptions {
 	/** Override initial "now" (tests). */
 	now?: () => number;
+	/** Read the routing switches (tests / router wiring). Defaults to "active". */
+	getRoutingFlags?: () => ComboFlowRoutingFlags;
 }
+
+const DEFAULT_ROUTING_FLAGS: ComboFlowRoutingFlags = {
+	combosEnabled: true,
+	forceAccountModel: false,
+};
 
 export function createComboFlowHandler(
 	dbOps: DatabaseOperations,
@@ -112,6 +149,7 @@ export function createComboFlowHandler(
 		try {
 			const generatedAt = now();
 			const sinceMs = generatedAt - REQUESTS_WINDOW_MS;
+			const flags = options.getRoutingFlags?.() ?? DEFAULT_ROUTING_FLAGS;
 
 			const [combos, assignmentList, accounts, rows] = await Promise.all([
 				dbOps.listCombos(),
@@ -159,6 +197,11 @@ export function createComboFlowHandler(
 			const data: ComboFlowResponse = {
 				generatedAt,
 				windows: { requestsHours: REQUESTS_WINDOW_MS / 3_600_000 },
+				routing: {
+					combosEnabled: flags.combosEnabled,
+					forceAccountModel: flags.forceAccountModel,
+					comboRoutingActive: flags.combosEnabled && !flags.forceAccountModel,
+				},
 				families,
 				combos: flowCombos,
 			};
@@ -231,21 +274,43 @@ async function buildCombo(
 		.map((s) => {
 			const account = accountById.get(s.account_id) ?? null;
 			const cooldownUntil = getModelCooldownUntil(s.account_id, s.model);
+			// A passthrough slot has no model of its own, so the (account, model)
+			// cooldown keyed on "" can never match — enumerate the account's
+			// per-model cooldowns instead, since any of them can still skip the
+			// slot for the model the client happened to request.
+			const cooldowns =
+				s.model === ""
+					? getModelCooldownsForAccount(s.account_id, generatedAt)
+					: [];
+			// Same usage snapshot the selector consults, so an account exhausted
+			// per telemetry reads as unavailable instead of healthy.
+			const usageSnapshot = account
+				? getRepresentativeUsageSnapshotForProvider(
+						usageCache.get(account.id),
+						account.provider ?? "anthropic",
+					)
+				: null;
 			return {
 				id: s.id,
 				accountId: s.account_id,
 				accountName: account?.name ?? null,
 				provider: account?.provider ?? null,
 				model: s.model,
+				passthrough: s.model === "",
 				priority: s.priority,
 				enabled: s.enabled,
 				cooldownUntil,
+				...(cooldowns.length > 0 ? { cooldowns } : {}),
 				// Same rule the selector applies before a slot can be routed:
-				// paused / requires_reauth / rate-limited accounts are unavailable
-				// even with no per-model cooldown of their own.
+				// paused / requires_reauth / rate-limited / usage-exhausted accounts
+				// are unavailable even with no per-model cooldown of their own.
 				available:
 					account !== null &&
-					isAccountAvailable(account, generatedAt) &&
+					isAccountAvailable(
+						account,
+						generatedAt,
+						usageSnapshot ?? undefined,
+					) &&
 					(cooldownUntil === null || cooldownUntil <= generatedAt),
 			};
 		})
@@ -254,6 +319,12 @@ async function buildCombo(
 	const pairings = buildPairings(rows, accountById);
 	const errorTop = await loadErrorTop(dbOps, combo.name, sinceMs, rows.length);
 	const stats = buildStats(rows, pairings, errorTop);
+	const recentRequests = await loadRecentRequests(
+		dbOps,
+		combo.name,
+		accountById,
+		rows.length,
+	);
 
 	return {
 		id: combo.id,
@@ -263,6 +334,7 @@ async function buildCombo(
 		familyCount,
 		slots,
 		stats,
+		recentRequests,
 	};
 }
 
@@ -297,9 +369,17 @@ function buildPairings(
 
 const ERROR_TOP_SQL =
 	"SELECT status_code AS status, error_message AS error, " +
-	"MIN(account_used) AS account_id, COUNT(*) AS count " +
+	"account_used AS account_id, COUNT(*) AS count " +
 	"FROM requests WHERE combo_name = ? AND timestamp >= ? AND success = FALSE " +
-	"GROUP BY status_code, error_message ORDER BY count DESC LIMIT 3";
+	"GROUP BY status_code, error_message, account_used " +
+	"ORDER BY count DESC, account_used ASC LIMIT 3";
+
+// Newest rows tagged with this combo. Per-combo LIMIT keeps the cost bounded;
+// the literal LIMIT (no bind parameter) is the dialect-hazard-test-safe shape.
+const RECENT_REQUESTS_SQL =
+	"SELECT id, timestamp, original_model, applied_model, model, account_used, " +
+	`status_code, success, failover_attempts, response_time_ms FROM requests ` +
+	`WHERE combo_name = ? ORDER BY timestamp DESC LIMIT ${RECENT_REQUESTS_LIMIT}`;
 
 /**
  * Top error groups for a combo. Skipped entirely when the combo has no
@@ -326,6 +406,46 @@ async function loadErrorTop(
 				: String(row.account_id),
 		error: row.error ?? null,
 		count: num(row.count),
+	}));
+}
+
+/**
+ * The newest requests tagged with a combo, resolved to display fields. Skipped
+ * when the combo has no rows in the stats window — such a combo cannot have
+ * tagged rows at all (the aggregate query selects on the same column), so the
+ * extra per-combo query is wasted work.
+ */
+async function loadRecentRequests(
+	dbOps: DatabaseOperations,
+	comboName: string,
+	accountById: Map<string, Account>,
+	rowCount: number,
+): Promise<ComboFlowRecentRequest[]> {
+	if (rowCount === 0) return [];
+	const adapter = dbOps.getAdapter();
+	const rows = await adapter.query<RecentRequestRow>(RECENT_REQUESTS_SQL, [
+		comboName,
+	]);
+	return rows.map((row) => ({
+		id: row.id,
+		// PostgreSQL returns BIGINT as a string (Bun.SQL); SQLite returns a number.
+		timestamp: num(row.timestamp),
+		originalModel: row.original_model ?? null,
+		appliedModel: row.applied_model ?? null,
+		servedModel: row.model ?? null,
+		account: row.account_used
+			? (accountById.get(row.account_used)?.name ?? row.account_used)
+			: null,
+		statusCode:
+			row.status_code === null || row.status_code === undefined
+				? null
+				: num(row.status_code),
+		success: Boolean(row.success),
+		failoverAttempts: num(row.failover_attempts),
+		responseTimeMs:
+			row.response_time_ms === null || row.response_time_ms === undefined
+				? null
+				: num(row.response_time_ms),
 	}));
 }
 

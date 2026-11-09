@@ -44,6 +44,7 @@ export type {
 	ComboFlowCombo,
 	ComboFlowFamily,
 	ComboFlowPairing,
+	ComboFlowRecentRequest,
 	ComboFlowResponse,
 	ComboFlowSlot,
 	ComboFlowStats,

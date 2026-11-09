@@ -136,9 +136,18 @@ export interface ComboFlowSlot {
 	provider: string | null;
 	/** Empty string = passthrough (the client's model is sent unchanged). */
 	model: string;
+	/** True when `model` is empty: the requested model goes upstream as-is. */
+	passthrough: boolean;
 	priority: number;
 	enabled: boolean;
 	cooldownUntil: number | null;
+	/**
+	 * Every active per-model cooldown on the slot's account. Only populated for
+	 * passthrough slots: there the slot has no model of its own, so a
+	 * (account, model) cooldown can still block the slot for the model the
+	 * client happened to request and `cooldownUntil` (keyed on "") stays null.
+	 */
+	cooldowns?: Array<{ model: string; until: number }>;
 	/** No active cooldown and the account still exists. */
 	available: boolean;
 }
@@ -180,6 +189,28 @@ export interface ComboFlowStats {
 	pairings: ComboFlowPairing[];
 }
 
+/**
+ * One of the newest requests routed through a combo (server-side query, bounded
+ * per combo and ordered newest first). Deliberately a narrow projection of the
+ * `requests` row so the dashboard does not have to page through global traffic
+ * and filter it client-side.
+ */
+export interface ComboFlowRecentRequest {
+	id: string;
+	/** Epoch ms. */
+	timestamp: number;
+	originalModel: string | null;
+	appliedModel: string | null;
+	/** Model the upstream reported — includes a combo slot's model pin. */
+	servedModel: string | null;
+	/** Resolved account name when the account still exists. */
+	account: string | null;
+	statusCode: number | null;
+	success: boolean;
+	failoverAttempts: number;
+	responseTimeMs: number | null;
+}
+
 export interface ComboFlowCombo {
 	id: string;
 	name: string;
@@ -189,12 +220,23 @@ export interface ComboFlowCombo {
 	familyCount: number;
 	slots: ComboFlowSlot[];
 	stats: ComboFlowStats;
+	/** Newest requests tagged with this combo's name (server-side, max 15). */
+	recentRequests: ComboFlowRecentRequest[];
+}
+
+/** Global routing switches that decide whether combos are consulted at all. */
+export interface ComboFlowRouting {
+	combosEnabled: boolean;
+	forceAccountModel: boolean;
+	/** `combosEnabled && !forceAccountModel` — the chains are live only then. */
+	comboRoutingActive: boolean;
 }
 
 export interface ComboFlowResponse {
 	/** Epoch ms the response was generated. */
 	generatedAt: number;
 	windows: { requestsHours: number };
+	routing: ComboFlowRouting;
 	families: ComboFlowFamily[];
 	combos: ComboFlowCombo[];
 }

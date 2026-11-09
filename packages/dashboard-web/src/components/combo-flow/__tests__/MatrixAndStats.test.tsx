@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ComboFlowCombo } from "../../../api";
+import type { ComboFlowCombo, ComboFlowRecentRequest } from "../../../api";
 import { MatrixAndStats } from "../MatrixAndStats";
 import { RecentRequests } from "../RecentRequests";
 
@@ -18,6 +18,7 @@ function mkCombo(over: Partial<ComboFlowCombo> = {}): ComboFlowCombo {
 				accountName: "alpha",
 				provider: "anthropic",
 				model: "",
+				passthrough: true,
 				priority: 0,
 				enabled: true,
 				cooldownUntil: null,
@@ -29,12 +30,14 @@ function mkCombo(over: Partial<ComboFlowCombo> = {}): ComboFlowCombo {
 				accountName: "beta",
 				provider: "ollama",
 				model: "glm-4.5",
+				passthrough: false,
 				priority: 1,
 				enabled: false,
 				cooldownUntil: null,
 				available: true,
 			},
 		],
+		recentRequests: [],
 		stats: {
 			requests: 10,
 			successRate: 0.9,
@@ -111,27 +114,24 @@ describe("MatrixAndStats", () => {
 });
 
 describe("RecentRequests", () => {
-	const summary = (id: string, over: Record<string, unknown> = {}) =>
+	const row = (id: string, over: Partial<ComboFlowRecentRequest> = {}) =>
 		({
 			id,
-			timestamp: "2026-11-09T10:00:00.000Z",
-			method: "POST",
-			path: "/v1/messages",
-			accountUsed: "alpha",
-			statusCode: 200,
-			success: true,
-			errorMessage: null,
-			responseTimeMs: 1200,
-			failoverAttempts: 1,
-			comboName: "Main",
+			timestamp: Date.parse("2026-11-09T10:00:00.000Z"),
 			originalModel: "claude-sonnet-4-5",
 			appliedModel: "glm-4.5",
+			servedModel: null,
+			account: "alpha",
+			statusCode: 200,
+			success: true,
+			failoverAttempts: 1,
+			responseTimeMs: 1200,
 			...over,
-		}) as never;
+		}) as ComboFlowRecentRequest;
 
 	it("renders the model rewrite, account, status and timing per row", () => {
 		const html = renderToStaticMarkup(
-			<RecentRequests requests={[summary("r1")]} />,
+			<RecentRequests requests={[row("r1")]} />,
 		);
 		expect(html).toContain("Only requests routed through this combo");
 		expect(html).toContain("claude-sonnet-4-5 → glm-4.5");
@@ -141,15 +141,15 @@ describe("RecentRequests", () => {
 	});
 
 	it("shows the served model for a combo-pinned row with no agent rewrite", () => {
-		// A slot pin never sets originalModel/appliedModel; only `model` (the
-		// upstream's reported model) carries it.
+		// A slot pin never sets originalModel/appliedModel; only `servedModel`
+		// (the upstream's reported model) carries it.
 		const html = renderToStaticMarkup(
 			<RecentRequests
 				requests={[
-					summary("r2", {
-						originalModel: undefined,
-						appliedModel: undefined,
-						model: "claude-haiku-4-5",
+					row("r2", {
+						originalModel: null,
+						appliedModel: null,
+						servedModel: "claude-haiku-4-5",
 					}),
 				]}
 			/>,
@@ -157,8 +157,26 @@ describe("RecentRequests", () => {
 		expect(html).toContain("— → claude-haiku-4-5");
 	});
 
+	it("prefers the served model when an agent rewrite AND a slot pin both happened", () => {
+		// servedModel is the ground truth of what actually ran; appliedModel is
+		// only the pre-slot rewrite and would under-report the pin.
+		const html = renderToStaticMarkup(
+			<RecentRequests
+				requests={[
+					row("r3", {
+						originalModel: "claude-sonnet-4-5",
+						appliedModel: "glm-4.5-air",
+						servedModel: "glm-4.5",
+					}),
+				]}
+			/>,
+		);
+		expect(html).toContain("claude-sonnet-4-5 → glm-4.5");
+		expect(html).not.toContain("glm-4.5-air");
+	});
+
 	it("caps rows at the limit and shows an empty message", () => {
-		const many = Array.from({ length: 20 }, (_, i) => summary(`r${i}`));
+		const many = Array.from({ length: 20 }, (_, i) => row(`r${i}`));
 		const html = renderToStaticMarkup(
 			<RecentRequests requests={many} limit={15} />,
 		);

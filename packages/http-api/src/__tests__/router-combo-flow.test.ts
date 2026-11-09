@@ -44,7 +44,10 @@ describe("APIRouter /api/combos/flow routing", () => {
 		} as unknown as DatabaseOperations;
 		const context = {
 			db: adapter,
-			config: {} as Config,
+			config: {
+				getCombosEnabled: () => true,
+				getForceAccountModel: () => false,
+			} as unknown as Config,
 			dbOps,
 			alertService: {},
 		} as unknown as APIContext;

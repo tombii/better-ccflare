@@ -11,6 +11,12 @@ export interface FamilyFlowCardProps {
 	/** The combo entry for `family.combo`, when it still exists. */
 	combo: ComboFlowCombo | null;
 	now: number;
+	/**
+	 * False when the global routing switches mean combos are not consulted at
+	 * all (combos disabled or "force account model" on). The chain is still
+	 * rendered — it just is not what the proxy is doing.
+	 */
+	routingActive?: boolean;
 }
 
 /**
@@ -18,7 +24,12 @@ export interface FamilyFlowCardProps {
  * slot chain in priority order. Pure props so it can be server-rendered in
  * tests; all data comes from GET /api/combos/flow.
  */
-export function FamilyFlowCard({ family, combo, now }: FamilyFlowCardProps) {
+export function FamilyFlowCard({
+	family,
+	combo,
+	now,
+	routingActive = true,
+}: FamilyFlowCardProps) {
 	const assigned = family.assignmentEnabled && family.combo !== null;
 	const lastPickedId = family.observation?.order[0]?.id ?? null;
 
@@ -32,6 +43,15 @@ export function FamilyFlowCard({ family, combo, now }: FamilyFlowCardProps) {
 					<span className="text-xs text-muted-foreground">
 						client <code>{family.family}</code> models
 					</span>
+					{!routingActive && (
+						<Badge
+							variant="outline"
+							className="px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+							title="Combo routing is inactive — this chain shows what would route if combos were enabled"
+						>
+							routing off
+						</Badge>
+					)}
 				</div>
 				{family.observation && (
 					<span className="text-xs text-muted-foreground">

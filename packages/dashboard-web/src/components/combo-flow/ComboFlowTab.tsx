@@ -3,35 +3,28 @@ import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import type { ComboFlowCombo, RequestSummary } from "../../api";
 import { useComboFlow, useRequests } from "../../hooks/queries";
+import { useRequestStream } from "../../hooks/useRequestStream";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Skeleton } from "../ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { FamilyFlowCard } from "./FamilyFlowCard";
 import { MatrixAndStats } from "./MatrixAndStats";
+import { mergeRecentRequests } from "./mergeRecentRequests";
 import { RecentRequests } from "./RecentRequests";
-
-const RECENT_ROWS = 15;
-
-/** Requests belonging to one combo, newest first. */
-function filterByCombo(
-	requests: RequestSummary[],
-	comboName: string,
-): RequestSummary[] {
-	return requests
-		.filter((r) => r.comboName === comboName)
-		.sort(
-			(a, b) =>
-				new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-		);
-}
+import { RoutingInactiveBanner } from "./RoutingInactiveBanner";
 
 function ComboDetail({
 	combo,
-	requests,
+	liveRequests,
 }: {
 	combo: ComboFlowCombo;
-	requests: RequestSummary[];
+	liveRequests: RequestSummary[];
 }) {
+	const recent = mergeRecentRequests(
+		combo.recentRequests,
+		liveRequests,
+		combo.name,
+	);
 	return (
 		<Tabs defaultValue="matrix">
 			<TabsList>
@@ -42,10 +35,7 @@ function ComboDetail({
 				<MatrixAndStats combo={combo} />
 			</TabsContent>
 			<TabsContent value="recent">
-				<RecentRequests
-					requests={filterByCombo(requests, combo.name)}
-					limit={RECENT_ROWS}
-				/>
+				<RecentRequests requests={recent} />
 			</TabsContent>
 		</Tabs>
 	);
@@ -55,9 +45,15 @@ function ComboDetail({
  * Combo Flow page root: family → combo → slot chains, each followed by that
  * combo's 24h matrix & stats (the default tab) and recent combo-tagged
  * requests.
+ *
+ * Freshness is split deliberately: requests arrive live through the shared
+ * request stream (pooled with the Requests tab, so both share one
+ * EventSource), while the flow query only polls topology, stats and cooldown
+ * state once a minute and not at all while the tab is hidden.
  */
 export function ComboFlowTab() {
 	const { data, isLoading, error } = useComboFlow();
+	useRequestStream(200);
 	const { data: requestPages } = useRequests(200);
 	const now = data?.generatedAt ?? Date.now();
 
@@ -67,7 +63,7 @@ export function ComboFlowTab() {
 	);
 	// The summary rows live in `detailsMap` (useRequests' placeholder list has
 	// no model/account fields); tolerate the array form RequestsTab also does.
-	const requests = useMemo<RequestSummary[]>(() => {
+	const liveRequests = useMemo<RequestSummary[]>(() => {
 		if (!requestPages) return [];
 		const map = requestPages.detailsMap;
 		return map instanceof Map
@@ -115,8 +111,11 @@ export function ComboFlowTab() {
 		);
 	}
 
+	const routingActive = data.routing.comboRoutingActive;
+
 	return (
 		<div className="space-y-4">
+			{!routingActive && <RoutingInactiveBanner routing={data.routing} />}
 			<p className="text-xs text-muted-foreground">
 				Family → combo → account/model chain, with the last routing decision
 				observed by the proxy. Stats cover the last {data.windows.requestsHours}
@@ -136,7 +135,12 @@ export function ComboFlowTab() {
 					)?.family === family.family;
 				return (
 					<div key={family.family} className="space-y-2">
-						<FamilyFlowCard family={family} combo={combo} now={now} />
+						<FamilyFlowCard
+							family={family}
+							combo={combo}
+							now={now}
+							routingActive={routingActive}
+						/>
 						{showDetail && combo && (
 							<Card>
 								<CardHeader className="pb-2">
@@ -145,7 +149,7 @@ export function ComboFlowTab() {
 									</CardTitle>
 								</CardHeader>
 								<CardContent>
-									<ComboDetail combo={combo} requests={requests} />
+									<ComboDetail combo={combo} liveRequests={liveRequests} />
 								</CardContent>
 							</Card>
 						)}

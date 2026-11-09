@@ -1,43 +1,16 @@
-import type { RequestPayload, RequestSummary } from "../../api";
-import { summaryToPlaceholder } from "../../hooks/queries";
+import type { ComboFlowRecentRequest } from "../../api";
 import { Badge } from "../ui/badge";
 import { formatMs, formatTimeOfDay } from "./format";
 
 export interface RecentRequestsProps {
-	/** Rows from `GET /api/requests` (already sorted newest first). */
-	requests: RequestSummary[];
+	/**
+	 * Newest combo-tagged rows, already merged newest first: seeded
+	 * server-side by GET /api/combos/flow and updated live from the shared
+	 * request stream (see mergeRecentRequests).
+	 */
+	requests: ComboFlowRecentRequest[];
 	/** Cap on rows shown (default 15). */
 	limit?: number;
-}
-
-interface Row {
-	id: string;
-	at: number;
-	originalModel?: string;
-	appliedModel?: string;
-	/** Model the upstream reported — includes a combo slot's model pin. */
-	servedModel?: string;
-	account: string | null;
-	status: number | null;
-	success: boolean;
-	failoverAttempts: number;
-	responseTimeMs: number | null;
-}
-
-function toRow(summary: RequestSummary): Row {
-	const placeholder: RequestPayload = summaryToPlaceholder(summary);
-	return {
-		id: summary.id,
-		at: placeholder.meta.timestamp,
-		originalModel: summary.originalModel,
-		appliedModel: summary.appliedModel,
-		servedModel: summary.model,
-		account: summary.accountUsed,
-		status: summary.statusCode,
-		success: summary.success,
-		failoverAttempts: summary.failoverAttempts,
-		responseTimeMs: summary.responseTimeMs,
-	};
 }
 
 /**
@@ -46,32 +19,35 @@ function toRow(summary: RequestSummary): Row {
  * `originalModel`/`appliedModel` are written only for AGENT-preference
  * rewrites, so a combo that pins a slot's model leaves them null. The served
  * model (what the upstream response reported) is then the only evidence of
- * the pin, and without it a combo-routed row would render as a bare "—".
+ * the pin, and is also the ground truth when both an agent rewrite AND a slot
+ * pin happened — which is why it wins over `appliedModel` whenever present.
  */
-function modelLabel(row: Row): string {
+function modelLabel(row: ComboFlowRecentRequest): string {
 	const requested = row.originalModel ?? "—";
-	if (row.appliedModel && row.appliedModel !== row.originalModel) {
-		return `${requested} → ${row.appliedModel}`;
+	const served = row.servedModel ?? row.appliedModel;
+	if (served && served !== row.originalModel) {
+		return `${requested} → ${served}`;
 	}
-	if (row.servedModel && row.servedModel !== row.originalModel) {
-		return `${requested} → ${row.servedModel}`;
-	}
-	return row.originalModel ?? row.servedModel ?? "—";
+	return row.originalModel ?? served ?? "—";
 }
 
 /**
  * The most recent requests that carry this combo's `combo_name` tag. Only
  * requests routed THROUGH the combo are tagged, so an empty list means the
  * combo hasn't served anything recently — not that the filter is broken.
+ *
+ * Rows are the newest through THIS combo (a bounded server-side query), not a
+ * sample of global traffic, and they keep updating from the live request
+ * stream while the page is open.
  */
 export function RecentRequests({ requests, limit = 15 }: RecentRequestsProps) {
-	// RequestPayload loses the model/account fields this table needs, so the
-	// summary rows are converted back where only the meta shape is read.
-	const rows = requests.slice(0, limit).map(toRow);
+	const rows = requests.slice(0, limit);
 	return (
 		<div className="space-y-2">
 			<p className="text-xs text-muted-foreground">
-				Only requests routed through this combo carry its tag.
+				Only requests routed through this combo carry its tag. This list is the
+				newest requests through this combo (seeded by the flow endpoint, then
+				kept live by the request stream) — not a sample of global traffic.
 			</p>
 			{rows.length === 0 ? (
 				<p className="text-xs text-muted-foreground">
@@ -93,7 +69,7 @@ export function RecentRequests({ requests, limit = 15 }: RecentRequestsProps) {
 						{rows.map((r) => (
 							<tr key={r.id} className="border-t">
 								<td className="py-1 whitespace-nowrap">
-									{formatTimeOfDay(r.at)}
+									{formatTimeOfDay(r.timestamp)}
 								</td>
 								<td className="py-1">{modelLabel(r)}</td>
 								<td className="py-1">{r.account ?? "—"}</td>
@@ -102,7 +78,7 @@ export function RecentRequests({ requests, limit = 15 }: RecentRequestsProps) {
 										variant={r.success ? "success" : "destructive"}
 										className="px-1.5 py-0 text-[10px]"
 									>
-										{r.status ?? "—"}
+										{r.statusCode ?? "—"}
 									</Badge>
 								</td>
 								<td className="py-1 text-right">{r.failoverAttempts}</td>

@@ -622,13 +622,20 @@ export const useCombos = () => {
 	});
 };
 
-/** Family → combo → slot flow view with 24h stats (GET /api/combos/flow). */
+/**
+ * Family → combo → slot flow view with 24h stats (GET /api/combos/flow).
+ *
+ * The poll refreshes topology, stats and cooldown state only, and stops while
+ * the tab is hidden. Live request rows are not this query's job: they stream
+ * through the shared request SSE (useRequestStream/useRequests), so a quiet
+ * system costs one small query set a minute and nothing when hidden.
+ */
 export const useComboFlow = () => {
 	return useQuery({
 		queryKey: queryKeys.comboFlow(),
 		queryFn: () => api.getComboFlow(),
 		staleTime: 20000,
-		refetchInterval: REFRESH_INTERVALS.default,
+		refetchInterval: REFRESH_INTERVALS.slow,
 		refetchIntervalInBackground: false,
 	});
 };

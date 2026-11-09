@@ -2896,6 +2896,17 @@ OAuth tokens will need to be re-authenticated.
 		return this.requests.getComboRoutingAggregates(sinceMs);
 	}
 
+	/**
+	 * Re-tags request history after a combo rename so the flow view's totals
+	 * follow the combo. Resolves to the number of migrated rows.
+	 */
+	async updateComboTags(
+		oldComboName: string,
+		newComboName: string,
+	): Promise<number> {
+		return this.requests.updateComboTags(oldComboName, newComboName);
+	}
+
 	async getActiveComboForFamily(
 		family: ComboFamily,
 	): Promise<ComboWithSlots | null> {

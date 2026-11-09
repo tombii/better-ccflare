@@ -16,6 +16,7 @@ function mkSlot(over: Partial<ComboFlowSlot> = {}): ComboFlowSlot {
 		accountName: "alpha",
 		provider: "anthropic",
 		model: "claude-sonnet-4-5",
+		passthrough: false,
 		priority: 0,
 		enabled: true,
 		cooldownUntil: null,
@@ -39,9 +40,11 @@ function mkCombo(over: Partial<ComboFlowCombo> = {}): ComboFlowCombo {
 				accountName: "beta",
 				provider: "ollama",
 				model: "",
+				passthrough: true,
 				priority: 1,
 			}),
 		],
+		recentRequests: [],
 		stats: {
 			requests: 0,
 			successRate: null,
@@ -187,5 +190,72 @@ describe("FamilyFlowCard", () => {
 			/>,
 		);
 		expect(html).toContain("Assigned combo no longer exists");
+	});
+
+	it("marks the card with a muted routing-off badge when combo routing is inactive", () => {
+		const html = renderToStaticMarkup(
+			<FamilyFlowCard
+				family={mkFamily({
+					assignmentEnabled: true,
+					combo: { id: "c1", name: "Main", enabled: true },
+				})}
+				combo={mkCombo()}
+				now={NOW}
+				routingActive={false}
+			/>,
+		);
+		expect(html).toContain("routing off");
+		expect(html).toContain("what would route if combos were enabled");
+	});
+
+	it("does not show the routing-off badge while combo routing is active", () => {
+		const html = renderToStaticMarkup(
+			<FamilyFlowCard
+				family={mkFamily({
+					assignmentEnabled: true,
+					combo: { id: "c1", name: "Main", enabled: true },
+				})}
+				combo={mkCombo()}
+				now={NOW}
+			/>,
+		);
+		expect(html).not.toContain("routing off");
+	});
+
+	it("shows model-dependent cooling badges on a passthrough slot with model cooldowns", () => {
+		const html = renderToStaticMarkup(
+			<FamilyFlowCard
+				family={mkFamily({
+					assignmentEnabled: true,
+					combo: { id: "c1", name: "Main", enabled: true },
+				})}
+				combo={mkCombo({
+					slots: [
+						mkSlot({
+							id: "s1",
+							model: "",
+							passthrough: true,
+							// No single deadline: "" never matches a cooldown key.
+							cooldownUntil: null,
+							cooldowns: [
+								{ model: "glm-4.5-air", until: NOW + 60_000 },
+								{ model: "glm-4.5", until: NOW + 120_000 },
+								{ model: "glm-4.6", until: NOW + 180_000 },
+							],
+						}),
+					],
+				})}
+				now={NOW}
+			/>,
+		);
+		expect((html.match(/Cooling \(model-dependent\)/g) ?? []).length).toBe(2);
+		expect(html).toContain("glm-4.5-air");
+		expect(html).toContain("glm-4.5");
+		// Only two cooldown badges inline; the rest collapse into a +n badge.
+		expect(html).not.toContain("glm-4.6 ·");
+		expect(html).toContain("+1");
+		expect(html).toContain("availability depends on the requested model");
+		// Still available — the skip is model-dependent, not definite.
+		expect(html).not.toContain(">unavailable<");
 	});
 });
