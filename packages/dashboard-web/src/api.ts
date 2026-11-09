@@ -292,6 +292,7 @@ class API extends HttpClient {
 			| "zai"
 			| "minimax"
 			| "deepseek"
+			| "sailresearch"
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
@@ -635,6 +636,44 @@ class API extends HttpClient {
 				url,
 				data,
 			);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	/**
+	 * Sail Research has no dedicated POST /api/accounts/sailresearch route; the
+	 * generic POST /api/accounts handler accepts any known provider (and the
+	 * `mode` alias), stores the key in api_key and leaves the endpoint at the
+	 * provider's fixed default.
+	 */
+	async addSailResearchAccount(data: {
+		name: string;
+		apiKey: string;
+		priority: number;
+	}): Promise<{ message: string; success: boolean; accountId: string }> {
+		const startTime = Date.now();
+		const url = "/api/accounts";
+
+		this.logger.debug(`→ POST ${url}`, { data });
+
+		try {
+			const response = await this.post<{
+				message: string;
+				success: boolean;
+				accountId: string;
+			}>(url, { ...data, mode: "sailresearch" });
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
 			return response;
