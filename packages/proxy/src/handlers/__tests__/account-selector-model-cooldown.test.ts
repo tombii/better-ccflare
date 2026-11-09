@@ -208,7 +208,7 @@ describe("selectAccountsForRequest — combo model-scoped cooldown", () => {
 	});
 
 	it("logs the cooldown deadline as an ISO timestamp for the skipped slot", async () => {
-		const acc = makeAccount({ id: "acc-1" });
+		const acc = makeAccount({ id: "acc-1", name: "mistral-vibe" });
 		const combo = makeCombo([makeSlot("acc-1", "claude-sonnet-4-5", 0)]);
 		const until = FROZEN_NOW + 10 * MINUTE;
 		markModelCooling("acc-1", "claude-sonnet-4-5", until);
@@ -235,7 +235,7 @@ describe("selectAccountsForRequest — combo model-scoped cooldown", () => {
 		const iso = new Date(until).toISOString();
 		expect(iso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 		expect(infos).toContain(
-			`Combo slot acc-1/claude-sonnet-4-5 for Test Combo is in a model-scoped cooldown until ${iso} — skipping (account stays eligible for its other slots)`,
+			`Combo slot mistral-vibe/claude-sonnet-4-5 for Test Combo is in a model-scoped cooldown until ${iso} — skipping (account stays eligible for its other slots)`,
 		);
 	});
 
