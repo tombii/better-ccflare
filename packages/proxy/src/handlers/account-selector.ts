@@ -933,7 +933,7 @@ export async function selectAccountsForRequest(
 							: null;
 						if (cooldownUntil !== null) {
 							log.info(
-								`Combo slot ${slot.account_id}/${slotModel} for ${combo.name} is in a model-scoped cooldown until ${new Date(cooldownUntil).toISOString()} — skipping (account stays eligible for its other slots)`,
+								`Combo slot ${account.name}/${slotModel} for ${combo.name} is in a model-scoped cooldown until ${new Date(cooldownUntil).toISOString()} — skipping (account stays eligible for its other slots)`,
 							);
 							continue;
 						}
