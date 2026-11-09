@@ -107,6 +107,31 @@ export function getModelCooldownUntil(
 }
 
 /**
+ * Every active per-model cooldown on an account, sorted by deadline (soonest
+ * first). Combo passthrough slots have no model of their own, so
+ * {@link getModelCooldownUntil}(accountId, "") can never match — this is how a
+ * caller enumerates the pair cooldowns that can still block such a slot for the
+ * model the client actually requested. Expired entries are deleted on read,
+ * matching {@link getModelCooldownUntil}.
+ */
+export function getModelCooldownsForAccount(
+	accountId: string,
+	now: number = Date.now(),
+): Array<{ model: string; until: number }> {
+	const prefix = `${accountId}:`;
+	const active: Array<{ model: string; until: number }> = [];
+	for (const [key, until] of cooldowns) {
+		if (!key.startsWith(prefix)) continue;
+		if (until <= now) {
+			cooldowns.delete(key);
+			continue;
+		}
+		active.push({ model: key.slice(prefix.length), until });
+	}
+	return active.sort((a, b) => a.until - b.until);
+}
+
+/**
  * Whether (accountId, model) was recently marked cooling and hasn't expired.
  * Delegates to {@link getModelCooldownUntil} so the two can never disagree
  * about when an entry lapses.

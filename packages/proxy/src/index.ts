@@ -83,6 +83,7 @@ export {
 	unregisterRefreshClearer,
 } from "./handlers";
 export {
+	getModelCooldownsForAccount,
 	markModelCooling,
 	resetModelCooldownsForTests,
 } from "./handlers/model-cooldown";

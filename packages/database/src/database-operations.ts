@@ -51,6 +51,7 @@ import { ApiKeyRepository } from "./repositories/api-key.repository";
 import { ComboRepository } from "./repositories/combo.repository";
 import { OAuthRepository } from "./repositories/oauth.repository";
 import {
+	type ComboRoutingAggregateRow,
 	type RequestData,
 	RequestRepository,
 } from "./repositories/request.repository";
@@ -2882,6 +2883,28 @@ OAuth tokens will need to be re-authenticated.
 
 	async getFamilyAssignments(): Promise<ComboFamilyAssignment[]> {
 		return this.combo.getFamilyAssignments();
+	}
+
+	/**
+	 * Per-(combo, original model, applied model, account) routing aggregates
+	 * since `sinceMs` — powers the Combo Flow view (GET /api/combos/flow).
+	 * Dialect-neutral SQL; see RequestRepository.getComboRoutingAggregates.
+	 */
+	async getComboRoutingAggregates(
+		sinceMs: number,
+	): Promise<ComboRoutingAggregateRow[]> {
+		return this.requests.getComboRoutingAggregates(sinceMs);
+	}
+
+	/**
+	 * Re-tags request history after a combo rename so the flow view's totals
+	 * follow the combo. Resolves to the number of migrated rows.
+	 */
+	async updateComboTags(
+		oldComboName: string,
+		newComboName: string,
+	): Promise<number> {
+		return this.requests.updateComboTags(oldComboName, newComboName);
 	}
 
 	async getActiveComboForFamily(

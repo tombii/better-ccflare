@@ -39,6 +39,22 @@ function sanitizeClientSessionId(
 		: cleaned;
 }
 
+/** One grouped row of the combo-flow aggregate: a (combo, original model,
+ * applied model, account) bucket with its 24h counts. Raw snake_case columns,
+ * dialect-neutral (see getComboRoutingAggregates). */
+export interface ComboRoutingAggregateRow {
+	combo_name: string;
+	original_model: string | null;
+	applied_model: string | null;
+	/** Model the upstream response reported (post combo-slot override). */
+	model: string | null;
+	account_used: string | null;
+	cnt: number;
+	ok: number;
+	failovers: number;
+	avg_rt: number | null;
+}
+
 // Source-authority ranks for the UPSERT conflict resolution below. Higher
 // number = higher authority. NULL and "none" both fall through to the ELSE
 // branch (rank 0) since neither is an explicit attribution.
@@ -550,6 +566,59 @@ export class RequestRepository extends BaseRepository<RequestData> {
 					? null
 					: Number(result.avg_response_time),
 		};
+	}
+
+	/**
+	 * Per-(combo, original model, applied model, served model, account) counts
+	 * since `sinceMs` — the raw material for the Combo Flow view's stats and
+	 * resolution matrix. Dialect-neutral: only COUNT/SUM/AVG, comparisons with
+	 * `= TRUE` / `> 0` and scalar column references (no strftime, no json_*).
+	 * `requests.success` may be stored as 0/1 or a boolean depending on the
+	 * dialect; `success = TRUE` is accepted by both backends. Bun.SQL returns
+	 * COUNT/SUM as strings on PostgreSQL, so consumers must coerce to Number.
+	 *
+	 * `model` is the model the upstream response reported. It is the only
+	 * column that reflects a COMBO SLOT override: `original_model`/
+	 * `applied_model` are written only for agent-preference rewrites
+	 * (proxy-operations' `isModelRewrite` guard), so a combo that pins a slot
+	 * model leaves both NULL while `model` carries the pinned model.
+	 */
+	async getComboRoutingAggregates(
+		sinceMs: number,
+	): Promise<ComboRoutingAggregateRow[]> {
+		return this.query<ComboRoutingAggregateRow>(
+			`
+			SELECT r.combo_name AS combo_name,
+				r.original_model AS original_model,
+				r.applied_model AS applied_model,
+				r.model AS model,
+				r.account_used AS account_used,
+				COUNT(*) AS cnt,
+				SUM(CASE WHEN r.success = TRUE THEN 1 ELSE 0 END) AS ok,
+				SUM(CASE WHEN r.failover_attempts > 0 THEN 1 ELSE 0 END) AS failovers,
+				AVG(r.response_time_ms) AS avg_rt
+			FROM requests r
+			WHERE r.combo_name IS NOT NULL AND r.timestamp >= ?
+			GROUP BY r.combo_name, r.original_model, r.applied_model, r.model, r.account_used
+		`,
+			[sinceMs],
+		);
+	}
+
+	/**
+	 * Re-points every request tagged with `oldComboName` at `newComboName`.
+	 * Called after a combo rename so the flow view's 24h totals survive it —
+	 * stats are derived from the `combo_name` tag, not from a combo id.
+	 * Dialect-neutral single UPDATE; resolves to the number of affected rows.
+	 */
+	async updateComboTags(
+		oldComboName: string,
+		newComboName: string,
+	): Promise<number> {
+		return this.runWithChanges(
+			"UPDATE requests SET combo_name = ? WHERE combo_name = ?",
+			[newComboName, oldComboName],
+		);
 	}
 
 	/**

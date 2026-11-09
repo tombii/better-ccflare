@@ -13,6 +13,7 @@ import type {
 	CacheInsightsResponse,
 	Combo,
 	ComboFamilyAssignment,
+	ComboFlowResponse,
 	ComboSlot,
 	ComboWithSlotsWithCooldown,
 	ContextInsightsResponse,
@@ -40,6 +41,13 @@ export type RequestSummary = RequestResponse;
 export type {
 	Agent,
 	AgentWorkspace,
+	ComboFlowCombo,
+	ComboFlowFamily,
+	ComboFlowPairing,
+	ComboFlowRecentRequest,
+	ComboFlowResponse,
+	ComboFlowSlot,
+	ComboFlowStats,
 	RequestPayload,
 	RequestResponse,
 	RequestTransformer,
@@ -2310,6 +2318,17 @@ class API extends HttpClient {
 			combo_id: params.comboId,
 			enabled: params.enabled,
 		});
+	}
+
+	/**
+	 * GET /api/combos/flow — family → combo → slot flow view with 24h stats.
+	 * The endpoint path is matched before `/api/combos/:id` on the server.
+	 */
+	async getComboFlow(): Promise<ComboFlowResponse> {
+		const res = await this.get<{ success: boolean; data: ComboFlowResponse }>(
+			"/api/combos/flow",
+		);
+		return res.data;
 	}
 
 	async getCombo(id: string): Promise<{ combo: ComboWithSlotsWithCooldown }> {

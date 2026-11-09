@@ -90,6 +90,11 @@ export function Navigation({ onLogout }: NavigationProps = {}) {
 		];
 
 		baseItems.push({ label: "Combos", icon: Zap, path: "/combos" });
+		baseItems.push({
+			label: "Combo Flow",
+			icon: GitBranch,
+			path: "/combo-flow",
+		});
 
 		// Add remaining items
 		baseItems.push(

@@ -31,7 +31,7 @@ import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ensureSchema, runMigrations } from "./migrations";
-import { ensureRequestsIndexesPg } from "./migrations-pg";
+import { ensureRequestsIndexesPg, NEW_REQUEST_INDEXES_PG } from "./migrations-pg";
 
 const PG_SOURCE_PATH = path.join(__dirname, "migrations-pg.ts");
 
@@ -427,7 +427,11 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 						if (q.includes("NOT i.indisvalid"))
 							return (opts.invalidNames ?? []).map((relname) => ({ relname }));
 						if (q.includes("i.indisvalid"))
-							return (opts.validNames ?? ["idx_requests_err_ts_cov"]).map(
+							// Default: every migrated index exists and is valid, so the
+							// gated redundant-drop block runs. Derived from the list so
+							// adding an index doesn't silently disable the gate here.
+							return (opts.validNames ??
+								NEW_REQUEST_INDEXES_PG.map((i) => i.name)).map(
 								(relname) => ({ relname }),
 							);
 						return [];
@@ -472,7 +476,7 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 				);
 				expect(
 					st.filter((q) => q.startsWith("CREATE INDEX CONCURRENTLY")).length,
-				).toBe(1);
+				).toBe(NEW_REQUEST_INDEXES_PG.length);
 				expect(st.at(-2)).toBe("RESET lock_timeout");
 				expect(f.isReleased()).toBe(true);
 			});
@@ -494,8 +498,10 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 							q.startsWith("CREATE INDEX CONCURRENTLY") ||
 							q.startsWith("DROP INDEX"),
 					);
-				// invalid SELECT + invalid DROP + 1 CREATE + redundant drops + client_session drop
-				expect(ddlOrSelect.length).toBe(3 + dropped.length + 1);
+				// invalid SELECT + invalid DROP + every CREATE + redundant drops + client_session drop
+				expect(ddlOrSelect.length).toBe(
+					2 + NEW_REQUEST_INDEXES_PG.length + dropped.length + 1,
+				);
 				for (const { i } of ddlOrSelect) expect(lock).toBeLessThan(i);
 			});
 
@@ -554,6 +560,15 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 			);
 			expect(pgSource).not.toMatch(
 				/CREATE INDEX[^`]*idx_requests_client_session/,
+			);
+		});
+
+		it("creates the Combo Flow per-combo index concurrently", () => {
+			// CONCURRENTLY, like every other requests index added by this
+			// migration: a plain CREATE INDEX would lock writes on the hottest
+			// table while it builds.
+			expect(pgSource).toMatch(
+				/CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_combo_timestamp\s+ON requests\(combo_name, timestamp DESC\)\s+WHERE combo_name IS NOT NULL/,
 			);
 		});
 

@@ -210,6 +210,18 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_requests_client_session");
 
+	// 10. Index for the Combo Flow view's per-combo recent rows (combos-flow.ts):
+	//   WHERE combo_name = ? ORDER BY timestamp DESC LIMIT 15
+	// Without it a lightly-used combo — fewer than 15 tagged rows in the whole
+	// retention window — makes the `ORDER BY … LIMIT` scan all traffic to prove
+	// there is nothing newer, once per combo on every flow refresh.
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_requests_combo_timestamp
+		ON requests(combo_name, timestamp DESC)
+		WHERE combo_name IS NOT NULL
+	`);
+	log.info("Added index: idx_requests_combo_timestamp");
+
 	log.info("Performance indexes added successfully");
 }
 
