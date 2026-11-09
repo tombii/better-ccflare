@@ -17,11 +17,19 @@ describe("sailresearch provider registration", () => {
 		expect(provider?.name).toBe("sailresearch");
 	});
 
-	it("builds the Sail messages URL", () => {
+	it("builds the Sail messages URL without duplicating /v1", () => {
 		const provider = getProvider("sailresearch");
+		// The client path already carries `/v1`; the endpoint must not.
 		expect(provider?.buildUrl("/v1/messages", "", undefined)).toBe(
-			"https://api.sailresearch.com/v1/v1/messages",
+			"https://api.sailresearch.com/v1/messages",
 		);
+	});
+
+	it("builds the Sail count_tokens URL without duplicating /v1", () => {
+		const provider = getProvider("sailresearch");
+		expect(
+			provider?.buildUrl("/v1/messages/count_tokens", "", undefined),
+		).toBe("https://api.sailresearch.com/v1/messages/count_tokens");
 	});
 
 	it("authenticates with a Bearer Authorization header, not x-api-key", () => {

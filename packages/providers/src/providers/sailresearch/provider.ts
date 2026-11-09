@@ -28,6 +28,9 @@ export class SailresearchProvider extends BaseAnthropicCompatibleProvider {
 	}
 
 	getEndpoint(): string {
-		return "https://api.sailresearch.com/v1";
+		// No `/v1` here: the base `buildUrl` appends the client path verbatim,
+		// and that path already begins with `/v1` (`/v1/messages`). Including it
+		// would produce `https://api.sailresearch.com/v1/v1/messages`.
+		return "https://api.sailresearch.com";
 	}
 }

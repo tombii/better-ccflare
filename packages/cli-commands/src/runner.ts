@@ -19,6 +19,19 @@ import { clearRequestHistory, resetAllStats } from "./commands/stats";
 import { checkReauthNeeded, checkTokenHealth } from "./commands/token-health";
 
 /**
+ * Options accepted by the CLI. Keys must match the flags as typed on the
+ * command line: `parseArgs` matches them exactly, so a camelCase key here
+ * would silently never populate from `--kebab-case`.
+ */
+export const CLI_OPTIONS = {
+	mode: { type: "string" },
+	priority: { type: "string" },
+	modelMappings: { type: "string" },
+	"night-window": { type: "string" },
+	force: { type: "boolean" },
+} as const;
+
+/**
  * Main CLI runner
  */
 export async function runCli(argv: string[]): Promise<void> {
@@ -34,13 +47,7 @@ export async function runCli(argv: string[]): Promise<void> {
 		const { positionals, values } = parseArgs({
 			args: argv.slice(2),
 			strict: false,
-			options: {
-				mode: { type: "string" },
-				priority: { type: "string" },
-				modelMappings: { type: "string" },
-				nightWindow: { type: "string" },
-				force: { type: "boolean" },
-			},
+			options: CLI_OPTIONS,
 		});
 
 		const command = positionals[0];
@@ -109,11 +116,12 @@ export async function runCli(argv: string[]): Promise<void> {
 				}
 
 				let nightWindow: boolean | undefined;
-				if (values.nightWindow !== undefined) {
-					const parsed = parseNightWindowValue(values.nightWindow as string);
+				const nightWindowValue = values["night-window"] as string | undefined;
+				if (nightWindowValue !== undefined) {
+					const parsed = parseNightWindowValue(nightWindowValue);
 					if (!parsed.ok) {
 						console.error(
-							`Error: Invalid --night-window value '${values.nightWindow}': expected on/off, true/false or 1/0`,
+							`Error: Invalid --night-window value '${nightWindowValue}': expected on/off, true/false or 1/0`,
 						);
 						process.exit(1);
 					}
