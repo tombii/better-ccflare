@@ -15,6 +15,7 @@ const KEPT_INDEXES = [
 	"idx_requests_account_timestamp",
 	"idx_requests_analytics_covering",
 	"idx_requests_api_key_timestamp",
+	"idx_requests_combo_timestamp",
 	"idx_requests_model_timestamp",
 	"idx_requests_summary_covering",
 ];
@@ -112,13 +113,14 @@ const FINAL_INDEXES = [
 	"idx_requests_analytics_covering",
 	"idx_requests_api_key_timestamp",
 	"idx_requests_client_session",
+	"idx_requests_combo_timestamp",
 	"idx_requests_err_ts_cov",
 	"idx_requests_model_timestamp",
 	"idx_requests_summary_covering",
 ];
 
 describe("requests indexes: final set", () => {
-	it("a fresh database has exactly the 7 approved indexes", () => {
+	it("a fresh database has exactly the 8 approved indexes", () => {
 		const db = new Database(":memory:");
 		ensureSchema(db);
 		runMigrations(db);
@@ -195,6 +197,27 @@ describe("requests indexes: final set", () => {
 			["no_account", Date.now() - 86_400_000],
 		);
 		expect(p).toContain("idx_requests_err_ts_cov");
+		db.close();
+	});
+
+	it("the Combo Flow per-combo recent query uses idx_requests_combo_timestamp", () => {
+		const db = seeded();
+		// The pathological case the index exists for: a combo with only a
+		// couple of tagged rows among thousands of untagged ones. Without the
+		// index the ordered LIMIT has to scan all traffic to prove nothing is
+		// newer.
+		const ins = db.prepare(
+			"INSERT INTO requests (id, timestamp, method, path, combo_name, success) VALUES (?, ?, 'POST', '/v1/messages', 'rare-combo', 1)",
+		);
+		ins.run("c1", Date.now() - 5000);
+		ins.run("c2", Date.now() - 9000);
+		const p = plan(
+			db,
+			`SELECT id FROM requests
+			 WHERE combo_name = ? ORDER BY timestamp DESC LIMIT 15`,
+			["rare-combo"],
+		);
+		expect(p).toContain("idx_requests_combo_timestamp");
 		db.close();
 	});
 });

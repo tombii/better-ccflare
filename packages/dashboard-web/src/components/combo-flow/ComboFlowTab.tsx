@@ -2,7 +2,7 @@ import { AlertTriangle } from "lucide-react";
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import type { ComboFlowCombo, RequestSummary } from "../../api";
-import { useComboFlow, useRequests } from "../../hooks/queries";
+import { useAccounts, useComboFlow, useRequests } from "../../hooks/queries";
 import { useRequestStream } from "../../hooks/useRequestStream";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Skeleton } from "../ui/skeleton";
@@ -16,14 +16,19 @@ import { RoutingInactiveBanner } from "./RoutingInactiveBanner";
 function ComboDetail({
 	combo,
 	liveRequests,
+	accountNameById,
 }: {
 	combo: ComboFlowCombo;
 	liveRequests: RequestSummary[];
+	/** id → display name: live SSE rows carry account ids, not names. */
+	accountNameById: ReadonlyMap<string, string>;
 }) {
 	const recent = mergeRecentRequests(
 		combo.recentRequests,
 		liveRequests,
 		combo.name,
+		undefined,
+		accountNameById,
 	);
 	return (
 		<Tabs defaultValue="matrix">
@@ -55,8 +60,15 @@ export function ComboFlowTab() {
 	const { data, isLoading, error } = useComboFlow();
 	useRequestStream(200);
 	const { data: requestPages } = useRequests(200);
+	// Shared 60s-polled account list (already cached by other tabs). Live SSE
+	// rows name their account by ID, so the merge needs this to keep the label.
+	const { data: accounts } = useAccounts();
 	const now = data?.generatedAt ?? Date.now();
 
+	const accountNameById = useMemo(
+		() => new Map((accounts ?? []).map((a) => [a.id, a.name])),
+		[accounts],
+	);
 	const comboById = useMemo(
 		() => new Map((data?.combos ?? []).map((c) => [c.id, c])),
 		[data],
@@ -149,7 +161,11 @@ export function ComboFlowTab() {
 									</CardTitle>
 								</CardHeader>
 								<CardContent>
-									<ComboDetail combo={combo} liveRequests={liveRequests} />
+									<ComboDetail
+									combo={combo}
+									liveRequests={liveRequests}
+									accountNameById={accountNameById}
+								/>
 								</CardContent>
 							</Card>
 						)}

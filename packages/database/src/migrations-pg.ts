@@ -1085,13 +1085,27 @@ export async function analyzeRewrittenTablesPg(
  * either a length cap at ingestion, or an expression index on
  * left(client_session_id, N) together with a matching query predicate.
  */
-const NEW_REQUEST_INDEXES_PG: ReadonlyArray<{ name: string; sql: string }> = [
+export const NEW_REQUEST_INDEXES_PG: ReadonlyArray<{
+	name: string;
+	sql: string;
+}> = [
 	{
 		// Partial index for the Errors tab grouping (getRecentErrorGroups).
 		name: "idx_requests_err_ts_cov",
 		sql: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_err_ts_cov
 			 ON requests(timestamp DESC, account_used)
 			 WHERE error_message IS NOT NULL`,
+	},
+	{
+		// Per-combo recent rows for the Combo Flow view (combos-flow.ts):
+		//   WHERE combo_name = ? ORDER BY timestamp DESC LIMIT 15
+		// Mirrors the SQLite idx_requests_combo_timestamp. Partial, because
+		// most traffic carries no combo tag; `combo_name = ?` implies NOT NULL,
+		// so the planner still uses it.
+		name: "idx_requests_combo_timestamp",
+		sql: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_requests_combo_timestamp
+			 ON requests(combo_name, timestamp DESC)
+			 WHERE combo_name IS NOT NULL`,
 	},
 ];
 

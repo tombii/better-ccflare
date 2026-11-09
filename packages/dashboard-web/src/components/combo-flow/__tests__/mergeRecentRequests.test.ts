@@ -74,6 +74,31 @@ describe("mergeRecentRequests", () => {
 		});
 	});
 
+	it("resolves a live row's account ID to a name via the map", () => {
+		// The SSE summary carries accountUsed as the account ID; the server
+		// rows carry display names. Without resolution the merge overwrites a
+		// name with an opaque ID.
+		const merged = mergeRecentRequests(
+			[serverRow("s1", { account: "nano" })],
+			[liveRow("l1", { accountUsed: "acc-nano" })],
+			"Main",
+			undefined,
+			new Map([["acc-nano", "nano"]]),
+		);
+		expect(merged[0].account).toBe("nano");
+	});
+
+	it("falls back to the raw id when the account is unknown", () => {
+		const merged = mergeRecentRequests(
+			[],
+			[liveRow("l1", { accountUsed: "acc-gone" })],
+			"Main",
+			undefined,
+			new Map([["acc-other", "someone"]]),
+		);
+		expect(merged[0].account).toBe("acc-gone");
+	});
+
 	it("orders newest first across both sources", () => {
 		const merged = mergeRecentRequests(
 			[
