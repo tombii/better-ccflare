@@ -20,6 +20,7 @@ import type {
 	TokenRefreshResult,
 } from "../../types";
 import { drainReader } from "../../utils/stream-drain";
+import { isMistralEndpoint, stripMistralReasoning } from "./mistral-reasoning";
 
 const log = new Logger("OpenAICompatibleProvider");
 
@@ -223,7 +224,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 				body,
 				effectiveAccount,
 			);
-			this.afterConvert(openaiBody);
+			this.afterConvert(openaiBody, account);
 
 			// Inject enable_thinking for reasoning models on DashScope
 			this.injectDashScopeReasoning(openaiBody, body);
@@ -382,11 +383,21 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	/**
 	 * Hook called after converting Anthropic request to OpenAI format.
 	 * Override to inject provider-specific fields (e.g., cache_control, vision flags).
+	 * `account` is the per-request account: the provider is a singleton shared by
+	 * every openai-compatible account, so endpoint-dependent rewrites must use
+	 * this rather than shared instance state.
 	 */
-	protected afterConvert(body: OpenAIRequest): void {
+	protected afterConvert(body: OpenAIRequest, account?: Account): void {
 		// Inject cache_control for Alibaba/DashScope endpoints
 		if (this.shouldInjectAlibabaCaching()) {
 			this.injectAlibabaCaching(body);
+		}
+
+		// Mistral rejects top-level `reasoning_content`; carry thinking as a
+		// typed content chunk instead. Only ever rewritten on the Mistral
+		// endpoint so every other provider keeps its bytes unchanged.
+		if (isMistralEndpoint(account)) {
+			stripMistralReasoning(body);
 		}
 	}
 
