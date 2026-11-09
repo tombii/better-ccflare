@@ -9,6 +9,7 @@ import {
 	logError,
 	type ModelRouting,
 	ProviderError,
+	parseNightWindow,
 	splitModelRouting,
 	stripModelRouting,
 	TIME_CONSTANTS,
@@ -18,6 +19,7 @@ import { Logger } from "@better-ccflare/logger";
 import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
 import {
 	type AnyUsageData,
+	applyNightWindowHeader,
 	applyXaiConvIdHeader,
 	getProvider,
 	isAnthropicExtraUsageExhausted,
@@ -1672,6 +1674,27 @@ export async function proxyWithAccount(
 			provider.name,
 			account,
 			getXaiConvId(requestMeta),
+		);
+
+		// Night-window completion tier (providers with a registered TierAdapter).
+		// Applied here for the same reason as the conv id above: the window
+		// depends on the selected account's opt-in flag, which prepareHeaders
+		// never sees. The window is resolved from config on every build, so a
+		// failover to another account re-evaluates it, while an in-place retry
+		// (reissueRequestInPlace) keeps the tier resolved at first build. A
+		// no-op for providers without an adapter, for accounts without the
+		// flag, and outside the window; any client-supplied tier header is
+		// stripped by applyNightWindowHeader.
+		// Config is a real Config instance in production; the optional-call
+		// guard only tolerates partial config doubles in tests.
+		applyNightWindowHeader(
+			headers,
+			provider.name,
+			account,
+			parseNightWindow(
+				ctx.config.getNightWindow?.() ?? "",
+				ctx.config.getNightTz?.() ?? "",
+			),
 		);
 		const targetUrl = provider.buildUrl(url.pathname, url.search, account);
 

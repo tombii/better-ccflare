@@ -3416,6 +3416,65 @@ export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 }
 
 /**
+ * Create an account night-window toggle handler.
+ *
+ * The flag is provider-agnostic by design: any provider that registers a
+ * night-window tier adapter can use it, so there is deliberately no
+ * sailresearch-only gate here.
+ */
+export function createAccountNightWindowHandler(dbOps: DatabaseOperations) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body: unknown = await req.json();
+
+			// Validate enabled parameter (strict boolean)
+			const enabled = (body as { enabled?: unknown } | null)?.enabled;
+
+			if (typeof enabled !== "boolean") {
+				return errorResponse(
+					BadRequest("Enabled field is required and must be a boolean"),
+				);
+			}
+
+			// Check if account exists
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string }>(
+				"SELECT name FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			// Update night-window setting
+			await dbOps.setNightWindowEnabled(accountId, enabled);
+
+			const updated = await dbOps.getAccount(accountId);
+			if (!updated) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			const action = enabled ? "enabled" : "disabled";
+
+			return jsonResponse({
+				success: true,
+				message: `Night window ${action} for account '${account.name}'`,
+				nightWindowEnabled: enabled,
+				account: updated,
+			});
+		} catch (error) {
+			log.error("Account night-window toggle error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to toggle night window"),
+			);
+		}
+	};
+}
+
+/**
  * Create an account billing type handler
  */
 export function createAccountBillingTypeHandler(dbOps: DatabaseOperations) {

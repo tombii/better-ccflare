@@ -45,6 +45,7 @@ const ACCOUNT_ADDITIVE_COLUMNS = [
 	"consecutive_rate_limits",
 	"last_manual_reauth_at",
 	"peak_hours_pause_enabled",
+	"night_window_enabled",
 	"usage_pause_five_hour_threshold",
 	"usage_pause_weekly_threshold",
 	"usage_pause_five_hour_enabled",
@@ -212,7 +213,8 @@ export function ensureSchema(db: Database): void {
 			gateway_hint_prev_tool_durations TEXT,
 			gateway_hint_compaction TEXT,
 			gateway_hint_context_compacted TEXT,
-			provider_served TEXT
+			provider_served TEXT,
+			completion_tier TEXT
 		)
 	`);
 
@@ -1309,6 +1311,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added peak_hours_pause_enabled column to accounts table");
 		}
 
+		// Add night_window_enabled column for per-account Sail completion tier
+		if (!initialAccountsColumnNames.includes("night_window_enabled")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN night_window_enabled INTEGER NOT NULL DEFAULT 0",
+			).run();
+			log.info("Added night_window_enabled column to accounts table");
+		}
+
 		// Add pause_reason column to track why an account is paused (issue #139)
 		// Possible values: null (not paused), 'manual' (user paused via CLI/API),
 		// 'failure_threshold' (auto-refresh failures), 'overage' (billing overage)
@@ -1746,6 +1756,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (!requestsColumnNames.includes("provider_served")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN provider_served TEXT").run();
 			log.info("Added provider_served column to requests table");
+		}
+
+		// Add completion_tier if it doesn't exist. The tier the provider reports
+		// it actually ran the request on (response usage.service_tier). NULL when
+		// the provider reports no tier — never a fallback to the requested tier.
+		if (!requestsColumnNames.includes("completion_tier")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN completion_tier TEXT").run();
+			log.info("Added completion_tier column to requests table");
 		}
 
 		// Add the binary payload column to request_payloads if it doesn't exist.

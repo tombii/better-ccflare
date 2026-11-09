@@ -83,6 +83,7 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			gateway_hint_compaction: string | null;
 			gateway_hint_context_compacted: string | null;
 			provider_served: string | null;
+			completion_tier: string | null;
 		}>(
 			`
 			SELECT r.*, a.name as account_name
@@ -154,6 +155,9 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			// The backend the provider's own response body named — a fact from
 			// the upstream response, absent when the provider does not say.
 			providerServed: request.provider_served || undefined,
+			// The tier the provider reported it actually ran the request on,
+			// absent when it reports none.
+			completionTier: request.completion_tier || undefined,
 		}));
 
 		return jsonResponse(response);

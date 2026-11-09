@@ -93,6 +93,11 @@ export {
 	MODEL_SHORT_NAMES,
 } from "./models";
 export {
+	isInNightWindow,
+	type NightWindow,
+	parseNightWindow,
+} from "./night-window";
+export {
 	installOutboundProxy,
 	uninstallOutboundProxy,
 } from "./outbound-proxy";

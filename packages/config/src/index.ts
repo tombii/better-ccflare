@@ -7,6 +7,7 @@ import {
 	DEFAULT_STRATEGY,
 	isValidStrategy,
 	NETWORK,
+	parseNightWindow,
 	type StrategyName,
 	TIME_CONSTANTS,
 	ValidationError,
@@ -38,6 +39,27 @@ function isValidModelScopedCapacityRoutingMode(
 	value: unknown,
 ): value is ModelScopedCapacityRoutingMode {
 	return value === "off" || value === "exhausted";
+}
+
+/**
+ * A night-window spec is empty (feature off) or a "HH:MM-HH:MM" pair the
+ * shared core parser accepts in UTC. Delegating to parseNightWindow keeps
+ * the config layer and the request-time consumer on one grammar.
+ */
+function isValidNightWindow(value: unknown): value is string {
+	if (typeof value !== "string") return false;
+	if (value === "") return true;
+	return parseNightWindow(value, "UTC") !== null;
+}
+
+/**
+ * A zone is empty (UTC) or an IANA name Intl accepts. A trivial window is
+ * parsed with the candidate zone purely to reuse the parser's zone check.
+ */
+function isValidNightTz(value: unknown): value is string {
+	if (typeof value !== "string") return false;
+	if (value === "") return true;
+	return parseNightWindow("00:00-00:01", value) !== null;
 }
 
 export interface RuntimeConfig {
@@ -130,6 +152,10 @@ export interface ConfigData {
 	usage_throttling_weekly_enabled?: boolean;
 	codex_five_hour_window_enabled?: boolean;
 	model_scoped_capacity_routing?: ModelScopedCapacityRoutingMode;
+	// sailresearch night window: "HH:MM-HH:MM" in `night_tz` (empty = off),
+	// and an IANA zone name (empty = UTC). See getNightWindow()/getNightTz().
+	night_window?: string;
+	night_tz?: string;
 	combos_enabled?: boolean;
 	combo_session_fallback?: boolean;
 	force_account_model?: boolean;
@@ -925,6 +951,68 @@ export class Config extends EventEmitter {
 		this.set("model_scoped_capacity_routing", mode);
 	}
 
+	private resolveNightWindow(): {
+		value: string;
+		source: "env" | "file" | "default";
+	} {
+		return this.resolveEnvFileSetting(
+			process.env.NIGHT_WINDOW,
+			this.data.night_window,
+			isValidNightWindow,
+			"",
+		);
+	}
+
+	private resolveNightTz(): {
+		value: string;
+		source: "env" | "file" | "default";
+	} {
+		return this.resolveEnvFileSetting(
+			process.env.NIGHT_TZ,
+			this.data.night_tz,
+			isValidNightTz,
+			"",
+		);
+	}
+
+	/**
+	 * Effective sailresearch night window ("HH:MM-HH:MM", local to
+	 * getNightTz()), resolved as NIGHT_WINDOW env > file > default. An empty
+	 * string means the feature is off; invalid values resolve to "" rather
+	 * than throwing, so a typo can never take the proxy down.
+	 */
+	getNightWindow(): string {
+		return this.resolveNightWindow().value;
+	}
+
+	/**
+	 * Effective IANA zone for the night window, resolved as NIGHT_TZ env >
+	 * file > default. An empty string means UTC (the parser's default).
+	 */
+	getNightTz(): string {
+		return this.resolveNightTz().value;
+	}
+
+	setNightWindow(value: string): void {
+		if (!isValidNightWindow(value)) {
+			throw new ValidationError(
+				`Invalid night_window: ${value} (expected HH:MM-HH:MM or empty)`,
+				"night_window",
+			);
+		}
+		this.set("night_window", value);
+	}
+
+	setNightTz(value: string): void {
+		if (!isValidNightTz(value)) {
+			throw new ValidationError(
+				`Invalid night_tz: ${value} (expected an IANA zone name or empty)`,
+				"night_tz",
+			);
+		}
+		this.set("night_tz", value);
+	}
+
 	/**
 	 * Whether combos take part in routing at all.
 	 *
@@ -1335,6 +1423,8 @@ export class Config extends EventEmitter {
 			usage_throttling_weekly_enabled: this.getUsageThrottlingWeeklyEnabled(),
 			codex_five_hour_window_enabled: this.getCodexFiveHourWindowEnabled(),
 			model_scoped_capacity_routing: this.getModelScopedCapacityRouting(),
+			night_window: this.getNightWindow(),
+			night_tz: this.getNightTz(),
 			combos_enabled: this.getCombosEnabled(),
 			combo_session_fallback: this.getComboSessionFallback(),
 			force_account_model: this.getForceAccountModel(),

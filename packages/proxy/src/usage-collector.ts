@@ -54,6 +54,8 @@ interface RequestState {
 		tokensPerSecond?: number;
 		/** Backend named by the provider's own response body (non-stream only). */
 		providerServed?: string;
+		/** Provider-reported (applied) tier, from response `usage.service_tier`. */
+		completionTier?: string;
 	};
 	lastActivity: number;
 	createdAt: number; // Capacity eviction ordering
@@ -179,6 +181,18 @@ function processSSELine(line: string, state: RequestState): void {
 	}
 }
 
+/**
+ * The provider-reported (applied) completion/service tier, from a `usage`
+ * object's `service_tier`. String values only, and empty strings count as
+ * absent — this is the tier the provider says it RAN the request on, never a
+ * fallback to the tier the client asked for.
+ */
+function reportedCompletionTier(usage: unknown): string | undefined {
+	if (!usage || typeof usage !== "object") return undefined;
+	const tier = (usage as { service_tier?: unknown }).service_tier;
+	return typeof tier === "string" && tier.length > 0 ? tier : undefined;
+}
+
 // Extract usage data from non-stream JSON response bodies
 function extractUsageFromJson(
 	json: {
@@ -188,6 +202,7 @@ function extractUsageFromJson(
 			cache_read_input_tokens?: number;
 			cache_creation_input_tokens?: number;
 			output_tokens?: number;
+			service_tier?: unknown;
 		};
 	},
 	state: RequestState,
@@ -205,6 +220,9 @@ function extractUsageFromJson(
 	if (!usageObj) return;
 
 	state.usage.model = json.model ?? state.usage.model;
+
+	const completionTier = reportedCompletionTier(usageObj);
+	if (completionTier) state.usage.completionTier = completionTier;
 
 	state.usage.inputTokens = usageObj.input_tokens ?? 0;
 	state.usage.cacheReadInputTokens = usageObj.cache_read_input_tokens ?? 0;
@@ -238,6 +256,18 @@ function extractUsageFromData(
 			parsed,
 		);
 		if (served) state.usage.providerServed = served;
+
+		// The provider-reported (applied) tier rides in `usage` on both
+		// message_start (`message.usage`) and message_delta (`usage`). Read it
+		// before the branches below — message_delta returns early once it has
+		// processed its usage block. A frame that names a tier overwrites an
+		// earlier frame's value: message_delta is the last report before the
+		// stream closes, so its tier is the most current applied one.
+		const frameTier =
+			reportedCompletionTier(parsed.message?.usage) ??
+			reportedCompletionTier(parsed.response?.usage) ??
+			reportedCompletionTier(parsed.usage);
+		if (frameTier) state.usage.completionTier = frameTier;
 
 		// Handle message_start - check both parsed.type and eventType
 		// (Some providers put type in event line, Anthropic puts it in JSON)
@@ -945,6 +975,7 @@ export class UsageCollector {
 								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
 								tokensPerSecond: state.usage.tokensPerSecond,
 								providerServed: state.usage.providerServed,
+								completionTier: state.usage.completionTier,
 							}
 						: undefined,
 					state.agentUsed,
@@ -1040,6 +1071,7 @@ export class UsageCollector {
 			gatewayHintContextCompacted:
 				state.gatewayHint.contextCompacted ?? undefined,
 			providerServed: state.usage.providerServed,
+			completionTier: state.usage.completionTier,
 			// Same value handed to saveRequest above, so a dashboard does not have
 			// to reload before a request shows its terminal state. Note this is
 			// the value as REPORTED, not as persisted: the save is an

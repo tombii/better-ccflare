@@ -43,12 +43,14 @@ import {
 	getApiKeyStats,
 	handleRepairCommand,
 	listApiKeys,
+	parseNightWindowValue,
 	pauseAccount,
 	reauthenticateAccount,
 	removeAccount,
 	resetAllStats,
 	resumeAccount,
 	runDoctor,
+	setAccountNightWindow,
 	setAccountPriority,
 	setUsagePauseThresholds,
 } from "@better-ccflare/cli-commands";
@@ -93,6 +95,7 @@ interface ParsedArgs {
 		| "codebuddy"
 		| "xai"
 		| "ollama"
+		| "sailresearch"
 		| null;
 	priority: number | null;
 	profile: string | null;
@@ -102,6 +105,8 @@ interface ParsedArgs {
 	pause: string | null;
 	resume: string | null;
 	setPriority: [string, number] | null;
+	setNightWindow: [string, string] | null;
+	nightWindow: boolean | null;
 	setUsagePauseThresholds: [string, string | null, string | null] | null;
 	reauthenticate: string | null;
 	analyze: boolean;
@@ -463,6 +468,8 @@ function parseArgs(args: string[]): ParsedArgs {
 		pause: null,
 		resume: null,
 		setPriority: null,
+		setNightWindow: null,
+		nightWindow: null,
 		setUsagePauseThresholds: null,
 		reauthenticate: null,
 		analyze: false,
@@ -561,6 +568,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "codebuddy"
 					| "xai"
 					| "ollama"
+					| "sailresearch"
 					| "max";
 
 				// Handle deprecated "max" mode with warning
@@ -586,7 +594,8 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "codex"
 					| "codebuddy"
 					| "xai"
-					| "ollama";
+					| "ollama"
+					| "sailresearch";
 				const validModes: Array<
 					| "claude-oauth"
 					| "console"
@@ -603,6 +612,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "codebuddy"
 					| "xai"
 					| "ollama"
+					| "sailresearch"
 				> = [
 					"claude-oauth",
 					"console",
@@ -619,6 +629,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					"codebuddy",
 					"xai",
 					"ollama",
+					"sailresearch",
 				];
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
@@ -739,6 +750,37 @@ function parseArgs(args: string[]): ParsedArgs {
 				const name = args[++i];
 				const priority = parseInt(args[++i], 10);
 				parsed.setPriority = [name, priority];
+				break;
+			}
+			case "--set-night-window": {
+				if (
+					i + 2 >= args.length ||
+					args[i + 1].startsWith("--") ||
+					args[i + 2].startsWith("--")
+				) {
+					console.error(
+						"❌ --set-night-window requires an account name and on|off",
+					);
+					fastExit(1);
+				}
+				const name = args[++i];
+				parsed.setNightWindow = [name, args[++i]];
+				break;
+			}
+			case "--night-window": {
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --night-window requires on|off");
+					fastExit(1);
+				}
+				const raw = args[++i];
+				const parsedValue = parseNightWindowValue(raw);
+				if (!parsedValue.ok) {
+					console.error(
+						`❌ Invalid --night-window value '${raw}': expected on/off, true/false or 1/0`,
+					);
+					fastExit(1);
+				}
+				parsed.nightWindow = parsedValue.value;
 				break;
 			}
 			case "--set-usage-pause-thresholds": {
@@ -895,7 +937,7 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|deepseek|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|codebuddy|xai|ollama>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|deepseek|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|codebuddy|xai|ollama|sailresearch>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
@@ -912,7 +954,9 @@ Options:
       codex: Codex (OpenAI OAuth) provider
       xai: xAI/Grok provider (imports local Grok CLI OAuth credentials)
       ollama: Ollama local provider (no API key required)
+      sailresearch: Sail Research provider (API key)
     --priority <number>   Account priority (default: 0)
+    --night-window <on|off>  Enable the provider night window (sailresearch)
   --list               List all accounts
   --remove <name>      Remove an account
   --reauthenticate <name> Re-authenticate an account (preserves metadata)
@@ -920,6 +964,7 @@ Options:
   --resume <name>      Resume an account
   --force-reset-rate-limit <name> Force-clear stale rate-limit lock for an account
   --set-priority <name> <priority>  Set account priority
+  --set-night-window <name> <on|off>  Enable/disable the provider night window for an account
   --set-usage-pause-thresholds <name> <5h%|off> <weekly%|off>
                         Pause the account when a usage window reaches the given percentage
   --analyze            Analyze database performance
@@ -1089,6 +1134,9 @@ Examples:
 			console.error(
 				"  --mode ollama              Ollama local provider (no API key required)",
 			);
+			console.error(
+				"  --mode sailresearch        Sail Research provider (API key)",
+			);
 			console.error("\nExample:");
 			console.error(
 				"  better-ccflare --add-account work --mode claude-oauth --priority 0",
@@ -1118,6 +1166,38 @@ Examples:
 					mode,
 					priority,
 					adapter: stdPromptAdapter,
+				});
+			} else if (mode === "sailresearch") {
+				// Sail Research: API key from the CLI env vars, or a prompt
+				let apiKey =
+					process.env[
+						`BETTER_CCFLARE_API_KEY_${parsed.addAccount.toUpperCase()}`
+					] ||
+					process.env[`API_KEY_${parsed.addAccount.toUpperCase()}`] ||
+					"";
+
+				if (!apiKey) {
+					const { stdPromptAdapter } = await import(
+						"@better-ccflare/cli-commands"
+					);
+					apiKey = await stdPromptAdapter.input(
+						`Enter API key for ${parsed.addAccount}: `,
+					);
+				}
+
+				await addAccount(dbOps, new Config(), {
+					name: parsed.addAccount,
+					mode: "sailresearch",
+					priority,
+					nightWindow: parsed.nightWindow ?? undefined,
+					adapter: {
+						select: async <T extends string | number>(
+							_prompt: string,
+							_options: Array<{ label: string; value: T }>,
+						) => (_options[0]?.value as T) || ("yes" as T),
+						input: async () => apiKey,
+						confirm: async () => true,
+					},
 				});
 			} else if (mode === "bedrock") {
 				// Bedrock uses AWS profiles, not API keys
@@ -1350,6 +1430,17 @@ Examples:
 		}
 
 		const result = await setAccountPriority(dbOps, name, priority);
+		console.log(result.message);
+		if (!result.success) {
+			await exitGracefully(1);
+		}
+		await exitGracefully(0);
+	}
+
+	if (parsed.setNightWindow) {
+		const [name, value] = parsed.setNightWindow;
+
+		const result = await setAccountNightWindow(dbOps, name, value);
 		console.log(result.message);
 		if (!result.success) {
 			await exitGracefully(1);

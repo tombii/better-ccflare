@@ -10,6 +10,7 @@ import {
 	createAccountForceResetRateLimitHandler,
 	createAccountModelFallbacksUpdateHandler,
 	createAccountModelMappingsUpdateHandler,
+	createAccountNightWindowHandler,
 	createAccountPauseHandler,
 	createAccountPeakHoursPauseHandler,
 	createAccountPriorityUpdateHandler,
@@ -799,6 +800,16 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					peakHoursPauseHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account night-window toggle (provider-agnostic)
+			if (path.endsWith("/night-window") && method === "POST") {
+				const nightWindowHandler = createAccountNightWindowHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					nightWindowHandler(req, accountId),
 				)(req, url);
 			}
 

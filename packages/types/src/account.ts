@@ -371,6 +371,7 @@ export interface AccountRow {
 	auto_refresh_enabled?: boolean | number | null;
 	auto_pause_on_overage_enabled?: boolean | number | null;
 	peak_hours_pause_enabled?: boolean | number | null;
+	night_window_enabled?: boolean | number | null;
 	usage_pause_five_hour_threshold?: number | null;
 	usage_pause_weekly_threshold?: number | null;
 	usage_pause_five_hour_enabled?: boolean | number | null;
@@ -415,6 +416,8 @@ export interface Account {
 	auto_refresh_enabled: boolean;
 	auto_pause_on_overage_enabled: boolean;
 	peak_hours_pause_enabled: boolean;
+	/** Add the Sail "balanced" completion-window header during the configured night window. */
+	night_window_enabled: boolean;
 	/** Pause the account when 5-hour utilization reaches this percent. null = unset. */
 	usage_pause_five_hour_threshold: number | null;
 	/** Pause the account when weekly utilization reaches this percent. null = unset. */
@@ -472,6 +475,7 @@ export interface AccountResponse {
 	autoRefreshEnabled: boolean;
 	autoPauseOnOverageEnabled?: boolean;
 	peakHoursPauseEnabled?: boolean;
+	nightWindowEnabled?: boolean;
 	/**
 	 * Runtime-only, server-computed peak-hours state (not persisted). `null` for
 	 * providers without a peak concept.
@@ -548,6 +552,7 @@ export interface AccountListItem {
 		| "zai"
 		| "minimax"
 		| "deepseek"
+		| "sailresearch"
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
@@ -630,6 +635,7 @@ export function toAccount(row: AccountRow): Account {
 		auto_refresh_enabled: !!row.auto_refresh_enabled,
 		auto_pause_on_overage_enabled: !!row.auto_pause_on_overage_enabled,
 		peak_hours_pause_enabled: !!row.peak_hours_pause_enabled,
+		night_window_enabled: !!row.night_window_enabled,
 		usage_pause_five_hour_threshold: toNumOrNull(
 			row.usage_pause_five_hour_threshold,
 		),
@@ -741,6 +747,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		autoRefreshEnabled: account.auto_refresh_enabled,
 		autoPauseOnOverageEnabled: account.auto_pause_on_overage_enabled,
 		peakHoursPauseEnabled: account.peak_hours_pause_enabled,
+		nightWindowEnabled: account.night_window_enabled,
 		usagePauseFiveHourThreshold: account.usage_pause_five_hour_threshold,
 		usagePauseWeeklyThreshold: account.usage_pause_weekly_threshold,
 		usagePauseFiveHourEnabled: account.usage_pause_five_hour_enabled,
