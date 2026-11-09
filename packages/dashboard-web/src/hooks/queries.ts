@@ -3,6 +3,7 @@ import type { AgentUpdatePayload } from "@better-ccflare/types";
 import { COMMON_MODELS } from "@better-ccflare/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type RequestPayload, type RequestSummary } from "../api";
+import { REFRESH_INTERVALS } from "../constants";
 import { queryKeys } from "../lib/query-keys";
 import { getRequestsSseSeq } from "./useRequestStream";
 
@@ -618,6 +619,17 @@ export const useCombos = () => {
 	return useQuery({
 		queryKey: queryKeys.combos(),
 		queryFn: () => api.getCombos(),
+	});
+};
+
+/** Family → combo → slot flow view with 24h stats (GET /api/combos/flow). */
+export const useComboFlow = () => {
+	return useQuery({
+		queryKey: queryKeys.comboFlow(),
+		queryFn: () => api.getComboFlow(),
+		staleTime: 20000,
+		refetchInterval: REFRESH_INTERVALS.default,
+		refetchIntervalInBackground: false,
 	});
 };
 

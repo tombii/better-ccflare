@@ -8,7 +8,8 @@
 4. [Managing Combos](#managing-combos)
 5. [Family Activation](#family-activation)
 6. [Slot Builder](#slot-builder)
-7. [REST API](#rest-api)
+7. [Combo Flow View](#combo-flow-view)
+8. [REST API](#rest-api)
 8. [Examples](#examples)
 
 ## Overview
@@ -155,6 +156,41 @@ Each slot's model field overrides the original requested model. This means you c
 - Mix models in a chain (Opus → Sonnet → Haiku)
 - Use provider-specific model names (e.g., OpenRouter model IDs)
 
+## Combo Flow View
+
+The **Combo Flow** page (sidebar → Combo Flow, `/combo-flow`) answers "what is
+my combo actually doing right now" without opening each combo in turn.
+
+For every model family it draws the pipeline the proxy follows:
+
+```
+client <family> models → assigned combo → slots in priority order
+```
+
+The slot chain shows, per slot, the account, the model it pins (or
+`passthrough` when the slot sends the client's own model), the provider, and
+whether the slot is currently routable. A slot that the selector would skip is
+marked `unavailable` (paused, needs re-auth, rate-limited) or `Cooling` with its
+cooldown deadline; a slot pointing at a deleted account is marked
+`account missing`. The account the proxy last actually picked for that family
+is highlighted, with how long ago it happened.
+
+Each combo that appears expands to two tabs:
+
+- **Recent requests** — the newest requests tagged with this combo's name
+  (requested model → served model, account, status, failovers, latency).
+- **Matrix & stats** — 24-hour totals (requests, success rate, failover
+  requests, average response time), the observed resolution matrix
+  (client model → served model → account, with counts), the slot definition in
+  priority order, and the top error groups.
+
+Two limits worth knowing:
+
+- Statistics come only from requests whose `combo_name` tag was recorded, so a
+  combo that has not served traffic in the last 24 hours shows zeroes.
+- The "last picked account" comes from in-process routing telemetry, so it is
+  empty right after a restart until the proxy routes that family again.
+
 ## REST API
 
 All combo and family management endpoints are available via the REST API.
@@ -165,6 +201,7 @@ All combo and family management endpoints are available via the REST API.
 | ------ | -------- | ----------- |
 | `GET` | `/api/combos` | List all combos with slot counts |
 | `POST` | `/api/combos` | Create a new combo |
+| `GET` | `/api/combos/flow` | Read-only flow view: family assignments, slot chains, last observed routing order and 24h per-combo stats (backs the Combo Flow page) |
 | `GET` | `/api/combos/:id` | Get combo detail with all slots |
 | `PUT` | `/api/combos/:id` | Update combo (name, description, enabled) |
 | `DELETE` | `/api/combos/:id` | Delete combo (cascades slots) |

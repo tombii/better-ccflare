@@ -12,6 +12,7 @@ import { AccountsTab } from "./components/AccountsTab";
 import { AgentsTab } from "./components/AgentsTab";
 import { ApiKeyAuthDialog } from "./components/ApiKeyAuthDialog";
 import { ApiKeysTab } from "./components/ApiKeysTab";
+import { ComboFlowTab } from "./components/combo-flow/ComboFlowTab";
 import { CombosTab } from "./components/combos/CombosTab";
 import { DebugPanel } from "./components/DebugPanel";
 import { LogsTab } from "./components/LogsTab";
@@ -155,6 +156,13 @@ export function App() {
 			element: <CombosTab />,
 			title: "Combos Management",
 			subtitle: "Define fallback chains for model families",
+		});
+		baseRoutes.splice(6, 0, {
+			path: "/combo-flow",
+			element: <ComboFlowTab />,
+			title: "Combo Flow",
+			subtitle:
+				"How each active combo routes a request: family → combo → account/model chain",
 		});
 
 		return baseRoutes;

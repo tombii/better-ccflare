@@ -31,6 +31,7 @@ export const queryKeys = {
 	defaultAgentModel: () =>
 		[...queryKeys.all, "config", "defaultAgentModel"] as const,
 	combos: () => [...queryKeys.all, "combos"] as const,
+	comboFlow: () => [...queryKeys.all, "combos", "flow"] as const,
 	families: () => [...queryKeys.all, "families"] as const,
 	apiKeys: () => [...queryKeys.all, "api-keys"] as const,
 	storage: () => [...queryKeys.all, "storage"] as const,

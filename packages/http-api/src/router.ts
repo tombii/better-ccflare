@@ -76,6 +76,7 @@ import {
 	createSlotReorderHandler,
 	createSlotUpdateHandler,
 } from "./handlers/combos";
+import { createComboFlowHandler } from "./handlers/combos-flow";
 import { createConfigHandlers } from "./handlers/config";
 import {
 	createHeapSnapshotHandler,
@@ -117,7 +118,10 @@ import {
 	createRequestsSummaryHandler,
 } from "./handlers/requests";
 import { createRequestsStreamHandler } from "./handlers/requests-stream";
-import { createRoutingObservationsHandler } from "./handlers/routing-observations";
+import {
+	createRoutingObservationsHandler,
+	getRoutingObservations,
+} from "./handlers/routing-observations";
 import { createSearchProviderHandlers } from "./handlers/search-providers";
 import { createSessionAccountHandler } from "./handlers/sessions";
 import { createStatsHandler, createStatsResetHandler } from "./handlers/stats";
@@ -955,6 +959,16 @@ export class APIRouter {
 					url,
 				);
 			}
+		}
+
+		// GET /api/combos/flow — must precede the /api/combos/:id handler below,
+		// which would otherwise read "flow" as a combo id.
+		if (path === "/api/combos/flow" && method === "GET") {
+			const flowHandler = createComboFlowHandler(
+				this.context.dbOps,
+				getRoutingObservations,
+			);
+			return await this.wrapHandler(() => flowHandler())(req, url);
 		}
 
 		// Check for dynamic combo endpoints

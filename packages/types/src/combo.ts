@@ -96,3 +96,105 @@ export function toComboFamilyAssignment(
 		enabled: !!row.enabled,
 	};
 }
+
+// ── Combo Flow view (GET /api/combos/flow) ──────────────────────────────────
+// Read-only, dashboard-facing projection of how requests flow through combos:
+// family → assigned combo → ordered slots, plus 24h per-combo statistics
+// derived from the requests table. Every field is JSON-serialisable.
+
+/** Families the flow view always renders, in display order. */
+export const COMBO_FLOW_FAMILIES: ComboFamily[] = [
+	"fable",
+	"opus",
+	"sonnet",
+	"haiku",
+];
+
+/** A family's assignment and the last order the proxy actually selected. */
+export interface ComboFlowFamily {
+	family: string;
+	/** False when no assignment row exists or the assignment is disabled. */
+	assignmentEnabled: boolean;
+	/** The assigned combo (whatever its own enabled flag), or null. */
+	combo: { id: string; name: string; enabled: boolean } | null;
+	/**
+	 * The proxy's last-observed routable order for this family (display-only
+	 * telemetry), or null when nothing has been observed since process start.
+	 */
+	observation: {
+		model: string;
+		order: Array<{ id: string; name: string }>;
+		observedAtMs: number;
+	} | null;
+}
+
+/** One slot of a combo, as shown in the flow chain. */
+export interface ComboFlowSlot {
+	id: string;
+	accountId: string;
+	accountName: string | null;
+	provider: string | null;
+	/** Empty string = passthrough (the client's model is sent unchanged). */
+	model: string;
+	priority: number;
+	enabled: boolean;
+	cooldownUntil: number | null;
+	/** No active cooldown and the account still exists. */
+	available: boolean;
+}
+
+/**
+ * One observed (requested model → served model → account) pairing.
+ *
+ * `originalModel`/`appliedModel` are populated only when an AGENT preference
+ * rewrote the model; a combo slot's model override does not touch them. The
+ * model a combo slot actually pinned therefore shows up as `servedModel` (the
+ * model the upstream response reported), which is also the only field that
+ * distinguishes two slots on the same account.
+ */
+export interface ComboFlowPairing {
+	originalModel: string | null;
+	appliedModel: string | null;
+	/** Model reported by the upstream response — includes combo-slot overrides. */
+	servedModel: string | null;
+	account: string | null;
+	count: number;
+	/** 0..1 */
+	successRate: number;
+}
+
+export interface ComboFlowStats {
+	requests: number;
+	/** 0..1, or null when requests = 0. */
+	successRate: number | null;
+	/** Requests where failover_attempts > 0. */
+	failoverRequests: number;
+	avgResponseMs: number | null;
+	errorTop: Array<{
+		status: number | null;
+		error: string | null;
+		/** Account the failing rows used (null when the request never reached one). */
+		accountId: string | null;
+		count: number;
+	}>;
+	pairings: ComboFlowPairing[];
+}
+
+export interface ComboFlowCombo {
+	id: string;
+	name: string;
+	description: string | null;
+	enabled: boolean;
+	/** How many family assignments reference this combo. */
+	familyCount: number;
+	slots: ComboFlowSlot[];
+	stats: ComboFlowStats;
+}
+
+export interface ComboFlowResponse {
+	/** Epoch ms the response was generated. */
+	generatedAt: number;
+	windows: { requestsHours: number };
+	families: ComboFlowFamily[];
+	combos: ComboFlowCombo[];
+}
