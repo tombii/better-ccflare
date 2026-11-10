@@ -347,6 +347,9 @@ describe.skipIf(!livePgAvailable)(
 				getRequestRetentionDays: () => 30,
 				getDataRetentionDays: () => 7,
 				getStorePayloads: () => true,
+				// createAccountsListHandler reads these per account.
+				getUsageThrottlingFiveHourEnabled: () => false,
+				getUsageThrottlingWeeklyEnabled: () => false,
 			} as unknown as Config;
 
 			// AlertService touches no external state until start() is called,
