@@ -38,8 +38,18 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		this.store = store;
 	}
 
-	private resetSessionIfExpired(account: Account): void {
-		const now = Date.now();
+	/**
+	 * `requestStartedAt` is the start of the request that triggered selection.
+	 * Use it for the new session boundary rather than "now": request rows are
+	 * stamped with the request's start, and getSessionStats counts rows with
+	 * timestamp >= session_start. A boundary taken after the request began puts
+	 * the opening request outside its own session.
+	 */
+	private resetSessionIfExpired(
+		account: Account,
+		requestStartedAt?: number,
+	): void {
+		const now = requestStartedAt ?? Date.now();
 
 		// Check if session has exceeded the fixed duration (only for providers that require session duration tracking)
 		const fixedDurationExpired =
@@ -263,7 +273,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
 		if (chosenFallback !== null) {
 			if (!bypassSession) {
-				this.resetSessionIfExpired(chosenFallback);
+				this.resetSessionIfExpired(chosenFallback, meta.timestamp);
 			}
 			this.log.info(
 				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
@@ -324,7 +334,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			} else {
 				// Reset session if expired (shouldn't happen but just in case)
 				if (!bypassSession) {
-					this.resetSessionIfExpired(activeAccount);
+					this.resetSessionIfExpired(activeAccount, meta.timestamp);
 				}
 				this.log.info(
 					`Continuing session for account ${activeAccount.name} (${activeAccount.session_request_count} requests in session)`,
@@ -361,7 +371,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// Pick the highest priority account (first in sorted list) and start a new session with it
 		const chosenAccount = available[0];
 		if (!bypassSession) {
-			this.resetSessionIfExpired(chosenAccount);
+			this.resetSessionIfExpired(chosenAccount, meta.timestamp);
 		}
 
 		// Return chosen account first, then others as fallback (already sorted by priority)

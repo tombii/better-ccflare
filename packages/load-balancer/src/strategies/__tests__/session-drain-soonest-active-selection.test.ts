@@ -390,7 +390,12 @@ describe("SessionDrainSoonestStrategy — strict ranking mode (A11)", () => {
 		// Selecting it re-opens its window: exactly one store reset, and the
 		// in-memory account reflects the fresh session.
 		expect(resetCalls).toEqual(["aged-out"]);
-		expect(agedOut.session_start).toBeGreaterThanOrEqual(now);
+		// The fresh session is anchored at the request's start (meta.timestamp),
+		// not at selection time: request rows carry the start timestamp and
+		// getSessionStats counts rows with timestamp >= session_start, so a
+		// later boundary would drop the opening request from its own session.
+		expect(agedOut.session_start).toBe(meta.timestamp);
+		expect(agedOut.session_start).toBeGreaterThan(now - 6 * HOUR);
 		expect(agedOut.session_request_count).toBe(0);
 	});
 

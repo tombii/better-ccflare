@@ -200,7 +200,11 @@ export function updateAccountMetadata(
 					`Codex ${windowSlot} window rolled over for ${account.name}: ${prevResetAt} → ${newResetAt}, resetting session`,
 				);
 				ctx.dbOps
-					.resetAccountSession(account.id, Date.now())
+					// Anchor the new session to the request that discovered the
+					// rollover, not to this later response-processing pass: rows
+					// carry the request's start timestamp, so a boundary taken
+					// now would exclude the request from its own session.
+					.resetAccountSession(account.id, startedAt ?? Date.now())
 					.catch((err) =>
 						log.warn(
 							`Failed to reset Codex session for ${account.name} on window reset: ${err}`,
