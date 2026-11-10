@@ -653,11 +653,13 @@ export class UsageCollector {
 			return;
 		}
 
-		// Update account usage if authenticated
+		// Update account usage if authenticated. Hand over the request's start
+		// time so a session opened by this request is anchored to it rather than
+		// to this queued write's execution time — see incrementUsage.
 		if (msg.accountId && msg.accountId !== NO_ACCOUNT_ID) {
 			const accountId = msg.accountId; // Capture for closure
 			this.asyncWriter.enqueue(async () =>
-				this.dbOps.updateAccountUsage(accountId),
+				this.dbOps.updateAccountUsage(accountId, msg.timestamp),
 			);
 		}
 	}

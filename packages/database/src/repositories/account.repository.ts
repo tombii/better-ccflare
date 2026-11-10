@@ -226,11 +226,26 @@ export class AccountRepository extends BaseRepository<Account> {
 		return changes > 0;
 	}
 
+	/**
+	 * Record one request against an account.
+	 *
+	 * `startedAt` is when the request started. Callers should pass it: the
+	 * write runs after the response, so stamping `session_start` with the write
+	 * time puts the boundary a little AFTER the opening request's own row
+	 * timestamp. `getSessionStats` counts rows with `timestamp >= session_start`,
+	 * which would then omit the request that opened the session. It also keeps
+	 * the expiry decision anchored to when the request actually happened.
+	 *
+	 * `last_used` deliberately keeps the write time: it is a display/tiebreak
+	 * value, and anchoring it to request start would let an in-flight long
+	 * request finishing late move it BACKWARDS past a newer request.
+	 */
 	async incrementUsage(
 		accountId: string,
 		sessionDurationMs: number,
+		startedAt?: number,
 	): Promise<void> {
-		const now = Date.now();
+		const sessionAt = startedAt ?? Date.now();
 		await this.run(
 			`
 			UPDATE accounts
@@ -242,13 +257,29 @@ export class AccountRepository extends BaseRepository<Account> {
 					WHEN session_start IS NULL OR ? - COALESCE(session_start, 0) >= ? THEN ?
 					ELSE session_start
 				END,
+				-- Only count this request in the session it belongs to. A request
+				-- that started before the current session opened (an in-flight
+				-- request finishing late, or writes landing out of order) is
+				-- excluded by getSessionStats' timestamp >= session_start window,
+				-- so counting it here would make the request count disagree with
+				-- the token/cost totals computed from that same window.
 				session_request_count = CASE
 					WHEN session_start IS NULL OR ? - COALESCE(session_start, 0) >= ? THEN 1
-					ELSE COALESCE(session_request_count, 0) + 1
+					WHEN ? >= COALESCE(session_start, 0) THEN COALESCE(session_request_count, 0) + 1
+					ELSE COALESCE(session_request_count, 0)
 				END
 			WHERE id = ?
 		`,
-			[now, now, sessionDurationMs, now, now, sessionDurationMs, accountId],
+			[
+				Date.now(),
+				sessionAt,
+				sessionDurationMs,
+				sessionAt,
+				sessionAt,
+				sessionDurationMs,
+				sessionAt,
+				accountId,
+			],
 		);
 	}
 

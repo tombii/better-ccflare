@@ -87,18 +87,25 @@ export function RequestsTab() {
 
 	const { data: accounts } = useAccounts();
 	const { data: configuredApiKeys } = useApiKeys();
-	const zaiAccountNames = new Set(
-		(accounts ?? []).filter((a) => a.provider === "zai").map((a) => a.name),
-	);
-	const deepseekAccountNames = new Set(
-		(accounts ?? [])
-			.filter((a) => a.provider === "deepseek")
-			.map((a) => a.name),
-	);
-	const oauthAccountNames = new Set(
-		(accounts ?? [])
-			.filter((a) => a.provider === "anthropic")
-			.map((a) => a.name),
+	// Memoised because this tab re-renders on every SSE summary event; the
+	// accounts query itself only changes on refetch (60s) or mutation.
+	const { zaiAccountNames, deepseekAccountNames, oauthAccountNames } = useMemo(
+		() => ({
+			zaiAccountNames: new Set(
+				(accounts ?? []).filter((a) => a.provider === "zai").map((a) => a.name),
+			),
+			deepseekAccountNames: new Set(
+				(accounts ?? [])
+					.filter((a) => a.provider === "deepseek")
+					.map((a) => a.name),
+			),
+			oauthAccountNames: new Set(
+				(accounts ?? [])
+					.filter((a) => a.provider === "anthropic")
+					.map((a) => a.name),
+			),
+		}),
+		[accounts],
 	);
 
 	// Transform the data to match the expected structure - memoized to avoid recalculation on SSE updates
@@ -772,11 +779,17 @@ export function RequestsTab() {
 							// excludes Chinese public holidays, a calendar only the
 							// server has. The local rules are the fallback for
 							// summaries that predate the field.
+							//
+							// A request still in flight has no summary yet. The local
+							// DeepSeek rule cannot see holidays, so it is withheld while
+							// pending: showing it would badge a weekday holiday as Peak
+							// and then clear the badge when the summary lands.
 							const isPeak =
 								summary?.peakHours != null
 									? summary.peakHours.active
 									: peakProvider === "deepseek"
-										? isDeepseekPeakHour(request.meta.timestamp)
+										? !request.meta.pending &&
+											isDeepseekPeakHour(request.meta.timestamp)
 										: peakProvider === "zai"
 											? isZaiPeakHour(request.meta.timestamp)
 											: peakProvider === "anthropic"

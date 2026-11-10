@@ -1138,11 +1138,19 @@ OAuth tokens will need to be re-authenticated.
 		);
 	}
 
-	async updateAccountUsage(accountId: string): Promise<void> {
+	/**
+	 * @param startedAt when the request started (epoch ms). Pass it whenever the
+	 * caller knows it — see AccountRepository.incrementUsage for why the session
+	 * boundary must use the request's start rather than the write time.
+	 */
+	async updateAccountUsage(
+		accountId: string,
+		startedAt?: number,
+	): Promise<void> {
 		const sessionDuration =
 			this.runtime?.sessionDurationMs || 5 * 60 * 60 * 1000;
 		await withDatabaseRetry(
-			() => this.accounts.incrementUsage(accountId, sessionDuration),
+			() => this.accounts.incrementUsage(accountId, sessionDuration, startedAt),
 			this.retryConfig,
 			"updateAccountUsage",
 		);
