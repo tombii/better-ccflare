@@ -298,7 +298,7 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 		// A key is optional: without one the adapter calls the keyless v2
 		// endpoint, which Firecrawl gates by IP reputation.
 		requiresKey: false,
-		docsUrl: "https://docs.firecrawl.dev/api-reference/v1-endpoint/search",
+		docsUrl: "https://docs.firecrawl.dev/api-reference/endpoint/search",
 		implemented: true,
 		tiers: ["free", "paid"],
 		keyless: {

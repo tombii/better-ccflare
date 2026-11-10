@@ -56,7 +56,7 @@ export class FirecrawlSearchError extends Error {
 	}
 }
 
-/** The subset of Firecrawl's v1 search body this adapter sends. */
+/** The subset of Firecrawl's v2 search body this adapter sends. */
 interface FirecrawlSearchBody {
 	query: string;
 	limit: number;
