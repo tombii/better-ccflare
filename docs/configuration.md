@@ -381,7 +381,7 @@ The window is a **per-account toggle** plus a **global time range**:
 | `NIGHT_WINDOW` | Time range in which enabled accounts request the cheaper tier, `HH:MM-HH:MM` (24h). The range may wrap past midnight. Resolved **env → config file → default**: a valid value in the environment wins, otherwise a valid `night_window` in the config file is used, otherwise the feature is off. An env value that is present but invalid is skipped rather than forced off, so the config file can still win. Set it to an empty string to switch the feature off outright | unset (off) | `NIGHT_WINDOW=22:00-08:00` |
 | `NIGHT_TZ` | IANA time zone the range is written in. Same env → config file → default order (`night_tz`); an empty value means UTC | `UTC` | `NIGHT_TZ=Europe/Kyiv` |
 
-Turn it on per account with the CLI or the API (the dashboard has no night-window control yet):
+Turn it on per account from the accounts list in the dashboard (the **Night window** switch, shown for providers that offer a cheaper tier), or with the CLI or the API:
 
 ```bash
 # on an existing account
