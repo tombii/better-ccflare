@@ -756,21 +756,32 @@ export function RequestsTab() {
 							const projectSrcLabel = attributionSourceLabel(
 								summary?.projectAttributionSource,
 							);
-							const isZaiPeak =
-								zaiAccountNames.has(request.meta.accountName ?? "") &&
-								isZaiPeakHour(request.meta.timestamp);
-							const isAnthropicPeak =
-								oauthAccountNames.has(request.meta.accountName ?? "") &&
-								isAnthropicPeakHour(request.meta.timestamp);
-							// DeepSeek's window excludes Chinese public holidays, a
-							// calendar only the server has — so prefer the state it
-							// computed for this request. The local rule is the fallback
-							// for summaries written before that field existed.
-							const isDeepseekPeak =
+							// Which peak window applies is a property of the ACCOUNT,
+							// not of the server value: /api/requests returns
+							// `peakHours` for every provider with a peak concept, so
+							// the provider still has to be resolved here for copy.
+							const accountName = request.meta.accountName ?? "";
+							const peakProvider = deepseekAccountNames.has(accountName)
+								? "deepseek"
+								: zaiAccountNames.has(accountName)
+									? "zai"
+									: oauthAccountNames.has(accountName)
+										? "anthropic"
+										: null;
+							// Prefer the server's evaluation — DeepSeek's window
+							// excludes Chinese public holidays, a calendar only the
+							// server has. The local rules are the fallback for
+							// summaries that predate the field.
+							const isPeak =
 								summary?.peakHours != null
 									? summary.peakHours.active
-									: deepseekAccountNames.has(request.meta.accountName ?? "") &&
-										isDeepseekPeakHour(request.meta.timestamp);
+									: peakProvider === "deepseek"
+										? isDeepseekPeakHour(request.meta.timestamp)
+										: peakProvider === "zai"
+											? isZaiPeakHour(request.meta.timestamp)
+											: peakProvider === "anthropic"
+												? isAnthropicPeakHour(request.meta.timestamp)
+												: false;
 							const statusClass =
 								statusCode == null
 									? ""
@@ -898,9 +909,7 @@ export function RequestsTab() {
 										(summary?.tokensPerSecond ?? 0) > 0 ||
 										accountLabel ||
 										request.meta.rateLimited ||
-										isZaiPeak ||
-										isAnthropicPeak ||
-										isDeepseekPeak) && (
+										isPeak) && (
 										<div className="flex flex-wrap items-center gap-1.5 px-3 pb-2 pl-9 text-xs">
 											{summary?.model && (
 												<Badge variant="secondary" className="text-xs">
@@ -993,12 +1002,12 @@ export function RequestsTab() {
 													Rate Limited
 												</Badge>
 											)}
-											{(isZaiPeak || isAnthropicPeak || isDeepseekPeak) && (
+											{isPeak && (
 												<Badge
 													variant="outline"
 													className="text-xs border-orange-500 text-orange-500"
 													title={
-														isDeepseekPeak
+														peakProvider === "deepseek"
 															? "Served during DeepSeek peak hours (01:00–04:00 and 06:00–10:00 UTC, weekdays, excluding Chinese public holidays)"
 															: "Served during the provider's peak pricing window"
 													}

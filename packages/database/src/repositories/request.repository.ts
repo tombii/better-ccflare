@@ -119,6 +119,16 @@ async function decryptForList(
 
 export interface RequestData {
 	id: string;
+	/**
+	 * When the request STARTED, in epoch ms. Callers that know the true start
+	 * (the usage collector, from its start message) should pass it: the row is
+	 * written after the response finishes, so defaulting to "now" would stamp a
+	 * long request with its completion time. Anything derived from the row
+	 * timestamp then disagrees with what the live SSE summary reported for the
+	 * same request — e.g. the peak/off-peak badge when a stream crosses a
+	 * pricing-window boundary. Defaults to `Date.now()`.
+	 */
+	timestamp?: number;
 	method: string;
 	path: string;
 	accountUsed: string | null;
@@ -303,7 +313,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		`,
 			[
 				data.id,
-				Date.now(),
+				data.timestamp ?? Date.now(),
 				data.method,
 				data.path,
 				data.accountUsed,

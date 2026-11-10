@@ -1461,11 +1461,14 @@ OAuth tokens will need to be re-authenticated.
 		gatewayHintPrevToolDurations?: string | null,
 		gatewayHintCompaction?: string | null,
 		gatewayHintContextCompacted?: string | null,
+		/** When the request started (epoch ms); see RequestData.timestamp. */
+		timestamp?: number,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
 				this.requests.save({
 					id,
+					timestamp,
 					method,
 					path,
 					accountUsed,

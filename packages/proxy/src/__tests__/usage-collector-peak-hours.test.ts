@@ -127,6 +127,28 @@ describe("UsageCollector - live summary carries peakHours", () => {
 		expect(offPeak?.peakHours).toEqual({ active: false });
 	});
 
+	test("persists the start timestamp, so a reload classifies the request the same way", async () => {
+		// The row is written after the response finishes. If it were stamped with
+		// the write time instead of the start time, a stream crossing a peak
+		// boundary would show Peak live and lose the badge on reload.
+		const summary = await run(
+			makeStart({
+				requestId: "peak-5-start-timestamp",
+				accountId: "acct-ds",
+				timestamp: WED_PEAK_MS,
+			}),
+		);
+		expect(summary?.peakHours).toEqual({ active: true });
+
+		const rows = await dbOps
+			.getAdapter()
+			.query<{ timestamp: number }>(
+				"SELECT timestamp FROM requests WHERE id = ?",
+				["peak-5-start-timestamp"],
+			);
+		expect(Number(rows[0]?.timestamp)).toBe(WED_PEAK_MS);
+	});
+
 	test("is null for providers without a peak concept", async () => {
 		const summary = await run(
 			makeStart({

@@ -999,6 +999,11 @@ export class UsageCollector {
 					state.gatewayHint.prevToolDurations,
 					state.gatewayHint.compaction,
 					state.gatewayHint.contextCompacted,
+					// Stamp the row with the request's start, not the moment this
+					// queued write runs: the live summary already reports the start
+					// timestamp, and any reload must classify the same request the
+					// same way (e.g. peak vs off-peak near a window boundary).
+					startMessage.timestamp,
 				);
 			} catch (error) {
 				log.error(
