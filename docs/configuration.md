@@ -177,8 +177,8 @@ These environment variables are not stored in the configuration file and must be
 | `USAGE_POLL_INTERVAL_MS` | How often the usage poller refreshes each account's quota windows from its provider's free usage endpoint (Anthropic `/api/oauth/usage`, Codex `chatgpt.com/backend-api/wham/usage`, xAI, MiniMax, …). Clamped to 10 s – 60 min. Same as the `usage_poll_interval_ms` config file field; env var takes precedence | `90000` (90 s) | `USAGE_POLL_INTERVAL_MS=60000` |
 | `CCFLARE_CODEX_MESSAGES_CONTINUATION` | Opt-in: let the Codex provider retain server-owned Responses continuation (`previous_response_id`) while serving `/v1/messages` clients, instead of replaying full translated history every turn. Requires an authenticated API key, a selected account, and a nonempty prompt cache key. State is partitioned by account, model, authenticated caller, session, and protocol; ambiguous, failed, expired, or cancelled turns never create or reuse a checkpoint, and the switch never changes model selection, fallback policy, or `store:false`. See [README](../README.md#claude-messages-continuation-on-codex-opt-in) for details | unset (off) | `CCFLARE_CODEX_MESSAGES_CONTINUATION=1` |
 | `CCFLARE_CODEX_MESSAGES_CONTINUATION_MODELS` | Restricts the above bridge to an exact, comma-separated allowlist of resolved model names. Unset enables all models (when the switch above is on); an empty string enables none | unset (all models) | `CCFLARE_CODEX_MESSAGES_CONTINUATION_MODELS=gpt-6-astra,gpt-5.6-sol` |
-| `NIGHT_WINDOW` | Time range (`HH:MM-HH:MM`, 24h, may wrap past midnight) in which accounts with the [night window](#night-window) enabled request their provider's cheaper completion tier. Unset or malformed means the feature is off for every account, whatever their toggle says | unset (off) | `NIGHT_WINDOW=22:00-08:00` |
-| `NIGHT_TZ` | IANA time zone `NIGHT_WINDOW` is written in. Resolved per request, so a DST-observing zone moves the window with the clock. The proxy never reads the ambient `TZ` for this | `UTC` | `NIGHT_TZ=Europe/Kyiv` |
+| `NIGHT_WINDOW` | Time range (`HH:MM-HH:MM`, 24h, may wrap past midnight) in which accounts with the [night window](#night-window) enabled request their provider's cheaper completion tier. Same as the `night_window` config file field; a valid env value takes precedence, an invalid one is skipped so the file value still applies. Empty (`NIGHT_WINDOW=""`) switches the feature off for every account, whatever their toggle says | unset (off) | `NIGHT_WINDOW=22:00-08:00` |
+| `NIGHT_TZ` | IANA time zone `NIGHT_WINDOW` is written in. Resolved per request, so a DST-observing zone moves the window with the clock. The proxy never reads the ambient `TZ` for this. Same as the `night_tz` config file field; env takes precedence when valid | `UTC` | `NIGHT_TZ=Europe/Kyiv` |
 
 ## Outbound Proxy
 
@@ -378,10 +378,10 @@ The window is a **per-account toggle** plus a **global time range**:
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `NIGHT_WINDOW` | Time range in which enabled accounts request the cheaper tier, `HH:MM-HH:MM` (24h). The range may wrap past midnight. Unset or malformed means the feature is off | unset (off) | `NIGHT_WINDOW=22:00-08:00` |
-| `NIGHT_TZ` | IANA time zone the range is written in. Unset means UTC | `UTC` | `NIGHT_TZ=Europe/Kyiv` |
+| `NIGHT_WINDOW` | Time range in which enabled accounts request the cheaper tier, `HH:MM-HH:MM` (24h). The range may wrap past midnight. Resolved **env → config file → default**: a valid value in the environment wins, otherwise a valid `night_window` in the config file is used, otherwise the feature is off. An env value that is present but invalid is skipped rather than forced off, so the config file can still win. Set it to an empty string to switch the feature off outright | unset (off) | `NIGHT_WINDOW=22:00-08:00` |
+| `NIGHT_TZ` | IANA time zone the range is written in. Same env → config file → default order (`night_tz`); an empty value means UTC | `UTC` | `NIGHT_TZ=Europe/Kyiv` |
 
-Turn it on per account with the dashboard, the CLI, or the API:
+Turn it on per account with the CLI or the API (the dashboard has no night-window control yet):
 
 ```bash
 # on an existing account

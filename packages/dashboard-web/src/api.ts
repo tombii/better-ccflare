@@ -666,7 +666,12 @@ class API extends HttpClient {
 		const startTime = Date.now();
 		const url = "/api/accounts";
 
-		this.logger.debug(`→ POST ${url}`, { data });
+		// Never log the key: this goes to console.debug, which people paste
+		// into bug reports.
+		this.logger.debug(`→ POST ${url}`, {
+			name: data.name,
+			priority: data.priority,
+		});
 
 		try {
 			const response = await this.post<{
