@@ -354,7 +354,8 @@ export function createAccountsListHandler(
 			auto_refresh_enabled: 0 | 1;
 			auto_pause_on_overage_enabled: 0 | 1;
 			peak_hours_pause_enabled: 0 | 1;
-			night_window_enabled: 0 | 1;
+			// BOOLEAN on PostgreSQL, INTEGER on SQLite.
+			night_window_enabled: 0 | 1 | boolean;
 			usage_pause_five_hour_threshold: number | null;
 			usage_pause_weekly_threshold: number | null;
 			usage_pause_five_hour_enabled: 0 | 1;
@@ -397,7 +398,7 @@ export function createAccountsListHandler(
 					custom_endpoint,
 					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
 					COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
-					COALESCE(night_window_enabled, 0) as night_window_enabled,
+					night_window_enabled,
 					usage_pause_five_hour_threshold,
 					usage_pause_weekly_threshold,
 					COALESCE(usage_pause_five_hour_enabled, 0) as usage_pause_five_hour_enabled,
@@ -844,7 +845,8 @@ export function createAccountsListHandler(
 					autoPauseOnOverageEnabled:
 						account.auto_pause_on_overage_enabled === 1,
 					peakHoursPauseEnabled: account.peak_hours_pause_enabled === 1,
-					nightWindowEnabled: account.night_window_enabled === 1,
+					// NOT NULL on both backends; `!!` normalises 1/0 and true/false.
+					nightWindowEnabled: !!account.night_window_enabled,
 					peakHours: getPeakHoursState(account.provider, now),
 					usagePauseFiveHourThreshold:
 						account.usage_pause_five_hour_threshold ?? null,

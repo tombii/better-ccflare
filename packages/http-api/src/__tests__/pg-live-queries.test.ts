@@ -75,6 +75,7 @@ import type {
 	DatabaseOperations,
 } from "@better-ccflare/database";
 import { NO_ACCOUNT_ID } from "@better-ccflare/types";
+import { createAccountsListHandler } from "../handlers/accounts";
 import { createAnalyticsHandler } from "../handlers/analytics";
 import {
 	createCombosListHandler,
@@ -1208,6 +1209,28 @@ describe.skipIf(!livePgAvailable)(
 		//    a different result property (`count`) than its SQLite arm
 		//    (`changes`). Neither arm has ever executed against PG in CI.
 		// -------------------------------------------------------------------
+
+		describe("GET /api/accounts", () => {
+			liveIt(
+				"selects night_window_enabled on PostgreSQL (BOOLEAN, not INTEGER)",
+				async () => {
+					// The list query used to wrap this column in COALESCE(..., 0),
+					// which PostgreSQL rejects because the column is BOOLEAN.
+					await seedAccount({ id: "acct-1", name: "primary" });
+					await dbOps.setNightWindowEnabled("acct-1", true);
+
+					const res = await createAccountsListHandler(dbOps, config)();
+					expect(res.status).toBe(200);
+
+					const body = (await res.json()) as Array<{
+						id: string;
+						nightWindowEnabled?: boolean;
+					}>;
+					const account = body.find((a) => a.id === "acct-1");
+					expect(account?.nightWindowEnabled).toBe(true);
+				},
+			);
+		});
 
 		describe("account repository write path", () => {
 			liveIt(
