@@ -650,6 +650,18 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleNightWindowToggle = async (account: Account) => {
+		try {
+			await api.updateAccountNightWindow(
+				account.id,
+				!account.nightWindowEnabled,
+			);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handleUpdateCustomEndpoint = async (
 		accountId: string,
 		customEndpoint: string | null,
@@ -776,6 +788,7 @@ export function AccountsTab() {
 						onBillingTypeToggle={handleBillingTypeToggle}
 						onAutoPauseOnOverageToggle={handleAutoPauseOnOverageToggle}
 						onPeakHoursPauseToggle={handlePeakHoursPauseToggle}
+						onNightWindowToggle={handleNightWindowToggle}
 						onUsageThresholdsChange={handleUsageThresholdsChange}
 						onCustomEndpointChange={handleCustomEndpointChange}
 						onModelMappingsChange={handleModelMappingsChange}

@@ -17,10 +17,12 @@ import {
 import { useState } from "react";
 import type { Account } from "../../api";
 import {
+	nightWindowTitle,
 	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
 	providerSupportsAutoFeatures,
 	providerSupportsCustomBilling,
+	providerSupportsNightWindow,
 } from "../../utils/provider-utils";
 import { OAuthTokenStatusWithBoundary } from "../OAuthTokenStatus";
 import { Badge } from "../ui/badge";
@@ -53,6 +55,7 @@ interface AccountListItemProps {
 	onBillingTypeToggle: (account: Account) => void;
 	onAutoPauseOnOverageToggle?: (account: Account) => void;
 	onPeakHoursPauseToggle?: (account: Account) => void;
+	onNightWindowToggle?: (account: Account) => void;
 	onUsageThresholdsChange?: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
@@ -77,6 +80,7 @@ export function AccountListItem({
 	onBillingTypeToggle,
 	onAutoPauseOnOverageToggle,
 	onPeakHoursPauseToggle,
+	onNightWindowToggle,
 	onUsageThresholdsChange,
 	onCustomEndpointChange,
 	onModelMappingsChange,
@@ -200,6 +204,19 @@ export function AccountListItem({
 									/>
 								</div>
 							)}
+							{providerSupportsNightWindow(account.provider) &&
+								onNightWindowToggle && (
+									<div className="flex items-center gap-2">
+										<span className="text-xs text-muted-foreground">
+											Night window:
+										</span>
+										<Switch
+											checked={account.nightWindowEnabled ?? false}
+											onCheckedChange={() => onNightWindowToggle(account)}
+											title={nightWindowTitle(account.provider)}
+										/>
+									</div>
+								)}
 							{account.provider === "anthropic" &&
 								onAutoPauseOnOverageToggle && (
 									<div className="flex items-center gap-2">

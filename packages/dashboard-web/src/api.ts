@@ -2625,6 +2625,15 @@ class API extends HttpClient {
 		});
 	}
 
+	async updateAccountNightWindow(
+		accountId: string,
+		enabled: boolean,
+	): Promise<void> {
+		// The handler validates a strict boolean, unlike the other account
+		// toggles, so send `enabled` as-is rather than 1/0.
+		await this.post(`/api/accounts/${accountId}/night-window`, { enabled });
+	}
+
 	async getQwenAuthStatus(
 		sessionId: string,
 	): Promise<{ status: "pending" | "complete" | "error"; error?: string }> {

@@ -138,6 +138,36 @@ export function getDefaultEndpointForProvider(provider: string): string {
 }
 
 /**
+ * Per-provider description of what the night window actually requests, keyed
+ * by the provider that registers a tier adapter on the server. Keep in sync
+ * with the `registerTierAdapter` calls under packages/providers/src.
+ */
+const NIGHT_WINDOW_TIERS: Record<string, string> = {
+	[PROVIDER_NAMES.SAILRESEARCH]: "balanced",
+};
+
+/**
+ * Check if a provider offers a cheaper completion tier the night window can
+ * request. Only these providers show the toggle.
+ */
+export function providerSupportsNightWindow(provider: string): boolean {
+	return provider in NIGHT_WINDOW_TIERS;
+}
+
+/**
+ * Tooltip for the night-window toggle: names the tier that will be requested.
+ * The window itself is server-side (NIGHT_WINDOW / NIGHT_TZ), so it is
+ * deliberately not restated here.
+ */
+export function nightWindowTitle(provider: string): string {
+	const tier = NIGHT_WINDOW_TIERS[provider];
+	const tierText = tier
+		? `the cheaper "${tier}" completion tier`
+		: "a cheaper completion tier";
+	return `During the configured night window (server NIGHT_WINDOW / NIGHT_TZ), request ${tierText} from this account instead of the default. No header is sent outside the window.`;
+}
+
+/**
  * Check if a given timestamp (default: now) falls within Zai peak hours.
  * Zai peak hours are weekdays 14:00–18:00 Singapore time (UTC+8), Monday–Friday.
  */
