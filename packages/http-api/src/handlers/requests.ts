@@ -39,9 +39,23 @@ function truncateBase64(body: unknown): {
 }
 
 /**
+ * Resolves a provider's peak-hours state at a given timestamp. Injected
+ * rather than imported: `@better-ccflare/proxy` cannot enter this module's
+ * import graph, because requests.ts must load as the first module in a fresh
+ * process (see requests-cold-import.test.ts) and the proxy barrel does not.
+ */
+export type PeakHoursLookup = (
+	provider: string | null | undefined,
+	ts?: number,
+) => { active: boolean } | null;
+
+/**
  * Create a requests summary handler (existing functionality)
  */
-export function createRequestsSummaryHandler(db: BunSqlAdapter) {
+export function createRequestsSummaryHandler(
+	db: BunSqlAdapter,
+	peakHoursState: PeakHoursLookup,
+) {
 	return async (limit: number = 50): Promise<Response> => {
 		const requests = await db.query<{
 			id: string;
@@ -50,6 +64,7 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			path: string;
 			account_used: string | null;
 			account_name: string | null;
+			account_provider: string | null;
 			status_code: number | null;
 			success: unknown;
 			error_message: string | null;
@@ -86,7 +101,7 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			completion_tier: string | null;
 		}>(
 			`
-			SELECT r.*, a.name as account_name
+			SELECT r.*, a.name as account_name, a.provider as account_provider
 			FROM requests r
 			LEFT JOIN accounts a ON r.account_used = a.id
 			ORDER BY r.timestamp DESC
@@ -158,6 +173,14 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			// The tier the provider reported it actually ran the request on,
 			// absent when it reports none.
 			completionTier: request.completion_tier || undefined,
+			// Peak state at the request's own timestamp. The provider comes from
+			// the account join, not from the request row, so the same rule that
+			// drives the auto-pause decides the badge. Mirrors the live SSE
+			// summary built in UsageCollector.handleEnd.
+			peakHours: peakHoursState(
+				request.account_provider,
+				Number(request.timestamp),
+			),
 		}));
 
 		return jsonResponse(response);

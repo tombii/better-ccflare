@@ -922,4 +922,19 @@ describe("SessionStrategy", () => {
 			expect(mockStore.resumeCalls).toEqual([]);
 		});
 	});
+
+	it("anchors a new session at the request's start timestamp, not selection time", () => {
+		const requestStartedAt = Date.now() - 5_000;
+		const account = makeAccount({
+			id: "session-boundary",
+			name: "session-boundary",
+			session_start: null,
+		});
+
+		strategy.select([account], { ...meta, timestamp: requestStartedAt });
+
+		const resetCall = mockStore.getResetCall(account.id);
+		expect(resetCall?.timestamp).toBe(requestStartedAt);
+		expect(account.session_start).toBe(requestStartedAt);
+	});
 });

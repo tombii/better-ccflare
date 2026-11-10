@@ -78,6 +78,8 @@ export function handleRateLimitResponse(
  * @param ctx - The proxy context
  * @param requestId - The request ID for usage tracking
  * @param bypassSession - Whether to bypass session tracking (for auto-refresh)
+ * @param startedAt - When the request started (epoch ms); anchors a newly
+ *   opened session to the request instead of to this queued write's run time.
  */
 export function updateAccountMetadata(
 	account: Account,
@@ -85,12 +87,15 @@ export function updateAccountMetadata(
 	ctx: ProxyContext,
 	requestId?: string,
 	bypassSession = false,
+	startedAt?: number,
 ): void {
 	// Update basic usage (with optional bypass)
 	if (bypassSession) {
 		// Increment request count without updating session tracking
 		ctx.asyncWriter.enqueue(async () => {
-			// Manually increment request count and total requests without touching session
+			// Manually increment request count and total requests without touching session.
+			// `last_used` stays at the write time for the same monotonicity reason
+			// as in incrementUsage.
 			const db = ctx.dbOps.getAdapter();
 			const now = Date.now();
 			await db.run(
@@ -101,7 +106,9 @@ export function updateAccountMetadata(
 			);
 		});
 	} else {
-		ctx.asyncWriter.enqueue(() => ctx.dbOps.updateAccountUsage(account.id));
+		ctx.asyncWriter.enqueue(() =>
+			ctx.dbOps.updateAccountUsage(account.id, startedAt),
+		);
 	}
 	// Extract and update rate limit info for every response
 	const rateLimitInfo = ctx.provider.parseRateLimit(response);
@@ -193,7 +200,11 @@ export function updateAccountMetadata(
 					`Codex ${windowSlot} window rolled over for ${account.name}: ${prevResetAt} → ${newResetAt}, resetting session`,
 				);
 				ctx.dbOps
-					.resetAccountSession(account.id, Date.now())
+					// Anchor the new session to the request that discovered the
+					// rollover, not to this later response-processing pass: rows
+					// carry the request's start timestamp, so a boundary taken
+					// now would exclude the request from its own session.
+					.resetAccountSession(account.id, startedAt ?? Date.now())
 					.catch((err) =>
 						log.warn(
 							`Failed to reset Codex session for ${account.name} on window reset: ${err}`,
@@ -368,7 +379,9 @@ async function readServedProvider(
  * @param account - The account used
  * @param ctx - The proxy context
  * @param requestId - The request ID for usage tracking
- * @param requestMeta - Request headers/path, used for the internal-probe checks
+ * @param requestMeta - Request headers/path, used for the internal-probe checks.
+ *   `timestamp` (when the request started) is forwarded to the account-metadata
+ *   write so a session opened by this request is anchored to it.
  * @param options - `serverErrorBenchApplied` is set by the transient-5xx
  *   failover in proxy-operations.ts on the terminal candidate account; see the
  *   guard at the top of the rate-limit branch below.
@@ -379,7 +392,7 @@ export async function processProxyResponse(
 	account: Account,
 	ctx: ProxyContext,
 	requestId?: string,
-	requestMeta?: { headers?: Headers; path?: string },
+	requestMeta?: { headers?: Headers; path?: string; timestamp?: number },
 	options?: { serverErrorBenchApplied?: boolean },
 ): Promise<boolean> {
 	let rateLimitInfo = ctx.provider.parseRateLimit(response);
@@ -468,7 +481,14 @@ export async function processProxyResponse(
 			);
 			const bypassSession =
 				requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
-			updateAccountMetadata(account, response, ctx, requestId, bypassSession);
+			updateAccountMetadata(
+				account,
+				response,
+				ctx,
+				requestId,
+				bypassSession,
+				requestMeta?.timestamp,
+			);
 			return false;
 		}
 
@@ -500,7 +520,14 @@ export async function processProxyResponse(
 		// Also update metadata for rate-limited responses
 		const bypassSession =
 			requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
-		updateAccountMetadata(account, response, ctx, requestId, bypassSession);
+		updateAccountMetadata(
+			account,
+			response,
+			ctx,
+			requestId,
+			bypassSession,
+			requestMeta?.timestamp,
+		);
 		return true; // Signal rate limit
 	}
 
@@ -509,7 +536,14 @@ export async function processProxyResponse(
 		// Update account metadata in background
 		const bypassSession =
 			requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
-		updateAccountMetadata(account, response, ctx, requestId, bypassSession);
+		updateAccountMetadata(
+			account,
+			response,
+			ctx,
+			requestId,
+			bypassSession,
+			requestMeta?.timestamp,
+		);
 	}
 
 	if (!rateLimitInfo.isRateLimited && !skipAccountMetadata) {

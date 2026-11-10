@@ -162,8 +162,18 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 		return 0;
 	}
 
-	private resetSessionIfExpired(account: Account): void {
-		const now = Date.now();
+	/**
+	 * `requestStartedAt` is the start of the request that triggered selection.
+	 * Use it for the new session boundary rather than "now": request rows are
+	 * stamped with the request's start, and getSessionStats counts rows with
+	 * timestamp >= session_start. A boundary taken after the request began puts
+	 * the opening request outside its own session.
+	 */
+	private resetSessionIfExpired(
+		account: Account,
+		requestStartedAt?: number,
+	): void {
+		const now = requestStartedAt ?? Date.now();
 
 		const fixedDurationExpired =
 			requiresSessionDurationTracking(account.provider) &&
@@ -340,7 +350,7 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 
 		if (chosenFallback !== null) {
 			if (!bypassSession) {
-				this.resetSessionIfExpired(chosenFallback);
+				this.resetSessionIfExpired(chosenFallback, meta.timestamp);
 			}
 			this.log.info(
 				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
@@ -371,7 +381,7 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 
 			const chosenAccount = availableStrict[0];
 			if (!bypassSession) {
-				this.resetSessionIfExpired(chosenAccount);
+				this.resetSessionIfExpired(chosenAccount, meta.timestamp);
 			}
 			this.log.debug(
 				`Strict drain selection: ${chosenAccount.name} (${availableStrict.length} available)`,
@@ -410,7 +420,7 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 		// account has become unavailable.
 		if (activeAccount && getCachedAvailability(activeAccount)) {
 			if (!bypassSession) {
-				this.resetSessionIfExpired(activeAccount);
+				this.resetSessionIfExpired(activeAccount, meta.timestamp);
 			}
 			this.log.info(
 				`Continuing session for account ${activeAccount.name} (${activeAccount.session_request_count} requests in session)`,
@@ -432,7 +442,7 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 
 		const chosenAccount = available[0];
 		if (!bypassSession) {
-			this.resetSessionIfExpired(chosenAccount);
+			this.resetSessionIfExpired(chosenAccount, meta.timestamp);
 		}
 
 		const others = available.filter((a) => a.id !== chosenAccount.id);

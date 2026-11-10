@@ -24,6 +24,7 @@ import {
 	extractGatewayHintHeadersFromParts,
 	type GatewayHintHeaders,
 } from "./gateway-hint-headers";
+import { getPeakHoursState } from "./peak-hours";
 import {
 	extractProjectAttributionFromParts,
 	sanitizeProjectName,
@@ -652,11 +653,13 @@ export class UsageCollector {
 			return;
 		}
 
-		// Update account usage if authenticated
+		// Update account usage if authenticated. Hand over the request's start
+		// time so a session opened by this request is anchored to it rather than
+		// to this queued write's execution time — see incrementUsage.
 		if (msg.accountId && msg.accountId !== NO_ACCOUNT_ID) {
 			const accountId = msg.accountId; // Capture for closure
 			this.asyncWriter.enqueue(async () =>
-				this.dbOps.updateAccountUsage(accountId),
+				this.dbOps.updateAccountUsage(accountId, msg.timestamp),
 			);
 		}
 	}
@@ -998,6 +1001,11 @@ export class UsageCollector {
 					state.gatewayHint.prevToolDurations,
 					state.gatewayHint.compaction,
 					state.gatewayHint.contextCompacted,
+					// Stamp the row with the request's start, not the moment this
+					// queued write runs: the live summary already reports the start
+					// timestamp, and any reload must classify the same request the
+					// same way (e.g. peak vs off-peak near a window boundary).
+					startMessage.timestamp,
 				);
 			} catch (error) {
 				log.error(
@@ -1072,6 +1080,17 @@ export class UsageCollector {
 				state.gatewayHint.contextCompacted ?? undefined,
 			providerServed: state.usage.providerServed,
 			completionTier: state.usage.completionTier,
+			// Peak state at the request's own timestamp, for the provider that
+			// served it — the same server-computed shape /api/accounts serves.
+			// The Requests tab badges a row from this summary alone, and the
+			// dashboard cannot compute it itself: DeepSeek's rule needs the
+			// Chinese holiday calendar, which only the server holds. A summary
+			// that disagreed with createRequestsSummaryHandler would make the
+			// badge appear on the live tick and vanish on reload.
+			peakHours:
+				startMessage.accountId && startMessage.accountId !== NO_ACCOUNT_ID
+					? getPeakHoursState(startMessage.providerName, startMessage.timestamp)
+					: null,
 			// Same value handed to saveRequest above, so a dashboard does not have
 			// to reload before a request shows its terminal state. Note this is
 			// the value as REPORTED, not as persisted: the save is an

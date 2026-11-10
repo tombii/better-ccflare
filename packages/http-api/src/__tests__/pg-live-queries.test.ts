@@ -967,7 +967,12 @@ describe.skipIf(!livePgAvailable)(
 				"GET /api/requests executes (takes a BunSqlAdapter, not dbOps)",
 				async () => {
 					await seedBaseline();
-					const res = await createRequestsSummaryHandler(adapter)(50);
+					// The peak-hours lookup is injected (requests.ts must not
+					// import the proxy barrel); null is enough for this query check.
+					const res = await createRequestsSummaryHandler(
+						adapter,
+						() => null,
+					)(50);
 					const body = (await readJson(res)) as unknown[];
 					expect(Array.isArray(body)).toBe(true);
 					expect(body).toHaveLength(6);

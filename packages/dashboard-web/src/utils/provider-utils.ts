@@ -183,12 +183,33 @@ export function isZaiPeakHour(ts?: number): boolean {
 }
 
 /**
+ * Check if a given timestamp (default: now) falls within DeepSeek peak hours.
+ * DeepSeek peak hours are 01:00–04:00 and 06:00–10:00 UTC, Monday–Friday,
+ * excluding Chinese public holidays.
+ *
+ * Keep in sync with isDeepseekPeakHour in packages/proxy/src/peak-hours.ts.
+ * This copy exists for RequestsTab's historical timestamps; live state comes
+ * from the server (`peakHours` on /api/accounts and on each request summary).
+ *
+ * Known gap: the holiday calendar is server-side only, so a request on a
+ * Chinese public holiday that falls on a weekday is shown as peak here. The
+ * server-computed `summary.peakHours` is preferred wherever it is available.
+ */
+export function isDeepseekPeakHour(ts?: number): boolean {
+	const d = new Date(ts ?? Date.now());
+	const day = d.getUTCDay();
+	if (day === 0 || day === 6) return false;
+	const utcHour = d.getUTCHours() + d.getUTCMinutes() / 60;
+	return (utcHour >= 1 && utcHour < 4) || (utcHour >= 6 && utcHour < 10);
+}
+
+/**
  * Check if a given timestamp (default: now) falls within Anthropic OAuth peak hours.
  * Peak hours are weekdays 5am–11am PT (1pm–7pm UTC), Monday–Friday.
  * During these windows, 5-hour sessions consume a larger share of the weekly budget.
  * Keep in sync with isAnthropicPeakHour in
- * packages/proxy/src/auto-refresh-scheduler.ts. This copy exists for
- * RequestsTab's historical timestamps; live state comes from /api/accounts.
+ * packages/proxy/src/peak-hours.ts. This copy exists for RequestsTab's
+ * historical timestamps; live state comes from /api/accounts.
  */
 export function isAnthropicPeakHour(ts?: number): boolean {
 	const d = new Date(ts ?? Date.now());

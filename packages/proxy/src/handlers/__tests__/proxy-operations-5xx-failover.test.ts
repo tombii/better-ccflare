@@ -998,7 +998,7 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 		const account = makeAccount();
 		const bodyBuffer = makeRequestBody();
 		const before = Date.now();
-		const { result } = await runProxy(
+		const { result, meta } = await runProxy(
 			makeRequest(bodyBuffer),
 			account,
 			bodyBuffer,
@@ -1041,7 +1041,9 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 		const usageCalls = (ctx.dbOps.updateAccountUsage as ReturnType<typeof mock>)
 			.mock.calls as unknown as unknown[][];
 		expect(usageCalls).toHaveLength(1);
-		expect(usageCalls[0]).toEqual([account.id]);
+		// The request's start time rides along so a session this request opens
+		// is anchored to it rather than to the queued write's run time.
+		expect(usageCalls[0]).toEqual([account.id, meta.timestamp]);
 
 		// The parsed metadata, not just "something was written": the real
 		// AnthropicProvider turns the two headers above into
