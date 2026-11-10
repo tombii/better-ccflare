@@ -260,9 +260,10 @@ export class AccountRepository extends BaseRepository<Account> {
 				-- Only count this request in the session it belongs to. A request
 				-- that started before the current session opened (an in-flight
 				-- request finishing late, or writes landing out of order) is
-				-- excluded by getSessionStats' timestamp >= session_start window,
-				-- so counting it here would make the request count disagree with
-				-- the token/cost totals computed from that same window.
+				-- excluded by the getSessionStats window (timestamp >=
+				-- session_start), so counting it here would make the request
+				-- count disagree with the token/cost totals computed from that
+				-- same window.
 				session_request_count = CASE
 					WHEN session_start IS NULL OR ? - COALESCE(session_start, 0) >= ? THEN 1
 					WHEN ? >= COALESCE(session_start, 0) THEN COALESCE(session_request_count, 0) + 1

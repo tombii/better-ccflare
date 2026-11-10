@@ -4,15 +4,51 @@ import type { SQL } from "bun";
 /**
  * Convert SQLite-style `?` and `?N` placeholders to PostgreSQL-style `$N` placeholders.
  * Handles both `?` (sequential) and `?1`, `?2` (positional) styles.
- * Skips placeholders inside single-quoted string literals.
+ * Skips placeholders inside single-quoted string literals and SQL comments.
+ *
+ * Comments are opaque on purpose. Treating their contents as SQL means an
+ * apostrophe in prose ("the caller's token") toggles string tracking, and every
+ * later `?` is left unconverted — PostgreSQL then rejects the statement. A `?`
+ * inside a comment has the mirror problem: converting it consumes a parameter
+ * number and shifts every real placeholder after it.
  */
-function convertPlaceholders(sql: string): string {
+export function convertPlaceholders(sql: string): string {
 	let result = "";
 	let paramIndex = 0;
 	let inString = false;
 
 	for (let i = 0; i < sql.length; i++) {
 		const ch = sql[i];
+
+		// `--` runs to the end of the line. Copy it through verbatim.
+		if (!inString && ch === "-" && sql[i + 1] === "-") {
+			const end = sql.indexOf("\n", i);
+			const stop = end === -1 ? sql.length : end + 1;
+			result += sql.slice(i, stop);
+			i = stop - 1;
+			continue;
+		}
+
+		// `/* ... */` may nest in PostgreSQL, so track depth rather than
+		// stopping at the first `*/`.
+		if (!inString && ch === "/" && sql[i + 1] === "*") {
+			let j = i + 2;
+			let depth = 1;
+			while (j < sql.length && depth > 0) {
+				if (sql[j] === "/" && sql[j + 1] === "*") {
+					depth++;
+					j += 2;
+				} else if (sql[j] === "*" && sql[j + 1] === "/") {
+					depth--;
+					j += 2;
+				} else {
+					j++;
+				}
+			}
+			result += sql.slice(i, j);
+			i = j - 1;
+			continue;
+		}
 
 		// Toggle string literal tracking (handle escaped quotes '')
 		if (ch === "'") {
