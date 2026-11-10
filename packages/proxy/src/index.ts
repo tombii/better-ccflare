@@ -9,10 +9,7 @@ export {
 	listProviders,
 	registerProvider,
 } from "@better-ccflare/providers";
-export {
-	AutoRefreshScheduler,
-	getPeakHoursState,
-} from "./auto-refresh-scheduler";
+export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
 export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export {
 	CircuitBreaker,
@@ -111,6 +108,7 @@ export {
 	fetchOpenAICompatibleModelsPreview,
 	getOpenAICompatibleModels,
 } from "./openai-compatible-model-catalog";
+export { getPeakHoursState } from "./peak-hours";
 export {
 	drainUsageCollector,
 	getUsageCollectorHealth,

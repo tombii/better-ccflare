@@ -8,11 +8,11 @@
  * Reference calendar (2026-09, UTC): 21 Mon, 22 Tue, 23 Wed, 26 Sat, 27 Sun
  */
 import { beforeEach, describe, expect, it } from "bun:test";
-import { isDeepseekPeakHour } from "../auto-refresh-scheduler";
 import {
 	refreshChineseHolidays,
 	resetChineseHolidayCache,
 } from "../chinese-holidays";
+import { isDeepseekPeakHour } from "../peak-hours";
 
 describe("isDeepseekPeakHour", () => {
 	beforeEach(() => resetChineseHolidayCache());

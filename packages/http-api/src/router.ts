@@ -1,5 +1,6 @@
 import { validateNumber } from "@better-ccflare/core";
 import { BadRequest, Unauthorized } from "@better-ccflare/errors";
+import { getPeakHoursState } from "@better-ccflare/proxy";
 import {
 	createAccountAddHandler,
 	createAccountAutoFallbackHandler,
@@ -237,6 +238,7 @@ export class APIRouter {
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
 		const requestsSummaryHandler = createRequestsSummaryHandler(
 			dbOps.getAdapter(),
+			getPeakHoursState,
 		);
 		const requestsDetailHandler = createRequestsDetailHandler(dbOps);
 		const configHandlers = createConfigHandlers(

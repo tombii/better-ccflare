@@ -5,11 +5,8 @@
  * Reference calendar (2026-09, UTC): 23 Wed, 26 Sat
  */
 import { beforeEach, describe, expect, it } from "bun:test";
-import {
-	getPeakHoursState,
-	isAnthropicPeakHour,
-} from "../auto-refresh-scheduler";
 import { resetChineseHolidayCache } from "../chinese-holidays";
+import { getPeakHoursState, isAnthropicPeakHour } from "../peak-hours";
 
 describe("isAnthropicPeakHour", () => {
 	it("is peak on weekdays 13:00-19:00 UTC, window end exclusive", () => {

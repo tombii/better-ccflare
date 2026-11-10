@@ -24,6 +24,7 @@ import {
 	extractGatewayHintHeadersFromParts,
 	type GatewayHintHeaders,
 } from "./gateway-hint-headers";
+import { getPeakHoursState } from "./peak-hours";
 import {
 	extractProjectAttributionFromParts,
 	sanitizeProjectName,
@@ -1072,6 +1073,17 @@ export class UsageCollector {
 				state.gatewayHint.contextCompacted ?? undefined,
 			providerServed: state.usage.providerServed,
 			completionTier: state.usage.completionTier,
+			// Peak state at the request's own timestamp, for the provider that
+			// served it — the same server-computed shape /api/accounts serves.
+			// The Requests tab badges a row from this summary alone, and the
+			// dashboard cannot compute it itself: DeepSeek's rule needs the
+			// Chinese holiday calendar, which only the server holds. A summary
+			// that disagreed with createRequestsSummaryHandler would make the
+			// badge appear on the live tick and vanish on reload.
+			peakHours:
+				startMessage.accountId && startMessage.accountId !== NO_ACCOUNT_ID
+					? getPeakHoursState(startMessage.providerName, startMessage.timestamp)
+					: null,
 			// Same value handed to saveRequest above, so a dashboard does not have
 			// to reload before a request shows its terminal state. Note this is
 			// the value as REPORTED, not as persisted: the save is an

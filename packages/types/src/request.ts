@@ -266,6 +266,15 @@ export interface RequestResponse {
 	providerServed?: string;
 	/** See the matching field on `Request` above. */
 	completionTier?: string;
+	/**
+	 * Whether this request was served during its account provider's peak
+	 * pricing window, evaluated at the request's own timestamp with the same
+	 * rules that drive the peak-hours auto-pause. Computed server-side because
+	 * DeepSeek's window excludes Chinese public holidays, a calendar the
+	 * dashboard does not have. `null` for providers without a peak concept and
+	 * for requests not attributed to an account.
+	 */
+	peakHours?: { active: boolean } | null;
 }
 
 // Detailed request with payload

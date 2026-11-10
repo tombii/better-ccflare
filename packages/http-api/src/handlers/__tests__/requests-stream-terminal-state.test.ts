@@ -69,7 +69,9 @@ describe("createRequestsSummaryHandler — stream terminal state mapping", () =>
 		DatabaseFactory.initialize(TEST_DB_PATH);
 		dbOps = DatabaseFactory.getInstance();
 
-		handler = createRequestsSummaryHandler(dbOps.getAdapter());
+		// Peak state is irrelevant here; the lookup is injected so this module
+		// never imports the proxy barrel (see requests-cold-import.test.ts).
+		handler = createRequestsSummaryHandler(dbOps.getAdapter(), () => null);
 
 		await saveWithTerminalState(dbOps, "req-cancelled", "client_cancelled");
 		await saveWithTerminalState(dbOps, "req-truncated", "truncated");

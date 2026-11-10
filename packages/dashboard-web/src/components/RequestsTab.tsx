@@ -24,7 +24,11 @@ import { API_LIMITS } from "../constants";
 import { useAccounts, useApiKeys, useRequests } from "../hooks/queries";
 import { useRequestStream } from "../hooks/useRequestStream";
 import { attributionSourceLabel } from "../lib/attribution";
-import { isAnthropicPeakHour, isZaiPeakHour } from "../utils/provider-utils";
+import {
+	isAnthropicPeakHour,
+	isDeepseekPeakHour,
+	isZaiPeakHour,
+} from "../utils/provider-utils";
 import { CopyButton } from "./CopyButton";
 import { RequestDetailsModal } from "./RequestDetailsModal";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
@@ -85,6 +89,11 @@ export function RequestsTab() {
 	const { data: configuredApiKeys } = useApiKeys();
 	const zaiAccountNames = new Set(
 		(accounts ?? []).filter((a) => a.provider === "zai").map((a) => a.name),
+	);
+	const deepseekAccountNames = new Set(
+		(accounts ?? [])
+			.filter((a) => a.provider === "deepseek")
+			.map((a) => a.name),
 	);
 	const oauthAccountNames = new Set(
 		(accounts ?? [])
@@ -753,6 +762,15 @@ export function RequestsTab() {
 							const isAnthropicPeak =
 								oauthAccountNames.has(request.meta.accountName ?? "") &&
 								isAnthropicPeakHour(request.meta.timestamp);
+							// DeepSeek's window excludes Chinese public holidays, a
+							// calendar only the server has — so prefer the state it
+							// computed for this request. The local rule is the fallback
+							// for summaries written before that field existed.
+							const isDeepseekPeak =
+								summary?.peakHours != null
+									? summary.peakHours.active
+									: deepseekAccountNames.has(request.meta.accountName ?? "") &&
+										isDeepseekPeakHour(request.meta.timestamp);
 							const statusClass =
 								statusCode == null
 									? ""
@@ -881,7 +899,8 @@ export function RequestsTab() {
 										accountLabel ||
 										request.meta.rateLimited ||
 										isZaiPeak ||
-										isAnthropicPeak) && (
+										isAnthropicPeak ||
+										isDeepseekPeak) && (
 										<div className="flex flex-wrap items-center gap-1.5 px-3 pb-2 pl-9 text-xs">
 											{summary?.model && (
 												<Badge variant="secondary" className="text-xs">
@@ -974,10 +993,15 @@ export function RequestsTab() {
 													Rate Limited
 												</Badge>
 											)}
-											{(isZaiPeak || isAnthropicPeak) && (
+											{(isZaiPeak || isAnthropicPeak || isDeepseekPeak) && (
 												<Badge
 													variant="outline"
 													className="text-xs border-orange-500 text-orange-500"
+													title={
+														isDeepseekPeak
+															? "Served during DeepSeek peak hours (01:00–04:00 and 06:00–10:00 UTC, weekdays, excluding Chinese public holidays)"
+															: "Served during the provider's peak pricing window"
+													}
 												>
 													Peak
 												</Badge>

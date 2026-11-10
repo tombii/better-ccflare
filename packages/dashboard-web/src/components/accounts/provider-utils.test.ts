@@ -17,6 +17,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
+	isDeepseekPeakHour,
 	isZaiPeakHour,
 	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
@@ -161,5 +162,47 @@ describe("isZaiPeakHour", () => {
 		// Just verify it doesn't throw and returns a boolean when called with
 		// no arguments (exercises the `ts ?? Date.now()` default).
 		expect(typeof isZaiPeakHour()).toBe("boolean");
+	});
+});
+
+/**
+ * Regression tests for isDeepseekPeakHour, the dashboard copy used by
+ * RequestsTab to badge a request that happened during DeepSeek's peak
+ * pricing window (01:00-04:00 and 06:00-10:00 UTC, weekdays).
+ *
+ * The server's copy in packages/proxy/src/peak-hours.ts is the source of
+ * truth and is what the badge prefers; this copy only covers summaries that
+ * predate the server-computed field. It deliberately omits the Chinese
+ * holiday calendar (server-only), so these tests pin only the weekday and
+ * window rules that must stay identical to the server's.
+ *
+ * Reference calendar (2026-09, UTC): 23 Wed, 26 Sat, 27 Sun.
+ */
+describe("isDeepseekPeakHour", () => {
+	it("is peak inside both windows on a weekday", () => {
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 2, 0))).toBe(true);
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 8, 30))).toBe(true);
+	});
+
+	it("includes window starts and excludes window ends", () => {
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 1, 0))).toBe(true);
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 4, 0))).toBe(false);
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 6, 0))).toBe(true);
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 10, 0))).toBe(false);
+	});
+
+	it("is off-peak between and outside the windows", () => {
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 0, 59))).toBe(false);
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 5, 0))).toBe(false);
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 23, 15, 0))).toBe(false);
+	});
+
+	it("is off-peak on weekends", () => {
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 26, 2, 0))).toBe(false);
+		expect(isDeepseekPeakHour(Date.UTC(2026, 8, 27, 8, 0))).toBe(false);
+	});
+
+	it("defaults to Date.now() when no timestamp is provided", () => {
+		expect(typeof isDeepseekPeakHour()).toBe("boolean");
 	});
 });
