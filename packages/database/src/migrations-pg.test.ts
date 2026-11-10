@@ -294,6 +294,23 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 		);
 	});
 
+	it("spot check: night_window_enabled is on accounts in both backends", () => {
+		expect(sqliteInventory.tables.get("accounts")?.has("night_window_enabled")).toBe(
+			true,
+		);
+		expect(pgInventory.tables.get("accounts")?.has("night_window_enabled")).toBe(
+			true,
+		);
+		// Upgrade path for existing PG databases, not just the CREATE TABLE.
+		expect(parsePgColumnsToAdd(pgSource)).toContainEqual({
+			table: "accounts",
+			column: "night_window_enabled",
+		});
+		expect(pgSource).toContain(
+			"ALTER TABLE accounts ADD COLUMN night_window_enabled BOOLEAN NOT NULL DEFAULT false",
+		);
+	});
+
 	it("spot check: newly-ported performance indexes exist in migrations-pg.ts", () => {
 		expect(pgSource).toContain("idx_request_payloads_cleanup");
 		expect(pgSource).toContain("idx_requests_summary_covering");
@@ -309,6 +326,20 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 		expect(pgSource).toContain("payload BYTEA");
 		// Existing PostgreSQL databases need the upgrade path too.
 		expect(pgSource).toContain("ADD COLUMN payload BYTEA");
+	});
+
+	it("spot check: completion_tier is on requests in both backends", () => {
+		expect(sqliteInventory.tables.get("requests")?.has("completion_tier")).toBe(
+			true,
+		);
+		expect(pgInventory.tables.get("requests")?.has("completion_tier")).toBe(
+			true,
+		);
+		// Upgrade path for existing PG databases, not just the CREATE TABLE.
+		expect(parsePgColumnsToAdd(pgSource)).toContainEqual({
+			table: "requests",
+			column: "completion_tier",
+		});
 	});
 
 	describe("redundant requests indexes", () => {

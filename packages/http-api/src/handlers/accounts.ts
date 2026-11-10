@@ -354,6 +354,8 @@ export function createAccountsListHandler(
 			auto_refresh_enabled: 0 | 1;
 			auto_pause_on_overage_enabled: 0 | 1;
 			peak_hours_pause_enabled: 0 | 1;
+			// BOOLEAN on PostgreSQL, INTEGER on SQLite.
+			night_window_enabled: 0 | 1 | boolean;
 			usage_pause_five_hour_threshold: number | null;
 			usage_pause_weekly_threshold: number | null;
 			usage_pause_five_hour_enabled: 0 | 1;
@@ -396,6 +398,7 @@ export function createAccountsListHandler(
 					custom_endpoint,
 					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
 					COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
+					night_window_enabled,
 					usage_pause_five_hour_threshold,
 					usage_pause_weekly_threshold,
 					COALESCE(usage_pause_five_hour_enabled, 0) as usage_pause_five_hour_enabled,
@@ -842,6 +845,8 @@ export function createAccountsListHandler(
 					autoPauseOnOverageEnabled:
 						account.auto_pause_on_overage_enabled === 1,
 					peakHoursPauseEnabled: account.peak_hours_pause_enabled === 1,
+					// NOT NULL on both backends; `!!` normalises 1/0 and true/false.
+					nightWindowEnabled: !!account.night_window_enabled,
 					peakHours: getPeakHoursState(account.provider, now),
 					usagePauseFiveHourThreshold:
 						account.usage_pause_five_hour_threshold ?? null,
@@ -3410,6 +3415,65 @@ export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to toggle peak-hours-pause"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an account night-window toggle handler.
+ *
+ * The flag is provider-agnostic by design: any provider that registers a
+ * night-window tier adapter can use it, so there is deliberately no
+ * sailresearch-only gate here.
+ */
+export function createAccountNightWindowHandler(dbOps: DatabaseOperations) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body: unknown = await req.json();
+
+			// Validate enabled parameter (strict boolean)
+			const enabled = (body as { enabled?: unknown } | null)?.enabled;
+
+			if (typeof enabled !== "boolean") {
+				return errorResponse(
+					BadRequest("Enabled field is required and must be a boolean"),
+				);
+			}
+
+			// Check if account exists
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string }>(
+				"SELECT name FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			// Update night-window setting
+			await dbOps.setNightWindowEnabled(accountId, enabled);
+
+			const updated = await dbOps.getAccount(accountId);
+			if (!updated) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			const action = enabled ? "enabled" : "disabled";
+
+			return jsonResponse({
+				success: true,
+				message: `Night window ${action} for account '${account.name}'`,
+				nightWindowEnabled: enabled,
+				account: updated,
+			});
+		} catch (error) {
+			log.error("Account night-window toggle error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to toggle night window"),
 			);
 		}
 	};

@@ -190,6 +190,12 @@ export interface RequestData {
 		 * that do not state it; persisted through `updateRequestUsage`.
 		 */
 		providerServed?: string;
+		/**
+		 * The tier the provider reports it actually ran the request on
+		 * (response `usage.service_tier`, e.g. Sail Research "balanced").
+		 * Absent when the provider reports no tier.
+		 */
+		completionTier?: string;
 	};
 }
 
@@ -226,9 +232,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				stream_terminal_state, client_session_id,
 				gateway_hint_request_class, gateway_hint_agent_type,
 				gateway_hint_prev_tool_durations, gateway_hint_compaction,
-				gateway_hint_context_compacted, provider_served
+				gateway_hint_context_compacted, provider_served, completion_tier
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET
 				timestamp = EXCLUDED.timestamp,
 				method = EXCLUDED.method,
@@ -290,7 +296,10 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				-- Preserve-first like the columns above: provider_served is
 				-- recorded after the fact by updateRequestUsage, and a re-save
 				-- without it must not blank it out.
-				provider_served = COALESCE(EXCLUDED.provider_served, requests.provider_served)
+				provider_served = COALESCE(EXCLUDED.provider_served, requests.provider_served),
+				-- Same preserve-first reasoning: completion_tier is written by the
+				-- main save path, and a later re-save without it must not blank it.
+				completion_tier = COALESCE(EXCLUDED.completion_tier, requests.completion_tier)
 		`,
 			[
 				data.id,
@@ -331,6 +340,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				data.gatewayHintCompaction || null,
 				data.gatewayHintContextCompacted || null,
 				usage?.providerServed || null,
+				usage?.completionTier || null,
 			],
 		);
 	}
@@ -355,7 +365,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				cache_creation_input_tokens = COALESCE(?, cache_creation_input_tokens),
 				output_tokens = COALESCE(?, output_tokens),
 				output_tokens_per_second = COALESCE(?, output_tokens_per_second),
-				provider_served = COALESCE(?, provider_served)
+				provider_served = COALESCE(?, provider_served),
+				completion_tier = COALESCE(?, completion_tier)
 			WHERE id = ?
 		`,
 			[
@@ -370,6 +381,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				usage.outputTokens || null,
 				usage.tokensPerSecond || null,
 				usage.providerServed || null,
+				usage.completionTier || null,
 				requestId,
 			],
 		);

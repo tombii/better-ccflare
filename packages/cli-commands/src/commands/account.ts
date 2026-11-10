@@ -50,6 +50,7 @@ export interface AddAccountOptionsWithAdapter {
 		| "zai"
 		| "minimax"
 		| "deepseek"
+		| "sailresearch"
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
@@ -72,6 +73,8 @@ export interface AddAccountOptionsWithAdapter {
 	modelFallbacks?: { [key: string]: string };
 	profile?: string;
 	crossRegionMode?: "geographic" | "global" | "regional";
+	/** Enable the provider night window for this account (sailresearch). */
+	nightWindow?: boolean;
 	adapter?: PromptAdapter;
 }
 
@@ -86,6 +89,7 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "zai"
 		| "minimax"
 		| "deepseek"
+		| "sailresearch"
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
@@ -202,6 +206,42 @@ async function createDeepseekAccount(
 			now,
 			validatedPriority,
 			null, // No custom endpoint for deepseek
+		],
+	);
+}
+
+/**
+ * Create a Sail Research account in the database
+ */
+async function createSailresearchAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+	nightWindow: boolean,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+
+	// Validate inputs
+	const validatedApiKey = validateApiKey(apiKey, "Sail Research API key");
+	const validatedPriority = validatePriority(priority, "priority");
+
+	await dbOps.getAdapter().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint,
+			night_window_enabled
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"sailresearch",
+			validatedApiKey,
+			now,
+			validatedPriority,
+			null, // No custom endpoint for sailresearch
+			nightWindow ? 1 : 0,
 		],
 	);
 }
@@ -1317,6 +1357,7 @@ export async function addAccount(
 			{ label: "z.ai account (API key)", value: "zai" },
 			{ label: "Minimax account (API key)", value: "minimax" },
 			{ label: "DeepSeek account (API key)", value: "deepseek" },
+			{ label: "Sail Research account (API key)", value: "sailresearch" },
 			{ label: "Kilo Gateway (API key)", value: "kilo" },
 			{ label: "OpenRouter (API key)", value: "openrouter" },
 			{
@@ -1551,6 +1592,19 @@ export async function addAccount(
 		await createDeepseekAccount(dbOps, name, apiKey, providedPriority || 0);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: DeepSeek (API key)");
+	} else if (mode === "sailresearch") {
+		// Handle Sail Research accounts with API keys
+		const apiKey = await adapter.input("\nEnter your Sail Research API key: ");
+
+		await createSailresearchAccount(
+			dbOps,
+			name,
+			apiKey,
+			providedPriority || 0,
+			options.nightWindow === true,
+		);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: Sail Research (API key)");
 	} else if (mode === "nanogpt") {
 		// Handle NanoGPT accounts with API keys
 		const apiKey = await adapter.input("\nEnter your NanoGPT API key: ");
@@ -2033,6 +2087,7 @@ export async function getAccountsList(
 					account.provider === "zai" ||
 					account.provider === "minimax" ||
 					account.provider === "deepseek" ||
+					account.provider === "sailresearch" ||
 					account.provider === "anthropic-compatible" ||
 					account.provider === "bedrock" ||
 					account.provider === "openrouter" ||
@@ -2294,6 +2349,68 @@ export async function setAccountPriority(
 	return {
 		success: true,
 		message: `Account '${name}' priority set to ${validatedPriority}`,
+	};
+}
+
+/**
+ * Parse a CLI on/off token into a boolean.
+ *
+ * Accepts on/off, true/false and 1/0 (case-insensitive). Anything else is
+ * rejected rather than coerced, so a typo never silently flips a flag.
+ */
+export function parseNightWindowValue(
+	raw: string,
+): { ok: true; value: boolean } | { ok: false } {
+	switch (raw.trim().toLowerCase()) {
+		case "on":
+		case "true":
+		case "1":
+			return { ok: true, value: true };
+		case "off":
+		case "false":
+		case "0":
+			return { ok: true, value: false };
+		default:
+			return { ok: false };
+	}
+}
+
+/**
+ * Set the night-window flag of an account by name.
+ */
+export async function setAccountNightWindow(
+	dbOps: DatabaseOperations,
+	name: string,
+	rawValue: string,
+): Promise<{ success: boolean; message: string }> {
+	const parsed = parseNightWindowValue(rawValue);
+	if (!parsed.ok) {
+		return {
+			success: false,
+			message: `Invalid night-window value '${rawValue}': expected on/off, true/false or 1/0`,
+		};
+	}
+
+	const adapter = dbOps.getAdapter();
+
+	// Get account ID by name
+	const account = await adapter.get<{ id: string }>(
+		"SELECT id FROM accounts WHERE name = ?",
+		[name],
+	);
+
+	if (!account) {
+		return {
+			success: false,
+			message: `Account '${name}' not found`,
+		};
+	}
+
+	await dbOps.setNightWindowEnabled(account.id, parsed.value);
+
+	return {
+		success: true,
+		message: `Account '${name}' night window set to ${parsed.value ? "on" : "off"}`,
 	};
 }
 

@@ -556,6 +556,7 @@ export class AutoRefreshScheduler {
 				refresh_token_issued_at: null,
 				consecutive_rate_limits: 0,
 				last_manual_reauth_at: null,
+				night_window_enabled: false,
 			};
 
 			// Emit request start event for analytics
@@ -1189,6 +1190,7 @@ export class AutoRefreshScheduler {
 					refresh_token_issued_at: null,
 					consecutive_rate_limits: 0,
 					last_manual_reauth_at: null,
+					night_window_enabled: false,
 				};
 
 				// Use refreshAccessTokenSafe to get deduplication and backoff handling
@@ -1385,6 +1387,7 @@ export class AutoRefreshScheduler {
 					refresh_token_issued_at: null,
 					consecutive_rate_limits: 0,
 					last_manual_reauth_at: null,
+					night_window_enabled: false,
 				};
 
 				// Register in refreshInFlight so concurrent request-triggered refreshes join this one

@@ -869,6 +869,7 @@ export function RequestsTab() {
 
 									{/* Badges row: wraps freely, holds all the non-essential context */}
 									{(summary?.model ||
+										summary?.completionTier ||
 										summary?.project ||
 										agent ||
 										summary?.comboName ||
@@ -885,6 +886,15 @@ export function RequestsTab() {
 											{summary?.model && (
 												<Badge variant="secondary" className="text-xs">
 													{summary.model}
+												</Badge>
+											)}
+											{summary?.completionTier && (
+												<Badge
+													variant="outline"
+													className="text-xs"
+													title="Provider-reported completion tier"
+												>
+													Tier: {summary.completionTier}
 												</Badge>
 											)}
 											{summary?.project && (

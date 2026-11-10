@@ -7,6 +7,7 @@ export const PROVIDER_NAMES = {
 	ZAI: "zai",
 	MINIMAX: "minimax",
 	DEEPSEEK: "deepseek",
+	SAILRESEARCH: "sailresearch",
 	ANTHROPIC_COMPATIBLE: "anthropic-compatible",
 	OPENAI_COMPATIBLE: "openai-compatible",
 	NANOGPT: "nanogpt",
@@ -80,6 +81,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: false, // No known usage/quota polling API
 		supportsOAuth: false, // DeepSeek uses API key authentication
 		defaultEndpoint: "https://api.deepseek.com/anthropic",
+	},
+	[PROVIDER_NAMES.SAILRESEARCH]: {
+		requiresSessionTracking: false, // Sail is pay-as-you-go
+		supportsUsageTracking: false, // No known usage/quota polling API
+		supportsOAuth: false, // Sail uses API key authentication (Bearer)
+		defaultEndpoint: "https://api.sailresearch.com/v1",
 	},
 	[PROVIDER_NAMES.ANTHROPIC_COMPATIBLE]: {
 		requiresSessionTracking: false, // Anthropic-compatible is pay-as-you-go

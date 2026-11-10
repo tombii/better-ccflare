@@ -6,15 +6,30 @@ import { DatabaseFactory } from "@better-ccflare/database";
 import {
 	addAccount,
 	getAccountsList,
+	parseNightWindowValue,
 	pauseAccount,
 	removeAccountWithConfirmation,
 	resumeAccount,
+	setAccountNightWindow,
 	setAccountPriority,
 } from "./commands/account";
 import { analyzePerformance } from "./commands/analyze";
 import { getHelpText } from "./commands/help";
 import { clearRequestHistory, resetAllStats } from "./commands/stats";
 import { checkReauthNeeded, checkTokenHealth } from "./commands/token-health";
+
+/**
+ * Options accepted by the CLI. Keys must match the flags as typed on the
+ * command line: `parseArgs` matches them exactly, so a camelCase key here
+ * would silently never populate from `--kebab-case`.
+ */
+export const CLI_OPTIONS = {
+	mode: { type: "string" },
+	priority: { type: "string" },
+	modelMappings: { type: "string" },
+	"night-window": { type: "string" },
+	force: { type: "boolean" },
+} as const;
 
 /**
  * Main CLI runner
@@ -32,12 +47,7 @@ export async function runCli(argv: string[]): Promise<void> {
 		const { positionals, values } = parseArgs({
 			args: argv.slice(2),
 			strict: false,
-			options: {
-				mode: { type: "string" },
-				priority: { type: "string" },
-				modelMappings: { type: "string" },
-				force: { type: "boolean" },
-			},
+			options: CLI_OPTIONS,
 		});
 
 		const command = positionals[0];
@@ -48,7 +58,7 @@ export async function runCli(argv: string[]): Promise<void> {
 				if (!name) {
 					console.error("Error: Account name is required");
 					console.log(
-						"Usage: ccflare-cli add <name> [--mode <claude-oauth|console|codex|qwen|xai|zai|minimax|deepseek|anthropic-compatible|openai-compatible|nanogpt|kilo|openrouter|ollama|ollama-cloud|meta>] [--priority <number>] [--modelMappings <JSON>]",
+						"Usage: ccflare-cli add <name> [--mode <claude-oauth|console|codex|qwen|xai|zai|minimax|deepseek|anthropic-compatible|openai-compatible|nanogpt|kilo|openrouter|ollama|ollama-cloud|meta>] [--priority <number>] [--modelMappings <JSON>] [--night-window <on|off>]",
 					);
 					process.exit(1);
 				}
@@ -74,6 +84,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					| "ollama"
 					| "ollama-cloud"
 					| "meta"
+					| "sailresearch"
 					| "max"
 					| undefined;
 
@@ -104,11 +115,25 @@ export async function runCli(argv: string[]): Promise<void> {
 					}
 				}
 
+				let nightWindow: boolean | undefined;
+				const nightWindowValue = values["night-window"] as string | undefined;
+				if (nightWindowValue !== undefined) {
+					const parsed = parseNightWindowValue(nightWindowValue);
+					if (!parsed.ok) {
+						console.error(
+							`Error: Invalid --night-window value '${nightWindowValue}': expected on/off, true/false or 1/0`,
+						);
+						process.exit(1);
+					}
+					nightWindow = parsed.value;
+				}
+
 				await addAccount(dbOps, config, {
 					name,
 					mode,
 					priority,
 					modelMappings,
+					nightWindow,
 				});
 				break;
 			}
@@ -239,6 +264,31 @@ export async function runCli(argv: string[]): Promise<void> {
 				}
 
 				const result = await setAccountPriority(dbOps, name, priority);
+				console.log(result.message);
+				if (!result.success) {
+					process.exit(1);
+				}
+				break;
+			}
+
+			case "set-night-window": {
+				const name = positionals[1];
+				const value = positionals[2];
+				const usage = "Usage: ccflare-cli set-night-window <name> <on|off>";
+
+				if (!name) {
+					console.error("Error: Account name is required");
+					console.log(usage);
+					process.exit(1);
+				}
+
+				if (value === undefined) {
+					console.error("Error: Night window value is required");
+					console.log(usage);
+					process.exit(1);
+				}
+
+				const result = await setAccountNightWindow(dbOps, name, value);
 				console.log(result.message);
 				if (!result.success) {
 					process.exit(1);

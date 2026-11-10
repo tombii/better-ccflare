@@ -98,6 +98,7 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			cross_region_mode TEXT DEFAULT 'geographic',
 			auto_pause_on_overage_enabled INTEGER DEFAULT 0,
 			peak_hours_pause_enabled INTEGER NOT NULL DEFAULT 0,
+			night_window_enabled BOOLEAN NOT NULL DEFAULT false,
 			usage_pause_five_hour_threshold INTEGER,
 			usage_pause_weekly_threshold INTEGER,
 			usage_pause_five_hour_enabled INTEGER NOT NULL DEFAULT 0,
@@ -153,7 +154,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			gateway_hint_prev_tool_durations TEXT,
 			gateway_hint_compaction TEXT,
 			gateway_hint_context_compacted TEXT,
-			provider_served TEXT
+			provider_served TEXT,
+			completion_tier TEXT
 		)
 	`);
 
@@ -1361,6 +1363,12 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		},
 		{
 			table: "accounts",
+			column: "night_window_enabled",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN night_window_enabled BOOLEAN NOT NULL DEFAULT false",
+		},
+		{
+			table: "accounts",
 			column: "usage_pause_five_hour_threshold",
 			definition:
 				"ALTER TABLE accounts ADD COLUMN usage_pause_five_hour_threshold INTEGER",
@@ -1482,6 +1490,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			table: "requests",
 			column: "provider_served",
 			definition: "ALTER TABLE requests ADD COLUMN provider_served TEXT",
+		},
+		{
+			table: "requests",
+			column: "completion_tier",
+			definition: "ALTER TABLE requests ADD COLUMN completion_tier TEXT",
 		},
 		{
 			table: "request_payloads",

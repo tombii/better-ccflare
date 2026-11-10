@@ -149,6 +149,7 @@ export interface RequestRow {
 	gateway_hint_compaction: string | null;
 	gateway_hint_context_compacted: string | null;
 	provider_served: string | null;
+	completion_tier: string | null;
 }
 
 // Domain model
@@ -203,6 +204,13 @@ export interface Request {
 	 * for streaming responses, whose frames carry no such field.
 	 */
 	providerServed?: string;
+	/**
+	 * The tier the provider reports it actually ran the request on, from the
+	 * response `usage.service_tier` (e.g. Sail Research "balanced"). A fact
+	 * from the response, never inferred — in particular never the tier the
+	 * client asked for. Absent when the provider reports no tier.
+	 */
+	completionTier?: string;
 }
 
 // API response type
@@ -256,6 +264,8 @@ export interface RequestResponse {
 	gatewayHintContextCompacted?: string;
 	/** See the matching field on `Request` above. */
 	providerServed?: string;
+	/** See the matching field on `Request` above. */
+	completionTier?: string;
 }
 
 // Detailed request with payload
@@ -371,6 +381,7 @@ export function toRequest(row: RequestRow): Request {
 		gatewayHintContextCompacted:
 			row.gateway_hint_context_compacted || undefined,
 		providerServed: row.provider_served || undefined,
+		completionTier: row.completion_tier || undefined,
 	};
 }
 
@@ -415,6 +426,7 @@ export function toRequestResponse(request: Request): RequestResponse {
 		gatewayHintCompaction: request.gatewayHintCompaction,
 		gatewayHintContextCompacted: request.gatewayHintContextCompacted,
 		providerServed: request.providerServed,
+		completionTier: request.completionTier,
 	};
 }
 

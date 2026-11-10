@@ -10,6 +10,8 @@ export * from "./kilo-usage-fetcher";
 export * from "./minimax-usage-fetcher";
 // Export NanoGPT usage fetcher
 export * from "./nanogpt-usage-fetcher";
+// Export provider-agnostic night-window tier adapters
+export * from "./night-window";
 // Export OAuth utilities
 export * from "./oauth";
 export * from "./openrouter-usage-fetcher";
@@ -63,6 +65,7 @@ import { OllamaProvider } from "./providers/ollama/provider";
 import { OpenAICompatibleProvider } from "./providers/openai/provider";
 import { OpenRouterProvider } from "./providers/openrouter/provider";
 import { QwenProvider } from "./providers/qwen/provider";
+import { SailresearchProvider } from "./providers/sailresearch/provider";
 import { VertexAIProvider } from "./providers/vertex-ai/provider";
 import { XaiProvider } from "./providers/xai/provider";
 import { ZaiProvider } from "./providers/zai/provider";
@@ -79,6 +82,7 @@ registry.registerProvider(new OpenRouterProvider());
 registry.registerProvider(new QwenProvider());
 registry.registerProvider(new MinimaxProvider());
 registry.registerProvider(new DeepseekProvider());
+registry.registerProvider(new SailresearchProvider());
 registry.registerProvider(new NanoGPTProvider());
 registry.registerProvider(new ZaiProvider());
 registry.registerProvider(new VertexAIProvider());

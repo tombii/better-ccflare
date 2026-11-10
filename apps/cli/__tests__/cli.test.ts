@@ -351,6 +351,41 @@ describe("CLI Integration Tests", () => {
 			const swappedOutput = swapped.stdout + swapped.stderr;
 			expect(swappedOutput).toContain("Invalid priority value: NaN");
 		});
+
+		it("should reject an invalid --set-night-window value", async () => {
+			const result = await runCLI([
+				"--set-night-window",
+				"some-account",
+				"maybe",
+			]);
+
+			expect(result.exitCode).toBe(1);
+			const output = result.stdout + result.stderr;
+			expect(output).toContain("Invalid night-window value 'maybe'");
+		});
+
+		it("should report an unknown account from --set-night-window", async () => {
+			const result = await runCLI(["--set-night-window", "some-account", "on"]);
+
+			expect(result.exitCode).toBe(1);
+			const output = result.stdout + result.stderr;
+			expect(output).toContain("Account 'some-account' not found");
+		});
+
+		it("should reject an invalid --night-window value at add time", async () => {
+			const result = await runCLI([
+				"--add-account",
+				"some-account",
+				"--mode",
+				"sailresearch",
+				"--night-window",
+				"bogus",
+			]);
+
+			expect(result.exitCode).toBe(1);
+			const output = result.stdout + result.stderr;
+			expect(output).toContain("Invalid --night-window value 'bogus'");
+		});
 	});
 
 	describe("Error Handling", () => {
