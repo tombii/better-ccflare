@@ -192,7 +192,7 @@ STORE_PAYLOADS=false                   # Disable storing request/response bodies
 
 # Night Window (cheaper completion tier for enabled accounts during these hours)
 NIGHT_WINDOW=22:00-08:00               # HH:MM-HH:MM, may wrap past midnight (unset = off)
-NIGHT_TZ=Europe/Kyiv                   # IANA zone the window is written in (default: UTC)
+NIGHT_TZ=Europe/Berlin                 # IANA zone the window is written in (default: UTC)
 ```
 
 **Security Notes**:
