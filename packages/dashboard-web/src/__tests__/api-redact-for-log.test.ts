@@ -76,19 +76,34 @@ describe("api.ts request logging", () => {
 
 	// Any outgoing body must be redacted before it reaches console.debug. This
 	// catches a new add<Provider>Account-style method that logs `{ data }` raw.
+	// Matched across line breaks: almost every log call is spread over several
+	// lines, so a line-by-line check would miss the payload entirely.
+	const logCall =
+		/this\.logger\.debug\(\s*`→ (POST|PATCH|PUT) [^`]*`([^)]*)\)/g;
+
 	it("never logs an unredacted request body", () => {
-		const offenders = source
-			.split("\n")
-			.map((line, i) => ({ line: line.trim(), number: i + 1 }))
-			.filter(({ line }) => {
-				if (!/logger\.debug\(`→ (POST|PATCH|PUT) /.test(line)) return false;
-				// text after the template literal — i.e. what is actually logged
-				const logged = line.split("`")[2] ?? "";
-				if (logged.includes("redactForLog")) return false;
-				// whole-body variables must go through the redactor; small
-				// explicit field logs ({ endpoint }, { accountId }, ...) are fine
-				return /\b(data|body|payload|partial|settings)\s*[,}]/.test(logged);
-			});
+		const offenders: string[] = [];
+		for (const match of source.matchAll(logCall)) {
+			const logged = match[2];
+			if (logged.includes("redactForLog")) continue;
+			// whole-body variables must go through the redactor; small explicit
+			// field logs ({ endpoint }, { accountId }, ...) are fine. A property
+			// read like `data.endpoint` logs one field, not the body.
+			if (/\b(data|body|payload|partial|settings)\b(?!\s*[.[])/.test(logged)) {
+				offenders.push(match[0].replace(/\s+/g, " "));
+			}
+		}
 		expect(offenders).toEqual([]);
+	});
+
+	it("parses every POST/PATCH/PUT log call in api.ts", () => {
+		// Guards the regex above: if it stops matching the file's style (e.g. a
+		// different logging helper), the test above would silently pass.
+		const arrowCount = (source.match(/→ (POST|PATCH|PUT) /g) ?? []).length;
+		const calls = [...source.matchAll(logCall)];
+		expect(calls.length).toBe(arrowCount);
+		expect(
+			calls.filter((m) => m[2].includes("redactForLog")).length,
+		).toBeGreaterThan(0);
 	});
 });
