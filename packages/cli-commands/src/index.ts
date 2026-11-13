@@ -3,6 +3,7 @@ export * from "./commands/account";
 export * from "./commands/analyze";
 export * from "./commands/api-key";
 export * from "./commands/api-key-options";
+export * from "./commands/cost-tracking";
 export * from "./commands/database-doctor";
 export * from "./commands/database-repair";
 export * from "./commands/help";

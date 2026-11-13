@@ -28,6 +28,8 @@ import {
 	apiKeyLimitWindowBounds,
 	computeSpendWindowResetMs,
 	computeSpendWindowStartMs,
+	getCostTrackingEpoch,
+	isCostTrackingEnabled,
 	spendWindowInstanceKey,
 } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
@@ -153,6 +155,7 @@ export class ApiKeySpendCounter {
 			createdMs: number;
 		}
 	>();
+	private reservationTrackingEpoch = getCostTrackingEpoch();
 	private readonly spendResetPoints = new Map<string, number>();
 	private readonly reservationLocks = new Map<string, Promise<void>>();
 	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -195,6 +198,11 @@ export class ApiKeySpendCounter {
 		}
 	}
 	private expireReservations(nowMs: number): void {
+		const epoch = getCostTrackingEpoch();
+		if (epoch !== this.reservationTrackingEpoch) {
+			this.reservations.clear();
+			this.reservationTrackingEpoch = epoch;
+		}
 		for (const [id, reservation] of this.reservations)
 			if (nowMs - reservation.createdMs >= SPEND_RESERVATION_TTL_MS)
 				this.reservations.delete(id);
@@ -696,6 +704,8 @@ export class ApiKeySpendCounter {
 		nowMs = Date.now(),
 		signal?: AbortSignal,
 	): Promise<Array<{ limit: ApiKeyLimit; snapshot: SpendSnapshot }>> {
+		if (!isCostTrackingEnabled()) return [];
+		const trackingEpoch = getCostTrackingEpoch();
 		const previous = this.reservationLocks.get(apiKeyId) ?? Promise.resolve();
 		let unlock!: () => void;
 		const lock = new Promise<void>((resolve) => {
@@ -757,6 +767,13 @@ export class ApiKeySpendCounter {
 						);
 					if (signal?.aborted)
 						throw signal.reason ?? new Error("Request aborted");
+					if (
+						!isCostTrackingEnabled() ||
+						trackingEpoch !== getCostTrackingEpoch()
+					) {
+						this.releaseReservation(requestId);
+						return [];
+					}
 					const blocked = snapshots.some(
 						({ limit, snapshot }) =>
 							limit.enforce === "block" && snapshot.exceeded,

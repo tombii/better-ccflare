@@ -11,6 +11,8 @@ import type {
 // ===== MAIN THREAD → WORKER =====
 
 export interface StartMessage {
+	/** Original ingress generation, carried through delayed response starts. */
+	costTrackingEpoch?: number | null;
 	type: "start";
 	messageId: string; // envelope ID for ack tracking
 	requestId: string;

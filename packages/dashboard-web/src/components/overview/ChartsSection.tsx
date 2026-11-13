@@ -1,6 +1,7 @@
 import { formatCost, formatPercentage } from "@better-ccflare/ui-common";
 import { useMemo } from "react";
 import { CHART_COLORS, COLORS } from "../../constants";
+import { useCostTracking } from "../../hooks/useCostTracking";
 import {
 	BaseAreaChart,
 	BaseBarChart,
@@ -60,6 +61,7 @@ export function ChartsSection({
 	apiKeyPerformanceData,
 	loading,
 }: ChartsSectionProps) {
+	const { enabled: costTrackingEnabled } = useCostTracking();
 	// Aggregate account-model usage into per-account totals for the donut chart
 	const accountUsageDonutData = useMemo(() => {
 		const totals = new Map<string, number>();
@@ -318,74 +320,79 @@ export function ChartsSection({
 							secondaryYAxis={true}
 							showLegend={true}
 						/>
-						<div className="mt-4 border rounded-md overflow-hidden">
-							<table
-								aria-label="Account cost breakdown"
-								className="w-full text-sm"
-							>
-								<thead className="bg-muted/50">
-									<tr>
-										<th scope="col" className="text-left px-3 py-2">
-											Account
-										</th>
-										<th scope="col" className="text-right px-3 py-2">
-											Plan Value
-										</th>
-										<th scope="col" className="text-right px-3 py-2">
-											API Value
-										</th>
-										<th scope="col" className="text-right px-3 py-2">
-											Total
-										</th>
-									</tr>
-								</thead>
-								<tbody>
-									{hasAnyAccountCostData(sortedAccountCostRows) ? (
-										sortedAccountCostRows.map((row) => (
-											<tr key={row.name} className="border-t">
-												<td className="px-3 py-2 text-muted-foreground">
-													{row.name}
-												</td>
-												<td className="px-3 py-2 text-right">
-													{formatCost(row.planCostUsd)}
-												</td>
-												<td className="px-3 py-2 text-right">
-													{formatCost(row.apiCostUsd)}
-												</td>
-												<td className="px-3 py-2 text-right font-medium">
-													{formatCost(row.totalCostUsd)}
+						{costTrackingEnabled && (
+							<div className="mt-4 border rounded-md overflow-hidden">
+								<table
+									aria-label="Account cost breakdown"
+									className="w-full text-sm"
+								>
+									<thead className="bg-muted/50">
+										<tr>
+											<th scope="col" className="text-left px-3 py-2">
+												Account
+											</th>
+											<th scope="col" className="text-right px-3 py-2">
+												Plan Value
+											</th>
+											<th scope="col" className="text-right px-3 py-2">
+												API Value
+											</th>
+											<th scope="col" className="text-right px-3 py-2">
+												Total
+											</th>
+										</tr>
+									</thead>
+									<tbody>
+										{hasAnyAccountCostData(sortedAccountCostRows) ? (
+											sortedAccountCostRows.map((row) => (
+												<tr key={row.name} className="border-t">
+													<td className="px-3 py-2 text-muted-foreground">
+														{row.name}
+													</td>
+													<td className="px-3 py-2 text-right">
+														{formatCost(row.planCostUsd)}
+													</td>
+													<td className="px-3 py-2 text-right">
+														{formatCost(row.apiCostUsd)}
+													</td>
+													<td className="px-3 py-2 text-right font-medium">
+														{formatCost(row.totalCostUsd)}
+													</td>
+												</tr>
+											))
+										) : (
+											<tr className="border-t">
+												<td
+													className="px-3 py-3 text-muted-foreground"
+													colSpan={4}
+												>
+													No cost data
 												</td>
 											</tr>
-										))
-									) : (
-										<tr className="border-t">
-											<td
-												className="px-3 py-3 text-muted-foreground"
-												colSpan={4}
+										)}
+									</tbody>
+									<tfoot className="bg-muted/30 border-t">
+										<tr>
+											<th
+												scope="row"
+												className="px-3 py-2 font-medium text-left"
 											>
-												No cost data
+												Total
+											</th>
+											<td className="px-3 py-2 text-right font-medium">
+												{formatCost(accountCostTotals.planCostUsd)}
+											</td>
+											<td className="px-3 py-2 text-right font-medium">
+												{formatCost(accountCostTotals.apiCostUsd)}
+											</td>
+											<td className="px-3 py-2 text-right font-medium">
+												{formatCost(accountCostTotals.totalCostUsd)}
 											</td>
 										</tr>
-									)}
-								</tbody>
-								<tfoot className="bg-muted/30 border-t">
-									<tr>
-										<th scope="row" className="px-3 py-2 font-medium text-left">
-											Total
-										</th>
-										<td className="px-3 py-2 text-right font-medium">
-											{formatCost(accountCostTotals.planCostUsd)}
-										</td>
-										<td className="px-3 py-2 text-right font-medium">
-											{formatCost(accountCostTotals.apiCostUsd)}
-										</td>
-										<td className="px-3 py-2 text-right font-medium">
-											{formatCost(accountCostTotals.totalCostUsd)}
-										</td>
-									</tr>
-								</tfoot>
-							</table>
-						</div>
+									</tfoot>
+								</table>
+							</div>
+						)}
 					</CardContent>
 				</Card>
 			</div>

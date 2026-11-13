@@ -55,6 +55,8 @@ const LOCAL_CONTROL_SECRET_HEADER = "x-better-ccflare-local-control-secret";
  * (clear an in-process cache / re-poll usage) triggered by the user's own CLI
  * against their own locally-running server, not a general auth bypass. */
 function isLocalControlNotifyPath(path: string): boolean {
+	// Local CLI invalidates the cached flag after persisting it to the same file.
+	if (path === "/api/config/cost-tracking/reload") return true;
 	const parts = path.split("/");
 	if (
 		parts.length === 5 &&
@@ -226,6 +228,11 @@ export class AuthService {
 		if (apiKey.role === "admin") {
 			return { authorized: true };
 		}
+		if (
+			method === "GET" &&
+			path === "/api/config/cost-tracking"
+		)
+			return { authorized: true };
 
 		// A non-admin key can inspect its own usage. The usage handler resolves
 		// URL-encoded names and checks the resulting key id before reading data.

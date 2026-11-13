@@ -1,7 +1,9 @@
 import {
 	type AccountUsageSnapshot,
+	getCostTrackingEpoch,
 	getModelFamily,
 	getModelRates,
+	isCostTrackingEnabled,
 	LATEST_FABLE_MODEL,
 	LATEST_HAIKU_MODEL,
 	LATEST_OPUS_MODEL,
@@ -554,6 +556,14 @@ async function handleProxyRequest(
 	reservationId = crypto.randomUUID(),
 	reservationState = { hasLimits: false },
 ): Promise<Response> {
+	const costTrackingEpoch =
+		(ctx.config.getCostTrackingEnabled?.() ?? isCostTrackingEnabled())
+			? getCostTrackingEpoch()
+			: null;
+	const trackingEnabledForRequest = () =>
+		(ctx.config.getCostTrackingEnabled?.() ?? true) &&
+		costTrackingEpoch !== null &&
+		costTrackingEpoch === getCostTrackingEpoch();
 	// 0. Silently ignore Claude Code internal endpoints (non-critical, not supported by all providers)
 	if (
 		url.pathname === "/api/event_logging/batch" ||
@@ -638,7 +648,9 @@ async function handleProxyRequest(
 	// call for a key (see SPEND_RESYNC_TTL_MS). Every later call is answered
 	// from memory with any refresh fired into the background.
 	const keySpendLimit =
-		options?.spendLimit && !isInternalProbe(req.headers, ctx)
+		trackingEnabledForRequest() &&
+		options?.spendLimit &&
+		!isInternalProbe(req.headers, ctx)
 			? options.spendLimit
 			: null;
 	let spendSnapshot: SpendSnapshot | null = null;
@@ -699,12 +711,17 @@ async function handleProxyRequest(
 		return latest;
 	};
 	const checkModelSpend = async (servedModel: string | null) => {
+		if (!trackingEnabledForRequest()) {
+			tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
+			return null;
+		}
 		if (!apiKeyId || !keyLimits.length) return null;
 		const estimatedUsd = await estimateApiKeyRequestCost(
 			parsedBody,
 			servedModel ?? requestModel ?? null,
 			requestModel ?? null,
 		);
+		if (!trackingEnabledForRequest()) return null;
 		const checks = await getApiKeySpendCounter(ctx.dbOps).checkAndReserve(
 			apiKeyId,
 			reservationId,
@@ -716,6 +733,10 @@ async function handleProxyRequest(
 			Date.now(),
 			req.signal,
 		);
+		if (!trackingEnabledForRequest()) {
+			tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
+			return null;
+		}
 		if (req.signal.aborted) {
 			tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
 			throw req.signal.reason ?? new Error("Request aborted");
@@ -723,6 +744,7 @@ async function handleProxyRequest(
 		return selectBlockingLimit(checks);
 	};
 	if (
+		trackingEnabledForRequest() &&
 		apiKeyId &&
 		!isInternalProbe(req.headers, ctx) &&
 		typeof ctx.dbOps.getApiKeyLimits === "function"
@@ -859,7 +881,7 @@ async function handleProxyRequest(
 	}
 
 	// 5. Create request metadata with agent info
-	const requestMeta = createRequestMetadata(req, url);
+	const requestMeta = { ...createRequestMetadata(req, url), costTrackingEpoch };
 	requestMeta.id = reservationId;
 	try {
 		observation?.bindRequestId(requestMeta.id);
@@ -1007,6 +1029,7 @@ async function handleProxyRequest(
 				method: req.method,
 				path: url.pathname,
 				timestamp: requestMeta.timestamp,
+				costTrackingEpoch: requestMeta.costTrackingEpoch,
 				requestHeaders: Object.fromEntries(req.headers.entries()),
 				requestBody: null,
 				project: project ?? null,
@@ -1090,7 +1113,7 @@ async function handleProxyRequest(
 		);
 	}
 
-	if (limitCheckUnavailable) {
+	if (trackingEnabledForRequest() && limitCheckUnavailable) {
 		return await returnRefusal(
 			createLimitCheckUnavailableResponse(),
 			"api_key_limit_check_unavailable",
@@ -1099,7 +1122,7 @@ async function handleProxyRequest(
 		);
 	}
 
-	if (blockingLimit) {
+	if (trackingEnabledForRequest() && blockingLimit) {
 		const { limit, snapshot } = blockingLimit;
 		return await returnRefusal(
 			createApiKeySpendLimitResponse({
@@ -1129,7 +1152,7 @@ async function handleProxyRequest(
 	//
 	// `warn` NEVER refuses. It falls through to the alert below and the
 	// request proceeds exactly as it would with no limit set.
-	if (spendLimitExceeded && spendSnapshot) {
+	if (trackingEnabledForRequest() && spendLimitExceeded && spendSnapshot) {
 		if (keySpendLimit?.limitEnforce === "block") {
 			log.warn(
 				`API key spend limit: refusing request — key ${apiKeyName ?? apiKeyId ?? "(unknown)"} has spent ${spendSnapshot.spentUsd.toFixed(4)} of its ${spendSnapshot.limitUsd} limit`,
@@ -1336,6 +1359,7 @@ async function handleProxyRequest(
 				method: req.method,
 				path: url.pathname,
 				timestamp: requestMeta.timestamp,
+				costTrackingEpoch: requestMeta.costTrackingEpoch,
 				requestHeaders: Object.fromEntries(req.headers.entries()),
 				requestBody: null,
 				project: project ?? null,
@@ -1762,6 +1786,7 @@ async function handleProxyRequest(
 	const routedSpendRefusal = async (
 		modelOverride: string | null | undefined,
 	): Promise<Response | null> => {
+		if (!trackingEnabledForRequest()) return null;
 		try {
 			const model = splitModelRouting(
 				modelOverride || effectiveModel || requestModel || "",
@@ -1784,6 +1809,7 @@ async function handleProxyRequest(
 			);
 		} catch (error) {
 			log.warn(`Routed spend limit check unavailable: ${String(error)}`);
+			if (!trackingEnabledForRequest()) return null;
 			const model = splitModelRouting(
 				modelOverride || effectiveModel || requestModel || "",
 			).model;

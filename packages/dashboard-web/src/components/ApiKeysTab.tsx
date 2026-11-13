@@ -39,6 +39,7 @@ import {
 	serializeSpendLimit,
 } from "./api-keys/spend-limit";
 import { CopyButton } from "./CopyButton";
+import { CostTrackingNotice } from "./CostTrackingNotice";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -379,6 +380,10 @@ export function ApiKeysTab() {
 
 	return (
 		<div className="space-y-6">
+			<CostTrackingNotice limits />
+			<Link to="/model-prices" className="text-sm underline">
+				Model prices (USD per 1M tokens)
+			</Link>
 			{/* Statistics Cards */}
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 				<Card>
@@ -443,6 +448,7 @@ export function ApiKeysTab() {
 								only once, so save it securely.
 							</DialogDescription>
 						</DialogHeader>
+						<CostTrackingNotice limits />
 						<div className="space-y-4 py-4">
 							<div className="space-y-2">
 								<Label htmlFor="name">Key Name</Label>

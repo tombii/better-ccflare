@@ -44,6 +44,7 @@ export {
 	apiKeyLimitWindowBounds,
 } from "./api-key-limit-window";
 export * from "./auth-failure-events";
+export * from "./cost-tracking";
 export * from "./extra-usage";
 export * from "./force-account-model";
 export {
@@ -111,6 +112,8 @@ export {
 	getModelRates,
 	initializeNanoGPTPricingIfAccountsExist,
 	listCatalogueModels,
+	listModelPrices,
+	type ModelPriceEntry,
 	type ModelRates,
 	resetNanoGPTPricingCacheForTest,
 	setPricingLogger,

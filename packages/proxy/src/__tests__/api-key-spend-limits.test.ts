@@ -164,6 +164,36 @@ function spendLimit(
 
 const PROXY_URL = new URL("https://proxy.local/v1/messages");
 
+describe("cost tracking and stale spend limits", () => {
+	it("bypasses stale blocking spend while off and enforces it again when on", async () => {
+		const ctx = makeContext([], { totalUsd: 500, oldestMs: null });
+		let enabled = false;
+		Object.assign(ctx.config, { getCostTrackingEnabled: () => enabled });
+		const options = { spendLimit: spendLimit({ limitUsd: 100 }) };
+		const off = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"budgeted",
+			options,
+		);
+		expect((await off.json()).error?.code).not.toBe("api_key_limit_exceeded");
+		expect(ctx.spendQueries.count).toBe(0);
+		enabled = true;
+		const on = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"budgeted",
+			options,
+		);
+		expect(on.status).toBe(429);
+		expect((await on.json()).error?.code).toBe("api_key_limit_exceeded");
+	});
+});
+
 let savedPassthrough: string | undefined;
 
 beforeEach(() => {
@@ -585,6 +615,37 @@ describe("multi-window row enforcement", () => {
 		});
 		return ctx;
 	}
+	it("does not consult v2 limits or price reservations while tracking is off, and resumes when on", async () => {
+		const ctx = v2Context(
+			[row()],
+			[{ timestamp: Date.now() - 1, costUsd: 8, model: "opus" }],
+		);
+		let enabled = false;
+		Object.assign(ctx.config, { getCostTrackingEnabled: () => enabled });
+		const prices = spyOn(core, "getModelRates");
+		const off = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"budgeted",
+			{ limitWindowMode: "calendar" },
+		);
+		expect((await off.json()).error?.code).not.toBe("api_key_limit_exceeded");
+		expect(ctx.dbOps.getApiKeyLimits).not.toHaveBeenCalled();
+		expect(prices).not.toHaveBeenCalled();
+		enabled = true;
+		const on = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"budgeted",
+			{ limitWindowMode: "calendar" },
+		);
+		expect(on.status).toBe(429);
+		expect((await on.json()).error?.code).toBe("api_key_limit_exceeded");
+	});
 	it("names the first exceeded model scope and returns its calendar boundary without a one-hour clamp", async () => {
 		const now = Date.now();
 		const ctx = v2Context(

@@ -123,7 +123,7 @@ export function RestrictionMultiSelect({
 												{option.label}
 											</span>
 											{option.hint && (
-												<span className="text-xs text-muted-foreground truncate">
+												<span className="text-xs text-muted-foreground whitespace-normal">
 													{option.hint}
 												</span>
 											)}

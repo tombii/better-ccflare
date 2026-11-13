@@ -2,8 +2,10 @@ import { registerUIRefresh } from "@better-ccflare/core";
 import type { ApiKeyLimitStatus, ApiKeyResponse } from "@better-ccflare/types";
 import { formatCost } from "@better-ccflare/ui-common";
 import { useEffect, useState } from "react";
+import { useCostTracking } from "../../hooks/useCostTracking";
 import { formatRelativeReset } from "../../lib/pool-usage";
 import { cn } from "../../lib/utils";
+import { CostTrackingNotice } from "../CostTrackingNotice";
 import { Progress } from "../ui/progress";
 import { spendFillClass, spendPercent, spendTextClass } from "./spend-limit";
 
@@ -13,6 +15,7 @@ export interface ApiKeySpendGaugeProps {
 }
 
 export function ApiKeySpendGauge({ apiKey, className }: ApiKeySpendGaugeProps) {
+	const { enabled } = useCostTracking();
 	const [now, setNow] = useState(() => Date.now());
 	useEffect(
 		() =>
@@ -25,6 +28,7 @@ export function ApiKeySpendGauge({ apiKey, className }: ApiKeySpendGaugeProps) {
 		[apiKey.id],
 	);
 	if (!apiKey.limits?.length) return null;
+	if (!enabled) return <CostTrackingNotice limits />;
 	return (
 		<div className={cn("space-y-3", className)}>
 			{apiKey.limits.map((limit) => (

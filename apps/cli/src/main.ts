@@ -34,6 +34,7 @@ import {
 	clearRequestHistory,
 	compactDatabase,
 	configureApiKey,
+	configureCostTracking,
 	deleteApiKey,
 	disableApiKey,
 	enableApiKey,
@@ -49,6 +50,7 @@ import {
 	parseApiKeyLimit,
 	parseApiKeyLimitMode,
 	parseApiKeyRouting,
+	parseCostTrackingValue,
 	parseNightWindowValue,
 	pauseAccount,
 	reauthenticateAccount,
@@ -79,6 +81,7 @@ import { parseBedrockConfig } from "@better-ccflare/providers";
 import startServer from "@better-ccflare/server";
 
 interface ParsedArgs {
+	costTracking: string | null;
 	version: boolean;
 	help: boolean;
 	serve: boolean;
@@ -462,6 +465,7 @@ Legend:
  */
 function parseArgs(args: string[]): ParsedArgs {
 	const parsed: ParsedArgs = {
+		costTracking: null,
 		version: false,
 		help: false,
 		serve: false, // Keep for backwards compatibility but treat as no-op
@@ -510,6 +514,10 @@ function parseArgs(args: string[]): ParsedArgs {
 		const arg = args[i];
 
 		switch (arg) {
+			case "--cost-tracking":
+				parseCostTrackingValue(args[i + 1]);
+				parsed.costTracking = args[++i];
+				break;
 			case "--version":
 			case "-v":
 				parsed.version = true;
@@ -962,6 +970,17 @@ function parseArgs(args: string[]): ParsedArgs {
 async function main() {
 	const args = process.argv.slice(2);
 	const parsed = parseArgs(args);
+	if (parsed.costTracking !== null) {
+		const result = await configureCostTracking(
+			new Config(),
+			parsed.costTracking,
+		);
+		console.log(
+			`Cost tracking ${result.enabled ? "enabled" : "disabled"}. ${result.notified ? "Local server updated." : "Saved; applies when the local server next starts."}`,
+		);
+		fastExit(0);
+		return;
+	}
 
 	// Handle version - check before any expensive initializations
 	if (parsed.version) {
@@ -990,6 +1009,7 @@ async function main() {
 Usage: better-ccflare [options]
 
 Options:
+	--cost-tracking <on|off> Persist cost tracking and notify the local server
   --version, -v       Show version number
   --serve              Start API server with dashboard
   --port <number>      Server port (default: 8080, or PORT env var)

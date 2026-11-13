@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { setCostTrackingEnabled } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import type { ApiKeyLimit } from "@better-ccflare/types";
 import {
@@ -44,9 +45,40 @@ afterEach(() => {
 	for (const counter of counters) counter.dispose();
 	counters.length = 0;
 	mock.restore();
+	setCostTrackingEnabled(true);
 });
 
 describe("round 3 spend admission regressions", () => {
+	it("drops reservations for requests spanning a cost-tracking gap", async () => {
+		const counter = make();
+		await counter.checkAndReserve(
+			"k",
+			"old",
+			[row()],
+			"calendar",
+			"opus",
+			"opus",
+			1,
+			NOW,
+		);
+		expect(
+			(await counter.getLimitSnapshot("k", row(), "calendar", NOW)).reservedUsd,
+		).toBe(1);
+		setCostTrackingEnabled(false);
+		setCostTrackingEnabled(true);
+		const [fresh] = await counter.checkAndReserve(
+			"k",
+			"fresh",
+			[row()],
+			"calendar",
+			"opus",
+			"opus",
+			0.1,
+			NOW,
+		);
+		expect(fresh.snapshot.exceeded).toBe(false);
+		expect(fresh.snapshot.reservedUsd).toBeCloseTo(0.1);
+	});
 	it.each([
 		[],
 		[row({ enforce: "warn" })],

@@ -19,6 +19,7 @@ import {
 	readUsageUtilization,
 	registerCleanup,
 	registerDisposable,
+	setCostTrackingEnabled,
 	setForceAccountModel,
 	setPricingLogger,
 	setUseExtraUsage,
@@ -1329,6 +1330,7 @@ export default async function startServer(options?: {
 	// which may depend on config; mirror the setting there before anything can
 	// route. The config POST handler mirrors it again after a write.
 	setForceAccountModel(config.getForceAccountModel());
+	setCostTrackingEnabled(config.getCostTrackingEnabled());
 	// Same constraint for "use extra usage": the usage snapshot that gates
 	// admission is built in providers. Seed it from the environment first (a
 	// one-time adoption into the config file), then mirror the result.

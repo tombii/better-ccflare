@@ -17,6 +17,7 @@ import { ComboFlowTab } from "./components/combo-flow/ComboFlowTab";
 import { CombosTab } from "./components/combos/CombosTab";
 import { DebugPanel } from "./components/DebugPanel";
 import { LogsTab } from "./components/LogsTab";
+import { ModelPricesTab } from "./components/ModelPricesTab";
 import { Navigation } from "./components/navigation";
 import { OverviewTab } from "./components/OverviewTab";
 import { RequestsTab } from "./components/RequestsTab";
@@ -158,6 +159,12 @@ export function App() {
 				element: <ApiKeysTab />,
 				title: "API Key Management",
 				subtitle: "Generate and manage API keys for authentication",
+			},
+			{
+				path: "/model-prices",
+				element: <ModelPricesTab />,
+				title: "Model prices",
+				subtitle: "The gateway's catalogue rates in USD per 1M tokens",
 			},
 			{
 				path: "/search",

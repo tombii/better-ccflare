@@ -1,6 +1,8 @@
 import {
 	BUFFER_SIZES,
 	estimateCostUSD,
+	getCostTrackingEpoch,
+	isCostTrackingEnabled,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import { AsyncDbWriter, DatabaseOperations } from "@better-ccflare/database";
@@ -38,6 +40,7 @@ import {
 } from "./worker-messages";
 
 interface RequestState {
+	costTrackingEpoch: number | null;
 	startMessage: StartMessage;
 	buffer: string;
 	streamDecoder: TextDecoder;
@@ -529,6 +532,12 @@ export class UsageCollector {
 		// Create request state
 		const now = Date.now();
 		const state: RequestState = {
+			costTrackingEpoch:
+				msg.costTrackingEpoch !== undefined
+					? msg.costTrackingEpoch
+					: isCostTrackingEnabled()
+						? getCostTrackingEpoch()
+						: null,
 			startMessage: msg,
 			buffer: "",
 			streamDecoder: new TextDecoder(),
@@ -853,17 +862,28 @@ export class UsageCollector {
 				(state.usage.cacheCreationInputTokens || 0);
 
 			try {
-				state.usage.costUsd = await this.estimateCostWithDeadline(
-					startMessage.requestId,
-					model,
-					() =>
-						estimateCostUSD(model, {
-							inputTokens: state.usage.inputTokens,
-							outputTokens: finalOutputTokens,
-							cacheReadInputTokens: state.usage.cacheReadInputTokens,
-							cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-						}),
-				);
+				if (
+					isCostTrackingEnabled() &&
+					state.costTrackingEpoch === getCostTrackingEpoch()
+				) {
+					state.usage.costUsd = await this.estimateCostWithDeadline(
+						startMessage.requestId,
+						model,
+						() =>
+							estimateCostUSD(model, {
+								inputTokens: state.usage.inputTokens,
+								outputTokens: finalOutputTokens,
+								cacheReadInputTokens: state.usage.cacheReadInputTokens,
+								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
+							}),
+					);
+				}
+				if (
+					!isCostTrackingEnabled() ||
+					state.costTrackingEpoch !== getCostTrackingEpoch()
+				) {
+					state.usage.costUsd = undefined;
+				}
 			} catch (error) {
 				if (preparedPayload) {
 					this.releasePreparedPayload(preparedPayload);
@@ -874,7 +894,8 @@ export class UsageCollector {
 			// Spend becomes chargeable when pricing finishes, which can be after
 			// EOF and an operator's reset. Keep this separate from response latency
 			// and persist the same instant even when the async writer runs later.
-			spendRecordedAt = Date.now();
+			spendRecordedAt =
+				state.usage.costUsd === undefined ? undefined : Date.now();
 
 			// Per-API-key spend counter: the request's cost has just become
 			// known, and this is the only place in the process where that is
@@ -890,14 +911,15 @@ export class UsageCollector {
 			// `tryGet...` and never `get...`: a key with no limit has no counter
 			// entry and a deployment with no limits at all has no counter, and
 			// neither may pay for this feature.
-			tryGetApiKeySpendCounter()?.record(
-				startMessage.apiKeyId,
-				state.usage.costUsd,
-				state.usage.model,
-				spendRecordedAt,
-				startMessage.requestId,
-				startMessage.limitModel ?? startMessage.originalModel ?? null,
-			);
+			if (state.usage.costUsd !== undefined)
+				tryGetApiKeySpendCounter()?.record(
+					startMessage.apiKeyId,
+					state.usage.costUsd,
+					state.usage.model,
+					spendRecordedAt,
+					startMessage.requestId,
+					startMessage.limitModel ?? startMessage.originalModel ?? null,
+				);
 
 			// Calculate tokens per second - zai specific vs other providers
 			if (finalOutputTokens > 0) {

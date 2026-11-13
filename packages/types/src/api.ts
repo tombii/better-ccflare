@@ -21,6 +21,8 @@ export interface ComboSlotInfo {
 }
 
 export interface RequestMeta {
+	/** Cost-tracking generation at ingress; null means this request is unpriced. */
+	costTrackingEpoch?: number | null;
 	id: string;
 	method: string;
 	path: string;

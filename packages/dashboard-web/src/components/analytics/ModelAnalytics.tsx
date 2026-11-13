@@ -1,6 +1,7 @@
 import { Activity, BarChart3, TrendingUp, Zap } from "lucide-react";
 import { useState } from "react";
 import type { TimeRange } from "../../constants";
+import { useCostTracking } from "../../hooks/useCostTracking";
 import { ModelPerformanceComparison, ModelTokenSpeedChart } from "../charts";
 import {
 	Card,
@@ -43,9 +44,11 @@ export function ModelAnalytics({
 	costByModel,
 	loading = false,
 }: ModelAnalyticsProps) {
+	const { enabled: costTrackingEnabled } = useCostTracking();
 	const [comparisonView, setComparisonView] = useState<
 		"speed-cost" | "performance" | "efficiency"
 	>("speed-cost");
+	const activeView = costTrackingEnabled ? comparisonView : "performance";
 
 	// Prepare data for the comparison chart
 	const comparisonData = modelPerformance.map((perf) => {
@@ -112,15 +115,15 @@ export function ModelAnalytics({
 										Model Performance Comparison
 									</CardTitle>
 									<CardDescription>
-										{comparisonView === "speed-cost"
+										{activeView === "speed-cost"
 											? "Token generation speed vs. cost efficiency"
-											: comparisonView === "performance"
+											: activeView === "performance"
 												? "Response time and error rate analysis"
 												: "Overall efficiency score (speed/cost ratio)"}
 									</CardDescription>
 								</div>
 								<Select
-									value={comparisonView}
+									value={activeView}
 									onValueChange={(v) =>
 										setComparisonView(
 											v as "speed-cost" | "performance" | "efficiency",
@@ -131,7 +134,10 @@ export function ModelAnalytics({
 										<SelectValue />
 									</SelectTrigger>
 									<SelectContent>
-										<SelectItem value="speed-cost">
+										<SelectItem
+											value="speed-cost"
+											disabled={!costTrackingEnabled}
+										>
 											<div className="flex items-center gap-2">
 												<Zap className="h-4 w-4" />
 												Speed vs Cost
@@ -143,7 +149,10 @@ export function ModelAnalytics({
 												Performance Metrics
 											</div>
 										</SelectItem>
-										<SelectItem value="efficiency">
+										<SelectItem
+											value="efficiency"
+											disabled={!costTrackingEnabled}
+										>
 											<div className="flex items-center gap-2">
 												<TrendingUp className="h-4 w-4" />
 												Efficiency Score
@@ -158,7 +167,7 @@ export function ModelAnalytics({
 								data={comparisonData}
 								loading={loading}
 								height={400}
-								viewMode={comparisonView}
+								viewMode={activeView}
 							/>
 						</CardContent>
 					</Card>
@@ -270,59 +279,61 @@ export function ModelAnalytics({
 							</Card>
 
 							{/* Most Cost-Effective Model Card */}
-							<Card>
-								<CardHeader className="pb-3">
-									<CardTitle className="text-sm font-medium">
-										Most Cost-Effective
-									</CardTitle>
-								</CardHeader>
-								<CardContent>
-									{(() => {
-										const costEffective = comparisonData
-											.filter(
-												(m) =>
-													m.avgTokensPerSecond !== null &&
-													m.costPer1kTokens > 0,
-											)
-											.sort((a, b) => {
-												const efficiencyA =
-													(a.avgTokensPerSecond || 0) / a.costPer1kTokens;
-												const efficiencyB =
-													(b.avgTokensPerSecond || 0) / b.costPer1kTokens;
-												return efficiencyB - efficiencyA;
-											})[0];
-										return costEffective ? (
-											<div className="space-y-2">
-												<p className="text-2xl font-bold">
-													{costEffective.model}
-												</p>
-												<div className="flex items-center gap-4 text-sm">
-													<span className="text-muted-foreground">
-														Efficiency:
-													</span>
-													<span className="font-medium">
-														{(
-															(costEffective.avgTokensPerSecond || 0) /
-															costEffective.costPer1kTokens
-														).toFixed(2)}{" "}
-														tok/s/$
-													</span>
+							{costTrackingEnabled && (
+								<Card>
+									<CardHeader className="pb-3">
+										<CardTitle className="text-sm font-medium">
+											Most Cost-Effective
+										</CardTitle>
+									</CardHeader>
+									<CardContent>
+										{(() => {
+											const costEffective = comparisonData
+												.filter(
+													(m) =>
+														m.avgTokensPerSecond !== null &&
+														m.costPer1kTokens > 0,
+												)
+												.sort((a, b) => {
+													const efficiencyA =
+														(a.avgTokensPerSecond || 0) / a.costPer1kTokens;
+													const efficiencyB =
+														(b.avgTokensPerSecond || 0) / b.costPer1kTokens;
+													return efficiencyB - efficiencyA;
+												})[0];
+											return costEffective ? (
+												<div className="space-y-2">
+													<p className="text-2xl font-bold">
+														{costEffective.model}
+													</p>
+													<div className="flex items-center gap-4 text-sm">
+														<span className="text-muted-foreground">
+															Efficiency:
+														</span>
+														<span className="font-medium">
+															{(
+																(costEffective.avgTokensPerSecond || 0) /
+																costEffective.costPer1kTokens
+															).toFixed(2)}{" "}
+															tok/s/$
+														</span>
+													</div>
+													<div className="flex items-center gap-4 text-sm">
+														<span className="text-muted-foreground">
+															Cost/1K:
+														</span>
+														<span className="font-medium">
+															${costEffective.costPer1kTokens.toFixed(3)}
+														</span>
+													</div>
 												</div>
-												<div className="flex items-center gap-4 text-sm">
-													<span className="text-muted-foreground">
-														Cost/1K:
-													</span>
-													<span className="font-medium">
-														${costEffective.costPer1kTokens.toFixed(3)}
-													</span>
-												</div>
-											</div>
-										) : (
-											<p className="text-muted-foreground">No data</p>
-										);
-									})()}
-								</CardContent>
-							</Card>
+											) : (
+												<p className="text-muted-foreground">No data</p>
+											);
+										})()}
+									</CardContent>
+								</Card>
+							)}
 						</div>
 					</div>
 				</TabsContent>

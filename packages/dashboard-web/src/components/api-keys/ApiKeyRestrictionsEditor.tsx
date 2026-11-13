@@ -1,6 +1,8 @@
 import { type ApiKeyRestrictions, PROVIDER_NAMES } from "@better-ccflare/types";
 import { useMemo } from "react";
 import { useAccounts, useModelOptions } from "../../hooks/queries";
+import { useModelPrices } from "../../hooks/useModelPrices";
+import { priceSummary } from "../../lib/model-prices";
 import {
 	RestrictionMultiSelect,
 	type RestrictionOption,
@@ -55,6 +57,7 @@ export function ApiKeyRestrictionsEditor({
 	// to scope the list, and a key restriction spans every account, so there is
 	// no provider to scope it by here.
 	const modelOptions = useModelOptions();
+	const { data: prices, isLoading: pricesLoading } = useModelPrices();
 
 	const accountGroups = useMemo<RestrictionOptionGroup[]>(() => {
 		const known = accounts ?? [];
@@ -77,12 +80,16 @@ export function ApiKeyRestrictionsEditor({
 		const catalog: RestrictionOption[] = modelOptions.map((model) => ({
 			value: model.id,
 			label: model.id,
-			hint: model.displayName !== model.id ? model.displayName : undefined,
+			hint: pricesLoading
+				? "Loading model prices…"
+				: priceSummary(prices?.models ?? [], model.id),
 		}));
 		const families: RestrictionOption[] = MODEL_FAMILIES.map((family) => ({
 			value: family,
 			label: family,
-			hint: `every ${family} model`,
+			hint: pricesLoading
+				? "Loading model prices…"
+				: priceSummary(prices?.models ?? [], family),
 		}));
 		const familyValues = new Set<string>(MODEL_FAMILIES);
 		// A family already listed above must not reappear as a dangling model.
@@ -95,7 +102,7 @@ export function ApiKeyRestrictionsEditor({
 				options: withDangling(catalog, stillSelected, (model) => model),
 			},
 		];
-	}, [modelOptions, value.allowedModels]);
+	}, [modelOptions, value.allowedModels, prices, pricesLoading]);
 
 	const providerGroups = useMemo<RestrictionOptionGroup[]>(() => {
 		const options: RestrictionOption[] = Object.values(PROVIDER_NAMES).map(

@@ -104,6 +104,7 @@ import {
 import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
 import { createCleanupHandler } from "./handlers/maintenance";
+import { modelPricesHandler } from "./handlers/model-prices";
 import {
 	createModelsHandler,
 	createModelsPreviewHandler,
@@ -513,6 +514,18 @@ export class APIRouter {
 		this.handlers.set("POST:/api/config/use-extra-usage", (req) =>
 			configHandlers.setUseExtraUsage(req),
 		);
+		this.handlers.set("GET:/api/config/cost-tracking", () =>
+			configHandlers.getCostTracking(),
+		);
+		this.handlers.set("POST:/api/config/cost-tracking", (req) =>
+			configHandlers.setCostTracking(req),
+		);
+		this.handlers.set("PUT:/api/config/cost-tracking", (req) =>
+			configHandlers.setCostTracking(req),
+		);
+		this.handlers.set("POST:/api/config/cost-tracking/reload", () =>
+			configHandlers.reloadCostTracking(),
+		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
 		this.handlers.set("GET:/api/version/check", () => versionCheckHandler());
@@ -585,6 +598,7 @@ export class APIRouter {
 		);
 
 		// Model catalog routes
+		this.handlers.set("GET:/api/model-prices", () => modelPricesHandler());
 		const modelsHandler = createModelsHandler(this.context);
 		const modelsRefreshHandler = createModelsRefreshHandler(this.context);
 		const modelsPreviewHandler = createModelsPreviewHandler();

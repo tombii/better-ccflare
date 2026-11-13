@@ -2,6 +2,8 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TIME_CONSTANTS } from "./constants";
+import { getCostTrackingEpoch, isCostTrackingEnabled } from "./cost-tracking";
+import { getModelFamily } from "./model-mappings";
 import { CLAUDE_MODEL_IDS, MODEL_DISPLAY_NAMES } from "./models";
 
 export interface TokenBreakdown {
@@ -1003,6 +1005,48 @@ export interface ModelRates {
 	cacheWrite: number | null;
 }
 
+/** Public, read-only view of the exact catalogue used by estimateCostUSD. */
+export interface ModelPriceEntry {
+	id: string;
+	name: string;
+	provider: string;
+	family: string;
+	rates: ModelRates | null;
+}
+
+export async function listModelPrices(): Promise<ModelPriceEntry[]> {
+	const pricing = await PriceCatalogue.get().getPricing();
+	const seen = new Set<string>();
+	const entries: ModelPriceEntry[] = [];
+	for (const [provider, section] of Object.entries(pricing)) {
+		for (const [id, model] of Object.entries(section.models ?? {})) {
+			// findModel uses the first provider containing this exact catalogue key.
+			// Preserve that precedence, including when its price is unknown.
+			if (seen.has(id)) continue;
+			seen.add(id);
+			const cost = model?.cost;
+			const valid = (value: unknown): value is number =>
+				typeof value === "number" && Number.isFinite(value);
+			entries.push({
+				id,
+				name: model?.name || id,
+				provider,
+				family: getModelFamily(id) ?? "other",
+				rates:
+					cost && valid(cost.input) && valid(cost.output)
+						? {
+								input: cost.input,
+								output: cost.output,
+								cacheRead: valid(cost.cache_read) ? cost.cache_read : null,
+								cacheWrite: valid(cost.cache_write) ? cost.cache_write : null,
+							}
+						: null,
+			});
+		}
+	}
+	return entries.sort((a, b) => a.id.localeCompare(b.id));
+}
+
 /**
  * Get the per-model pricing rates in dollars per 1M tokens
  * @returns Rates for the model, or null if the model is unknown
@@ -1021,6 +1065,8 @@ export async function estimateCostUSD(
 	modelId: string,
 	tokens: TokenBreakdown,
 ): Promise<number> {
+	if (!isCostTrackingEnabled()) return 0;
+	const trackingEpoch = getCostTrackingEpoch();
 	const catalogue = PriceCatalogue.get();
 
 	try {
@@ -1046,7 +1092,9 @@ export async function estimateCostUSD(
 			totalCost += tokens.cacheCreationInputTokens * rate;
 		}
 
-		return totalCost;
+		return isCostTrackingEnabled() && trackingEpoch === getCostTrackingEpoch()
+			? totalCost
+			: 0;
 	} catch (error) {
 		catalogue.warnOnce(modelId, error instanceof Error ? error : String(error));
 		return 0;

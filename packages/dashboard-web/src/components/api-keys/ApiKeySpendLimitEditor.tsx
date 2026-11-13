@@ -47,6 +47,15 @@ export function ApiKeySpendLimitEditor({
 
 	return (
 		<div className="space-y-3">
+			<CostTrackingNotice limits />
+			<div className="space-y-1">
+				{["fable", "opus", "sonnet", "haiku"].map((family) => (
+					<div key={family}>
+						<span className="text-xs font-medium capitalize">{family}</span>
+						<ModelPriceHint scope={family} />
+					</div>
+				))}
+			</div>
 			<div className="space-y-2">
 				<Label htmlFor={`${idPrefix}-limit-usd`}>Spend limit (USD)</Label>
 				<Input
@@ -128,3 +137,6 @@ export function ApiKeySpendLimitEditor({
 		</div>
 	);
 }
+
+import { CostTrackingNotice } from "../CostTrackingNotice";
+import { ModelPriceHint } from "../ModelPricesTab";

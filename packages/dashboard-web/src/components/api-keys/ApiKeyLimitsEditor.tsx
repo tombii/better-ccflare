@@ -8,6 +8,8 @@ import { useState } from "react";
 import { api } from "../../api";
 import { useModelOptions } from "../../hooks/queries";
 import { queryKeys } from "../../lib/query-keys";
+import { CostTrackingNotice } from "../CostTrackingNotice";
+import { ModelPriceHint } from "../ModelPricesTab";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -63,6 +65,7 @@ export function ApiKeyLimitsEditor({
 	const optionsId = `limit-models-${keyId}`;
 	return (
 		<div className="space-y-4">
+			<CostTrackingNotice limits />
 			<div className="flex items-center justify-between gap-3">
 				<Label htmlFor={`calendar-limits-${keyId}`}>
 					Calendar windows (Europe/Dublin)
@@ -112,6 +115,7 @@ export function ApiKeyLimitsEditor({
 									update(row.id, { scopeModel: event.target.value })
 								}
 							/>
+							<ModelPriceHint scope={row.scopeModel} />
 						</div>
 						<div className="space-y-1">
 							<Label htmlFor={`usd-${row.id}`}>API cost limit (USD)</Label>

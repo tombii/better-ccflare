@@ -96,6 +96,7 @@ function isExpectedResponse(path: string, response: Response): boolean {
 }
 
 export interface ResponseHandlerOptions {
+	costTrackingEpoch?: number | null;
 	requestId: string;
 	method: string;
 	path: string;
@@ -208,6 +209,7 @@ export async function forwardToClient(
 	// Send START message immediately if not filtered
 	if (shouldProcessRequest) {
 		const startMessage: StartMessage = {
+			costTrackingEpoch: options.costTrackingEpoch,
 			type: "start",
 			messageId: crypto.randomUUID(),
 			requestId,
