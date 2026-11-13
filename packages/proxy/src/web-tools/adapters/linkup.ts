@@ -173,6 +173,44 @@ function requestSignal(signal: AbortSignal | undefined): AbortSignal {
 	return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
+/**
+ * Whether a failure is the client disconnecting or our timeout firing.
+ *
+ * `AbortSignal.timeout` rejects with a `TimeoutError`, a caller abort with an
+ * `AbortError`; either can also surface as a `DOMException` while the body is
+ * being read, and `DOMException` is not an `Error` subclass, so the name is
+ * checked structurally rather than via `instanceof`.
+ */
+function isAbortLike(error: unknown, effectiveSignal: AbortSignal): boolean {
+	if (effectiveSignal.aborted) return true;
+	if (typeof error !== "object" || error === null) return false;
+	const name = (error as { name?: unknown }).name;
+	return name === "AbortError" || name === "TimeoutError";
+}
+
+/**
+ * Read the 2xx body as JSON.
+ *
+ * The fetch-phase try/catch only covers the network up to the response
+ * headers: an abort or timeout that fires while the body is still streaming
+ * rejects here instead, and must keep its 408 rather than escaping as an
+ * untyped error. Any other failure means a 2xx response whose body is not
+ * JSON, i.e. a malformed 200, which carries 502.
+ */
+async function readJsonBody(
+	response: Response,
+	effectiveSignal: AbortSignal,
+): Promise<unknown> {
+	try {
+		return await response.json();
+	} catch (error) {
+		if (isAbortLike(error, effectiveSignal)) {
+			throw new LinkupSearchError(408, "Linkup search request aborted");
+		}
+		throw new LinkupSearchError(502, "Linkup response is not valid JSON");
+	}
+}
+
 /** POST a search body to Linkup, throwing {@link LinkupSearchError} on failure. */
 async function postSearch(
 	body: LinkupSearchBody,
@@ -194,14 +232,8 @@ async function postSearch(
 		});
 	} catch (error) {
 		// An abort here is either the client disconnecting or our timeout.
-		// `AbortSignal.timeout` rejects with a `TimeoutError`, a caller abort
-		// with an `AbortError`; treat both the same way. Neither warrants a
-		// cooldown, so the status is informational only.
-		if (
-			effectiveSignal.aborted ||
-			(error instanceof Error &&
-				(error.name === "AbortError" || error.name === "TimeoutError"))
-		) {
+		// Neither warrants a cooldown, so the status is informational only.
+		if (isAbortLike(error, effectiveSignal)) {
 			throw new LinkupSearchError(408, "Linkup search request aborted");
 		}
 		throw error;
@@ -215,7 +247,7 @@ async function postSearch(
 		);
 	}
 
-	return response.json();
+	return readJsonBody(response, effectiveSignal);
 }
 
 /**

@@ -55,6 +55,18 @@ function entry(url: string): Record<string, unknown> {
 	return { title: `t ${url}`, description: "s", url, content: "" };
 }
 
+/**
+ * A 200 Response whose body read fails. `stubFetch`'s responder is typed as
+ * returning a real `Response`, so the fake is cast.
+ */
+function failedBodyResponse(reason: unknown): Response {
+	return {
+		ok: true,
+		status: 200,
+		json: () => Promise.reject(reason),
+	} as unknown as Response;
+}
+
 const adapter = createNimbleAdapter();
 
 const keyedConfig: WebToolAdapterConfig = {
@@ -388,6 +400,101 @@ describe("nimble adapter — errors", () => {
 
 		expect(caught).toBeInstanceOf(NimbleSearchError);
 		expect((caught as NimbleSearchError).status).toBe(408);
+	});
+
+	it("maps a timeout while reading the body to status 408", async () => {
+		const timeout = new Error("The operation timed out.");
+		timeout.name = "TimeoutError";
+		stubFetch(() => failedBodyResponse(timeout));
+
+		let caught: unknown;
+		try {
+			await adapter.search(request(), keyedConfig);
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBeInstanceOf(NimbleSearchError);
+		expect((caught as NimbleSearchError).status).toBe(408);
+		expect((caught as Error).message).toContain("aborted");
+	});
+
+	it("maps an abort while reading the body to status 408", async () => {
+		// `DOMException` is not an `Error` subclass, so this also covers the
+		// structural name check used for abort-like failures.
+		stubFetch(() =>
+			failedBodyResponse(
+				new DOMException("The operation was aborted.", "AbortError"),
+			),
+		);
+
+		let caught: unknown;
+		try {
+			await adapter.search(request(), keyedConfig);
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBeInstanceOf(NimbleSearchError);
+		expect((caught as NimbleSearchError).status).toBe(408);
+	});
+
+	it("maps a caller abort during the body read to status 408", async () => {
+		const controller = new AbortController();
+		let fetchSignal: AbortSignal | null | undefined;
+		stubFetch((call) => {
+			fetchSignal = call.init.signal;
+			return {
+				ok: true,
+				status: 200,
+				json: () =>
+					new Promise((_resolve, reject) => {
+						const fail = () =>
+							reject(
+								new DOMException("The operation was aborted.", "AbortError"),
+							);
+						if (fetchSignal?.aborted) {
+							fail();
+							return;
+						}
+						fetchSignal?.addEventListener("abort", fail, { once: true });
+					}),
+			} as unknown as Response;
+		});
+
+		const promise = adapter.search(
+			request({ signal: controller.signal }),
+			keyedConfig,
+		);
+		controller.abort();
+
+		let caught: unknown;
+		try {
+			await promise;
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(fetchSignal).toBeInstanceOf(AbortSignal);
+		expect(caught).toBeInstanceOf(NimbleSearchError);
+		expect((caught as NimbleSearchError).status).toBe(408);
+	});
+
+	it("maps invalid JSON on a 200 to status 502", async () => {
+		stubFetch(() =>
+			failedBodyResponse(new SyntaxError("Unexpected token in JSON")),
+		);
+
+		let caught: unknown;
+		try {
+			await adapter.search(request(), keyedConfig);
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBeInstanceOf(NimbleSearchError);
+		expect((caught as NimbleSearchError).status).toBe(502);
+		expect((caught as Error).message).toContain("not valid JSON");
 	});
 
 	it("refuses to call out without an API key", async () => {

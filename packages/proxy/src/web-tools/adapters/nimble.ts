@@ -4,11 +4,14 @@
  * Search is a POST to Nimble's SDK search endpoint with a flat JSON body
  * (`query`, `max_results`, optional `search_depth` / `focus` / domain lists)
  * returning `{ results: [...] }` with `title` / `description` / `url` /
- * `content` per entry. `content` is only populated when `full_content` is
- * requested, which this adapter deliberately never does — the interception
- * chain only needs the lightweight title/description/url triple, and full page
- * text would turn every search into a set of heavy fetches. A non-empty
- * `content` (should Nimble ever return one) is still mapped through.
+ * `content` per entry. The rich per-result text that `search_depth: "standard"`
+ * advertises (~2K chars per result, tuned for AI agents) arrives in
+ * `description`; the separate `content` field is populated only when
+ * `full_content` is requested, which this adapter deliberately never does —
+ * the interception chain only needs the lightweight title/description/url
+ * triple, and full page text would turn every search into a set of heavy
+ * fetches. A non-empty `content` (should Nimble ever return one) is still
+ * mapped through.
  *
  * `include_domains` / `exclude_domains` are native request parameters, so the
  * Anthropic domain filters are forwarded rather than post-filtered. Nimble
@@ -183,6 +186,44 @@ function requestSignal(signal: AbortSignal | undefined): AbortSignal {
 	return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
+/**
+ * Whether a failure is the client disconnecting or our timeout firing.
+ *
+ * `AbortSignal.timeout` rejects with a `TimeoutError`, a caller abort with an
+ * `AbortError`; either can also surface as a `DOMException` while the body is
+ * being read, and `DOMException` is not an `Error` subclass, so the name is
+ * checked structurally rather than via `instanceof`.
+ */
+function isAbortLike(error: unknown, effectiveSignal: AbortSignal): boolean {
+	if (effectiveSignal.aborted) return true;
+	if (typeof error !== "object" || error === null) return false;
+	const name = (error as { name?: unknown }).name;
+	return name === "AbortError" || name === "TimeoutError";
+}
+
+/**
+ * Read the 2xx body as JSON.
+ *
+ * The fetch-phase try/catch only covers the network up to the response
+ * headers: an abort or timeout that fires while the body is still streaming
+ * rejects here instead, and must keep its 408 rather than escaping as an
+ * untyped error. Any other failure means a 2xx response whose body is not
+ * JSON, i.e. a malformed 200, which carries 502.
+ */
+async function readJsonBody(
+	response: Response,
+	effectiveSignal: AbortSignal,
+): Promise<unknown> {
+	try {
+		return await response.json();
+	} catch (error) {
+		if (isAbortLike(error, effectiveSignal)) {
+			throw new NimbleSearchError(408, "Nimble search request aborted");
+		}
+		throw new NimbleSearchError(502, "Nimble response is not valid JSON");
+	}
+}
+
 /** POST a search body to Nimble, throwing {@link NimbleSearchError} on failure. */
 async function postSearch(
 	body: NimbleSearchBody,
@@ -204,14 +245,8 @@ async function postSearch(
 		});
 	} catch (error) {
 		// An abort here is either the client disconnecting or our timeout.
-		// `AbortSignal.timeout` rejects with a `TimeoutError`, a caller abort
-		// with an `AbortError`; treat both the same way. Neither warrants a
-		// cooldown, so the status is informational only.
-		if (
-			effectiveSignal.aborted ||
-			(error instanceof Error &&
-				(error.name === "AbortError" || error.name === "TimeoutError"))
-		) {
+		// Neither warrants a cooldown, so the status is informational only.
+		if (isAbortLike(error, effectiveSignal)) {
 			throw new NimbleSearchError(408, "Nimble search request aborted");
 		}
 		throw error;
@@ -225,7 +260,7 @@ async function postSearch(
 		);
 	}
 
-	return response.json();
+	return readJsonBody(response, effectiveSignal);
 }
 
 /**
@@ -267,8 +302,10 @@ function toHits(data: unknown, maxResults: number): WebToolSearchHit[] {
 		if (typeof entry.description === "string" && entry.description) {
 			hit.snippet = entry.description;
 		}
-		// `content` is "" unless `full_content` was requested; pass a non-empty
-		// value through in case the provider includes one anyway.
+		// `standard` depth delivers its rich per-result text in `description`
+		// (mapped to `snippet` above). The separate `content` field is populated
+		// only when `full_content` is requested, which this adapter never does;
+		// pass a non-empty value through in case the provider includes one.
 		if (typeof entry.content === "string" && entry.content) {
 			hit.content = entry.content;
 		}

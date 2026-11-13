@@ -413,7 +413,7 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 				options: ["standard", "lite"],
 				defaultValue: "standard",
 				description:
-					"`standard` returns ~2K chars of page content per result; `lite` returns titles, URLs and snippets only (cheaper, more token-efficient).",
+					"`standard` returns richer per-result text, delivered in the result description; `lite` returns titles, URLs and snippets only (cheaper, more token-efficient).",
 			},
 			{
 				key: "focus",
