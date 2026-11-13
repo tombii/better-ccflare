@@ -55,6 +55,9 @@ function num(value: unknown): number {
 interface TotalsSqlRow {
 	requests: number | string | null;
 	successful: number | string | null;
+	failed_attempts: number | string | null;
+	failover_attempts: number | string | null;
+	recovered_requests: number | string | null;
 	input_tokens: number | string | null;
 	output_tokens: number | string | null;
 	cache_read_input_tokens: number | string | null;
@@ -72,6 +75,7 @@ interface ModelSqlRow {
 }
 
 interface AccountSqlRow {
+	failed_attempts: number | string | null;
 	account_id: string | null;
 	account_name: string | null;
 	requests: number | string | null;
@@ -156,6 +160,9 @@ export function createApiKeyUsageHandler(context: APIContext) {
 				SELECT
 					COUNT(*) as requests,
 					SUM(CASE WHEN r.success = TRUE THEN 1 ELSE 0 END) as successful,
+					SUM(CASE WHEN r.success = FALSE THEN 1 ELSE 0 END) as failed_attempts,
+					SUM(CASE WHEN r.success = TRUE THEN COALESCE(r.failover_attempts, 0) ELSE 0 END) as failover_attempts,
+					SUM(CASE WHEN r.success = TRUE AND r.failover_attempts > 0 THEN 1 ELSE 0 END) as recovered_requests,
 					SUM(COALESCE(r.input_tokens, 0)) as input_tokens,
 					SUM(COALESCE(r.output_tokens, 0)) as output_tokens,
 					SUM(COALESCE(r.cache_read_input_tokens, 0)) as cache_read_input_tokens,
@@ -200,6 +207,7 @@ export function createApiKeyUsageHandler(context: APIContext) {
 					r.account_used as account_id,
 					a.name as account_name,
 					COUNT(*) as requests,
+					SUM(CASE WHEN r.success = FALSE THEN 1 ELSE 0 END) as failed_attempts,
 					SUM(COALESCE(r.cost_usd, 0)) as cost_usd,
 					${PLAN_VALUE_SUM} as plan_value_usd,
 					SUM(CASE WHEN r.billing_type = 'plan' THEN 1 ELSE 0 END) as plan_requests,
@@ -329,6 +337,7 @@ export function createApiKeyUsageHandler(context: APIContext) {
 				.map((row) => ({
 					accountId: row.account_id,
 					accountName: row.account_name,
+					failedAttempts: num(row.failed_attempts),
 					requests: num(row.requests),
 					costUsd: num(row.cost_usd),
 				}))
@@ -342,6 +351,12 @@ export function createApiKeyUsageHandler(context: APIContext) {
 			}));
 
 			const response: ApiKeyUsageResponse = {
+				// Rows have independent IDs; sessions and timings cannot safely join
+				// concurrent requests. Preserve compatibility fields but name their unit.
+				metricUnit: "attempts",
+				failedAttempts: num(totalsRow?.failed_attempts),
+				failoverAttempts: num(totalsRow?.failover_attempts),
+				recoveredRequests: num(totalsRow?.recovered_requests),
 				canManage: !caller?.apiKeyId || caller.role === "admin",
 				limitWindowMode: keyResponse.limitWindowMode ?? "calendar",
 				familyComboOverrides: keyResponse.familyComboOverrides ?? null,

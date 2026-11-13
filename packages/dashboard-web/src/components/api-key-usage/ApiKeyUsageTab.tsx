@@ -5,13 +5,14 @@ import {
 	formatPercentage,
 	formatTokens,
 } from "@better-ccflare/ui-common";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { COLORS } from "../../constants";
 import { useApiKeys, useApiKeyUsage } from "../../hooks/queries";
+import { useCostTracking } from "../../hooks/useCostTracking";
 import { queryKeys } from "../../lib/query-keys";
 import { ApiKeyLimitsEditor } from "../api-keys/ApiKeyLimitsEditor";
 import {
@@ -21,6 +22,7 @@ import {
 import { ApiKeyRestrictionsEditor } from "../api-keys/ApiKeyRestrictionsEditor";
 import { ApiKeyRoutingEditor } from "../api-keys/ApiKeyRoutingEditor";
 import { ApiKeySpendGauge } from "../api-keys/ApiKeySpendGauge";
+import { CostTrackingNotice } from "../CostTrackingNotice";
 import { BaseAreaChart } from "../charts/BaseAreaChart";
 import { BaseBarChart } from "../charts/BaseBarChart";
 import { Badge } from "../ui/badge";
@@ -37,6 +39,7 @@ import {
 } from "../ui/select";
 import {
 	apiKeyPageTarget,
+	apiKeyUsageSelectionLocation,
 	buildCostSeries,
 	efficiencyCaption,
 	formatEfficiencyRatio,
@@ -88,15 +91,43 @@ export function ApiKeyUsageTab() {
 	// Read the raw path once so existing name links and stable ID links agree
 	// with the authentication lookup performed by App.
 	const directKey = apiKeyPageTarget(location.pathname, location.search) || "";
-	const { data: apiKeys } = useApiKeys({ enabled: !directKey });
-	const [range, setRange] = useState("24h");
-	const [from, setFrom] = useState("");
-	const [to, setTo] = useState("");
+	const { data: session } = useQuery({
+		queryKey: ["auth-session"],
+		queryFn: () =>
+			api.get<{ canManage: boolean; apiKeyId: string | null }>(
+				"/api/auth/session",
+			),
+		staleTime: 60_000,
+	});
+	const [inferredCanManage, setCanManage] = useState(false);
+	const canManage = session?.canManage ?? inferredCanManage;
+	const { data: apiKeys } = useApiKeys({ enabled: canManage });
+	const params = new URLSearchParams(location.search);
+	const range =
+		RANGES.find((option) => option.value === params.get("range"))?.value ??
+		"24h";
+	const from = params.get("from") ?? "";
+	const to = params.get("to") ?? "";
+	const setRangeState = (name: string, value: string) => {
+		const next = new URLSearchParams(location.search);
+		next.set(name, value);
+		navigate(
+			{ pathname: location.pathname, search: next.toString() },
+			{ replace: true },
+		);
+	};
+	const { enabled: costTrackingEnabled } = useCostTracking();
+	const displayCost = (value: number) =>
+		costTrackingEnabled ? formatCost(value) : "—";
 	const fromMs = new Date(from).getTime();
 	const toMs = new Date(to).getTime();
 	const validCustom =
 		Number.isFinite(fromMs) && Number.isFinite(toMs) && fromMs < toMs;
-	const selectedId = directKey || pickDefaultApiKey(apiKeys) || "";
+	const selectedId =
+		directKey ||
+		(session?.canManage === false ? session.apiKeyId : null) ||
+		pickDefaultApiKey(apiKeys) ||
+		"";
 	const { data, isLoading, error } = useApiKeyUsage(
 		selectedId,
 		range,
@@ -107,6 +138,8 @@ export function ApiKeyUsageTab() {
 			? new Date(toMs).toISOString()
 			: undefined,
 	);
+	if (data && inferredCanManage !== data.canManage)
+		setCanManage(data.canManage);
 	const [editingId, setEditingId] = useState("");
 	const [resetSpendKey, setResetSpendKey] = useState<ResetSpendKey | null>(
 		null,
@@ -155,29 +188,19 @@ export function ApiKeyUsageTab() {
 
 	return (
 		<div className="space-y-4">
+			<CostTrackingNotice limits />
 			<div className="flex flex-wrap items-center gap-3">
-				{directKey ? (
-					<div className="mr-auto">
-						{data?.canManage ? (
-							<Link
-								to="/api-keys"
-								className="text-xs text-muted-foreground hover:underline"
-							>
-								API keys
-							</Link>
-						) : null}
-						<h2 className="text-xl font-semibold">
-							{data?.apiKey.name ?? directKey}
-						</h2>
-					</div>
-				) : (
+				<h2 className="text-xl font-semibold">
+					{data?.apiKey.name ?? directKey}
+				</h2>
+				{canManage ? (
 					<Select
-						value={selectedId}
-						onValueChange={(id) => {
-							navigate(`/api-keys/${encodeURIComponent(id)}`);
-						}}
+						value={data?.apiKey.id ?? selectedId}
+						onValueChange={(id) =>
+							navigate(apiKeyUsageSelectionLocation(id, location.search))
+						}
 					>
-						<SelectTrigger className="w-64">
+						<SelectTrigger aria-label="Select API key" className="w-64">
 							<SelectValue placeholder="Select API key" />
 						</SelectTrigger>
 						<SelectContent>
@@ -189,10 +212,15 @@ export function ApiKeyUsageTab() {
 							))}
 						</SelectContent>
 					</Select>
-				)}
-				<Select value={range} onValueChange={setRange}>
+				) : null}
+				<Select
+					value={range}
+					onValueChange={(value) => setRangeState("range", value)}
+				>
 					<SelectTrigger className="w-52">
-						<SelectValue />
+						<SelectValue>
+							{RANGES.find((option) => option.value === range)?.label}
+						</SelectValue>
 					</SelectTrigger>
 					<SelectContent>
 						{RANGES.map((option) => (
@@ -211,7 +239,7 @@ export function ApiKeyUsageTab() {
 							id="usage-from"
 							type="datetime-local"
 							value={from}
-							onChange={(event) => setFrom(event.target.value)}
+							onChange={(event) => setRangeState("from", event.target.value)}
 						/>
 					</div>
 					<div className="space-y-1">
@@ -220,7 +248,7 @@ export function ApiKeyUsageTab() {
 							id="usage-to"
 							type="datetime-local"
 							value={to}
-							onChange={(event) => setTo(event.target.value)}
+							onChange={(event) => setRangeState("to", event.target.value)}
 						/>
 					</div>
 					{!validCustom ? (
@@ -269,7 +297,11 @@ export function ApiKeyUsageTab() {
 						</CardHeader>
 						<CardContent>
 							<p className="text-5xl font-bold tabular-nums">
-								{isLoading ? "…" : (ratioText ?? "unavailable")}
+								{!costTrackingEnabled
+									? "—"
+									: isLoading
+										? "…"
+										: (ratioText ?? "unavailable")}
 							</p>
 							<p className="text-sm text-muted-foreground mt-2">
 								{data
@@ -285,32 +317,55 @@ export function ApiKeyUsageTab() {
 					<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
 						<StatTile
 							label="API cost"
-							value={formatCost(data?.apiCostUsd ?? 0)}
+							value={displayCost(data?.apiCostUsd ?? 0)}
 							hint="Real money, pay-per-token billing"
 						/>
 						<StatTile
 							label="Plan value"
-							value={formatCost(data?.planValueUsd ?? 0)}
+							value={displayCost(data?.planValueUsd ?? 0)}
 							hint="What subscription traffic would have cost at API rates"
 						/>
 						<StatTile
 							label="Plan cost"
-							value={formatCost(data?.planCost.planCostUsd ?? 0)}
+							value={displayCost(data?.planCost.planCostUsd ?? 0)}
 							hint={`Apportioned subscription money over ${
 								data ? data.planCost.windowDays.toFixed(2) : "0"
 							} days`}
 						/>
 						<StatTile
 							label="Total API-cost equivalent"
-							value={formatCost(data?.totalCostUsd ?? 0)}
+							value={displayCost(data?.totalCostUsd ?? 0)}
 							hint="API cost + plan value; used by spend limits"
 						/>
 						<StatTile
-							label="Requests"
+							label="Attempts"
 							value={formatNumber(data?.requests ?? 0)}
-							hint={`${formatPercentage(data?.successRate ?? 0)} succeeded`}
+							hint={`${formatPercentage(data?.successRate ?? 0)} attempt success rate`}
 						/>
 					</div>
+
+					<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+						<StatTile
+							label="Successful attempts"
+							value={formatNumber(data?.successfulRequests ?? 0)}
+							hint={`including ${formatNumber(data?.recoveredRequests ?? 0)} recovered after failover`}
+						/>
+						<StatTile
+							label="Failed attempts"
+							value={formatNumber(data?.failedAttempts ?? 0)}
+							hint="Upstream attempt failures; may recover on another account"
+						/>
+						<StatTile
+							label="Failover attempts"
+							value={formatNumber(data?.failoverAttempts ?? 0)}
+							hint="Prior attempts reported by successful outcomes"
+						/>
+					</div>
+					<p className="text-xs text-muted-foreground">
+						Rows are attempts, with independent IDs. Client-visible failure
+						totals cannot be inferred reliably from session IDs or timing. A
+						successful outcome after failover remains a success.
+					</p>
 
 					<div className="grid grid-cols-1 md:grid-cols-4 gap-4">
 						<StatTile
@@ -331,7 +386,9 @@ export function ApiKeyUsageTab() {
 						/>
 					</div>
 
-					{data && data.unknownPricingModels.length > 0 ? (
+					{costTrackingEnabled &&
+					data &&
+					data.unknownPricingModels.length > 0 ? (
 						<Card className="border-warning/40">
 							<CardContent className="pt-6 flex items-start gap-2 text-sm">
 								<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-warning" />
@@ -388,7 +445,7 @@ export function ApiKeyUsageTab() {
 							</CardContent>
 						</Card>
 					) : null}
-					{data?.planCost.unpricedAccountIds.length ? (
+					{costTrackingEnabled && data?.planCost.unpricedAccountIds.length ? (
 						<Card className="border-warning/40">
 							<CardContent className="pt-6 text-sm">
 								Accounts without a monthly plan price:{" "}
@@ -405,7 +462,10 @@ export function ApiKeyUsageTab() {
 						</Card>
 					) : null}
 
-					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+					<div
+						hidden={!costTrackingEnabled}
+						className="grid grid-cols-1 lg:grid-cols-2 gap-4"
+					>
 						<Card>
 							<CardHeader>
 								<CardTitle className="text-sm">Cost over time</CardTitle>
@@ -424,7 +484,7 @@ export function ApiKeyUsageTab() {
 										formatCost(value),
 										"Total API-cost equivalent",
 									]}
-									emptyState="No requests from this key in this window."
+									emptyState="No attempts from this key in this window."
 								/>
 							</CardContent>
 						</Card>
@@ -465,7 +525,7 @@ export function ApiKeyUsageTab() {
 												Model
 											</th>
 											<th scope="col" className="text-right px-3 py-2">
-												Requests
+												Attempts
 											</th>
 											<th scope="col" className="text-right px-3 py-2">
 												Tokens
@@ -492,7 +552,7 @@ export function ApiKeyUsageTab() {
 													{formatTokens(row.totalTokens)}
 												</td>
 												<td className="px-3 py-2 text-right">
-													{formatCost(row.costUsd)}
+													{displayCost(row.costUsd)}
 												</td>
 											</tr>
 										))}
@@ -502,7 +562,7 @@ export function ApiKeyUsageTab() {
 													colSpan={4}
 													className="px-3 py-4 text-muted-foreground"
 												>
-													No requests in this window.
+													No attempts in this window.
 												</td>
 											</tr>
 										) : null}
@@ -523,7 +583,7 @@ export function ApiKeyUsageTab() {
 												Account
 											</th>
 											<th scope="col" className="text-right px-3 py-2">
-												Requests
+												Attempts
 											</th>
 											<th scope="col" className="text-right px-3 py-2">
 												Cost
@@ -551,10 +611,14 @@ export function ApiKeyUsageTab() {
 														)}
 													</td>
 													<td className="px-3 py-2 text-right">
-														{formatNumber(row.requests)}
+														{formatNumber(row.requests)}{" "}
+														<span className="block text-xs text-muted-foreground">
+															{formatNumber(row.failedAttempts ?? 0)} failed
+															attempts
+														</span>
 													</td>
 													<td className="px-3 py-2 text-right">
-														{formatCost(row.costUsd)}
+														{displayCost(row.costUsd)}
 													</td>
 													<td className="px-3 py-2 text-right">
 														{share == null ? (
@@ -565,7 +629,7 @@ export function ApiKeyUsageTab() {
 															<span
 																title={`${(share.share * 100).toFixed(1)}% of this account's plan traffic`}
 															>
-																{formatCost(share.contributionUsd)}
+																{displayCost(share.contributionUsd)}
 															</span>
 														)}
 													</td>
@@ -578,7 +642,7 @@ export function ApiKeyUsageTab() {
 													colSpan={4}
 													className="px-3 py-4 text-muted-foreground"
 												>
-													No requests in this window.
+													No attempts in this window.
 												</td>
 											</tr>
 										) : null}

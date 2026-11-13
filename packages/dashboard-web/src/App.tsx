@@ -75,6 +75,8 @@ const LoadingSkeleton = () => (
 export function App() {
 	const location = useLocation();
 	const usageKeyForAuth = apiKeyPageTarget(location.pathname, location.search);
+	const isUsagePage =
+		location.pathname === "/api-key-usage" || usageKeyForAuth !== null;
 	// Build the dashboard routes once; released features remain reachable.
 	const routes = useMemo(() => {
 		const baseRoutes = [
@@ -285,14 +287,18 @@ export function App() {
 	// Check if authentication is required
 	useEffect(() => {
 		const checkAuth = async () => {
-			setIsCheckingAuth(true);
+			// Subsequent navigation verifies auth without unmounting page state.
 
 			// Always verify with a test request, even if we have a stored key
 			// The stored key might be invalid, deleted, or expired
 			try {
-				if (usageKeyForAuth) {
-					const usage = await api.getApiKeyUsage(usageKeyForAuth);
-					setCanManage(usage.canManage);
+				if (isUsagePage) {
+					const session = await api.get<{
+						canManage: boolean;
+						apiKeyId: string | null;
+					}>("/api/auth/session");
+					queryClient.setQueryData(["auth-session"], session);
+					setCanManage(session.canManage);
 				} else {
 					await api.getStats();
 					setCanManage(true);
@@ -308,7 +314,7 @@ export function App() {
 					api.clearApiKey();
 					setAuthRequired(true);
 					setShowAuthDialog(true);
-				} else if (usageKeyForAuth) {
+				} else if (isUsagePage) {
 					setCanManage(false);
 					// The page presents missing-key and permission errors itself.
 					setIsAuthenticated(true);
@@ -319,7 +325,7 @@ export function App() {
 		};
 
 		checkAuth();
-	}, [usageKeyForAuth]);
+	}, [isUsagePage, queryClient]);
 
 	// Listen for 401 errors from API client
 	useEffect(() => {
@@ -344,9 +350,12 @@ export function App() {
 
 		// Try to make a request to verify the key
 		try {
-			if (usageKeyForAuth) {
-				const usage = await api.getApiKeyUsage(usageKeyForAuth);
-				setCanManage(usage.canManage);
+			if (isUsagePage) {
+				const session = await api.get<{
+					canManage: boolean;
+					apiKeyId: string | null;
+				}>("/api/auth/session");
+				setCanManage(session.canManage);
 			} else {
 				await api.getStats();
 				setCanManage(true);

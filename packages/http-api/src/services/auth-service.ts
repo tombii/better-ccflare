@@ -230,7 +230,7 @@ export class AuthService {
 		}
 		if (
 			method === "GET" &&
-			path === "/api/config/cost-tracking"
+			(path === "/api/config/cost-tracking" || path === "/api/auth/session")
 		)
 			return { authorized: true };
 

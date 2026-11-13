@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+	apiKeyUsageSelectionLocation,
 	buildCostSeries,
 	efficiencyCaption,
 	formatEfficiencyRatio,
@@ -90,5 +91,20 @@ describe("buildCostSeries", () => {
 		const { data, maxCost } = buildCostSeries([], 3_600_000);
 		expect(data).toEqual([]);
 		expect(maxCost).toBe(0);
+	});
+});
+
+describe("API key switching", () => {
+	it("changes stable identity while preserving range, custom dates, and other URL state", () => {
+		const path = apiKeyUsageSelectionLocation(
+			"team/app",
+			"?range=custom&from=2026-11-01T12%3A00&to=2026-11-02T12%3A00&key=old&extra=keep",
+		);
+		const url = new URL(path, "https://local");
+		expect(url.pathname).toBe("/api-keys/team%2Fapp");
+		expect(url.searchParams.get("range")).toBe("custom");
+		expect(url.searchParams.get("from")).toBe("2026-11-01T12:00");
+		expect(url.searchParams.get("extra")).toBe("keep");
+		expect(url.searchParams.has("key")).toBe(false);
 	});
 });

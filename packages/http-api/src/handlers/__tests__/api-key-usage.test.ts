@@ -89,14 +89,15 @@ describe("createApiKeyUsageHandler", () => {
 		cacheReadTokens?: number;
 		cacheCreationTokens?: number;
 		totalTokens?: number;
+		failoverAttempts?: number;
 	}): Promise<void> {
 		requestSeq += 1;
 		await dbOps.getAdapter().run(
 			`INSERT INTO requests
 				(id, timestamp, method, path, account_used, success, model, cost_usd,
 				 billing_type, api_key_id, input_tokens, output_tokens,
-				 cache_read_input_tokens, cache_creation_input_tokens, total_tokens)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				 cache_read_input_tokens, cache_creation_input_tokens, total_tokens, failover_attempts)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			[
 				`req-${requestSeq}`,
 				now - (row.agoMs ?? HOUR),
@@ -113,6 +114,7 @@ describe("createApiKeyUsageHandler", () => {
 				row.cacheReadTokens ?? 0,
 				row.cacheCreationTokens ?? 0,
 				row.totalTokens ?? 0,
+				row.failoverAttempts ?? 0,
 			],
 		);
 	}
@@ -127,6 +129,53 @@ describe("createApiKeyUsageHandler", () => {
 			body: (await res.json()) as ApiKeyUsageResponse,
 		};
 	}
+
+	it("labels uncorrelated rows as attempts and separates recovered failovers from account failures", async () => {
+		await seedKey("key-1", "alpha");
+		await seedAccount("a", "first", null);
+		await seedAccount("b", "recovered", null);
+		await seedRequest({ apiKeyId: "key-1", accountId: "a", success: false });
+		await seedRequest({
+			apiKeyId: "key-1",
+			accountId: "b",
+			success: true,
+			failoverAttempts: 1,
+		});
+		const { body } = await usage("key-1");
+		expect(body.metricUnit).toBe("attempts");
+		expect(body.successfulRequests).toBe(1);
+		expect(body.failedAttempts).toBe(1);
+		expect(body.failoverAttempts).toBe(1);
+		expect(body.recoveredRequests).toBe(1);
+		expect(
+			body.accounts.find((row) => row.accountId === "a")?.failedAttempts,
+		).toBe(1);
+		expect(
+			body.accounts.find((row) => row.accountId === "b")?.failedAttempts,
+		).toBe(0);
+	});
+
+	it("never merges concurrent rows sharing a session and timestamp", async () => {
+		await seedKey("key-1", "alpha");
+		await seedRequest({ apiKeyId: "key-1", success: false });
+		await seedRequest({
+			apiKeyId: "key-1",
+			success: true,
+			failoverAttempts: 1,
+		});
+		await seedRequest({ apiKeyId: "key-1", success: true });
+		await dbOps
+			.getAdapter()
+			.run(
+				"UPDATE requests SET client_session_id = 'same-session' WHERE api_key_id = ?",
+				["key-1"],
+			);
+		const { body } = await usage("key-1");
+		expect(body.requests).toBe(3);
+		expect(body.successfulRequests).toBe(2);
+		expect(body.failedAttempts).toBe(1);
+		expect(body.recoveredRequests).toBe(1);
+	});
 
 	it("404s for an unknown key", async () => {
 		const res = await handler("nope", new URLSearchParams());

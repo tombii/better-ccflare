@@ -717,6 +717,13 @@ export class APIRouter {
 			})(req, url);
 		}
 
+		if (path === "/api/auth/session" && method === "GET") {
+			return jsonResponse({
+				canManage: !authResult.apiKeyId || authResult.role === "admin",
+				apiKeyId: authResult.apiKeyId ?? null,
+			});
+		}
+
 		// Check for exact match
 		const handler = this.handlers.get(key);
 		if (handler) {

@@ -155,3 +155,14 @@ export function apiKeyPageTarget(pathname: string, search = ""): string | null {
 		return new URLSearchParams(search).get("key");
 	return null;
 }
+
+/** Push a key selection while retaining the range, custom bounds and URL UI state. */
+export function apiKeyUsageSelectionLocation(
+	keyId: string,
+	search: string,
+): string {
+	const params = new URLSearchParams(search);
+	params.delete("key");
+	const query = params.toString();
+	return `/api-keys/${encodeURIComponent(keyId)}${query ? `?${query}` : ""}`;
+}

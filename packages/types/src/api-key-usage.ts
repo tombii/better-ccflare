@@ -104,6 +104,7 @@ export interface ApiKeyUsageModelRow {
 }
 
 export interface ApiKeyUsageAccountRow {
+	failedAttempts?: number;
 	/** null for unattributed requests. */
 	accountId: string | null;
 	accountName: string | null;
@@ -131,6 +132,13 @@ export interface ApiKeyUsageLimitState {
 }
 
 export interface ApiKeyUsageResponse {
+	/** Independent request rows cannot be correlated safely; compatibility counts are attempts. */
+	metricUnit?: "attempts";
+	failedAttempts?: number;
+	/** Failovers reported by successful terminal attempts only; failed ordinal rows are excluded. */
+	failoverAttempts?: number;
+	/** Successful outcomes explicitly reporting a prior failover. */
+	recoveredRequests?: number;
 	/** Whether this caller can edit the key's limits, restrictions and routing. */
 	canManage: boolean;
 	limitWindowMode: ApiKeyLimitWindowMode;
