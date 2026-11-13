@@ -22,6 +22,7 @@ import type {
 	RequestMeta,
 } from "@better-ccflare/types";
 import {
+	getDeferredCandidates,
 	getModelFamilyExhaustionInfo,
 	selectAccountsForRequest,
 } from "../account-selector";
@@ -629,5 +630,63 @@ describe("seam 4 — the cooldown-masking sweep skips restricted-away accounts",
 		// cooldown-masking diagnosis must survive untouched.
 		expect(result).toHaveLength(0);
 		expect(getModelFamilyExhaustionInfo(meta)?.origin).toBe("cooldown_masked");
+	});
+});
+
+// ── Vision deferrals: a restricted-away account is never "deferred" ──────────
+
+describe("deferred candidates exclude accounts the key may not use", () => {
+	it("does not record a restricted-away pool account as deferred", async () => {
+		const ctx = makeCtx({
+			accounts: [makeAccount({ id: "acc-1" }), makeAccount({ id: "acc-2" })],
+		});
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-opus-4-5",
+			{ restrictions: restrictions({ allowedAccounts: ["acc-2"] }) },
+		);
+
+		expect(result.map((account) => account.id)).toEqual(["acc-2"]);
+		// acc-1 is permanently ineligible for this key, so it must not hold a
+		// terminal vision verdict open as if it might serve the request later.
+		expect(
+			getDeferredCandidates(meta).map((candidate) => candidate.accountId),
+		).not.toContain("acc-1");
+	});
+
+	it("does not record a restricted-away combo slot as deferred", async () => {
+		const ctx = makeCtx({
+			accounts: [makeAccount({ id: "acc-1" }), makeAccount({ id: "acc-2" })],
+			activeCombo: makeCombo([
+				{
+					id: "slot-1",
+					combo_id: "combo-1",
+					account_id: "acc-1",
+					model: "",
+					priority: 0,
+					enabled: true,
+				},
+				{
+					id: "slot-2",
+					combo_id: "combo-1",
+					account_id: "acc-2",
+					model: "",
+					priority: 1,
+					enabled: true,
+				},
+			] as unknown as ComboWithSlots["slots"]),
+		});
+		const meta = makeRequestMeta();
+
+		await selectAccountsForRequest(meta, ctx, "claude-opus-4-5", {
+			restrictions: restrictions({ allowedAccounts: ["acc-2"] }),
+		});
+
+		expect(
+			getDeferredCandidates(meta).map((candidate) => candidate.accountId),
+		).not.toContain("acc-1");
 	});
 });

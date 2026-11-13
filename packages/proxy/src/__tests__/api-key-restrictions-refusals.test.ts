@@ -99,6 +99,8 @@ function makeContext(accounts: Account[]): ProxyContext {
 		} as never,
 		runtime: { port: 8080, clientId: "test" } as never,
 		config: {
+			getWebSearchEnabled: () => false,
+			getWebSearchBypassHeader: () => true,
 			getUsageThrottlingFiveHourEnabled: () => false,
 			getUsageThrottlingWeeklyEnabled: () => false,
 			getSystemPromptCacheTtl1h: () => false,
@@ -416,5 +418,51 @@ describe("api_key_account_restricted", () => {
 		);
 
 		expect(response.status).toBe(503);
+	});
+});
+
+// ── Local web_search interception ─────────────────────────────────────────────
+
+describe("web_search interception and the model allowlist", () => {
+	function withWebSearchProbe(ctx: ProxyContext) {
+		const getWebSearchEnabled = mock(() => false);
+		(ctx.config as unknown as Record<string, unknown>).getWebSearchEnabled =
+			getWebSearchEnabled;
+		return getWebSearchEnabled;
+	}
+
+	it("is skipped for a request the key is about to be refused for", async () => {
+		const ctx = makeContext([makeAccount()]);
+		const getWebSearchEnabled = withWebSearchProbe(ctx);
+
+		const response = await handleProxy(
+			makeRequest("claude-opus-4-5"),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"scoped-key",
+			{ restrictions: restrictions({ allowedModels: ["haiku"] }) },
+		);
+
+		// The local search path would otherwise answer (and spend search
+		// provider quota on) a request this key may not make.
+		expect(response.status).toBe(403);
+		expect(getWebSearchEnabled.mock.calls.length).toBe(0);
+	});
+
+	it("still runs for a permitted model", async () => {
+		const ctx = makeContext([]);
+		const getWebSearchEnabled = withWebSearchProbe(ctx);
+
+		await handleProxy(
+			makeRequest("claude-opus-4-5"),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"scoped-key",
+			{ restrictions: restrictions({ allowedModels: ["opus"] }) },
+		);
+
+		expect(getWebSearchEnabled.mock.calls.length).toBe(1);
 	});
 });

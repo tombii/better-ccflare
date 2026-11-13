@@ -112,6 +112,8 @@ function makeContext(
 		} as never,
 		runtime: { port: 8080, clientId: "test" } as never,
 		config: {
+			getWebSearchEnabled: () => false,
+			getWebSearchBypassHeader: () => true,
 			getUsageThrottlingFiveHourEnabled: () => false,
 			getUsageThrottlingWeeklyEnabled: () => false,
 			getSystemPromptCacheTtl1h: () => false,
@@ -501,5 +503,42 @@ describe("failure handling", () => {
 		);
 
 		expect(response.status).not.toBe(429);
+	});
+});
+
+describe("web_search interception and the spend limit", () => {
+	function withWebSearchProbe(ctx: ProxyContext) {
+		const getWebSearchEnabled = mock(() => false);
+		(ctx.config as unknown as Record<string, unknown>).getWebSearchEnabled =
+			getWebSearchEnabled;
+		return getWebSearchEnabled;
+	}
+
+	it("is skipped when a blocking limit is exceeded", async () => {
+		const ctx = makeContext([makeAccount()], { totalUsd: 200, oldestMs: null });
+		const getWebSearchEnabled = withWebSearchProbe(ctx);
+
+		const response = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"budgeted",
+			{ spendLimit: spendLimit({ limitUsd: 100 }) },
+		);
+
+		expect(response.status).toBe(429);
+		expect(getWebSearchEnabled.mock.calls.length).toBe(0);
+	});
+
+	it("still runs when the exceeded limit only warns", async () => {
+		const ctx = makeContext([], { totalUsd: 200, oldestMs: null });
+		const getWebSearchEnabled = withWebSearchProbe(ctx);
+
+		await handleProxy(makeRequest(), PROXY_URL, ctx, "key-1", "budgeted", {
+			spendLimit: spendLimit({ limitUsd: 100, limitEnforce: "warn" }),
+		});
+
+		expect(getWebSearchEnabled.mock.calls.length).toBe(1);
 	});
 });
