@@ -29,7 +29,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 - **⚠️ WARNING**: Strategies that spread individual requests across accounts (e.g. `least-used`) can trigger Claude's anti-abuse systems — stick to session-class strategies
 
 ### 🔎 Local Web Search
-- **Bring your own search** - Claude Code's `web_search` helper request is answered by your own Tavily / Exa / Parallel / DeepSeek / Serper / Brave provider, with automatic fallback and safe pass-through — see [Web Search](web-search.md)
+- **Bring your own search** - Claude Code's `web_search` helper request is answered by your own Tavily / Exa / Parallel / DeepSeek / Serper / Brave / Nimble / Linkup provider, with automatic fallback and safe pass-through — see [Web Search](web-search.md)
 
 ### 📈 Real-Time Monitoring & Analytics
 - **Web Dashboard**: Interactive UI at `/dashboard` with live metrics

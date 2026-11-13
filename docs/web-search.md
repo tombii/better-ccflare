@@ -265,6 +265,8 @@ Only the query *length* is logged at info level — queries can be sensitive.
 | **Brave Search** | `endpoint`: `llm-context` (default), `web`; `country`, `safesearch`: `off`, `moderate` (default), `strict` | Domain filtering is applied client-side. See [Brave: `web` vs `llm-context`](#brave-web-vs-llm-context) |
 | **Keenable** | `mode`: `pro` (default), `realtime`; `site`; `published_after`, `published_before`, `acquired_after` (date, ISO timestamp, or `7d`-style delta); `snippet_max_length`: 180–10000 | A single `allowed_domains` entry is pushed down as `site`; multi-domain lists and blocklists are filtered client-side. Keyless-capable — see [Free tier](#free-tier-keyless-providers) |
 | **Firecrawl** | `location`; `tbs` | Uses `/v2/search`. Keyless-capable — see [Free tier](#free-tier-keyless-providers) |
+| **Nimble** | `search_depth`: `standard` (default), `lite`; `focus`: `general` (default), `news` | Key required. `POST https://sdk.nimbleway.com/v2/search`; `standard` enriches each result's description with richer per-result text; the separate `content` field requires `full_content`, which this adapter does not request. See [Nimble docs](https://docs.nimbleway.com/nimble-sdk/web-tools/search) |
+| **Linkup** | `depth`: `standard` (default), `flash`, `fast`, `deep` | Key required. `POST https://api.linkup.so/v1/search`; sends `outputType: "searchResults"`. `deep` costs roughly 5x a `standard` call. See [Linkup docs](https://docs.linkup.so/pages/documentation/endpoints/search/overview) |
 | **Perplexity** | `model` (default `sonar`) | **Listed but not implemented** — rows are accepted but the chain skips them |
 
 `maxResults` accepts 1–50 (default 10). The adapter requests
