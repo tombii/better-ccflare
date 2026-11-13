@@ -493,6 +493,7 @@ export class UsageCollector {
 		if (replacedState) {
 			this.freeRequestState(replacedState);
 			this.requests.delete(msg.requestId);
+			tryGetApiKeySpendCounter()?.releaseReservation(msg.requestId);
 		}
 
 		// Check if we should skip logging this request
@@ -520,6 +521,7 @@ export class UsageCollector {
 					const [id, state] = sortedByAge[i];
 					this.freeRequestState(state);
 					this.requests.delete(id);
+					tryGetApiKeySpendCounter()?.releaseReservation(id);
 				}
 			}
 		}
@@ -1332,6 +1334,7 @@ export class UsageCollector {
 				);
 				this.freeRequestState(state);
 				this.requests.delete(id);
+				tryGetApiKeySpendCounter()?.releaseReservation(id);
 				removedCount++;
 			}
 		}
@@ -1351,6 +1354,7 @@ export class UsageCollector {
 				const [id, state] = sortedByAge[i];
 				this.freeRequestState(state);
 				this.requests.delete(id);
+				tryGetApiKeySpendCounter()?.releaseReservation(id);
 				removedCount++;
 			}
 		}

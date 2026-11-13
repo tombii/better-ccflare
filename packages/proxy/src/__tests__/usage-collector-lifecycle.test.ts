@@ -10,6 +10,7 @@ import {
 import * as core from "@better-ccflare/core";
 import { logBus } from "@better-ccflare/logger";
 import type { LogEvent, RequestResponse } from "@better-ccflare/types";
+import * as spend from "../handlers/api-key-spend";
 import type { EndMessage, StartMessage } from "../worker-messages";
 
 interface PricingTokens {
@@ -612,6 +613,11 @@ describe("UsageCollector request lifecycle", () => {
 	});
 
 	it("evicts a stream that exceeds the inactivity timeout", async () => {
+		const release = mock(() => {});
+		const reservationSpy = spyOn(
+			spend,
+			"tryGetApiKeySpendCounter",
+		).mockReturnValue({ releaseReservation: release } as never);
 		const { collector, saveRequestIds } = harness();
 		collector.handleStart(makeStartMessage("inactive-stream"));
 
@@ -619,6 +625,11 @@ describe("UsageCollector request lifecycle", () => {
 		testable(collector).cleanupStaleRequests();
 
 		expect(testable(collector).requests.has("inactive-stream")).toBe(false);
+		try {
+			expect(release).toHaveBeenCalledWith("inactive-stream");
+		} finally {
+			reservationSpy.mockRestore();
+		}
 		await collector.handleEnd({
 			type: "end",
 			requestId: "inactive-stream",
@@ -790,6 +801,11 @@ describe("UsageCollector request lifecycle", () => {
 	});
 
 	it("retains the capacity safeguard and frees the oldest evicted state", () => {
+		const release = mock(() => {});
+		const reservationSpy = spyOn(
+			spend,
+			"tryGetApiKeySpendCounter",
+		).mockReturnValue({ releaseReservation: release } as never);
 		const { collector } = harness(true);
 		const oldestBody = Buffer.from("oldest request").toString("base64");
 		collector.handleStart(
@@ -816,6 +832,11 @@ describe("UsageCollector request lifecycle", () => {
 
 		expect(testable(collector).requests.size).toBe(9_001);
 		expect(testable(collector).requests.has("capacity-oldest")).toBe(false);
+		try {
+			expect(release).toHaveBeenCalledWith("capacity-oldest");
+		} finally {
+			reservationSpy.mockRestore();
+		}
 		expect(testable(collector).requests.has("capacity-newest")).toBe(true);
 		expect(oldestState?.chunks).toEqual([]);
 		expect(oldestState?.chunksBytes).toBe(0);

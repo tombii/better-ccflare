@@ -194,6 +194,12 @@ This setting operates at the transport layer and is unrelated to a per-account `
 
 Coverage spans both the running server process and CLI-only commands that never start the server (e.g. `better-ccflare --add-account`, `--reauthenticate`) — account management and OAuth flows invoked directly from the CLI are proxied the same way; the one carve-out is the embedded database-maintenance worker threads, which run in their own global scope outside this wrapper, but they make no outbound HTTP requests themselves so no traffic escapes unproxied through them.
 
+### API key spend resets
+
+Admins can reset a key's spend against all of its limits from the dashboard or CLI. A reset clears its in-flight reservations as well as recorded spend for limit enforcement. The actual cost of an in-flight request still counts when it is recorded after the reset. Limits and usage history are preserved; reset also resolves the key's existing limit alerts so fresh warnings can appear.
+
+Production runs one replica. Within that server, the proxy observes the reset immediately. Other replicas observe a spend reset on their next synchronization (at most 2 minutes); this is not an immediate cross-replica broadcast. Continue to follow the [single-instance deployment requirement](deployment.md#multi-instance-deployment-single-instance-per-database).
+
 ## Alerts
 
 better-ccflare can emit threshold and anomaly alerts and deliver them via webhook and the dashboard. Alerts are persisted to the same database as requests and deduplicated per cooldown bucket; persistence is best-effort — a database failure is logged and skipped rather than failing the request or crashing the proxy. All `ALERT_*` env vars have equivalent config-file fields (`alert_daily_spend_usd`, `alert_tokens_per_hour`, `alert_request_tokens`, `alert_anomaly_enabled`, `alert_anomaly_interval_minutes`, `alert_cooldown_minutes`, `alert_webhook_url`); env vars take precedence.

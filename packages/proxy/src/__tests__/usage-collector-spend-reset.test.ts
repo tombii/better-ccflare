@@ -143,7 +143,7 @@ describe("usage cost recorded after a spend reset", () => {
 			for (const limit of limits)
 				expect(
 					(await counter.getLimitSnapshot("key", limit, mode)).spentUsd,
-				).toBe(2);
+				).toBe(0);
 			clock.mockReturnValue(START + 3_000);
 			finishPricing(6);
 			await finalizing;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
 import type {
 	ApiKeyResponse,
 	ApiKeyUsageResponse,
@@ -11,9 +12,19 @@ import {
 } from "../../api-keys/reset-spend";
 
 describe("reset spend dashboard state", () => {
+	it("documents one production replica and the reset sync interval for other replicas", () => {
+		const docs = readFileSync(
+			new URL("../../../../../../docs/configuration.md", import.meta.url),
+			"utf8",
+		);
+		expect(docs).toContain("Production runs one replica.");
+		expect(docs).toContain(
+			"Other replicas observe a spend reset on their next synchronization (at most 2 minutes)",
+		);
+	});
 	it("names the key and explains what the confirmation preserves", () => {
 		expect(resetSpendConfirmation("team / app")).toBe(
-			"Reset the spend of team / app against its limits to zero? Its limits stay; usage history is kept.",
+			"Reset the spend of team / app against its limits to zero? Its limits stay; usage history is kept. In-flight reservations are cleared; their actual cost counts when recorded after this reset.",
 		);
 	});
 

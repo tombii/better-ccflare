@@ -222,6 +222,7 @@ export async function withSpendUsage(
 						return {
 							...limit,
 							spentUsd: snapshot.spentUsd,
+							reservedUsd: snapshot.reservedUsd ?? 0,
 							resetsAt:
 								snapshot.resetMs == null
 									? null
@@ -242,6 +243,7 @@ export async function withSpendUsage(
 		);
 		if (key.limitUsd != null && legacy) {
 			key.spentUsd = legacy.spentUsd;
+			key.reservedUsd = legacy.reservedUsd;
 			key.windowResetsAt = legacy.resetsAt;
 		}
 	}

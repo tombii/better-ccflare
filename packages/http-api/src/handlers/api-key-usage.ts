@@ -384,6 +384,7 @@ export function createApiKeyUsageHandler(context: APIContext) {
 					limitWindow: keyResponse.limitWindow,
 					limitEnforce: keyResponse.limitEnforce,
 					spentUsd: keyResponse.spentUsd,
+					reservedUsd: keyResponse.reservedUsd,
 					windowResetsAt: keyResponse.windowResetsAt,
 				},
 				restrictions: {
@@ -394,6 +395,7 @@ export function createApiKeyUsageHandler(context: APIContext) {
 			};
 
 			if (!response.canManage) {
+				delete response.apiKey.spendResetBy;
 				// Account labels are local to this response. Plan apportionment
 				// inputs (including share) reveal other keys' totals, so retain
 				// only this key's aggregate plan-cost contribution.

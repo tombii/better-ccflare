@@ -68,6 +68,10 @@ import { isModelAllowedForApiKey } from "./api-key-restrictions";
 export const SPEND_RESYNC_TTL_MS = 2 * 60 * 1000;
 export const SPEND_PENDING_TTL_MS = 10 * 60 * 1000;
 export const SPEND_IDLE_TTL_MS = 60 * 60 * 1000;
+export const SPEND_RESERVATION_TTL_MS = 30 * 60 * 1000;
+export const SPEND_SYNC_TIMEOUT_MS = 5_000;
+
+class SpendCheckSupersededError extends Error {}
 
 interface SpendEvent {
 	requestId?: string;
@@ -81,11 +85,13 @@ interface SpendEvent {
 export interface SpendSnapshot {
 	/** Spend counted in the current window, in API-cost-equivalent dollars. */
 	spentUsd: number;
+	/** Estimates for open requests, separate from completed spend. */
+	reservedUsd?: number;
 	/** The limit this was measured against. */
 	limitUsd: number;
 	/** Epoch ms when this window's spend next falls; null when unknown. */
 	resetMs: number | null;
-	/** `spentUsd >= limitUsd`. */
+	/** Completed spend plus reservations has reached the limit (warnings use completed spend). */
 	exceeded: boolean;
 }
 
@@ -144,12 +150,55 @@ export class ApiKeySpendCounter {
 			model: string | null;
 			requestedModel: string | null;
 			costUsd: number;
+			createdMs: number;
 		}
 	>();
 	private readonly spendResetPoints = new Map<string, number>();
 	private readonly reservationLocks = new Map<string, Promise<void>>();
 	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
-	constructor(private readonly dbOps: DatabaseOperations) {}
+	private readonly syncTimeoutMs: number;
+	constructor(
+		private readonly dbOps: DatabaseOperations,
+		options: { syncTimeoutMs?: number } = {},
+	) {
+		this.syncTimeoutMs = options.syncTimeoutMs ?? SPEND_SYNC_TIMEOUT_MS;
+	}
+	/** The underlying database work may finish later; callers never wait indefinitely. */
+	private async bounded<T>(
+		pending: Promise<T>,
+		signal?: AbortSignal,
+		timeoutMs: number | null = this.syncTimeoutMs,
+	): Promise<T> {
+		if (signal?.aborted) {
+			// The operation was created before entering this helper.
+			void pending.catch(() => {});
+			throw signal.reason ?? new Error("Request aborted");
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let onAbort: (() => void) | undefined;
+		const cancelled = new Promise<never>((_, reject) => {
+			if (timeoutMs !== null)
+				timer = setTimeout(
+					() => reject(new Error("Spend sync deadline exceeded")),
+					Math.max(0, timeoutMs),
+				);
+			if (signal) {
+				onAbort = () => reject(signal.reason ?? new Error("Request aborted"));
+				signal.addEventListener("abort", onAbort, { once: true });
+			}
+		});
+		try {
+			return await Promise.race([pending, cancelled]);
+		} finally {
+			if (timer) clearTimeout(timer);
+			if (onAbort) signal?.removeEventListener("abort", onAbort);
+		}
+	}
+	private expireReservations(nowMs: number): void {
+		for (const [id, reservation] of this.reservations)
+			if (nowMs - reservation.createdMs >= SPEND_RESERVATION_TTL_MS)
+				this.reservations.delete(id);
+	}
 	dispose(): void {
 		if (this.refreshTimer) clearTimeout(this.refreshTimer);
 		this.refreshTimer = null;
@@ -186,6 +235,7 @@ export class ApiKeySpendCounter {
 	/** One refresh per active key, rather than one scan per scope/window row. */
 	async reconcileActiveKeys(): Promise<void> {
 		const now = Date.now();
+		this.expireReservations(now);
 		for (const [apiKeyId, lastAccess] of this.lastAccess)
 			if (
 				now - lastAccess > SPEND_IDLE_TTL_MS &&
@@ -224,15 +274,28 @@ export class ApiKeySpendCounter {
 		for (const [id, reservation] of this.reservations)
 			if (reservation.apiKeyId === apiKeyId) this.reservations.delete(id);
 	}
-	async getLimitsForKey(apiKeyId: string): Promise<ApiKeyLimit[]> {
+	async getLimitsForKey(
+		apiKeyId: string,
+		signal?: AbortSignal,
+	): Promise<ApiKeyLimit[]> {
 		this.lastAccess.set(apiKeyId, Date.now());
 		const cached = this.keyLimits.get(apiKeyId);
 		if (cached && Date.now() - cached.loadedMs < SPEND_RESYNC_TTL_MS)
 			return cached.limits;
 		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
-		const limits = await this.dbOps.getApiKeyLimits(apiKeyId);
+		let limits: ApiKeyLimit[];
+		try {
+			limits = await this.bounded(this.dbOps.getApiKeyLimits(apiKeyId), signal);
+		} catch (error) {
+			const stale = this.keyLimits.get(apiKeyId);
+			if (!stale || signal?.aborted) throw error;
+			log.warn(
+				`Using cached spend limits for key ${apiKeyId} after refresh failed: ${String(error)}`,
+			);
+			return stale.limits;
+		}
 		if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
-			return this.getLimitsForKey(apiKeyId);
+			return this.getLimitsForKey(apiKeyId, signal);
 		this.keyLimits.set(apiKeyId, { loadedMs: Date.now(), limits });
 		if (!this.refreshTimer) this.scheduleRefresh();
 		return limits;
@@ -241,14 +304,16 @@ export class ApiKeySpendCounter {
 		return JSON.stringify([apiKeyId, limit.scopeModel, limit.window]);
 	}
 	/**
-	 * Reset completed spend immediately. Existing in-flight reservations remain:
-	 * their final cost is counted when recorded at/after this boundary, even if
-	 * the request started before it. Request history is never changed.
+	 * Reset completed spend and drop this key's in-flight reservations. Their
+	 * final cost still counts when recorded at/after this boundary, even if the
+	 * request started before it. Request history is never changed.
 	 */
 	applySpendReset(apiKeyId: string, timestamp: number): void {
 		if ((this.spendResetPoints.get(apiKeyId) ?? 0) >= timestamp) return;
 		this.spendResetPoints.set(apiKeyId, timestamp);
 		this.forget(apiKeyId);
+		for (const [id, reservation] of this.reservations)
+			if (reservation.apiKeyId === apiKeyId) this.reservations.delete(id);
 		const pending = this.pendingRecords.get(apiKeyId);
 		if (pending)
 			for (const [id, event] of pending)
@@ -271,9 +336,14 @@ export class ApiKeySpendCounter {
 		mode: ApiKeyLimitWindowMode,
 		nowMs: number,
 	): Promise<void> {
+		const deadline = performance.now() + this.syncTimeoutMs;
 		const resetAt =
 			typeof this.dbOps.getApiKey === "function"
-				? await this.loadSpendReset(apiKeyId)
+				? await this.bounded(
+						this.loadSpendReset(apiKeyId),
+						undefined,
+						deadline - performance.now(),
+					)
 				: (this.spendResetPoints.get(apiKeyId) ?? 0);
 		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
 		const keyLimits =
@@ -318,24 +388,28 @@ export class ApiKeySpendCounter {
 			if (local)
 				for (const [id, event] of local)
 					if (nowMs - event.timestamp > SPEND_PENDING_TTL_MS) local.delete(id);
-			const reconciliation =
-				typeof this.dbOps.getApiKeySpendReconciliation === "function"
-					? await this.dbOps.getApiKeySpendReconciliation(
-							apiKeyId,
-							mode === "calendar" ? windows : [],
-							mode === "rolling"
-								? Math.min(...windows.map((window) => window.startMs))
-								: null,
-							Math.max(nowMs - SPEND_PENDING_TTL_MS, resetAt),
-							nowMs,
-						)
-					: {
-							calendar: null,
-							events: await this.dbOps.getApiKeySpendEventsSince(
+			const reconciliation = await this.bounded(
+				(async () =>
+					typeof this.dbOps.getApiKeySpendReconciliation === "function"
+						? await this.dbOps.getApiKeySpendReconciliation(
 								apiKeyId,
-								Math.min(...windows.map((window) => window.startMs)),
-							),
-						};
+								mode === "calendar" ? windows : [],
+								mode === "rolling"
+									? Math.min(...windows.map((window) => window.startMs))
+									: null,
+								Math.max(nowMs - SPEND_PENDING_TTL_MS, resetAt),
+								nowMs,
+							)
+						: {
+								calendar: null,
+								events: await this.dbOps.getApiKeySpendEventsSince(
+									apiKeyId,
+									Math.min(...windows.map((window) => window.startMs)),
+								),
+							})(),
+				undefined,
+				deadline - performance.now(),
+			);
 			if (
 				(this.limitGenerations.get(apiKeyId) ?? 0) !== generation ||
 				limits.some(
@@ -343,7 +417,7 @@ export class ApiKeySpendCounter {
 						this.limitSyncTokens.get(this.identity(apiKeyId, row)) !== token,
 				)
 			)
-				throw new Error(
+				throw new SpendCheckSupersededError(
 					"Spend counter reconciliation superseded by updated settings",
 				);
 			const persisted = reconciliation.events;
@@ -413,7 +487,8 @@ export class ApiKeySpendCounter {
 		nowMs = Date.now(),
 		reconcile = false,
 		excludeReservationId?: string,
-		proposedCostUsd = 0,
+		_proposedCostUsd = 0,
+		signal?: AbortSignal,
 	): Promise<SpendSnapshot> {
 		this.lastAccess.set(apiKeyId, Date.now());
 		const identity = this.identity(apiKeyId, limit);
@@ -427,7 +502,27 @@ export class ApiKeySpendCounter {
 			entry.mode !== mode ||
 			(mode === "calendar" && entry.startMs !== bounds.startMs)
 		) {
-			await this.syncLimitKey(apiKeyId, limit, mode, nowMs);
+			try {
+				await this.bounded(
+					this.syncLimitKey(apiKeyId, limit, mode, nowMs),
+					signal,
+					null,
+				);
+			} catch (error) {
+				const stale = this.limitEntries.get(identity);
+				if (
+					error instanceof SpendCheckSupersededError ||
+					signal?.aborted ||
+					!stale ||
+					stale.mode !== mode ||
+					stale.lastSyncMs === 0 ||
+					(mode === "calendar" && stale.startMs !== bounds.startMs)
+				)
+					throw error;
+				log.warn(
+					`Using cached spend totals for key ${apiKeyId} after refresh failed: ${String(error)}`,
+				);
+			}
 			generation = this.limitGenerations.get(apiKeyId) ?? 0;
 			entry = this.limitEntries.get(identity);
 		} else if (nowMs - entry.lastSyncMs >= SPEND_RESYNC_TTL_MS) {
@@ -438,8 +533,36 @@ export class ApiKeySpendCounter {
 			);
 		}
 		if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
-			throw new Error("Spend counter settings changed during check");
-		if (!entry) throw new Error("Spend counter failed to initialize");
+			throw new SpendCheckSupersededError(
+				"Spend counter settings changed during check",
+			);
+		if (!entry)
+			throw new SpendCheckSupersededError(
+				"Spend counter failed to initialize after settings changed",
+			);
+		return this.snapshotFromEntry(
+			apiKeyId,
+			limit,
+			mode,
+			nowMs,
+			entry,
+			excludeReservationId,
+		);
+	}
+	private snapshotFromEntry(
+		apiKeyId: string,
+		limit: ApiKeyLimit,
+		mode: ApiKeyLimitWindowMode,
+		nowMs: number,
+		entry: {
+			limit: ApiKeyLimit;
+			spentUsd: number;
+			cursor: number;
+			events: SpendEvent[];
+		},
+		excludeReservationId?: string,
+	): SpendSnapshot {
+		const bounds = apiKeyLimitWindowBounds(limit.window, mode, nowMs);
 		entry.limit = limit;
 		while (
 			entry.cursor < entry.events.length &&
@@ -452,21 +575,22 @@ export class ApiKeySpendCounter {
 			entry.events = entry.events.slice(entry.cursor);
 			entry.cursor = 0;
 		}
-		let spentUsd = Math.max(0, entry.spentUsd);
+		const spentUsd = Math.max(0, entry.spentUsd);
+		let reservedUsd = 0;
+		this.expireReservations(nowMs);
 		for (const [id, reservation] of this.reservations)
 			if (
 				id !== excludeReservationId &&
 				reservation.apiKeyId === apiKeyId &&
 				this.matchesEventScope(reservation, limit.scopeModel)
 			)
-				spentUsd += reservation.costUsd;
-		const alreadyExceeded = spentUsd >= limit.limitUsd;
-		// A proposed request affects relief, but has no expiry before it completes.
-		spentUsd += proposedCostUsd;
+				reservedUsd += reservation.costUsd;
+		const committedUsd =
+			spentUsd + (limit.enforce === "warn" ? 0 : reservedUsd);
 		let resetMs: number | null = bounds.endMs;
 		if (mode === "rolling") {
 			resetMs = null;
-			let remaining = spentUsd;
+			let remaining = committedUsd;
 			for (let i = entry.cursor; i < entry.events.length; i++) {
 				const event = entry.events[i];
 				remaining -= event.costUsd;
@@ -474,28 +598,91 @@ export class ApiKeySpendCounter {
 					nowMs + API_KEY_ROLLING_DURATION_MS[limit.window],
 					event.timestamp + API_KEY_ROLLING_DURATION_MS[limit.window],
 				);
-				if (
-					proposedCostUsd > 0
-						? remaining <= limit.limitUsd
-						: remaining < limit.limitUsd
-				)
-					break;
+				if (remaining < limit.limitUsd) break;
 			}
-			if (
-				proposedCostUsd > 0
-					? remaining > limit.limitUsd
-					: remaining >= limit.limitUsd
-			)
-				resetMs = null;
+			if (remaining >= limit.limitUsd) resetMs = null;
 		}
 		if (Math.abs(Date.now() - nowMs) < 1000 && !this.refreshTimer)
 			this.scheduleRefresh();
 		return {
 			spentUsd,
+			reservedUsd,
 			limitUsd: limit.limitUsd,
 			resetMs,
-			exceeded: alreadyExceeded || spentUsd > limit.limitUsd,
+			exceeded: committedUsd >= limit.limitUsd,
 		};
+	}
+	/** Read usable cached totals even when lock admission or a refresh failed. */
+	getCachedChecks(
+		apiKeyId: string,
+		limits: ApiKeyLimit[],
+		mode: ApiKeyLimitWindowMode,
+		requestedModel: string | null,
+		servedModel: string | null,
+		nowMs = Date.now(),
+		excludeReservationId?: string,
+	): Array<{ limit: ApiKeyLimit; snapshot: SpendSnapshot }> {
+		return limits.flatMap((limit) => {
+			if (
+				!this.matchesEventScope(
+					{ requestedModel, model: servedModel },
+					limit.scopeModel,
+				)
+			)
+				return [];
+			const entry = this.limitEntries.get(this.identity(apiKeyId, limit));
+			if (
+				!entry ||
+				entry.lastSyncMs === 0 ||
+				entry.mode !== mode ||
+				(mode === "calendar" &&
+					entry.startMs !==
+						apiKeyLimitWindowBounds(limit.window, mode, nowMs).startMs)
+			)
+				return [];
+			return [
+				{
+					limit,
+					snapshot: this.snapshotFromEntry(
+						apiKeyId,
+						limit,
+						mode,
+						nowMs,
+						entry,
+						excludeReservationId,
+					),
+				},
+			];
+		});
+	}
+	/** Fail closed only for an applicable block limit without a usable total. */
+	shouldFailClosed(
+		apiKeyId: string,
+		limits: ApiKeyLimit[],
+		mode: ApiKeyLimitWindowMode,
+		requestedModel: string | null,
+		servedModel: string | null,
+		nowMs = Date.now(),
+	): boolean {
+		return limits.some((limit) => {
+			if (
+				limit.enforce !== "block" ||
+				!this.matchesEventScope(
+					{ requestedModel, model: servedModel },
+					limit.scopeModel,
+				)
+			)
+				return false;
+			const entry = this.limitEntries.get(this.identity(apiKeyId, limit));
+			return (
+				!entry ||
+				entry.lastSyncMs === 0 ||
+				entry.mode !== mode ||
+				(mode === "calendar" &&
+					entry.startMs !==
+						apiKeyLimitWindowBounds(limit.window, mode, nowMs).startMs)
+			);
+		});
 	}
 	/** Check and reserve under one per-key lock so concurrent checks cannot oversubscribe. */
 	async checkAndReserve(
@@ -507,49 +694,109 @@ export class ApiKeySpendCounter {
 		servedModel: string | null,
 		estimatedUsd: number,
 		nowMs = Date.now(),
+		signal?: AbortSignal,
 	): Promise<Array<{ limit: ApiKeyLimit; snapshot: SpendSnapshot }>> {
 		const previous = this.reservationLocks.get(apiKeyId) ?? Promise.resolve();
 		let unlock!: () => void;
 		const lock = new Promise<void>((resolve) => {
 			unlock = resolve;
 		});
-		this.reservationLocks.set(apiKeyId, lock);
-		await previous;
+		// An aborted waiter must keep its place until its predecessor releases.
+		const tail = previous.then(() => lock);
+		this.reservationLocks.set(apiKeyId, tail);
+		void tail.then(() => {
+			if (this.reservationLocks.get(apiKeyId) === tail)
+				this.reservationLocks.delete(apiKeyId);
+		});
 		try {
+			await this.bounded(previous, signal);
 			const reservation = {
 				apiKeyId,
 				model: servedModel,
 				requestedModel,
-				costUsd: Math.max(0, estimatedUsd),
+				costUsd: Number.isFinite(estimatedUsd) ? Math.max(0, estimatedUsd) : 0,
+				createdMs: nowMs,
 			};
-			const snapshots: Array<{ limit: ApiKeyLimit; snapshot: SpendSnapshot }> =
-				[];
-			for (const limit of limits) {
-				if (!this.matchesEventScope(reservation, limit.scopeModel)) continue;
-				const snapshot = await this.getLimitSnapshot(
-					apiKeyId,
-					limit,
-					mode,
-					nowMs,
-					false,
-					requestId,
-					reservation.costUsd,
-				);
-				snapshots.push({ limit, snapshot });
+			for (let attempt = 0; attempt < 2; attempt++) {
+				const generation = this.limitGenerations.get(apiKeyId) ?? 0;
+				try {
+					const snapshots: Array<{
+						limit: ApiKeyLimit;
+						snapshot: SpendSnapshot;
+					}> = [];
+					for (const limit of limits) {
+						if (!this.matchesEventScope(reservation, limit.scopeModel))
+							continue;
+						try {
+							const snapshot = await this.getLimitSnapshot(
+								apiKeyId,
+								limit,
+								mode,
+								nowMs,
+								false,
+								requestId,
+								0,
+								signal,
+							);
+							snapshots.push({ limit, snapshot });
+						} catch (error) {
+							if (
+								error instanceof SpendCheckSupersededError ||
+								limit.enforce === "block" ||
+								signal?.aborted
+							)
+								throw error;
+							log.warn(
+								`Warn-only spend check unavailable for key ${apiKeyId}: ${String(error)}`,
+							);
+						}
+					}
+					if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
+						throw new SpendCheckSupersededError(
+							"Spend counter settings changed before reservation",
+						);
+					if (signal?.aborted)
+						throw signal.reason ?? new Error("Request aborted");
+					const blocked = snapshots.some(
+						({ limit, snapshot }) =>
+							limit.enforce === "block" && snapshot.exceeded,
+					);
+					if (blocked) this.reservations.delete(requestId);
+					else {
+						for (const { limit, snapshot } of snapshots)
+							if (limit.enforce === "block")
+								reservation.costUsd = Math.min(
+									reservation.costUsd,
+									Math.max(
+										0,
+										limit.limitUsd -
+											snapshot.spentUsd -
+											(snapshot.reservedUsd ?? 0),
+									),
+								);
+						this.reservations.set(requestId, reservation);
+						for (const { snapshot } of snapshots)
+							snapshot.reservedUsd =
+								(snapshot.reservedUsd ?? 0) + reservation.costUsd;
+					}
+					return snapshots;
+				} catch (error) {
+					if (!(error instanceof SpendCheckSupersededError)) throw error;
+					if (attempt === 0) {
+						if (typeof this.dbOps.getApiKeyLimits === "function")
+							limits = await this.getLimitsForKey(apiKeyId, signal);
+						continue;
+					}
+					// Repeated concurrent edits are not database unavailability.
+					log.warn(
+						`Spend check superseded again for key ${apiKeyId}; using next reconciliation`,
+					);
+					return [];
+				}
 			}
-			if (
-				!snapshots.some(
-					({ limit, snapshot }) =>
-						limit.enforce === "block" && snapshot.exceeded,
-				)
-			)
-				this.reservations.set(requestId, reservation);
-			else this.reservations.delete(requestId);
-			return snapshots;
+			return [];
 		} finally {
-			unlock();
-			if (this.reservationLocks.get(apiKeyId) === lock)
-				this.reservationLocks.delete(apiKeyId);
+			void previous.then(unlock);
 		}
 	}
 	releaseReservation(requestId: string): void {

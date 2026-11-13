@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { DatabaseOperations } from "./database-operations";
 import { DatabaseFactory } from "./factory";
 
@@ -37,11 +37,95 @@ async function event(
 		);
 }
 describe("budget reconciliation SQL", () => {
+	for (const operation of [
+		"reconciliation",
+		"events",
+		"spend-since",
+	] as const) {
+		it(`${operation} bounds the timestamp index range while retaining completion-time precision`, async () => {
+			const since = NOW - 60_000;
+			const maxLag = 24 * 60 * 60 * 1000;
+			await event("completed-in-window", since - 1000, 2000, 2);
+			await event("completed-before-window", since - 2000, 1000, 4);
+			await event("beyond-completion-lag", since - maxLag - 1, maxLag + 2, 16);
+			await event("future-start", NOW + 1, 0, 32);
+			const adapter = db.getAdapter();
+			const query = adapter.query.bind(adapter);
+			const get = adapter.get.bind(adapter);
+			const plans: string[] = [];
+			const explain = async (sql: string, params: unknown[] = []) => {
+				if (sql.includes("FROM requests")) {
+					const statement = adapter
+						.getSQLiteDb()
+						.prepare<{ detail: string }, Array<string | number>>(
+							`EXPLAIN QUERY PLAN ${sql}`,
+						);
+					try {
+						plans.push(
+							...statement
+								.all(...(params as Array<string | number>))
+								.map(({ detail }) => detail),
+						);
+					} finally {
+						statement.finalize();
+					}
+				}
+			};
+			const querySpy = spyOn(adapter, "query").mockImplementation(
+				async <T>(sql: string, params?: unknown[]) => {
+					await explain(sql, params);
+					return query<T>(sql, params);
+				},
+			);
+			const getSpy = spyOn(adapter, "get").mockImplementation(
+				async <T>(sql: string, params?: unknown[]) => {
+					await explain(sql, params);
+					return get<T>(sql, params);
+				},
+			);
+			try {
+				if (operation === "reconciliation") {
+					const result = await db.getApiKeySpendReconciliation(
+						"key",
+						[{ window: "hour", startMs: since, endMs: NOW + 60_000 }],
+						null,
+						since,
+						NOW,
+					);
+					expect(result.calendar[0].totals[0].totalUsd).toBe(2);
+					expect(result.events.map(({ requestId }) => requestId)).toEqual([
+						"completed-in-window",
+					]);
+				} else if (operation === "events") {
+					const result = await db.getApiKeySpendEventsSince("key", since, NOW);
+					expect(result.map(({ requestId }) => requestId)).toEqual([
+						"completed-in-window",
+					]);
+				} else {
+					expect(await db.getApiKeySpendSince("key", since, NOW)).toEqual({
+						totalUsd: 2,
+						oldestMs: since + 1000,
+					});
+				}
+				expect(
+					plans.some((plan) =>
+						/idx_requests_api_key_timestamp \(api_key_id=\? AND timestamp>\? AND timestamp<\?\)/.test(
+							plan,
+						),
+					),
+				).toBe(true);
+			} finally {
+				querySpy.mockRestore();
+				getSpy.mockRestore();
+			}
+		});
+	}
 	it("charges a stream to its completion hour after persistence", async () => {
 		await event("crosses-hour", NOW - 3000, 2000, 2);
 		const events = await db.getApiKeySpendEventsSince(
 			"key",
 			Date.parse("2026-11-13T13:00:00Z"),
+			NOW,
 		);
 		expect(events).toHaveLength(1);
 		expect(events[0].timestamp).toBe(NOW - 1000);

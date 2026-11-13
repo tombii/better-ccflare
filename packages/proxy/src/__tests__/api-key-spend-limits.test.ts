@@ -859,7 +859,7 @@ describe("request reservation lifecycle", () => {
 			body: JSON.stringify({
 				model: "claude-opus-4-5",
 				messages: [{ role: "user", content: "hello" }],
-				max_tokens: 2048,
+				max_tokens: 4096,
 			}),
 			signal,
 		});
@@ -940,7 +940,8 @@ describe("request reservation lifecycle", () => {
 				row,
 				"calendar",
 			);
-			expect(before.spentUsd).toBeGreaterThan(4.9);
+			expect(before.spentUsd).toBe(4.9);
+			expect(before.reservedUsd).toBeGreaterThan(0);
 			expect(typeof price).toBe("function");
 			price(0.02);
 			await ending.mock.results[0].value;
@@ -1029,5 +1030,171 @@ describe("request reservation lifecycle", () => {
 			).spentUsd,
 		).toBe(4.9);
 		await response.body?.cancel();
+	});
+});
+
+describe("second review: limit failures and request estimates", () => {
+	const limit = (
+		enforce: "block" | "warn",
+		scopeModel: string | null = null,
+	): ApiKeyLimit => ({
+		id: "review3",
+		apiKeyId: "key-1",
+		scopeModel,
+		window: "day",
+		limitUsd: 1,
+		enforce,
+		createdAt: 0,
+		updatedAt: 0,
+	});
+	function context(rows: ApiKeyLimit[]) {
+		const ctx = makeContext([]);
+		Object.assign(ctx.dbOps, {
+			getApiKeyLimits: mock(async () => rows),
+			getApiKeySpendEventsSince: mock(async () => []),
+		});
+		return ctx;
+	}
+	for (const [label, rows] of [
+		["warn only", [limit("warn")]],
+		["unrelated block scope", [limit("block", "sonnet")]],
+		["no limits", []],
+	] as const) {
+		it(`allows ${label} when limit checking fails`, async () => {
+			const ctx = context([...rows]);
+			spyOn(
+				getApiKeySpendCounter(ctx.dbOps),
+				"checkAndReserve",
+			).mockRejectedValue(new Error("partial database failure"));
+			const response = await handleProxy(
+				makeRequest(),
+				PROXY_URL,
+				ctx,
+				"key-1",
+			);
+			expect((await response.json()).error.code).not.toBe(
+				"api_key_limit_check_unavailable",
+			);
+		});
+	}
+	it("allows an unknown limit list read failure without inventing a block policy", async () => {
+		const ctx = context([]);
+		Object.assign(ctx.dbOps, {
+			getApiKeyLimits: mock(async () => {
+				throw new Error("partial database failure");
+			}),
+		});
+		const response = await handleProxy(makeRequest(), PROXY_URL, ctx, "key-1");
+		expect((await response.json()).error.code).not.toBe(
+			"api_key_limit_check_unavailable",
+		);
+	});
+	it("enforces a stale over-limit snapshot when the reservation check fails", async () => {
+		const rows = [limit("block")];
+		const ctx = context(rows);
+		Object.assign(ctx.dbOps, {
+			getApiKeySpendEventsSince: mock(async () => [
+				{
+					requestId: "spent",
+					timestamp: Date.now() - 1,
+					costUsd: 2,
+					model: "opus",
+				},
+			]),
+		});
+		const counter = getApiKeySpendCounter(ctx.dbOps);
+		await counter.getLimitSnapshot("key-1", rows[0], "calendar");
+		spyOn(counter, "checkAndReserve").mockRejectedValue(
+			new Error("lock wait deadline exceeded"),
+		);
+		const response = await handleProxy(makeRequest(), PROXY_URL, ctx, "key-1");
+		expect(response.status).toBe(429);
+		expect((await response.json()).error.spent_usd).toBe(2);
+	});
+	async function estimate(body: Record<string, unknown>) {
+		const ctx = context([limit("block")]);
+		const check = spyOn(
+			getApiKeySpendCounter(ctx.dbOps),
+			"checkAndReserve",
+		).mockResolvedValue([]);
+		const req = new Request(PROXY_URL, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		await handleProxy(req, PROXY_URL, ctx, "key-1");
+		return {
+			cost: check.mock.calls[0][6],
+			signal: check.mock.calls[0][8],
+			req,
+		};
+	}
+	it("prices cached input at the cache read rate", async () => {
+		spyOn(core, "getModelRates").mockResolvedValue({
+			input: 10,
+			output: 0,
+			cacheRead: 1,
+			cacheWrite: 12.5,
+		});
+		const { cost } = await estimate({
+			model: "claude-opus-4-5",
+			max_tokens: 0,
+			messages: [
+				{
+					role: "user",
+					content: [
+						{
+							type: "text",
+							text: "x".repeat(3000),
+							cache_control: { type: "ephemeral" },
+						},
+					],
+				},
+			],
+		});
+		expect(cost).toBeLessThan(0.002);
+	});
+	it("does not price image data as text tokens", async () => {
+		const { cost } = await estimate({
+			model: "claude-opus-4-5",
+			max_tokens: 0,
+			messages: [
+				{
+					role: "user",
+					content: [
+						{
+							type: "image",
+							source: {
+								type: "base64",
+								media_type: "image/png",
+								data: "a".repeat(300000),
+							},
+						},
+					],
+				},
+			],
+		});
+		expect(cost).toBeLessThan(0.001);
+	});
+	it("uses a known family rate for a provider-specific model name", async () => {
+		spyOn(core, "getModelRates").mockImplementation(async (model) =>
+			model.includes("provider/")
+				? null
+				: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+		);
+		const { cost } = await estimate({
+			model: "provider/custom-haiku",
+			max_tokens: 1000,
+			messages: [{ role: "user", content: "hello" }],
+		});
+		expect(cost).toBeLessThan(0.006);
+	});
+	it("passes the request abort signal to the reservation check", async () => {
+		const { signal, req } = await estimate({
+			model: "claude-opus-4-5",
+			max_tokens: 0,
+			messages: [{ role: "user", content: "hello" }],
+		});
+		expect(signal).toBe(req.signal);
 	});
 });

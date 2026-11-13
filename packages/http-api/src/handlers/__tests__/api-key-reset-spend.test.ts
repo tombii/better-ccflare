@@ -75,6 +75,50 @@ async function limits(mode: "calendar" | "rolling") {
 	return dbOps.getApiKeyLimits("target");
 }
 describe("reset API key spend", () => {
+	it("redacts reset actor on own-key usage while retaining it for admins", async () => {
+		await dbOps.resetApiKeySpend(
+			"target",
+			Date.now(),
+			"API key private-admin (admin-id)",
+		);
+		const handler = createApiKeyUsageHandler({ dbOps } as APIContext);
+		const caller = {
+			isAuthenticated: true,
+			apiKeyId: "target",
+			role: "api-only" as const,
+		};
+		const own = await (
+			await handler("target", new URLSearchParams(), caller)
+		).json();
+		expect(own.apiKey.spendResetAt).toBeNumber();
+		expect(own.apiKey).not.toHaveProperty("spendResetBy");
+		const admin = await (
+			await handler("target", new URLSearchParams(), {
+				...caller,
+				role: "admin",
+			})
+		).json();
+		expect(admin.apiKey.spendResetBy).toBe("API key private-admin (admin-id)");
+	});
+	it("reports reservations separately from actual spend on API gauges", async () => {
+		const rows = await limits("calendar");
+		await getApiKeySpendCounter(dbOps).checkAndReserve(
+			"target",
+			"reserved",
+			rows,
+			"calendar",
+			"opus",
+			"claude-opus-4-6",
+			2,
+		);
+		const response = await (await createApiKeysListHandler(dbOps)()).json();
+		const key = response.data.find(
+			(value: { id: string }) => value.id === "target",
+		);
+		expect(key.limits[0].spentUsd).toBe(0);
+		expect(key.limits[0].reservedUsd).toBe(2);
+	});
+
 	for (const mode of ["calendar", "rolling"] as const) {
 		it(`${mode}: unblocks immediately, counts new spend, preserves history and survives reconcile/restart`, async () => {
 			const rows = await limits(mode);
@@ -189,7 +233,7 @@ describe("reset API key spend", () => {
 			).toBe("admin tester");
 		});
 	}
-	it("retains reservations across reset and counts pre-reset requests completed after it", async () => {
+	it("drops reservations across reset and counts pre-reset requests completed after it", async () => {
 		const rows = await limits("calendar");
 		const counter = getApiKeySpendCounter(dbOps);
 		await counter.checkAndReserve(
@@ -206,7 +250,7 @@ describe("reset API key spend", () => {
 		counter.applySpendReset("target", resetAt);
 		expect(
 			(await counter.getLimitSnapshot("target", rows[0], "calendar")).spentUsd,
-		).toBe(2);
+		).toBe(0);
 		await cost("inflight", resetAt - 5000, 4, 5000);
 		counter.record("target", 4, "claude-opus-4-6", resetAt, "inflight", "opus");
 		expect(

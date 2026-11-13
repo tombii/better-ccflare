@@ -76,6 +76,10 @@ import {
 } from "./search-tier-seeding";
 import { runWalTruncateInWorker } from "./wal-truncate-runner";
 
+// Bound history scans by request start while precise accounting uses completion
+// time, allowing a day of completion/pricing lag before the window starts.
+const MAX_COMPLETION_LAG_MS = 24 * 60 * 60 * 1000;
+
 export interface DatabaseConfig {
 	/** Enable WAL (Write-Ahead Logging) mode for better concurrency */
 	walMode?: boolean;
@@ -2960,7 +2964,14 @@ OAuth tokens will need to be re-authenticated.
 			eventSinceMs,
 			...windows.map((window) => window.startMs),
 		);
-		const params: Array<string | number> = [apiKeyId, sinceMs, nowMs, apiKeyId];
+		const params: Array<string | number> = [
+			apiKeyId,
+			sinceMs - MAX_COMPLETION_LAG_MS,
+			nowMs,
+			sinceMs,
+			nowMs,
+			apiKeyId,
+		];
 		for (const window of windows) params.push(window.startMs, window.endMs);
 		params.push(eventSinceMs);
 		const rows = await withDatabaseRetry(
@@ -2977,7 +2988,7 @@ OAuth tokens will need to be re-authenticated.
 			WITH completed AS (
 				SELECT id, COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) AS completed_ms,
 					cost_usd, model, COALESCE(limit_model, original_model) AS requested_model
-				FROM requests WHERE api_key_id = ? AND cost_usd > 0
+				FROM requests WHERE api_key_id = ? AND requests.timestamp >= ? AND requests.timestamp <= ? AND cost_usd > 0
 			), eligible AS (SELECT * FROM completed WHERE completed_ms >= ? AND completed_ms <= ? AND completed_ms >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0))
 			SELECT 'total' AS kind, NULL AS request_id, NULL AS completed_ms, model, requested_model, ${sums.join(", ")}
 			FROM eligible GROUP BY model, requested_model
@@ -3017,6 +3028,7 @@ OAuth tokens will need to be re-authenticated.
 	async getApiKeySpendEventsSince(
 		apiKeyId: string,
 		sinceMs: number,
+		nowMs = Date.now(),
 	): Promise<
 		Array<{
 			requestId: string;
@@ -3035,8 +3047,15 @@ OAuth tokens will need to be re-authenticated.
 					model: string | null;
 					requested_model: string | null;
 				}>(
-					"SELECT id, COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) AS timestamp, cost_usd, model, COALESCE(limit_model, original_model) AS requested_model FROM requests WHERE api_key_id = ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) >= ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0) AND cost_usd > 0 ORDER BY timestamp",
-					[apiKeyId, sinceMs, apiKeyId],
+					"SELECT id, COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) AS timestamp, cost_usd, model, COALESCE(limit_model, original_model) AS requested_model FROM requests WHERE api_key_id = ? AND requests.timestamp >= ? AND requests.timestamp <= ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) >= ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) <= ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0) AND cost_usd > 0 ORDER BY timestamp",
+					[
+						apiKeyId,
+						sinceMs - MAX_COMPLETION_LAG_MS,
+						nowMs,
+						sinceMs,
+						nowMs,
+						apiKeyId,
+					],
 				),
 			this.retryConfig,
 			"getApiKeySpendEventsSince",
@@ -3066,9 +3085,9 @@ OAuth tokens will need to be re-authenticated.
 	 * This is the spend counter's seed and resync query, and the only new SQL
 	 * this feature adds. Notes on its shape, all deliberate:
 	 *
-	 *  - `timestamp > ?` with an absolute epoch-ms bound computed in
-	 *    JavaScript. No SQL date function: the two backends disagree on all of
-	 *    them and this must answer identically on both.
+	 *  - Completion-time filtering is precise; additional absolute request-start
+	 *    bounds keep idx_requests_api_key_timestamp usable on both backends.
+	 *    The lower bound allows up to 24 hours for completion/pricing lag.
 	 *  - No `billing_type` predicate AT ALL. Every request in this codebase is
 	 *    priced at public pay-per-token rates regardless of whether the account
 	 *    is on a subscription, so `cost_usd` already IS the API-cost-equivalent
@@ -3079,13 +3098,13 @@ OAuth tokens will need to be re-authenticated.
 	 *  - `cost_usd IS NOT NULL` so MIN(timestamp) reports the oldest row that
 	 *    actually CONTRIBUTES to the total: a zero-cost row ageing out relieves
 	 *    nothing, and reporting it would promise a reset that does not happen.
-	 *  - Served by the existing idx_requests_api_key_timestamp. Measured at
-	 *    ~264ms against a key with 282k requests in 30 days, which is why the
-	 *    caller runs this once at startup and then on a TTL, never per request.
+	 *  - Served by the existing idx_requests_api_key_timestamp. The caller runs
+	 *    this once at startup and then on a TTL, never per request.
 	 */
 	async getApiKeySpendSince(
 		apiKeyId: string,
 		sinceMs: number,
+		nowMs = Date.now(),
 	): Promise<{ totalUsd: number; oldestMs: number | null }> {
 		const row = await withDatabaseRetry(
 			() =>
@@ -3095,9 +3114,18 @@ OAuth tokens will need to be re-authenticated.
 				}>(
 					`SELECT SUM(cost_usd) AS total, MIN(COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0))) AS oldest
 					 FROM requests
-					 WHERE api_key_id = ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) > ?
+					 WHERE api_key_id = ? AND requests.timestamp >= ? AND requests.timestamp <= ?
+					 AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) > ?
+					 AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) <= ?
 					 AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0) AND cost_usd IS NOT NULL`,
-					[apiKeyId, sinceMs, apiKeyId],
+					[
+						apiKeyId,
+						sinceMs - MAX_COMPLETION_LAG_MS,
+						nowMs,
+						sinceMs,
+						nowMs,
+						apiKeyId,
+					],
 				),
 			this.retryConfig,
 			"getApiKeySpendSince",

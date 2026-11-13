@@ -1,6 +1,11 @@
 import {
 	type AccountUsageSnapshot,
+	getModelFamily,
 	getModelRates,
+	LATEST_FABLE_MODEL,
+	LATEST_HAIKU_MODEL,
+	LATEST_OPUS_MODEL,
+	LATEST_SONNET_MODEL,
 	requestEvents,
 	runForceAccountModelExempt,
 	ServiceUnavailableError,
@@ -200,6 +205,7 @@ const SPEND_LIMIT_MAX_RETRY_AFTER_SECONDS = 3600;
 function createApiKeySpendLimitResponse(info: {
 	limitUsd: number;
 	spentUsd: number;
+	reservedUsd?: number;
 	window: string;
 	resetMs: number | null;
 	scopeModel?: string | null;
@@ -227,6 +233,7 @@ function createApiKeySpendLimitResponse(info: {
 				message: `This API key has exceeded its spend limit of $${info.limitUsd} over its ${info.window} window${info.scopeModel ? ` for model scope "${info.scopeModel}"` : " for the whole key"} ($${info.spentUsd.toFixed(4)} spent).`,
 				limit_usd: info.limitUsd,
 				spent_usd: info.spentUsd,
+				reserved_usd: info.reservedUsd ?? 0,
 				window: info.window,
 				scope_model: info.scopeModel ?? null,
 				resets_at:
@@ -260,24 +267,64 @@ function createLimitCheckUnavailableResponse(): Response {
 	);
 }
 
-/** Conservative prompt estimate plus a bounded output allowance, priced for this route. */
+/** Advisory reservation using prompt text, cache boundaries and the route's pricing. */
 async function estimateApiKeyRequestCost(
 	body: RequestJsonBody | null,
 	model: string | null,
+	requestedModel: string | null,
 ): Promise<number> {
-	// Unknown model pricing uses the highest bundled Claude rates rather than a zero reservation.
-	const rates = model ? await getModelRates(model) : null;
-	const inputTokens = Math.ceil(
-		new TextEncoder().encode(JSON.stringify(body ?? {})).byteLength / 3,
-	);
+	let rates = model ? await getModelRates(model) : null;
+	if (!rates) {
+		const family =
+			getModelFamily(model ?? "") ?? getModelFamily(requestedModel ?? "");
+		const familyModels = {
+			fable: LATEST_FABLE_MODEL,
+			opus: LATEST_OPUS_MODEL,
+			sonnet: LATEST_SONNET_MODEL,
+			haiku: LATEST_HAIKU_MODEL,
+		};
+		if (family) rates = await getModelRates(familyModels[family]);
+	}
+	// There is no image-pricing rule in the catalogue. Binary image data must
+	// never masquerade as text; actual provider usage replaces this estimate.
+	let inputBytes = 0;
+	let cachedBytes = 0;
+	const encoder = new TextEncoder();
+	const visit = (value: unknown): void => {
+		if (typeof value === "string") {
+			inputBytes += encoder.encode(value).byteLength;
+			return;
+		}
+		if (Array.isArray(value)) {
+			for (const item of value) visit(item);
+			return;
+		}
+		if (value == null || typeof value !== "object") return;
+		const block = value as Record<string, unknown>;
+		if (["image", "input_image", "image_url"].includes(String(block.type)))
+			return;
+		for (const [key, item] of Object.entries(block)) {
+			if (key !== "cache_control") visit(item);
+		}
+		// A cache boundary applies to the prompt prefix, including preceding tools
+		// and messages. Text following the last boundary retains the input rate.
+		if (block.cache_control) cachedBytes = inputBytes;
+	};
+	visit(body?.tools);
+	visit(body?.system);
+	visit(body?.messages);
+	if (body?.cache_control) cachedBytes = inputBytes;
+	const inputTokens = Math.ceil((inputBytes - cachedBytes) / 3);
+	const cachedTokens = Math.ceil(cachedBytes / 3);
 	const maxTokens =
 		typeof body?.max_tokens === "number" && Number.isFinite(body.max_tokens)
 			? Math.max(0, body.max_tokens)
 			: 4096;
 	const outputTokens = Math.min(maxTokens, 4096);
 	return (
-		(inputTokens * (rates?.input ?? 15) +
-			outputTokens * (rates?.output ?? 75)) /
+		(inputTokens * (rates?.input ?? 0) +
+			cachedTokens * (rates?.cacheRead ?? rates?.input ?? 0) +
+			outputTokens * (rates?.output ?? 0)) /
 		1_000_000
 	);
 }
@@ -656,6 +703,7 @@ async function handleProxyRequest(
 		const estimatedUsd = await estimateApiKeyRequestCost(
 			parsedBody,
 			servedModel ?? requestModel ?? null,
+			requestModel ?? null,
 		);
 		const checks = await getApiKeySpendCounter(ctx.dbOps).checkAndReserve(
 			apiKeyId,
@@ -665,6 +713,8 @@ async function handleProxyRequest(
 			requestModel ?? null,
 			servedModel,
 			estimatedUsd,
+			Date.now(),
+			req.signal,
 		);
 		if (req.signal.aborted) {
 			tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
@@ -680,11 +730,32 @@ async function handleProxyRequest(
 		try {
 			keyLimits = await getApiKeySpendCounter(ctx.dbOps).getLimitsForKey(
 				apiKeyId,
+				req.signal,
 			);
 			reservationState.hasLimits = keyLimits.length > 0;
 			blockingLimit = await checkModelSpend(null);
 		} catch (error) {
-			limitCheckUnavailable = true;
+			const counter = getApiKeySpendCounter(ctx.dbOps);
+			blockingLimit = selectBlockingLimit(
+				counter.getCachedChecks(
+					apiKeyId,
+					keyLimits,
+					options?.limitWindowMode ?? "calendar",
+					requestModel ?? null,
+					null,
+					Date.now(),
+					reservationId,
+				),
+			);
+			limitCheckUnavailable =
+				!blockingLimit &&
+				counter.shouldFailClosed(
+					apiKeyId,
+					keyLimits,
+					options?.limitWindowMode ?? "calendar",
+					requestModel ?? null,
+					null,
+				);
 			log.warn(
 				`Spend limit check unavailable for key ${apiKeyName ?? apiKeyId}: ${String(error)}`,
 			);
@@ -1034,6 +1105,7 @@ async function handleProxyRequest(
 			createApiKeySpendLimitResponse({
 				limitUsd: limit.limitUsd,
 				spentUsd: snapshot.spentUsd,
+				reservedUsd: snapshot.reservedUsd,
 				window: limit.window,
 				scopeModel: limit.scopeModel,
 				resetMs: snapshot.resetMs,
@@ -1700,6 +1772,7 @@ async function handleProxyRequest(
 				createApiKeySpendLimitResponse({
 					limitUsd: blocked.limit.limitUsd,
 					spentUsd: blocked.snapshot.spentUsd,
+					reservedUsd: blocked.snapshot.reservedUsd,
 					window: blocked.limit.window,
 					scopeModel: blocked.limit.scopeModel,
 					resetMs: blocked.snapshot.resetMs,
@@ -1711,6 +1784,47 @@ async function handleProxyRequest(
 			);
 		} catch (error) {
 			log.warn(`Routed spend limit check unavailable: ${String(error)}`);
+			const model = splitModelRouting(
+				modelOverride || effectiveModel || requestModel || "",
+			).model;
+			if (!apiKeyId) return null;
+			const counter = getApiKeySpendCounter(ctx.dbOps);
+			const blocked = selectBlockingLimit(
+				counter.getCachedChecks(
+					apiKeyId,
+					keyLimits,
+					options?.limitWindowMode ?? "calendar",
+					requestModel ?? null,
+					model || null,
+					Date.now(),
+					reservationId,
+				),
+			);
+			if (blocked)
+				return await returnRefusal(
+					createApiKeySpendLimitResponse({
+						limitUsd: blocked.limit.limitUsd,
+						spentUsd: blocked.snapshot.spentUsd,
+						reservedUsd: blocked.snapshot.reservedUsd,
+						window: blocked.limit.window,
+						scopeModel: blocked.limit.scopeModel,
+						resetMs: blocked.snapshot.resetMs,
+						fullRetryAfter: true,
+					}),
+					"api_key_limit_exceeded",
+					0,
+					requestMeta.comboName ?? null,
+				);
+			if (
+				!counter.shouldFailClosed(
+					apiKeyId,
+					keyLimits,
+					options?.limitWindowMode ?? "calendar",
+					requestModel ?? null,
+					model || null,
+				)
+			)
+				return null;
 			return await returnRefusal(
 				createLimitCheckUnavailableResponse(),
 				"api_key_limit_check_unavailable",

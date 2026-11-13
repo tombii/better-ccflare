@@ -103,11 +103,16 @@ describe("spend counter review regressions", () => {
 			),
 		);
 		expect(checks.filter((check) => !check[0].snapshot.exceeded)).toHaveLength(
-			1,
+			2,
 		);
-		expect(
-			(await counter.getLimitSnapshot("k", row(), "calendar", NOW)).spentUsd,
-		).toBeCloseTo(4.96);
+		const reserved = await counter.getLimitSnapshot(
+			"k",
+			row(),
+			"calendar",
+			NOW,
+		);
+		expect(reserved.spentUsd).toBe(4.9);
+		expect(reserved.reservedUsd).toBeCloseTo(0.1);
 		counter.releaseReservation("r0");
 		expect(
 			(
@@ -124,12 +129,13 @@ describe("spend counter review regressions", () => {
 			)[0].snapshot.exceeded,
 		).toBe(false);
 		counter.releaseReservation("after-error");
+		counter.releaseReservation("r1");
 		expect(
 			(await counter.getLimitSnapshot("k", row(), "calendar", NOW)).spentUsd,
 		).toBe(4.9);
 	});
 	it("counts a live reservation against the new calendar window", async () => {
-		const clock = spyOn(Date, "now").mockReturnValue(NOW);
+		const clock = spyOn(Date, "now").mockReturnValue(NOW + 60_000);
 		const { counter } = make();
 		await counter.checkAndReserve(
 			"k",
@@ -139,20 +145,24 @@ describe("spend counter review regressions", () => {
 			"opus",
 			"opus",
 			1,
-			NOW,
+			NOW + 60_000,
 		);
-		clock.mockReturnValue(NOW + 3600000);
+		clock.mockReturnValue(NOW + 1800000);
+		const open = await counter.getLimitSnapshot(
+			"k",
+			row(),
+			"calendar",
+			NOW + 1800000,
+		);
+		expect(open.spentUsd).toBe(0);
+		expect(open.reservedUsd).toBe(1);
+		counter.record("k", 0.5, "opus", NOW + 1800000, "long");
 		expect(
-			(await counter.getLimitSnapshot("k", row(), "calendar", NOW + 3600000))
-				.spentUsd,
-		).toBe(1);
-		counter.record("k", 0.5, "opus", NOW + 3600000, "long");
-		expect(
-			(await counter.getLimitSnapshot("k", row(), "calendar", NOW + 3600000))
+			(await counter.getLimitSnapshot("k", row(), "calendar", NOW + 1800000))
 				.spentUsd,
 		).toBe(0.5);
 	});
-	it("reports rolling relief when the proposed request will fit, including its estimate", async () => {
+	it("reports rolling relief from actual spend independently of a new estimate", async () => {
 		spyOn(Date, "now").mockReturnValue(NOW);
 		const { counter } = make([
 			{
@@ -177,27 +187,28 @@ describe("spend counter review regressions", () => {
 		const [blocked] = await counter.checkAndReserve(
 			"k",
 			"proposed",
-			[row()],
+			[row({ limitUsd: 3 })],
 			"rolling",
 			"opus",
 			"opus",
 			3,
 			NOW,
 		);
-		expect(blocked.snapshot.spentUsd).toBe(7);
+		expect(blocked.snapshot.spentUsd).toBe(4);
 		expect(blocked.snapshot.exceeded).toBe(true);
 		expect(blocked.snapshot.resetMs).toBe(NOW + 1_600_000);
 		const [allowed] = await counter.checkAndReserve(
 			"k",
 			"retry",
-			[row()],
+			[row({ limitUsd: 3 })],
 			"rolling",
 			"opus",
 			"opus",
 			3,
 			NOW + 1_600_000,
 		);
-		expect(allowed.snapshot.spentUsd).toBe(5);
+		expect(allowed.snapshot.spentUsd).toBe(2);
+		expect(allowed.snapshot.reservedUsd).toBe(1);
 		expect(allowed.snapshot.exceeded).toBe(false);
 	});
 	it("does not promise rolling relief for estimates that cannot fit without an open request finishing", async () => {
@@ -213,7 +224,7 @@ describe("spend counter review regressions", () => {
 			4,
 			NOW,
 		);
-		const [blocked] = await counter.checkAndReserve(
+		const [allowed] = await counter.checkAndReserve(
 			"k",
 			"proposed",
 			[row()],
@@ -221,6 +232,18 @@ describe("spend counter review regressions", () => {
 			"opus",
 			"opus",
 			2,
+			NOW,
+		);
+		expect(allowed.snapshot.exceeded).toBe(false);
+		expect(allowed.snapshot.reservedUsd).toBe(5);
+		const [blocked] = await counter.checkAndReserve(
+			"k",
+			"third",
+			[row()],
+			"rolling",
+			"opus",
+			"opus",
+			0.1,
 			NOW,
 		);
 		expect(blocked.snapshot.exceeded).toBe(true);
@@ -288,7 +311,7 @@ describe("spend counter review regressions", () => {
 		expect(counter.cachedLimitCount).toBe(0);
 		expect(query).toHaveBeenCalledTimes(1);
 	});
-	it("keeps a long open request reserved while evicting idle keys", async () => {
+	it("expires leaked reservations so idle keys can be evicted", async () => {
 		const clock = spyOn(Date, "now").mockReturnValue(NOW);
 		const { counter } = make();
 		await counter.checkAndReserve(
@@ -303,11 +326,15 @@ describe("spend counter review regressions", () => {
 		);
 		clock.mockReturnValue(NOW + 3600001);
 		await counter.reconcileActiveKeys();
-		expect(counter.cachedLimitCount).toBe(1);
-		expect(
-			(await counter.getLimitSnapshot("k", row(), "calendar", NOW + 3600001))
-				.spentUsd,
-		).toBe(1);
+		expect(counter.cachedLimitCount).toBe(0);
+		const next = await counter.getLimitSnapshot(
+			"k",
+			row(),
+			"calendar",
+			NOW + 3600001,
+		);
+		expect(next.spentUsd).toBe(0);
+		expect(next.reservedUsd).toBe(0);
 	});
 	it("handles concurrent cold snapshots for different scopes without a primed row cache", async () => {
 		spyOn(Date, "now").mockReturnValue(NOW);

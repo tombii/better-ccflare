@@ -8,7 +8,12 @@ import {
 	type SpendLimitExceededEvt,
 	spendLimitEvents,
 } from "@better-ccflare/core";
-import { BunSqlAdapter, ensureSchema } from "@better-ccflare/database";
+import {
+	BunSqlAdapter,
+	ensureSchema,
+	runMigrations,
+} from "@better-ccflare/database";
+import { ApiKeyRepository } from "../../../../database/src/repositories/api-key.repository";
 import { AlertService, buildThresholdAlertId } from "../alerts";
 
 const settleEvents = () =>
@@ -94,5 +99,38 @@ describe("API key warn limit dashboard alerts", () => {
 		await settleEvents();
 		expect(await service.listAlerts()).toHaveLength(1);
 		expect(emitted).toHaveLength(1);
+	});
+
+	it("a reset resolves prior warnings so a new warning fires in the same cooldown bucket", async () => {
+		runMigrations(sqlite);
+		const repository = new ApiKeyRepository(new BunSqlAdapter(sqlite));
+		await repository.create({
+			id: base.apiKeyId,
+			name: base.apiKeyName,
+			hashed_key: "unused",
+			prefix_last_8: "unused",
+			created_at: Date.now(),
+			last_used: null,
+			is_active: 1,
+			role: "api-only",
+		});
+		spendLimitEvents.emit("event", { ...base, limitId: "daily-limit" });
+		spendLimitEvents.emit("event", {
+			...base,
+			apiKeyId: "other-key",
+			limitId: "daily-limit",
+		});
+		await settleEvents();
+		expect(await service.listAlerts()).toHaveLength(2);
+		expect(
+			await repository.resetSpend(base.apiKeyId, Date.now(), "operator"),
+		).toBe(true);
+		const remaining = await service.listAlerts();
+		expect(remaining).toHaveLength(1);
+		expect(remaining[0].id).toContain("api_key_spend_limit:other-key:");
+		spendLimitEvents.emit("event", { ...base, limitId: "daily-limit" });
+		await settleEvents();
+		expect(await service.listAlerts()).toHaveLength(2);
+		expect(emitted).toHaveLength(3);
 	});
 });

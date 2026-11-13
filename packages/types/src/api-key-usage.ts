@@ -126,6 +126,7 @@ export interface ApiKeyUsageLimitState {
 	limitEnforce: ApiKeyLimitEnforcement | null;
 	/** Live spend from the counter the proxy enforces against. Absent = unknown. */
 	spentUsd?: number;
+	reservedUsd?: number;
 	windowResetsAt?: string | null;
 }
 

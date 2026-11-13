@@ -158,7 +158,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		);
 	}
 
-	/** Reset budget accounting and dismiss this key's current spend-limit alerts atomically. */
+	/** Reset budget accounting and resolve this key's spend-limit alerts atomically. */
 	async resetSpend(
 		id: string,
 		timestamp: number,
@@ -171,7 +171,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				params: [timestamp, actor, id, timestamp],
 			},
 			{
-				sql: "UPDATE alerts SET acknowledged = 1 WHERE type = 'api_key_spend_limit' AND acknowledged = 0 AND substr(id, 1, ?) = ?",
+				// Removing cooldown identities lets newly incurred spend warn again.
+				sql: "DELETE FROM alerts WHERE type = 'api_key_spend_limit' AND substr(id, 1, ?) = ?",
 				params: [
 					`api_key_spend_limit:${id}:`.length,
 					`api_key_spend_limit:${id}:`,

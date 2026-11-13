@@ -48,6 +48,7 @@ export interface ApiKeyLimit extends ApiKeyLimitInput {
 }
 export interface ApiKeyLimitStatus extends ApiKeyLimit {
 	spentUsd?: number;
+	reservedUsd?: number;
 	resetsAt: string | null;
 }
 
@@ -294,6 +295,7 @@ export interface ApiKeyResponse {
 	 * surface that builds an ApiKeyResponse.
 	 */
 	spentUsd?: number;
+	reservedUsd?: number;
 	/**
 	 * ISO time at which this window's spend next falls — the start of next
 	 * month for `calendar_month`, and the moment the oldest counted request
