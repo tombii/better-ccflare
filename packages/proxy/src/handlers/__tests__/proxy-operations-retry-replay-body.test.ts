@@ -1,8 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
+import { preserveTestEnv } from "../../__tests__/preserve-test-env";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 import { resetRateLimitProbeGatesForTests } from "../rate-limit-cooldown";
+
+preserveTestEnv([
+	"CCFLARE_OVERLOAD_RETRY_BASE_MS",
+	"CCFLARE_OVERLOAD_RETRY_MAX_MS",
+	"CCFLARE_OVERLOAD_RETRY_ENABLED",
+	"CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS",
+	"CCFLARE_SERVER_ERROR_RETRY_ENABLED",
+	"CCFLARE_SERVER_ERROR_COOLDOWN_MS",
+]);
 
 /**
  * The in-place 529/5xx retry rebuilds the request from a buffered Request plus
@@ -335,12 +345,6 @@ describe("proxyWithAccount — an in-place retry replays the request actually in
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_ENABLED;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS;
-		delete process.env.CCFLARE_SERVER_ERROR_RETRY_ENABLED;
-		delete process.env.CCFLARE_SERVER_ERROR_COOLDOWN_MS;
 		resetRateLimitProbeGatesForTests();
 	});
 

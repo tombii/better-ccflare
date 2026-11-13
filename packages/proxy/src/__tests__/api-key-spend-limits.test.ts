@@ -768,11 +768,12 @@ describe("review regressions: requested/routed scopes and relief", () => {
 		...extra,
 	});
 	function context(rows: ApiKeyLimit[], model: string) {
+		const timestamp = Date.now() - 1;
 		const ctx = makeContext([]);
 		Object.assign(ctx.dbOps, {
 			getApiKeyLimits: mock(async () => rows),
 			getApiKeySpendEventsSince: mock(async () => [
-				{ requestId: "spent", timestamp: Date.now() - 1, costUsd: 8, model },
+				{ requestId: "spent", timestamp, costUsd: 8, model },
 			]),
 		});
 		return ctx;
@@ -883,6 +884,7 @@ describe("request reservation lifecycle", () => {
 		updatedAt: 0,
 	};
 	function context() {
+		const timestamp = Date.now() - 1000;
 		const ctx = makeContext([
 			makeAccount({
 				provider: "test" as Account["provider"],
@@ -905,7 +907,7 @@ describe("request reservation lifecycle", () => {
 			getApiKeySpendEventsSince: mock(async () => [
 				{
 					requestId: "history",
-					timestamp: Date.now() - 1000,
+					timestamp,
 					costUsd: 4.9,
 					model: "claude-opus-4-5",
 				},
@@ -1151,20 +1153,29 @@ describe("second review: limit failures and request estimates", () => {
 		);
 	});
 	it("enforces a stale over-limit snapshot when the reservation check fails", async () => {
+		const now = Date.now();
+		const clock = spyOn(Date, "now").mockReturnValue(now);
 		const rows = [limit("block")];
 		const ctx = context(rows);
 		Object.assign(ctx.dbOps, {
-			getApiKeySpendEventsSince: mock(async () => [
-				{
-					requestId: "spent",
-					timestamp: Date.now() - 1,
-					costUsd: 2,
-					model: "opus",
-				},
-			]),
+			getApiKeySpendEventsSince: mock(async () => {
+				// The database resolves after admission captured its cutoff. Its
+				// existing spend must retain its original completion timestamp.
+				clock.mockReturnValue(now + 5);
+				return [
+					{
+						requestId: "spent",
+						timestamp: now - 1,
+						costUsd: 2,
+						model: "opus",
+					},
+				];
+			}),
 		});
 		const counter = getApiKeySpendCounter(ctx.dbOps);
-		await counter.getLimitSnapshot("key-1", rows[0], "calendar");
+		expect(
+			(await counter.getLimitSnapshot("key-1", rows[0], "calendar")).spentUsd,
+		).toBe(2);
 		spyOn(counter, "checkAndReserve").mockRejectedValue(
 			new Error("lock wait deadline exceeded"),
 		);

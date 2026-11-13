@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	clearModelCooldownsForAccount,
 	DEFAULT_MODEL_COOLDOWN_TTL_MS,
@@ -14,6 +14,10 @@ const NOW = Date.UTC(2026, 10, 3, 12, 0, 0);
 const MINUTE = 60 * 1000;
 
 beforeEach(() => {
+	resetModelCooldownsForTests();
+});
+
+afterEach(() => {
 	resetModelCooldownsForTests();
 });
 

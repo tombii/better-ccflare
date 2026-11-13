@@ -155,6 +155,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	mock.restore();
 	usageCache.clear();
 	if (savedPassthrough === undefined) {
 		delete process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL;

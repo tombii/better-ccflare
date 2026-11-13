@@ -31,6 +31,7 @@ function counter(
 }
 afterEach(() => {
 	for (const c of counters) c.dispose();
+	counters.length = 0;
 	mock.restore();
 });
 describe("multi-window spend counters", () => {

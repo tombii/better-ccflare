@@ -1084,14 +1084,23 @@ type CodeBuddySession =
 	| { status: "error"; accountName: string; error: string };
 
 const codebuddySessions = new Map<string, CodeBuddySession>();
+const codebuddySessionTimers = new Set<ReturnType<typeof setTimeout>>();
 
 const CODEBUDDY_SESSION_TTL_MS = 10 * 60 * 1000;
 
 function expireCodeBuddySession(sessionId: string): void {
-	setTimeout(
-		() => codebuddySessions.delete(sessionId),
-		CODEBUDDY_SESSION_TTL_MS,
-	);
+	const timer = setTimeout(() => {
+		codebuddySessionTimers.delete(timer);
+		codebuddySessions.delete(sessionId);
+	}, CODEBUDDY_SESSION_TTL_MS);
+	codebuddySessionTimers.add(timer);
+}
+
+/** Test-only: release retained login sessions and their expiry timers. */
+export function resetCodeBuddySessionsForTests(): void {
+	for (const timer of codebuddySessionTimers) clearTimeout(timer);
+	codebuddySessionTimers.clear();
+	codebuddySessions.clear();
 }
 
 /**
