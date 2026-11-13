@@ -1,12 +1,13 @@
 import {
-	afterAll,
 	afterEach,
 	beforeEach,
 	describe,
 	expect,
 	it,
 	mock,
+	spyOn,
 } from "bun:test";
+import * as core from "@better-ccflare/core";
 import { logBus } from "@better-ccflare/logger";
 import type { LogEvent, RequestResponse } from "@better-ccflare/types";
 import type { EndMessage, StartMessage } from "../worker-messages";
@@ -28,21 +29,7 @@ const estimateCostUSD = mock((model: string, tokens: PricingTokens) =>
 	pricingImplementation(model, tokens),
 );
 
-// Spread the real module so every other export (constants, isValidClaudeModel,
-// isOverloadReason, computeRateLimitBackoffMs, ...) stays intact for the rest
-// of the process — mock.module replaces the WHOLE module globally and across
-// file boundaries in Bun, so a partial stub here silently breaks unrelated
-// modules imported later in the same test run. Only estimateCostUSD needs
-// interception here (routed through a controllable pricingImplementation per
-// test case).
-const actualCore = await import("@better-ccflare/core");
-
-mock.module("@better-ccflare/core", () => ({
-	...actualCore,
-	estimateCostUSD,
-}));
-
-// Unlike @better-ccflare/core above, this file never touches
+// This file never touches
 // @better-ccflare/database's real exports at runtime: every test constructs
 // UsageCollector directly with hand-rolled fake dbOps/asyncWriter objects
 // (see makeHarness below), so getUsageCollector()'s internal
@@ -54,14 +41,6 @@ mock.module("@better-ccflare/core", () => ({
 // any test, so even an afterAll restore here can't protect a file whose
 // beforeAll runs first). Do not reintroduce this mock without also auditing
 // bun's cross-file mock.module ordering.
-
-// Restore @better-ccflare/core once this file's tests finish so later test
-// files in the same process (mock.module has no per-file isolation without
-// --isolate) resolve the real exports again instead of the stub registered
-// above.
-afterAll(() => {
-	mock.module("@better-ccflare/core", () => actualCore);
-});
 
 const { UsageCollector } = await import("../usage-collector");
 type UsageCollectorInstance = InstanceType<typeof UsageCollector>;
@@ -225,6 +204,7 @@ describe("UsageCollector request lifecycle", () => {
 	const previousStreamTimeout = process.env.CF_STREAM_TIMEOUT_MS;
 	let now = 1_700_000_000_000;
 	const collectors: UsageCollectorInstance[] = [];
+	let pricingSpy: ReturnType<typeof spyOn<typeof core, "estimateCostUSD">>;
 
 	beforeEach(() => {
 		now = 1_700_000_000_000;
@@ -233,10 +213,17 @@ describe("UsageCollector request lifecycle", () => {
 		process.env.CF_STREAM_TIMEOUT_MS = String(INACTIVITY_TIMEOUT_MS);
 		pricingImplementation = async () => 0;
 		estimateCostUSD.mockClear();
+		// A module-global mock becomes the "original" function for spies in
+		// other files. Bun then restores that same, mutated mock, which can
+		// leave their deferred pricing implementation installed indefinitely.
+		pricingSpy = spyOn(core, "estimateCostUSD").mockImplementation(
+			estimateCostUSD,
+		);
 	});
 
 	afterEach(() => {
 		for (const collector of collectors.splice(0)) collector.dispose();
+		pricingSpy.mockRestore();
 		Date.now = realDateNow;
 		if (previousPricingTimeout === undefined) {
 			delete process.env.CF_PRICING_TIMEOUT_MS;
