@@ -657,14 +657,7 @@ export function ApiKeysTab() {
 								>
 									<div className="flex-1">
 										<div className="flex items-center gap-2">
-											<h3 className="font-medium">
-												<Link
-													className="hover:underline"
-													to={`/api-keys/${encodeURIComponent(key.id)}`}
-												>
-													{key.name}
-												</Link>
-											</h3>
+											<h3 className="font-medium">{key.name}</h3>
 											<div
 												className={`px-2 py-1 rounded text-xs font-medium ${
 													key.isActive
@@ -773,11 +766,6 @@ export function ApiKeysTab() {
 										<ApiKeySpendGauge apiKey={key} className="mt-3" />
 									</div>
 									<div className="flex items-center gap-2">
-										<Button variant="outline" size="sm" asChild>
-											<Link to={`/api-keys/${encodeURIComponent(key.id)}`}>
-												Stats
-											</Link>
-										</Button>
 										<CopyButton
 											variant="outline"
 											size="sm"

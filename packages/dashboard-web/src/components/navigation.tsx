@@ -84,7 +84,7 @@ export function Navigation({
 				{
 					label: "API Key Usage",
 					icon: Gauge,
-					path: location.pathname + location.search,
+					path: "/api-key-usage",
 				},
 			];
 		const baseItems: NavItem[] = [
@@ -125,7 +125,7 @@ export function Navigation({
 		);
 
 		return baseItems;
-	}, [unacknowledgedCount, canManage, location.pathname, location.search]);
+	}, [unacknowledgedCount, canManage]);
 
 	// Cleanup on unmount to prevent memory leaks
 	useEffect(() => {

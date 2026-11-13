@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
-	apiKeyUsageSelectionLocation,
 	buildCostSeries,
 	efficiencyCaption,
 	formatEfficiencyRatio,
+	legacyApiKeyUsageLocation,
 	pickDefaultApiKey,
 	sortKeysActiveFirst,
 } from "../tab-helpers";
@@ -94,17 +94,39 @@ describe("buildCostSeries", () => {
 	});
 });
 
-describe("API key switching", () => {
-	it("changes stable identity while preserving range, custom dates, and other URL state", () => {
-		const path = apiKeyUsageSelectionLocation(
-			"team/app",
-			"?range=custom&from=2026-11-01T12%3A00&to=2026-11-02T12%3A00&key=old&extra=keep",
-		);
-		const url = new URL(path, "https://local");
-		expect(url.pathname).toBe("/api-keys/team%2Fapp");
-		expect(url.searchParams.get("range")).toBe("custom");
-		expect(url.searchParams.get("from")).toBe("2026-11-01T12:00");
-		expect(url.searchParams.get("extra")).toBe("keep");
-		expect(url.searchParams.has("key")).toBe(false);
+describe("legacy API key links", () => {
+	it("redirects stable IDs and arbitrary remaining path segments to the one usage page", () => {
+		for (const id of ["own", "team/app", "nested/path/key", "team app"]) {
+			const redirect = new URL(
+				legacyApiKeyUsageLocation(`/api-keys/${encodeURIComponent(id)}`),
+				"https://local",
+			);
+			expect(redirect.pathname).toBe("/api-key-usage");
+			expect(redirect.searchParams.get("key")).toBe(id);
+		}
+		expect(
+			new URL(
+				legacyApiKeyUsageLocation("/api-keys/nested/path/key"),
+				"https://local",
+			).searchParams.get("key"),
+		).toBe("nested/path/key");
+	});
+	it("decodes once so literal escaped slashes stay distinct from actual slashes", () => {
+		expect(
+			new URL(
+				legacyApiKeyUsageLocation("/api-keys/team%252Fapp"),
+				"https://local",
+			).searchParams.get("key"),
+		).toBe("team%2Fapp");
+		expect(
+			new URL(
+				legacyApiKeyUsageLocation("/api-keys/team%2Fapp"),
+				"https://local",
+			).searchParams.get("key"),
+		).toBe("team/app");
+	});
+	it("falls back safely for an empty or malformed key", () => {
+		expect(legacyApiKeyUsageLocation("/api-keys/")).toBe("/api-key-usage");
+		expect(legacyApiKeyUsageLocation("/api-keys/%zz")).toBe("/api-key-usage");
 	});
 });

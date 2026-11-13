@@ -1,13 +1,19 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import type { ApiKeyUsageResponse } from "@better-ccflare/types";
+import type {
+	ApiKeyResponse,
+	ApiKeyUsageResponse,
+} from "@better-ccflare/types";
 import * as ReactQuery from "@tanstack/react-query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactElement, ReactNode } from "react";
+import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as Router from "react-router-dom";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { api } from "../../../api";
 import { queryKeys } from "../../../lib/query-keys";
+import { ApiKeysTab } from "../../ApiKeysTab";
+import { Input } from "../../ui/input";
 import * as SelectUI from "../../ui/select";
 import { ApiKeyUsageTab } from "../ApiKeyUsageTab";
 
@@ -68,304 +74,488 @@ const usage: ApiKeyUsageResponse = {
 	},
 };
 
-function renderOwnPage(
-	path = "/api-keys/team%20app",
-	entries: Array<[string, ApiKeyUsageResponse]> = [["team app", usage]],
-	costTracking = true,
-	callerAccess?: { canManage: boolean; apiKeyId: string | null },
-) {
+const keys: ApiKeyResponse[] = [
+	{ id: "disabled", name: "Disabled", isActive: false },
+	{ id: "own", name: "team app", isActive: true },
+	{ id: "second", name: "Second key", isActive: true },
+].map((key) => ({
+	...key,
+	role: "api-only",
+	prefixLast8: "abcd1234",
+	createdAt: "2026-11-01",
+	lastUsed: null,
+	usageCount: 0,
+	allowedAccounts: null,
+	allowedModels: null,
+	allowedProviders: null,
+	limitUsd: null,
+	limitWindow: null,
+	limitEnforce: null,
+}));
+
+function renderPage({
+	admin = false,
+	path = "/api-key-usage",
+	enabled = true,
+	data = usage,
+}: {
+	admin?: boolean;
+	path?: string;
+	enabled?: boolean;
+	data?: ApiKeyUsageResponse;
+} = {}) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
-	client.setQueryData(["cost-tracking"], { enabled: costTracking });
-	if (callerAccess) client.setQueryData(["auth-session"], callerAccess);
-	for (const [target, data] of entries)
-		client.setQueryData(
-			queryKeys.apiKeyUsage(
-				target,
-				new URL(path, "https://local").searchParams.get("range") ?? "24h",
-			),
-			data,
+	client.setQueryData(["cost-tracking"], { enabled });
+	client.setQueryData(["auth-session"], { canManage: admin, apiKeyId: "own" });
+	client.setQueryData(queryKeys.apiKeys(), keys);
+	for (const key of keys)
+		client.setQueryData(queryKeys.apiKeyUsage(key.id, "24h"), {
+			...data,
+			canManage: admin,
+			apiKey: { ...data.apiKey, id: key.id, name: key.name },
+		});
+	try {
+		return renderToStaticMarkup(
+			<QueryClientProvider client={client}>
+				<MemoryRouter initialEntries={[path]}>
+					<ApiKeyUsageTab />
+				</MemoryRouter>
+			</QueryClientProvider>,
 		);
-	const markup = renderToStaticMarkup(
-		<QueryClientProvider client={client}>
-			<MemoryRouter initialEntries={[path]}>
-				<Routes>
-					<Route path="/api-keys/:keyId" element={<ApiKeyUsageTab />} />
-					<Route path="/api-key-usage" element={<ApiKeyUsageTab />} />
-				</Routes>
-			</MemoryRouter>
-		</QueryClientProvider>,
-	);
-	client.clear();
-	return markup;
+	} finally {
+		client.clear();
+	}
 }
 
-describe("API-only key page", () => {
-	it("shows own stats, restrictions, and scoped gauges while hiding administration", () => {
-		const markup = renderOwnPage();
-		expect(markup).toContain("team app");
-		expect(markup).not.toContain('aria-label="Select API key"');
-		expect(markup).toContain("Total API-cost equivalent");
-		expect(markup).toContain("opus");
-		expect(markup).toContain("codex");
-		expect(markup).toContain("calendar");
-		expect(markup).not.toContain("Save restrictions");
-		expect(markup).not.toContain("Save limits");
-		expect(markup).not.toContain("Save routing");
-		expect(markup).not.toContain("Reset spend");
-		expect(markup).not.toContain('href="/accounts"');
-		expect(markup).not.toContain('href="/api-keys"');
-	});
-	it("retains the admin selector on direct key routes and keeps the selected range in the URL", () => {
-		const admin = { ...usage, canManage: true };
-		const markup = renderOwnPage("/api-keys/own?range=7d", [["own", admin]]);
+describe("API Key Usage page", () => {
+	it("uses the Usage History header and keeps administration in API Keys dialogs", () => {
+		const markup = renderPage({ admin: true });
 		expect(markup).toContain('aria-label="Select API key"');
-		expect(markup).toContain("7 days");
-		expect(markup).not.toContain('href="/api-keys"');
+		expect(markup).toMatch(/<button[^>]*class="[^"]*w-64[^"]*"[^>]*>/);
+		expect(markup).toMatch(/<button[^>]*class="[^"]*w-28[^"]*"[^>]*>/);
+		for (const text of [
+			"Plan efficiency",
+			"Total API-cost equivalent",
+			"Cost over time",
+			"Models used",
+			"By model",
+			"By account",
+			"Current limits",
+			"Reset spend",
+		])
+			expect(markup).toContain(text);
+		for (const text of [
+			"Save restrictions",
+			"Save limits",
+			"Save routing",
+			"Routing overrides",
+			"Allowed providers",
+		])
+			expect(markup).not.toContain(text);
 	});
-	it("labels raw rows as attempts and separates successful recoveries from failed attempts", () => {
-		const markup = renderOwnPage("/api-keys/own", [
-			[
-				"own",
-				{
-					...usage,
-					requests: 2,
-					successfulRequests: 1,
-					failedAttempts: 1,
-					failoverAttempts: 1,
-					recoveredRequests: 1,
-					successRate: 50,
-				},
-			],
-		]);
-		expect(markup).toContain("Successful attempts");
-		expect(markup).toContain("Failed attempts");
-		expect(markup).toContain("Failover attempts");
-		expect(markup).toContain("including 1 recovered after failover");
-		expect(markup).toContain(
-			"Client-visible failure totals cannot be inferred",
-		);
-		expect(markup).not.toContain('label="Requests"');
+	it("shows only the caller's name, stats and gauges for API-only keys, even with another query key", () => {
+		const markup = renderPage({ path: "/api-key-usage?key=second" });
+		expect(markup).toContain("team app");
+		expect(markup).toContain("Total API-cost equivalent");
+		expect(markup).toContain("Current limits");
+		expect(markup).toContain("opus");
+		for (const text of [
+			'aria-label="Select API key"',
+			"Second key",
+			"Save restrictions",
+			"Save limits",
+			"Save routing",
+			"Reset spend",
+		])
+			expect(markup).not.toContain(text);
 	});
-
-	it("switches keys in place, pushes the URL and refetches the selected key with its existing range", async () => {
-		const selections: ComponentProps<typeof SelectUI.Select>[] = [];
-		const queryOptions: Parameters<typeof ReactQuery.useQuery>[0][] = [];
-		const originalSelect = SelectUI.Select;
-		const originalQuery = ReactQuery.useQuery;
-		const navigate = () => {};
-		const calls: unknown[][] = [];
-		const selectSpy = spyOn(SelectUI, "Select").mockImplementation((props) => {
-			selections.push(props);
-			return originalSelect(props);
-		});
-		const navigateSpy = spyOn(Router, "useNavigate").mockReturnValue(((
-			...args: unknown[]
-		) => {
-			calls.push(args);
-			navigate();
-		}) as ReturnType<typeof Router.useNavigate>);
-		const querySpy = spyOn(ReactQuery, "useQuery").mockImplementation(((
-			options: Parameters<typeof ReactQuery.useQuery>[0],
-		) => {
-			queryOptions.push(options);
-			return originalQuery(options);
-		}) as typeof ReactQuery.useQuery);
-		const fetchSpy = spyOn(api, "getApiKeyUsage").mockResolvedValue(usage);
-		try {
-			const first = renderOwnPage("/api-keys/own?range=7d", [
-				["own", { ...usage, canManage: true }],
-			]);
-			selections
-				.find((option) => option.value === "own")
-				?.onValueChange?.("second");
-			expect(calls).toEqual([["/api-keys/second?range=7d"]]);
-			const second = renderOwnPage(calls[0][0] as string, [
-				[
-					"second",
-					{
-						...usage,
-						canManage: true,
-						apiKey: { ...usage.apiKey, id: "second", name: "Second key" },
-					},
-				],
-			]);
-			expect(first).toContain('aria-label="Select API key"');
-			expect(second).toContain('aria-label="Select API key"');
-			expect(second).toContain("Second key");
-			expect(second).toContain("7 days");
-			const usageQueries = queryOptions.filter((option) =>
-				option.queryKey?.includes("api-key-usage"),
-			);
-			const fetchSelected = usageQueries.findLast((option) =>
-				option.queryKey?.some(
-					(part) =>
-						typeof part === "object" &&
-						part !== null &&
-						"keyId" in part &&
-						part.keyId === "second",
-				),
-			)?.queryFn;
-			expect(typeof fetchSelected).toBe("function");
-			await (fetchSelected as () => Promise<unknown>)();
-			expect(fetchSpy).toHaveBeenCalledWith(
-				"second",
-				"7d",
-				undefined,
-				undefined,
-			);
-		} finally {
-			selectSpy.mockRestore();
-			navigateSpy.mockRestore();
-			querySpy.mockRestore();
-			fetchSpy.mockRestore();
-		}
-	});
-
-	it("hides cost values and warns that limits are suspended on the API-only page", () => {
-		const markup = renderOwnPage("/api-keys/own", [["own", usage]], false);
+	it("keeps the cost-disabled notice and hides costs without hiding attempt metrics", () => {
+		const markup = renderPage({ enabled: false });
 		expect(markup).toContain("Cost tracking is disabled");
 		expect(markup).toContain("Spend limits are not enforced");
+		expect(markup).toContain("Successful attempts");
 		expect(markup).not.toContain("$1.0000");
 		expect(markup).not.toContain("$2.0000");
-		expect(markup).toContain("Successful attempts");
-		expect(markup).not.toContain('aria-label="Select API key"');
 	});
-
-	it("retains the admin selector when the direct target has no usage response", () => {
-		const markup = renderOwnPage("/api-keys/deleted", [], true, {
-			canManage: true,
-			apiKeyId: "admin",
-		});
-		expect(markup).toContain('aria-label="Select API key"');
-	});
-	it("opens the overview as the API-only caller's own key without querying the admin list", () => {
-		const queries: Parameters<typeof ReactQuery.useQuery>[0][] = [];
-		const original = ReactQuery.useQuery;
-		const spy = spyOn(ReactQuery, "useQuery").mockImplementation(((
-			options: Parameters<typeof ReactQuery.useQuery>[0],
-		) => {
-			queries.push(options);
-			return original(options);
-		}) as typeof ReactQuery.useQuery);
-		try {
-			const markup = renderOwnPage("/api-key-usage", [["own", usage]], true, {
-				canManage: false,
-				apiKeyId: "own",
-			});
-			expect(markup).toContain("team app");
-			expect(markup).not.toContain('aria-label="Select API key"');
-			expect(
-				queries
-					.filter((option) => option.queryKey?.includes("api-keys"))
-					.every((option) => option.enabled === false),
-			).toBe(true);
-		} finally {
-			spy.mockRestore();
-		}
-	});
-
-	it("offers an admin reset next to the gauges, disables it without limits, and shows its actor", () => {
-		const admin: ApiKeyUsageResponse = {
+	it("preserves reset audit, and disables an admin reset when there are no limits", () => {
+		const data = {
 			...usage,
-			canManage: true,
 			apiKey: {
 				...usage.apiKey,
 				spendResetAt: 1_795_000_000_000,
 				spendResetBy: "operator",
 			},
 		};
-		const markup = renderOwnPage("/api-keys/own", [["own", admin]]);
-		expect(markup).toContain("Reset spend</button>");
+		const markup = renderPage({ admin: true, data });
 		expect(markup).toContain("Spend reset at");
 		expect(markup).toContain("by operator");
-		const unlimited = renderOwnPage("/api-keys/own", [
-			["own", { ...admin, limits: [] }],
-		]);
-		expect(unlimited).toMatch(
+		expect(markup).toContain("Reset spend</button>");
+		expect(renderPage({ admin: true, data: { ...data, limits: [] } })).toMatch(
 			/<button[^>]*disabled=""[^>]*>Reset spend<\/button>/,
 		);
 	});
-	it("keeps literal escaped slashes distinct from slashes when both key names exist", () => {
-		const escaped: ApiKeyUsageResponse = {
-			...usage,
-			apiKey: { ...usage.apiKey, id: "escaped-key-id", name: "team%2Fapp" },
-			canManage: true,
-		};
-		const slash: ApiKeyUsageResponse = {
-			...usage,
-			apiKey: { ...usage.apiKey, id: "slash-key-id", name: "team/app" },
-			canManage: true,
-		};
-		const entries: Array<[string, ApiKeyUsageResponse]> = [
-			[escaped.apiKey.name, escaped],
-			[slash.apiKey.name, slash],
-			[escaped.apiKey.id, escaped],
-			[slash.apiKey.id, slash],
-		];
-		for (const [path, ownId, otherId, ownName] of [
-			[
-				"/api-keys/team%252Fapp",
-				"escaped-key-id",
-				"slash-key-id",
-				"team%2Fapp",
-			],
-			["/api-keys/team%2Fapp", "slash-key-id", "escaped-key-id", "team/app"],
-			[
-				"/api-keys/escaped-key-id",
-				"escaped-key-id",
-				"slash-key-id",
-				"team%2Fapp",
-			],
-			["/api-keys/slash-key-id", "slash-key-id", "escaped-key-id", "team/app"],
-		]) {
-			const markup = renderOwnPage(path, entries);
-			expect(markup).toContain(`>${ownName}</h2>`);
-			expect(markup).toContain(`id="calendar-limits-${ownId}"`);
-			expect(markup).toContain(`id="routing-${ownId}-opus"`);
-			expect(markup).not.toContain(`id="calendar-limits-${otherId}"`);
+	it("retains attempt and recovery semantics", () => {
+		const markup = renderPage({
+			data: {
+				...usage,
+				requests: 2,
+				successfulRequests: 1,
+				failedAttempts: 1,
+				failoverAttempts: 1,
+				recoveredRequests: 1,
+				successRate: 50,
+			},
+		});
+		for (const text of [
+			"Successful attempts",
+			"Failed attempts",
+			"Failover attempts",
+			"including 1 recovered after failover",
+			"Client-visible failure totals cannot be inferred",
+		])
+			expect(markup).toContain(text);
+	});
+	it("restores plain key names and removes the Stats action on API Keys", () => {
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		client.setQueryData(queryKeys.apiKeys(), keys);
+		client.setQueryData(["cost-tracking"], { enabled: true });
+		try {
+			const previousStorage = globalThis.localStorage;
+			Object.defineProperty(globalThis, "localStorage", {
+				configurable: true,
+				value: { getItem: () => null },
+			});
+			let markup: string;
+			try {
+				markup = renderToStaticMarkup(
+					<QueryClientProvider client={client}>
+						<MemoryRouter>
+							<ApiKeysTab />
+						</MemoryRouter>
+					</QueryClientProvider>,
+				);
+			} finally {
+				Object.defineProperty(globalThis, "localStorage", {
+					configurable: true,
+					value: previousStorage,
+				});
+			}
+			expect(markup).toContain('<h3 class="font-medium">team app</h3>');
+			expect(markup).not.toMatch(/>Stats<\/a>/);
+			expect(markup).not.toContain('href="/api-keys/');
+		} finally {
+			client.clear();
 		}
 	});
-	it("saves restrictions by the resolved ID even when opened through a legacy escaped name", async () => {
-		const escaped: ApiKeyUsageResponse = {
-			...usage,
-			apiKey: { ...usage.apiKey, id: "escaped-key-id", name: "team%2Fapp" },
-			canManage: true,
-		};
-		const slash: ApiKeyUsageResponse = {
-			...usage,
-			apiKey: { ...usage.apiKey, id: "slash-key-id", name: "team/app" },
-			canManage: true,
-		};
-		const originalUseMutation = ReactQuery.useMutation;
-		const options: Parameters<typeof originalUseMutation>[0][] = [];
-		const mutationSpy = spyOn(ReactQuery, "useMutation").mockImplementation(((
-			...args: Parameters<typeof originalUseMutation>
-		) => {
-			options.push(args[0]);
-			return originalUseMutation(...args);
-		}) as typeof originalUseMutation);
-		const patch = spyOn(api, "patch").mockResolvedValue({});
+});
+
+function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
+	if (Array.isArray(node)) return node.flatMap(elements);
+	if (!React.isValidElement<{ children?: ReactNode }>(node)) return [];
+	return [
+		node as ReactElement<Record<string, unknown>>,
+		...elements(node.props.children),
+	];
+}
+
+/**
+ * Exercise the component's real control handlers and query functions without a
+ * browser. State survives renders; child components are left as elements, so
+ * the harness only replaces the page's React hooks and query responses.
+ */
+function pageHarness({
+	path = "/api-key-usage",
+	session = { canManage: true, apiKeyId: "admin" } as
+		| { canManage: boolean; apiKeyId: string | null }
+		| undefined,
+}: {
+	path?: string;
+	session?: { canManage: boolean; apiKeyId: string | null };
+} = {}) {
+	const states: unknown[] = [];
+	let cursor = 0;
+	let changed = false;
+	let currentSession = session;
+	let tree: ReactNode;
+	const queries: Parameters<typeof ReactQuery.useQuery>[0][] = [];
+	const url = new URL(path, "https://local");
+	const location = {
+		pathname: url.pathname,
+		search: url.search,
+		hash: "",
+		state: null,
+		key: "test",
+	};
+	const client = new QueryClient();
+	const stateSpy = spyOn(React, "useState").mockImplementation(((
+		initial: unknown,
+	) => {
+		const index = cursor++;
+		if (!(index in states))
+			states[index] = typeof initial === "function" ? initial() : initial;
+		return [
+			states[index],
+			(next: unknown) => {
+				const value = typeof next === "function" ? next(states[index]) : next;
+				if (!Object.is(value, states[index])) {
+					states[index] = value;
+					changed = true;
+				}
+			},
+		];
+	}) as typeof React.useState);
+	const memoSpy = spyOn(React, "useMemo").mockImplementation((factory) =>
+		factory(),
+	);
+	const querySpy = spyOn(ReactQuery, "useQuery").mockImplementation(((
+		options: Parameters<typeof ReactQuery.useQuery>[0],
+	) => {
+		queries.push(options);
+		let data: unknown;
+		if (options.queryKey?.includes("auth-session")) data = currentSession;
+		if (options.queryKey?.includes("cost-tracking")) data = { enabled: true };
+		if (options.queryKey?.includes("api-keys"))
+			data = options.enabled === false ? undefined : keys;
+		if (options.queryKey?.includes("api-key-usage")) {
+			const target = options.queryKey.find(
+				(part) => typeof part === "object" && part !== null && "keyId" in part,
+			) as { keyId: string };
+			const key = keys.find((candidate) => candidate.id === target.keyId);
+			if (key && options.enabled !== false)
+				data = {
+					...usage,
+					canManage: currentSession?.canManage ?? false,
+					apiKey: { ...usage.apiKey, ...key },
+				};
+		}
+		return { data, isLoading: false, error: null };
+	}) as typeof ReactQuery.useQuery);
+	const clientSpy = spyOn(ReactQuery, "useQueryClient").mockReturnValue(client);
+	const mutationSpy = spyOn(ReactQuery, "useMutation").mockReturnValue(
+		{} as never,
+	);
+	const locationSpy = spyOn(Router, "useLocation").mockReturnValue(location);
+	const navigateSpy = spyOn(Router, "useNavigate").mockReturnValue(
+		(() => {}) as never,
+	);
+	const fetchSpy = spyOn(api, "getApiKeyUsage").mockResolvedValue(usage);
+	function render() {
+		for (let attempts = 0; attempts < 10; attempts++) {
+			cursor = 0;
+			changed = false;
+			tree = ApiKeyUsageTab();
+			if (!changed) break;
+		}
+		return elements(tree);
+	}
+	return {
+		render,
+		queries,
+		location,
+		navigateSpy,
+		fetchSpy,
+		setSession(value: typeof currentSession) {
+			currentSession = value;
+		},
+		selects() {
+			return elements(tree).filter(
+				(element) => element.type === SelectUI.Select,
+			) as ReactElement<ComponentProps<typeof SelectUI.Select>>[];
+		},
+		inputs() {
+			return elements(tree).filter(
+				(element) => element.type === Input,
+			) as ReactElement<ComponentProps<typeof Input>>[];
+		},
+		usageQuery() {
+			return queries.findLast((option) =>
+				option.queryKey?.includes("api-key-usage"),
+			);
+		},
+		async fetchUsage() {
+			const query = queries.findLast((option) =>
+				option.queryKey?.includes("api-key-usage"),
+			);
+			expect(typeof query?.queryFn).toBe("function");
+			await (query?.queryFn as () => Promise<unknown>)();
+		},
+		restore() {
+			for (const spy of [
+				stateSpy,
+				memoSpy,
+				querySpy,
+				clientSpy,
+				mutationSpy,
+				locationSpy,
+				navigateSpy,
+				fetchSpy,
+			])
+				spy.mockRestore();
+			client.clear();
+		},
+	};
+}
+
+describe("API Key Usage controls", () => {
+	it("defaults to the first active key, and refetches key and range changes in place", async () => {
+		const page = pageHarness();
 		try {
-			renderOwnPage("/api-keys/team%252Fapp", [
-				[escaped.apiKey.name, escaped],
-				[slash.apiKey.name, slash],
+			page.render();
+			expect(page.selects().map((element) => element.props.value)).toEqual([
+				"own",
+				"24h",
 			]);
-			const save = options.findLast(
-				(option) => option.mutationFn?.length === 1,
-			)?.mutationFn;
-			expect(save).toBeDefined();
-			await (save as (value: typeof usage.restrictions) => Promise<unknown>)(
-				usage.restrictions,
+			page.selects()[1].props.onValueChange?.("7d");
+			page.render();
+			await page.fetchUsage();
+			expect(page.fetchSpy).toHaveBeenLastCalledWith(
+				"own",
+				"7d",
+				undefined,
+				undefined,
 			);
-			expect(patch).toHaveBeenCalledWith(
-				"/api/api-keys/escaped-key-id/restrictions",
-				usage.restrictions,
+			page.selects()[0].props.onValueChange?.("second");
+			page.render();
+			await page.fetchUsage();
+			expect(page.selects().map((element) => element.props.value)).toEqual([
+				"second",
+				"7d",
+			]);
+			expect(page.fetchSpy).toHaveBeenLastCalledWith(
+				"second",
+				"7d",
+				undefined,
+				undefined,
 			);
+			expect(page.navigateSpy).not.toHaveBeenCalled();
+			expect(page.location.pathname).toBe("/api-key-usage");
+			expect(page.location.search).toBe("");
 		} finally {
-			patch.mockRestore();
-			mutationSpy.mockRestore();
+			page.restore();
+		}
+	});
+	it("preselects an optional query key and offers all Usage History ranges plus month and custom", () => {
+		const page = pageHarness({ path: "/api-key-usage?key=second" });
+		try {
+			page.render();
+			expect(page.selects()[0].props.value).toBe("second");
+			const options = elements(page.selects()[1])
+				.filter((element) => element.type === SelectUI.SelectItem)
+				.map((element) => element.props.value);
+			expect(options).toEqual([
+				"1h",
+				"6h",
+				"24h",
+				"7d",
+				"30d",
+				"this_month",
+				"last_month",
+				"custom",
+			]);
+			for (const range of ["6h", "this_month", "last_month"]) {
+				page.selects()[1].props.onValueChange?.(range);
+				page.render();
+				expect(page.usageQuery()?.queryKey).toEqual(
+					queryKeys.apiKeyUsage("second", range),
+				);
+			}
+			expect(page.navigateSpy).not.toHaveBeenCalled();
+		} finally {
+			page.restore();
+		}
+	});
+	it("keeps an admin selector available when a preselected key was deleted", async () => {
+		const page = pageHarness({ path: "/api-key-usage?key=deleted" });
+		try {
+			page.render();
+			expect(page.selects()).toHaveLength(2);
+			expect(page.selects()[0].props.value).toBe("deleted");
+			page.selects()[0].props.onValueChange?.("own");
+			page.render();
+			await page.fetchUsage();
+			expect(page.fetchSpy).toHaveBeenLastCalledWith(
+				"own",
+				"24h",
+				undefined,
+				undefined,
+			);
+			expect(page.navigateSpy).not.toHaveBeenCalled();
+		} finally {
+			page.restore();
+		}
+	});
+	it("reveals custom bounds inline and refetches only after valid dates are entered", async () => {
+		const page = pageHarness();
+		try {
+			const initial = page.render();
+			expect(page.inputs()).toHaveLength(0);
+			page.selects()[1].props.onValueChange?.("custom");
+			const nodes = page.render();
+			expect(page.usageQuery()?.enabled).toBe(false);
+			const header = nodes.find(
+				(element) =>
+					element.type === "div" &&
+					elements(element.props.children as ReactNode).some(
+						(child) => child.type === SelectUI.Select,
+					) &&
+					element !== nodes[0],
+			);
+			expect(
+				elements(header).filter((element) => element.type === Input),
+			).toHaveLength(2);
+			const update = (id: string, value: string) => {
+				page
+					.inputs()
+					.find((element) => element.props.id === id)
+					?.props.onChange?.({
+						target: { value },
+					} as React.ChangeEvent<HTMLInputElement>);
+				page.render();
+			};
+			update("usage-from", "2026-11-02T12:00");
+			update("usage-to", "2026-11-01T12:00");
+			expect(page.usageQuery()?.enabled).toBe(false);
+			update("usage-to", "2026-11-03T12:00");
+			expect(page.usageQuery()?.enabled).toBe(true);
+			await page.fetchUsage();
+			expect(page.fetchSpy).toHaveBeenLastCalledWith(
+				"own",
+				"custom",
+				new Date("2026-11-02T12:00").toISOString(),
+				new Date("2026-11-03T12:00").toISOString(),
+			);
+			expect(page.navigateSpy).not.toHaveBeenCalled();
+			expect(initial[0].props.className).toBe("space-y-4");
+		} finally {
+			page.restore();
+		}
+	});
+	it("does not query other keys for an API-only caller or before its session resolves", () => {
+		const page = pageHarness({
+			path: "/api-key-usage?key=second",
+			session: { canManage: false, apiKeyId: "own" },
+		});
+		try {
+			page.setSession(undefined);
+			page.render();
+			expect(page.usageQuery()?.enabled).toBe(false);
+			page.setSession({ canManage: false, apiKeyId: "own" });
+			page.render();
+			expect(page.selects()).toHaveLength(1);
+			expect(page.usageQuery()?.queryKey).toEqual(
+				queryKeys.apiKeyUsage("own", "24h"),
+			);
+			expect(
+				page.queries
+					.filter((query) => query.queryKey?.includes("api-keys"))
+					.every((query) => query.enabled === false),
+			).toBe(true);
+		} finally {
+			page.restore();
 		}
 	});
 });

@@ -156,13 +156,9 @@ export function apiKeyPageTarget(pathname: string, search = ""): string | null {
 	return null;
 }
 
-/** Push a key selection while retaining the range, custom bounds and URL UI state. */
-export function apiKeyUsageSelectionLocation(
-	keyId: string,
-	search: string,
-): string {
-	const params = new URLSearchParams(search);
-	params.delete("key");
-	const query = params.toString();
-	return `/api-keys/${encodeURIComponent(keyId)}${query ? `?${query}` : ""}`;
+/** Redirect old key links without decoding escaped names a second time. */
+export function legacyApiKeyUsageLocation(pathname: string): string {
+	const key = apiKeyPageTarget(pathname);
+	if (!key) return "/api-key-usage";
+	return `/api-key-usage?${new URLSearchParams({ key }).toString()}`;
 }

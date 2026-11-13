@@ -1,26 +1,21 @@
-import type { ApiKeyRestrictions } from "@better-ccflare/types";
 import {
 	formatCost,
 	formatNumber,
 	formatPercentage,
 	formatTokens,
 } from "@better-ccflare/ui-common";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { api } from "../../api";
 import { COLORS } from "../../constants";
 import { useApiKeys, useApiKeyUsage } from "../../hooks/queries";
 import { useCostTracking } from "../../hooks/useCostTracking";
-import { queryKeys } from "../../lib/query-keys";
-import { ApiKeyLimitsEditor } from "../api-keys/ApiKeyLimitsEditor";
 import {
 	ApiKeyResetSpendDialog,
 	type ResetSpendKey,
 } from "../api-keys/ApiKeyResetSpendDialog";
-import { ApiKeyRestrictionsEditor } from "../api-keys/ApiKeyRestrictionsEditor";
-import { ApiKeyRoutingEditor } from "../api-keys/ApiKeyRoutingEditor";
 import { ApiKeySpendGauge } from "../api-keys/ApiKeySpendGauge";
 import { CostTrackingNotice } from "../CostTrackingNotice";
 import { BaseAreaChart } from "../charts/BaseAreaChart";
@@ -38,8 +33,6 @@ import {
 	SelectValue,
 } from "../ui/select";
 import {
-	apiKeyPageTarget,
-	apiKeyUsageSelectionLocation,
 	buildCostSeries,
 	efficiencyCaption,
 	formatEfficiencyRatio,
@@ -48,13 +41,14 @@ import {
 } from "./tab-helpers";
 
 const RANGES = [
-	{ value: "1h", label: "1 hour" },
-	{ value: "24h", label: "24 hours" },
-	{ value: "7d", label: "7 days" },
-	{ value: "30d", label: "30 days" },
-	{ value: "this_month", label: "This month (Dublin)" },
-	{ value: "last_month", label: "Last month (Dublin)" },
-	{ value: "custom", label: "Custom range" },
+	{ value: "1h", label: "1h" },
+	{ value: "6h", label: "6h" },
+	{ value: "24h", label: "24h" },
+	{ value: "7d", label: "7d" },
+	{ value: "30d", label: "30d" },
+	{ value: "this_month", label: "This month" },
+	{ value: "last_month", label: "Last month" },
+	{ value: "custom", label: "Custom" },
 ];
 
 interface StatTileProps {
@@ -82,15 +76,15 @@ function StatTile({ label, value, hint, className }: StatTileProps) {
 	);
 }
 
-/** Per-key cost, account attribution, model usage and administration. */
+/** Per-key cost, account attribution, model usage and current spend limits. */
 export function ApiKeyUsageTab() {
-	const queryClient = useQueryClient();
-	const navigate = useNavigate();
 	const location = useLocation();
-	// React Router decodes route parameters again after resolving encoded slashes.
-	// Read the raw path once so existing name links and stable ID links agree
-	// with the authentication lookup performed by App.
-	const directKey = apiKeyPageTarget(location.pathname, location.search) || "";
+	const [keyId, setKeyId] = useState(
+		() => new URLSearchParams(location.search).get("key") ?? "",
+	);
+	const [range, setRange] = useState("24h");
+	const [from, setFrom] = useState("");
+	const [to, setTo] = useState("");
 	const { data: session } = useQuery({
 		queryKey: ["auth-session"],
 		queryFn: () =>
@@ -99,23 +93,8 @@ export function ApiKeyUsageTab() {
 			),
 		staleTime: 60_000,
 	});
-	const [inferredCanManage, setCanManage] = useState(false);
-	const canManage = session?.canManage ?? inferredCanManage;
+	const canManage = session?.canManage ?? false;
 	const { data: apiKeys } = useApiKeys({ enabled: canManage });
-	const params = new URLSearchParams(location.search);
-	const range =
-		RANGES.find((option) => option.value === params.get("range"))?.value ??
-		"24h";
-	const from = params.get("from") ?? "";
-	const to = params.get("to") ?? "";
-	const setRangeState = (name: string, value: string) => {
-		const next = new URLSearchParams(location.search);
-		next.set(name, value);
-		navigate(
-			{ pathname: location.pathname, search: next.toString() },
-			{ replace: true },
-		);
-	};
 	const { enabled: costTrackingEnabled } = useCostTracking();
 	const displayCost = (value: number) =>
 		costTrackingEnabled ? formatCost(value) : "—";
@@ -123,11 +102,13 @@ export function ApiKeyUsageTab() {
 	const toMs = new Date(to).getTime();
 	const validCustom =
 		Number.isFinite(fromMs) && Number.isFinite(toMs) && fromMs < toMs;
-	const selectedId =
-		directKey ||
-		(session?.canManage === false ? session.apiKeyId : null) ||
-		pickDefaultApiKey(apiKeys) ||
-		"";
+	// Wait for access to resolve before trusting a linked key. API-only callers
+	// always use their own identity, even when the query string names another key.
+	const selectedId = session
+		? canManage
+			? keyId || pickDefaultApiKey(apiKeys) || ""
+			: session.apiKeyId || ""
+		: "";
 	const { data, isLoading, error } = useApiKeyUsage(
 		selectedId,
 		range,
@@ -138,35 +119,9 @@ export function ApiKeyUsageTab() {
 			? new Date(toMs).toISOString()
 			: undefined,
 	);
-	if (data && inferredCanManage !== data.canManage)
-		setCanManage(data.canManage);
-	const [editingId, setEditingId] = useState("");
 	const [resetSpendKey, setResetSpendKey] = useState<ResetSpendKey | null>(
 		null,
 	);
-	const [restrictionsDraft, setRestrictionsDraft] =
-		useState<ApiKeyRestrictions>({
-			allowedAccounts: null,
-			allowedModels: null,
-			allowedProviders: null,
-		});
-	if (data && editingId !== data.apiKey.id) {
-		setEditingId(data.apiKey.id);
-		setRestrictionsDraft(data.restrictions);
-	}
-	const saveRestrictions = useMutation({
-		mutationFn: (restrictions: ApiKeyRestrictions) =>
-			api.patch(
-				`/api/api-keys/${encodeURIComponent(data?.apiKey.id ?? selectedId)}/restrictions`,
-				restrictions,
-			),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys() });
-			queryClient.invalidateQueries({
-				queryKey: [...queryKeys.all, "api-key-usage"],
-			});
-		},
-	});
 
 	const costSeries = useMemo(
 		() => buildCostSeries(data?.series ?? [], data?.bucketMs ?? 3_600_000),
@@ -188,17 +143,15 @@ export function ApiKeyUsageTab() {
 
 	return (
 		<div className="space-y-4">
-			<CostTrackingNotice limits />
-			<div className="flex flex-wrap items-center gap-3">
-				<h2 className="text-xl font-semibold">
-					{data?.apiKey.name ?? directKey}
-				</h2>
+			<div
+				className={
+					range === "custom" ? "flex flex-wrap items-end gap-3" : "flex gap-3"
+				}
+			>
 				{canManage ? (
 					<Select
 						value={data?.apiKey.id ?? selectedId}
-						onValueChange={(id) =>
-							navigate(apiKeyUsageSelectionLocation(id, location.search))
-						}
+						onValueChange={setKeyId}
 					>
 						<SelectTrigger aria-label="Select API key" className="w-64">
 							<SelectValue placeholder="Select API key" />
@@ -212,15 +165,14 @@ export function ApiKeyUsageTab() {
 							))}
 						</SelectContent>
 					</Select>
-				) : null}
-				<Select
-					value={range}
-					onValueChange={(value) => setRangeState("range", value)}
-				>
-					<SelectTrigger className="w-52">
-						<SelectValue>
-							{RANGES.find((option) => option.value === range)?.label}
-						</SelectValue>
+				) : (
+					<div className="flex w-64 items-center text-sm font-medium">
+						{data?.apiKey.name ?? "API key"}
+					</div>
+				)}
+				<Select value={range} onValueChange={setRange}>
+					<SelectTrigger aria-label="Select range" className="w-28">
+						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
 						{RANGES.map((option) => (
@@ -230,34 +182,35 @@ export function ApiKeyUsageTab() {
 						))}
 					</SelectContent>
 				</Select>
+				{range === "custom" ? (
+					<>
+						<div className="space-y-1">
+							<Label htmlFor="usage-from">From (your local time)</Label>
+							<Input
+								id="usage-from"
+								type="datetime-local"
+								value={from}
+								onChange={(event) => setFrom(event.target.value)}
+							/>
+						</div>
+						<div className="space-y-1">
+							<Label htmlFor="usage-to">To (your local time)</Label>
+							<Input
+								id="usage-to"
+								type="datetime-local"
+								value={to}
+								onChange={(event) => setTo(event.target.value)}
+							/>
+						</div>
+						{!validCustom ? (
+							<p className="text-xs text-muted-foreground">
+								Choose a start and a later end to load usage.
+							</p>
+						) : null}
+					</>
+				) : null}
 			</div>
-			{range === "custom" ? (
-				<div className="flex flex-wrap items-end gap-3">
-					<div className="space-y-1">
-						<Label htmlFor="usage-from">From (your local time)</Label>
-						<Input
-							id="usage-from"
-							type="datetime-local"
-							value={from}
-							onChange={(event) => setRangeState("from", event.target.value)}
-						/>
-					</div>
-					<div className="space-y-1">
-						<Label htmlFor="usage-to">To (your local time)</Label>
-						<Input
-							id="usage-to"
-							type="datetime-local"
-							value={to}
-							onChange={(event) => setRangeState("to", event.target.value)}
-						/>
-					</div>
-					{!validCustom ? (
-						<p className="text-xs text-muted-foreground">
-							Choose a start and a later end to load usage.
-						</p>
-					) : null}
-				</div>
-			) : null}
+			<CostTrackingNotice limits />
 			{data ? (
 				<p className="text-xs text-muted-foreground">
 					{new Date(data.windowStartMs).toLocaleString("en-IE", {
@@ -651,98 +604,6 @@ export function ApiKeyUsageTab() {
 							</CardContent>
 						</Card>
 					</div>
-
-					{data ? (
-						<Card>
-							<CardHeader>
-								<CardTitle className="text-sm">Restrictions</CardTitle>
-							</CardHeader>
-							<CardContent className="space-y-4">
-								<dl className="grid gap-2 text-sm">
-									{(
-										[
-											["Models", data.restrictions.allowedModels],
-											["Accounts", data.restrictions.allowedAccounts],
-											["Providers", data.restrictions.allowedProviders],
-										] as const
-									).map(([label, values]) => (
-										<div key={label}>
-											<dt className="font-medium">{label}</dt>
-											<dd className="text-muted-foreground break-all">
-												{values === null
-													? "Unrestricted"
-													: values.length
-														? values.join(", ")
-														: "None allowed"}
-											</dd>
-										</div>
-									))}
-								</dl>
-								{data.canManage ? (
-									<>
-										<ApiKeyRestrictionsEditor
-											idPrefix={`usage-${data.apiKey.id}`}
-											value={restrictionsDraft}
-											onChange={setRestrictionsDraft}
-											disabled={saveRestrictions.isPending}
-										/>
-										{saveRestrictions.isError ? (
-											<p role="alert" className="text-sm text-destructive">
-												{saveRestrictions.error instanceof Error
-													? saveRestrictions.error.message
-													: "Failed to save restrictions."}
-											</p>
-										) : null}
-										<Button
-											disabled={saveRestrictions.isPending}
-											onClick={() => saveRestrictions.mutate(restrictionsDraft)}
-										>
-											{saveRestrictions.isPending
-												? "Saving..."
-												: "Save restrictions"}
-										</Button>
-										{saveRestrictions.isSuccess ? (
-											<p
-												role="status"
-												className="text-sm text-muted-foreground"
-											>
-												Restrictions saved.
-											</p>
-										) : null}
-									</>
-								) : null}
-							</CardContent>
-						</Card>
-					) : null}
-					{data?.canManage ? (
-						<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-							<Card>
-								<CardHeader>
-									<CardTitle className="text-sm">Spend limits</CardTitle>
-								</CardHeader>
-								<CardContent>
-									<ApiKeyLimitsEditor
-										key={data.apiKey.id}
-										keyId={data.apiKey.id}
-										limits={data.limits}
-										mode={data.limitWindowMode}
-									/>
-								</CardContent>
-							</Card>
-							<Card>
-								<CardHeader>
-									<CardTitle className="text-sm">Routing overrides</CardTitle>
-								</CardHeader>
-								<CardContent>
-									<ApiKeyRoutingEditor
-										key={data.apiKey.id}
-										keyId={data.apiKey.id}
-										overrides={data.familyComboOverrides}
-									/>
-								</CardContent>
-							</Card>
-						</div>
-					) : null}
 				</>
 			)}
 			<ApiKeyResetSpendDialog

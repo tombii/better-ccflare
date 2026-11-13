@@ -12,7 +12,7 @@ import { AccountsTab } from "./components/AccountsTab";
 import { AgentsTab } from "./components/AgentsTab";
 import { ApiKeyAuthDialog } from "./components/ApiKeyAuthDialog";
 import { ApiKeysTab } from "./components/ApiKeysTab";
-import { apiKeyPageTarget } from "./components/api-key-usage/tab-helpers";
+import { legacyApiKeyUsageLocation } from "./components/api-key-usage/tab-helpers";
 import { ComboFlowTab } from "./components/combo-flow/ComboFlowTab";
 import { CombosTab } from "./components/combos/CombosTab";
 import { DebugPanel } from "./components/DebugPanel";
@@ -72,11 +72,16 @@ const LoadingSkeleton = () => (
 
 // QueryClient will be created inside App component to have access to auth state
 
+export function LegacyApiKeyUsageRedirect() {
+	const location = useLocation();
+	return <Navigate to={legacyApiKeyUsageLocation(location.pathname)} replace />;
+}
+
 export function App() {
 	const location = useLocation();
-	const usageKeyForAuth = apiKeyPageTarget(location.pathname, location.search);
 	const isUsagePage =
-		location.pathname === "/api-key-usage" || usageKeyForAuth !== null;
+		location.pathname === "/api-key-usage" ||
+		location.pathname.startsWith("/api-keys/");
 	// Build the dashboard routes once; released features remain reachable.
 	const routes = useMemo(() => {
 		const baseRoutes = [
@@ -130,17 +135,6 @@ export function App() {
 			},
 			{
 				path: "/api-key-usage",
-				element: (
-					<Suspense fallback={<LoadingSkeleton />}>
-						<LazyApiKeyUsageTab />
-					</Suspense>
-				),
-				title: "API Key Usage",
-				subtitle:
-					"Per-key cost, plan efficiency and limits for one API key at a time",
-			},
-			{
-				path: "/api-keys/:keyId",
 				element: (
 					<Suspense fallback={<LoadingSkeleton />}>
 						<LazyApiKeyUsageTab />
@@ -210,7 +204,7 @@ export function App() {
 		routes.find(
 			(route) =>
 				route.path === location.pathname ||
-				(route.path === "/api-keys/:keyId" &&
+				(route.path === "/api-key-usage" &&
 					location.pathname.startsWith("/api-keys/")),
 		) || routes[0];
 	const [showAuthDialog, setShowAuthDialog] = useState(false);
@@ -430,6 +424,10 @@ export function App() {
 							{!isCheckingAuth && isAuthenticated && (
 								<div className="animate-in fade-in-0 duration-200">
 									<Routes>
+										<Route
+											path="/api-keys/*"
+											element={<LegacyApiKeyUsageRedirect />}
+										/>
 										{routes.map((route) => (
 											<Route
 												key={route.path}
