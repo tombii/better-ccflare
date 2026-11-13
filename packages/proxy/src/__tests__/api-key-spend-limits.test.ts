@@ -181,6 +181,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	// The tests spy on globalThis.fetch; restore it, or every later test file in the
+	// same `bun test` run gets the stub (17 unrelated failures in the full suite).
+	mock.restore();
 	usageCache.clear();
 	resetApiKeySpendCounter();
 	if (savedPassthrough === undefined) {
