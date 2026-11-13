@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account, ComboWithSlots } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
+import { clearFamilyExhaustionCache } from "../handlers/model-capacity";
 import { handleProxy } from "../proxy";
 import * as usageCollectorModule from "../usage-collector";
 
@@ -73,6 +74,7 @@ function makeContext(
 
 afterEach(() => {
 	usageCache.delete("acc-1");
+	clearFamilyExhaustionCache();
 	globalThis.fetch = originalFetch;
 });
 
@@ -281,7 +283,6 @@ function makeComboAccount(overrides: Partial<Account> = {}): Account {
 describe("handleProxy Step-10 combo-fallback control flow (v3 Fix3)", () => {
 	afterEach(() => {
 		usageCache.clear();
-		delete process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
 	});
 
 	it("does not re-attempt the just-failed combo accounts unfiltered — the Step-10 fallback re-selection applies the capacity filter and returns the structured model_family_exhausted response instead of a generic failure", async () => {

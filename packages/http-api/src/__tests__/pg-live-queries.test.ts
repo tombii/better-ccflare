@@ -77,6 +77,7 @@ import type {
 import { NO_ACCOUNT_ID } from "@better-ccflare/types";
 import { createAccountsListHandler } from "../handlers/accounts";
 import { createAnalyticsHandler } from "../handlers/analytics";
+import { createApiKeyUsageHandler } from "../handlers/api-key-usage";
 import {
 	createCombosListHandler,
 	createFamiliesListHandler,
@@ -95,6 +96,7 @@ import {
 import { createStatsHandler, createStatsResetHandler } from "../handlers/stats";
 import { createUsageHistoryHandler } from "../handlers/usage-history";
 import { AlertService } from "../services/alerts";
+import { calendarMonthFraction } from "../services/api-key-usage-range";
 import type { APIContext } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -954,6 +956,176 @@ describe.skipIf(!livePgAvailable)(
 					new URLSearchParams("range=24h"),
 				);
 				expect(res.status).toBe(400);
+			});
+		});
+
+		describe("GET /api/api-keys/:idOrName/usage", () => {
+			// Five raw statements, every one of them a dialect hazard if written
+			// naively: a bucket expression repeated in SELECT and GROUP BY, an
+			// IN list whose arity is built in TypeScript, BIGINT counts read
+			// back as strings, and CASE sums over a nullable billing_type.
+			async function seedUsageFixture(): Promise<void> {
+				await seedAccount({ id: "acct-1", name: "primary" });
+				await seedAccount({ id: "acct-2", name: "secondary" });
+				await adapter.run(
+					`UPDATE accounts SET plan_monthly_usd = ? WHERE id = ?`,
+					[300, "acct-1"],
+				);
+				// acct-2 is left with a NULL plan_monthly_usd on purpose: the
+				// unpriced branch has to survive PostgreSQL's stricter typing too.
+				await dbOps.createApiKey({
+					id: "key-1",
+					name: "ci",
+					hashedKey: "hash",
+					prefixLast8: "abcdefgh",
+					createdAt: now,
+					lastUsed: null,
+					isActive: true,
+					role: "admin",
+				});
+				await dbOps.createApiKey({
+					id: "key-2",
+					name: "other",
+					hashedKey: "hash-2",
+					prefixLast8: "hgfedcba",
+					createdAt: now,
+					lastUsed: null,
+					isActive: true,
+					role: "admin",
+				});
+
+				await seedRequest({
+					id: "u-1",
+					timestamp: now - HOUR,
+					accountUsed: "acct-1",
+					success: true,
+					apiKeyId: "key-1",
+					billingType: "plan",
+					costUsd: 1.5,
+				});
+				await seedRequest({
+					id: "u-2",
+					timestamp: now - 2 * HOUR,
+					accountUsed: "acct-1",
+					success: false,
+					apiKeyId: "key-1",
+					billingType: "api",
+					costUsd: 0.25,
+				});
+				await seedRequest({
+					id: "u-3",
+					timestamp: now - 3 * HOUR,
+					accountUsed: "acct-2",
+					success: true,
+					apiKeyId: "key-1",
+					billingType: "plan",
+					costUsd: 0.75,
+				});
+				// A NULL model and a NULL billing_type: the two degenerate row
+				// shapes the endpoint has to survive.
+				await adapter.run(
+					`UPDATE requests SET model = CAST(NULL AS TEXT), billing_type = CAST(NULL AS TEXT) WHERE id = ?`,
+					["u-2"],
+				);
+				// Another key's plan traffic on acct-1 — the apportionment
+				// denominator, which is the one query that spans every key.
+				await seedRequest({
+					id: "u-4",
+					timestamp: now - HOUR,
+					accountUsed: "acct-1",
+					success: true,
+					apiKeyId: "key-2",
+					billingType: "plan",
+					costUsd: 4.5,
+				});
+			}
+
+			liveIt("executes every statement and apportions plan cost", async () => {
+				await seedUsageFixture();
+				const res = await createApiKeyUsageHandler(context)(
+					"key-1",
+					new URLSearchParams("range=24h"),
+				);
+				expect(res.status).toBe(200);
+				const body = (await readJson(res)) as {
+					windowStartMs: number;
+					windowEndMs: number;
+					requests: number;
+					successfulRequests: number;
+					apiCostUsd: number;
+					planValueUsd: number;
+					planCost: {
+						planCostUsd: number;
+						unpricedAccountIds: string[];
+						accounts: { accountId: string; share: number }[];
+					};
+					models: { model: string | null }[];
+					accounts: unknown[];
+					series: { ts: number; requests: number }[];
+					efficiencyStatus: string;
+				};
+
+				// Every numeric field arrives as a JS number, not a BIGINT string.
+				expect(typeof body.requests).toBe("number");
+				expect(body.requests).toBe(3);
+				expect(body.successfulRequests).toBe(2);
+				// The NULL-billing_type row lands in the API bucket.
+				expect(body.apiCostUsd).toBeCloseTo(0.25, 6);
+				expect(body.planValueUsd).toBeCloseTo(2.25, 6);
+				// acct-1: 1.5 of 6.0 = 0.25 share of a $300/mo plan prorated to
+				// 24h using the Dublin month duration. acct-2 is unpriced.
+				expect(body.planCost.planCostUsd).toBeCloseTo(
+					75 * calendarMonthFraction(body.windowStartMs, body.windowEndMs),
+					4,
+				);
+				expect(body.planCost.unpricedAccountIds).toEqual(["acct-2"]);
+				expect(body.efficiencyStatus).toBe("partial");
+				expect(body.models.some((row) => row.model === null)).toBe(true);
+				expect(body.accounts).toHaveLength(2);
+				expect(body.series.length).toBeGreaterThan(0);
+				for (const point of body.series) {
+					expect(typeof point.ts).toBe("number");
+					expect(point.ts % (60 * 60 * 1000)).toBe(0);
+				}
+			});
+
+			liveIt("executes every range bucket width", async () => {
+				await seedUsageFixture();
+				for (const range of ["1h", "6h", "24h", "7d", "30d"]) {
+					const res = await createApiKeyUsageHandler(context)(
+						"key-1",
+						new URLSearchParams(`range=${range}`),
+					);
+					expect(res.status).toBe(200);
+				}
+			});
+
+			liveIt("executes against a key with no traffic at all", async () => {
+				await dbOps.createApiKey({
+					id: "key-empty",
+					name: "empty",
+					hashedKey: "hash-empty",
+					prefixLast8: "00000000",
+					createdAt: now,
+					lastUsed: null,
+					isActive: true,
+					role: "admin",
+				});
+				const res = await createApiKeyUsageHandler(context)(
+					"key-empty",
+					new URLSearchParams("range=24h"),
+				);
+				expect(res.status).toBe(200);
+				const body = (await readJson(res)) as { requests: number };
+				expect(body.requests).toBe(0);
+			});
+
+			liveIt("404s for an unknown key", async () => {
+				const res = await createApiKeyUsageHandler(context)(
+					"nope",
+					new URLSearchParams("range=24h"),
+				);
+				expect(res.status).toBe(404);
 			});
 		});
 

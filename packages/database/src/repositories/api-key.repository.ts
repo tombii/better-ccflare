@@ -1,4 +1,14 @@
-import { type ApiKey, type ApiKeyRow, toApiKey } from "@better-ccflare/types";
+import {
+	type ApiKey,
+	type ApiKeyLimit,
+	type ApiKeyLimitInput,
+	type ApiKeyLimitWindowMode,
+	type ApiKeyRestrictions,
+	type ApiKeyRow,
+	type ApiKeySpendLimit,
+	serializeRestrictionList,
+	toApiKey,
+} from "@better-ccflare/types";
 import { BaseRepository } from "./base.repository";
 
 export class ApiKeyRepository extends BaseRepository<ApiKey> {
@@ -9,7 +19,9 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		const rows = await this.query<ApiKeyRow>(`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active, role
+				last_used, usage_count, is_active, role,
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
 			FROM api_keys
 			ORDER BY created_at DESC
 		`);
@@ -23,7 +35,9 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		const rows = await this.query<ApiKeyRow>(`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active, role
+				last_used, usage_count, is_active, role,
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
 			FROM api_keys
 			WHERE is_active = 1
 			ORDER BY created_at DESC
@@ -39,7 +53,9 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active, role
+				last_used, usage_count, is_active, role,
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
 			FROM api_keys
 			WHERE id = ?
 		`,
@@ -57,7 +73,9 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active, role
+				last_used, usage_count, is_active, role,
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
 			FROM api_keys
 			WHERE hashed_key = ? AND is_active = 1
 		`,
@@ -75,7 +93,9 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active, role
+				last_used, usage_count, is_active, role,
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
 			FROM api_keys
 			WHERE name = ?
 		`,
@@ -109,8 +129,10 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			INSERT INTO api_keys (
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, is_active, role
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				last_used, is_active, role,
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			[
 				apiKey.id,
@@ -121,8 +143,43 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				apiKey.last_used,
 				apiKey.is_active,
 				apiKey.role,
+				// `?? null` and not `|| null`: the columns are nullable on
+				// purpose and an absent restriction must land as SQL NULL
+				// (unrestricted), never as the string '[]' (deny-all).
+				apiKey.allowed_accounts ?? null,
+				apiKey.allowed_models ?? null,
+				apiKey.allowed_providers ?? null,
+				// Same `?? null` reasoning: a key created without a limit must
+				// land as SQL NULL, not as 0 (which would deny every request).
+				apiKey.limit_usd ?? null,
+				apiKey.limit_window ?? null,
+				apiKey.limit_enforce ?? null,
 			],
 		);
+	}
+
+	/** Reset budget accounting and resolve this key's spend-limit alerts atomically. */
+	async resetSpend(
+		id: string,
+		timestamp: number,
+		actor: string,
+	): Promise<boolean> {
+		if (!(await this.findById(id))) return false;
+		await this.adapter.atomicStatements([
+			{
+				sql: "UPDATE api_keys SET spend_reset_at = ?, spend_reset_by = ? WHERE id = ? AND (spend_reset_at IS NULL OR spend_reset_at <= ?)",
+				params: [timestamp, actor, id, timestamp],
+			},
+			{
+				// Removing cooldown identities lets newly incurred spend warn again.
+				sql: "DELETE FROM alerts WHERE type = 'api_key_spend_limit' AND substr(id, 1, ?) = ?",
+				params: [
+					`api_key_spend_limit:${id}:`.length,
+					`api_key_spend_limit:${id}:`,
+				],
+			},
+		]);
+		return true;
 	}
 
 	/**
@@ -201,6 +258,243 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		);
 
 		return changes > 0;
+	}
+
+	/**
+	 * Replace an API key's restrictions.
+	 *
+	 * Writes all three columns in one statement so a partial update can never
+	 * leave a key half-restricted: the caller always supplies the complete
+	 * intended state, with `null` meaning unrestricted and `[]` meaning
+	 * deny-all.
+	 */
+	async updateRestrictions(
+		id: string,
+		restrictions: ApiKeyRestrictions,
+	): Promise<boolean> {
+		const changes = await this.runWithChanges(
+			`
+			UPDATE api_keys
+			SET allowed_accounts = ?,
+				allowed_models = ?,
+				allowed_providers = ?
+			WHERE id = ?
+		`,
+			[
+				serializeRestrictionList(restrictions.allowedAccounts),
+				serializeRestrictionList(restrictions.allowedModels),
+				serializeRestrictionList(restrictions.allowedProviders),
+				id,
+			],
+		);
+
+		return changes > 0;
+	}
+
+	/**
+	 * Replace an API key's spend limit.
+	 *
+	 * `null` clears the limit, and clears the window and enforcement columns
+	 * with it: leaving a stale window behind on a key with no budget would
+	 * make a later "set a limit of $50" silently inherit a window the operator
+	 * set months ago and has no reason to remember.
+	 */
+	async updateSpendLimit(
+		id: string,
+		spendLimit: ApiKeySpendLimit | null,
+	): Promise<boolean> {
+		const key = await this.findById(id);
+		if (!key) return false;
+		const rows = await this.getLimits(id);
+		const oldWindow = key.limitWindow
+			? key.limitWindow === "rolling_7d"
+				? "week"
+				: "month"
+			: null;
+		const window = spendLimit
+			? spendLimit.limitWindow === "rolling_7d"
+				? "week"
+				: "month"
+			: oldWindow;
+		const remaining = rows.filter(
+			(row) =>
+				!(
+					row.scopeModel == null &&
+					(row.window === oldWindow || row.window === window)
+				),
+		);
+		const currentMode = key.limitWindowMode ?? "calendar";
+		const mode = spendLimit
+			? spendLimit.limitWindow === "calendar_month"
+				? "calendar"
+				: "rolling"
+			: currentMode;
+		if (mode !== currentMode && remaining.length > 0) {
+			throw Object.assign(
+				new Error(
+					"Legacy spend limit cannot change the window mode while other limits exist; use PUT /api/api-keys/:id/limits",
+				),
+				{ statusCode: 409 },
+			);
+		}
+		const now = Date.now();
+		const existing = rows.find(
+			(row) => row.scopeModel == null && row.window === window,
+		);
+		const statements = [
+			{
+				sql: "UPDATE api_keys SET limit_usd = ?, limit_window = ?, limit_enforce = ?, limit_window_mode = ? WHERE id = ?",
+				params: [
+					spendLimit?.limitUsd ?? null,
+					spendLimit?.limitWindow ?? null,
+					spendLimit?.limitEnforce ?? null,
+					mode,
+					id,
+				] as unknown[],
+			},
+		];
+		for (const row of rows) {
+			if (
+				row.scopeModel == null &&
+				(row.window === oldWindow || row.window === window)
+			) {
+				statements.push({
+					sql: "DELETE FROM api_key_limits WHERE id = ?",
+					params: [row.id],
+				});
+			}
+		}
+		if (spendLimit)
+			statements.push({
+				sql: 'INSERT INTO api_key_limits (id, api_key_id, scope_model, "window", limit_usd, enforce, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+				params: [
+					existing?.id ?? crypto.randomUUID(),
+					id,
+					null,
+					window,
+					spendLimit.limitUsd,
+					spendLimit.limitEnforce,
+					existing?.createdAt ?? now,
+					now,
+				],
+			});
+		await this.adapter.atomicStatements(statements);
+		return true;
+	}
+
+	/**
+	 * Every ACTIVE key that carries a spend limit.
+	 *
+	 * The seed set for the in-memory spend counter at startup: a key with no
+	 * limit needs no counter at all, and an inactive key cannot make a request
+	 * to spend against one.
+	 */
+	async listWithSpendLimits(): Promise<ApiKey[]> {
+		const rows = await this.query<ApiKeyRow>(`
+			SELECT
+				id, name, hashed_key, prefix_last_8, created_at,
+				last_used, usage_count, is_active, role,
+				allowed_accounts, allowed_models, allowed_providers,
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
+			FROM api_keys
+			WHERE is_active = 1 AND EXISTS (SELECT 1 FROM api_key_limits WHERE api_key_id = api_keys.id)
+			ORDER BY created_at DESC
+		`);
+
+		return rows.map(toApiKey);
+	}
+
+	async getLimits(apiKeyId: string): Promise<ApiKeyLimit[]> {
+		const rows = await this.query<{
+			id: string;
+			api_key_id: string;
+			scope_model: string | null;
+			window: ApiKeyLimit["window"];
+			limit_usd: number;
+			enforce: ApiKeyLimit["enforce"];
+			created_at: number;
+			updated_at: number;
+		}>(
+			"SELECT * FROM api_key_limits WHERE api_key_id = ? ORDER BY created_at, id",
+			[apiKeyId],
+		);
+		return rows.map((row) => ({
+			id: row.id,
+			apiKeyId: row.api_key_id,
+			scopeModel: row.scope_model,
+			window: row.window,
+			limitUsd: Number(row.limit_usd),
+			enforce: row.enforce,
+			createdAt: Number(row.created_at),
+			updatedAt: Number(row.updated_at),
+		}));
+	}
+	async replaceLimits(
+		apiKeyId: string,
+		limits: ApiKeyLimitInput[],
+		mode: ApiKeyLimitWindowMode,
+	): Promise<boolean> {
+		const key = await this.findById(apiKeyId);
+		if (!key) return false;
+		const legacyWindow = key.limitWindow === "rolling_7d" ? "week" : "month";
+		const legacyMode =
+			key.limitWindow === "calendar_month" ? "calendar" : "rolling";
+		const legacy =
+			key.limitWindow && mode === legacyMode
+				? limits.find(
+						(row) => row.scopeModel == null && row.window === legacyWindow,
+					)
+				: undefined;
+		const existing = await this.getLimits(apiKeyId);
+		const now = Date.now();
+		const statements = [
+			{
+				sql: "UPDATE api_keys SET limit_window_mode = ?, limit_usd = ?, limit_window = ?, limit_enforce = ? WHERE id = ?",
+				params: [
+					mode,
+					legacy?.limitUsd ?? null,
+					legacy ? key.limitWindow : null,
+					legacy?.enforce ?? null,
+					apiKeyId,
+				] as unknown[],
+			},
+			{
+				sql: "DELETE FROM api_key_limits WHERE api_key_id = ?",
+				params: [apiKeyId] as unknown[],
+			},
+			...limits.map((limit) => {
+				const previous = existing.find(
+					(row) =>
+						row.scopeModel === limit.scopeModel && row.window === limit.window,
+				);
+				return {
+					sql: 'INSERT INTO api_key_limits (id, api_key_id, scope_model, "window", limit_usd, enforce, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+					params: [
+						previous?.id ?? crypto.randomUUID(),
+						apiKeyId,
+						limit.scopeModel,
+						limit.window,
+						limit.limitUsd,
+						limit.enforce,
+						previous?.createdAt ?? now,
+						now,
+					] as unknown[],
+				};
+			}),
+		];
+		await this.adapter.atomicStatements(statements);
+		return true;
+	}
+	async updateRouting(
+		apiKeyId: string,
+		overrides: Record<string, string> | null,
+	): Promise<boolean> {
+		return (
+			(await this.runWithChanges(
+				"UPDATE api_keys SET family_combo_overrides = ? WHERE id = ?",
+				[overrides == null ? null : JSON.stringify(overrides), apiKeyId],
+			)) > 0
+		);
 	}
 
 	/**

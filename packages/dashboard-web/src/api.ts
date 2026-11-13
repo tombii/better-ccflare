@@ -10,6 +10,7 @@ import type {
 	AgentWorkspace,
 	AnalyticsResponse,
 	AnomalyInsightsResponse,
+	ApiKeyUsageResponse,
 	CacheInsightsResponse,
 	Combo,
 	ComboFamilyAssignment,
@@ -1284,6 +1285,25 @@ class API extends HttpClient {
 		);
 	}
 
+	/**
+	 * Per-key usage for the monitoring page. `keyIdOrName` is sent as the id;
+	 * the endpoint accepts either, but the id is what the dropdown holds and
+	 * what the requests table is indexed on.
+	 */
+	async getApiKeyUsage(
+		keyIdOrName: string,
+		range = "24h",
+		from?: string,
+		to?: string,
+	): Promise<ApiKeyUsageResponse> {
+		const params = new URLSearchParams({ range });
+		if (from) params.set("from", from);
+		if (to) params.set("to", to);
+		return this.get<ApiKeyUsageResponse>(
+			`/api/api-keys/${encodeURIComponent(keyIdOrName)}/usage?${params.toString()}`,
+		);
+	}
+
 	async getContextInsights(range = "24h"): Promise<ContextInsightsResponse> {
 		const params = new URLSearchParams({ range });
 
@@ -1590,6 +1610,32 @@ class API extends HttpClient {
 		} catch (error) {
 			this.logger.error(`✗ POST ${url} - ERROR`, {
 				error: error instanceof Error ? error.message : String(error),
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async updateAccountPlanPrice(
+		accountId: string,
+		planMonthlyUsd: number | null,
+	): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/accounts/${accountId}/plan-price`;
+
+		this.logger.debug(`→ POST ${url}`, { planMonthlyUsd });
+
+		try {
+			await this.post(url, { planMonthlyUsd });
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);

@@ -1,6 +1,8 @@
 import {
 	BUFFER_SIZES,
 	estimateCostUSD,
+	getCostTrackingEpoch,
+	isCostTrackingEnabled,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import { AsyncDbWriter, DatabaseOperations } from "@better-ccflare/database";
@@ -24,6 +26,7 @@ import {
 	extractGatewayHintHeadersFromParts,
 	type GatewayHintHeaders,
 } from "./gateway-hint-headers";
+import { tryGetApiKeySpendCounter } from "./handlers/api-key-spend";
 import { getPeakHoursState } from "./peak-hours";
 import {
 	extractProjectAttributionFromParts,
@@ -37,6 +40,7 @@ import {
 } from "./worker-messages";
 
 interface RequestState {
+	costTrackingEpoch: number | null;
 	startMessage: StartMessage;
 	buffer: string;
 	streamDecoder: TextDecoder;
@@ -452,6 +456,7 @@ export class UsageCollector {
 	private readonly requests = new Map<string, RequestState>();
 	private readonly missingStateWarnings = new Set<string>();
 	private readonly pendingHandleEnds = new Set<Promise<void>>();
+	private readonly pendingRequestEnds = new Map<string, number>();
 	private readonly pendingPricingFallbacks = new Set<() => void>();
 	private cleanupInterval: Timer | null = null;
 	// Permanent once drain() is called — collector cannot estimate costs after this.
@@ -491,6 +496,7 @@ export class UsageCollector {
 		if (replacedState) {
 			this.freeRequestState(replacedState);
 			this.requests.delete(msg.requestId);
+			tryGetApiKeySpendCounter()?.releaseReservation(msg.requestId);
 		}
 
 		// Check if we should skip logging this request
@@ -518,6 +524,7 @@ export class UsageCollector {
 					const [id, state] = sortedByAge[i];
 					this.freeRequestState(state);
 					this.requests.delete(id);
+					tryGetApiKeySpendCounter()?.releaseReservation(id);
 				}
 			}
 		}
@@ -525,6 +532,12 @@ export class UsageCollector {
 		// Create request state
 		const now = Date.now();
 		const state: RequestState = {
+			costTrackingEpoch:
+				msg.costTrackingEpoch !== undefined
+					? msg.costTrackingEpoch
+					: isCostTrackingEnabled()
+						? getCostTrackingEpoch()
+						: null,
 			startMessage: msg,
 			buffer: "",
 			streamDecoder: new TextDecoder(),
@@ -707,10 +720,27 @@ export class UsageCollector {
 		processStreamChunk(data, state, this.maxBufferSize);
 	}
 
+	hasPendingRequest(requestId: string): boolean {
+		return (
+			this.requests.has(requestId) || this.pendingRequestEnds.has(requestId)
+		);
+	}
+
 	handleEnd(msg: EndMessage): Promise<void> {
+		this.pendingRequestEnds.set(
+			msg.requestId,
+			(this.pendingRequestEnds.get(msg.requestId) ?? 0) + 1,
+		);
 		const promise = this._handleEndInternal(msg);
 		this.pendingHandleEnds.add(promise);
-		const cleanup = () => this.pendingHandleEnds.delete(promise);
+		const cleanup = () => {
+			this.pendingHandleEnds.delete(promise);
+			const remaining = (this.pendingRequestEnds.get(msg.requestId) ?? 1) - 1;
+			if (remaining > 0) this.pendingRequestEnds.set(msg.requestId, remaining);
+			else this.pendingRequestEnds.delete(msg.requestId);
+			if (!this.hasPendingRequest(msg.requestId))
+				tryGetApiKeySpendCounter()?.releaseReservation(msg.requestId);
+		};
 		promise.then(cleanup, cleanup);
 		return promise;
 	}
@@ -811,6 +841,7 @@ export class UsageCollector {
 		this.freeRequestState(state);
 
 		// Calculate total tokens and cost
+		let spendRecordedAt: number | undefined;
 		if (state.usage.model) {
 			const model = state.usage.model;
 			// Use provider's authoritative count if available, fallback to computed
@@ -831,17 +862,28 @@ export class UsageCollector {
 				(state.usage.cacheCreationInputTokens || 0);
 
 			try {
-				state.usage.costUsd = await this.estimateCostWithDeadline(
-					startMessage.requestId,
-					model,
-					() =>
-						estimateCostUSD(model, {
-							inputTokens: state.usage.inputTokens,
-							outputTokens: finalOutputTokens,
-							cacheReadInputTokens: state.usage.cacheReadInputTokens,
-							cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-						}),
-				);
+				if (
+					isCostTrackingEnabled() &&
+					state.costTrackingEpoch === getCostTrackingEpoch()
+				) {
+					state.usage.costUsd = await this.estimateCostWithDeadline(
+						startMessage.requestId,
+						model,
+						() =>
+							estimateCostUSD(model, {
+								inputTokens: state.usage.inputTokens,
+								outputTokens: finalOutputTokens,
+								cacheReadInputTokens: state.usage.cacheReadInputTokens,
+								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
+							}),
+					);
+				}
+				if (
+					!isCostTrackingEnabled() ||
+					state.costTrackingEpoch !== getCostTrackingEpoch()
+				) {
+					state.usage.costUsd = undefined;
+				}
 			} catch (error) {
 				if (preparedPayload) {
 					this.releasePreparedPayload(preparedPayload);
@@ -849,6 +891,35 @@ export class UsageCollector {
 				}
 				throw error;
 			}
+			// Spend becomes chargeable when pricing finishes, which can be after
+			// EOF and an operator's reset. Keep this separate from response latency
+			// and persist the same instant even when the async writer runs later.
+			spendRecordedAt =
+				state.usage.costUsd === undefined ? undefined : Date.now();
+
+			// Per-API-key spend counter: the request's cost has just become
+			// known, and this is the only place in the process where that is
+			// true. The api key id is already on the StartMessage, so the
+			// increment costs one Map lookup and no query.
+			//
+			// It runs BEFORE the row is enqueued for the async writer, on
+			// purpose: the counter is the thing the proxy enforces against and
+			// must not lag behind a write that may be queued, delayed or (under
+			// backpressure) dropped. The periodic resync is what reconciles the
+			// two afterwards.
+			//
+			// `tryGet...` and never `get...`: a key with no limit has no counter
+			// entry and a deployment with no limits at all has no counter, and
+			// neither may pay for this feature.
+			if (state.usage.costUsd !== undefined)
+				tryGetApiKeySpendCounter()?.record(
+					startMessage.apiKeyId,
+					state.usage.costUsd,
+					state.usage.model,
+					spendRecordedAt,
+					startMessage.requestId,
+					startMessage.limitModel ?? startMessage.originalModel ?? null,
+				);
 
 			// Calculate tokens per second - zai specific vs other providers
 			if (finalOutputTokens > 0) {
@@ -1006,6 +1077,8 @@ export class UsageCollector {
 					// timestamp, and any reload must classify the same request the
 					// same way (e.g. peak vs off-peak near a window boundary).
 					startMessage.timestamp,
+					startMessage.limitModel ?? null,
+					spendRecordedAt,
 				);
 			} catch (error) {
 				log.error(
@@ -1063,6 +1136,7 @@ export class UsageCollector {
 			project: state.project ?? undefined,
 			billingType: state.billingType,
 			originalModel: startMessage.originalModel || undefined,
+			limitModel: startMessage.limitModel || undefined,
 			appliedModel: startMessage.appliedModel || undefined,
 			comboName: startMessage.comboName || undefined,
 			projectAttributionSource: state.projectAttributionSource ?? undefined,
@@ -1282,6 +1356,7 @@ export class UsageCollector {
 				);
 				this.freeRequestState(state);
 				this.requests.delete(id);
+				tryGetApiKeySpendCounter()?.releaseReservation(id);
 				removedCount++;
 			}
 		}
@@ -1301,6 +1376,7 @@ export class UsageCollector {
 				const [id, state] = sortedByAge[i];
 				this.freeRequestState(state);
 				this.requests.delete(id);
+				tryGetApiKeySpendCounter()?.releaseReservation(id);
 				removedCount++;
 			}
 		}

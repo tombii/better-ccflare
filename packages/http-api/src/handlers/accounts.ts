@@ -366,6 +366,7 @@ export function createAccountsListHandler(
 			cross_region_mode: string | null;
 			model_fallbacks: string | null;
 			billing_type: string | null;
+			plan_monthly_usd: number | null;
 			pause_reason: string | null;
 			last_manual_reauth_at: number | null;
 			requires_reauth: 0 | 1;
@@ -409,6 +410,7 @@ export function createAccountsListHandler(
 					cross_region_mode,
 					model_fallbacks,
 					billing_type,
+					plan_monthly_usd,
 					pause_reason,
 					last_manual_reauth_at,
 					CASE
@@ -870,6 +872,12 @@ export function createAccountsListHandler(
 					crossRegionMode: account.cross_region_mode,
 					modelFallbacks,
 					billingType: account.billing_type,
+					// 0 is a meaningful price (free plan), so null-check rather than
+					// truthiness — `|| null` would erase it.
+					planMonthlyUsd:
+						account.plan_monthly_usd != null
+							? Number(account.plan_monthly_usd)
+							: null,
 					sessionStats: sessionStatsMap.get(account.id) ?? null,
 					isPrimary: account.id === primaryId,
 				};
@@ -3538,6 +3546,80 @@ export function createAccountBillingTypeHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to update billing type"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an account monthly plan price handler
+ *
+ * Stores the ACTUAL dollar price of the account's subscription. This is not
+ * the same thing as `plan_cost_usd` on requests, which is the counterfactual
+ * "what this plan traffic would have cost at public API rates" (surfaced as
+ * "Plan Value" in the dashboard). Unlike billing-type, this is NOT restricted
+ * by provider — any account can carry a monthly price.
+ */
+export function createAccountPlanPriceHandler(dbOps: DatabaseOperations) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Hand-rolled because `validateNumber` coerces numeric strings, and a
+			// price arriving as a string is a caller bug we want surfaced, not
+			// silently accepted. `null` is the documented way to clear the value;
+			// a missing field is a malformed request, not a clear.
+			const raw = body?.planMonthlyUsd;
+			if (raw === undefined) {
+				return errorResponse(BadRequest("planMonthlyUsd is required"));
+			}
+
+			let planMonthlyUsd: number | null;
+			if (raw === null) {
+				planMonthlyUsd = null;
+			} else if (typeof raw !== "number") {
+				return errorResponse(
+					BadRequest("planMonthlyUsd must be a number or null"),
+				);
+			} else if (!Number.isFinite(raw)) {
+				// Catches NaN and ±Infinity, both of which JSON.parse can produce
+				// from a JS client and neither of which SQLite/PG can store sanely.
+				return errorResponse(
+					BadRequest("planMonthlyUsd must be a finite number"),
+				);
+			} else if (raw < 0) {
+				return errorResponse(BadRequest("planMonthlyUsd must be >= 0"));
+			} else {
+				planMonthlyUsd = raw;
+			}
+
+			// Check if account exists
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string }>(
+				"SELECT name FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			await dbOps.setAccountPlanMonthlyUsd(accountId, planMonthlyUsd);
+
+			return jsonResponse({
+				success: true,
+				message:
+					planMonthlyUsd === null
+						? `Monthly plan price cleared for account '${account.name}'`
+						: `Monthly plan price set to ${planMonthlyUsd} for account '${account.name}'`,
+				planMonthlyUsd,
+			});
+		} catch (error) {
+			log.error("Account plan price update error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to update plan price"),
 			);
 		}
 	};

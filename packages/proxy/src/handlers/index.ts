@@ -25,6 +25,25 @@ export {
 	isRewriteTargetServable,
 } from "./agent-interceptor";
 export {
+	type ApiKeyRestrictionDenial,
+	type ApiKeyRestrictionScope,
+	getApiKeyRestrictionDenial,
+	isAccountAllowedForApiKey,
+	isModelAllowedForApiKey,
+	restrictsAccountPool,
+	restrictsModels,
+	setApiKeyRestrictionDenial,
+	summarizeAccountRestrictionScope,
+} from "./api-key-restrictions";
+export {
+	ApiKeySpendCounter,
+	getApiKeySpendCounter,
+	resetApiKeySpendCounter,
+	SPEND_RESYNC_TTL_MS,
+	type SpendSnapshot,
+	tryGetApiKeySpendCounter,
+} from "./api-key-spend";
+export {
 	clearFamilyExhaustionForAccount,
 	createModelFamilyExhaustedResponse,
 	type FamilyExhaustionOrigin,

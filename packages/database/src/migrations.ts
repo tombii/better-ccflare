@@ -173,7 +173,8 @@ export function ensureSchema(db: Database): void {
 			requires_reauth INTEGER DEFAULT 0,
 			last_manual_reauth_at INTEGER,
 			request_transformer TEXT,
-			night_window_enabled INTEGER NOT NULL DEFAULT 0
+			night_window_enabled INTEGER NOT NULL DEFAULT 0,
+			plan_monthly_usd REAL
 		)
 	`);
 
@@ -215,7 +216,9 @@ export function ensureSchema(db: Database): void {
 			gateway_hint_compaction TEXT,
 			gateway_hint_context_compacted TEXT,
 			provider_served TEXT,
-			completion_tier TEXT
+			completion_tier TEXT,
+			limit_model TEXT,
+			spend_recorded_at INTEGER
 		)
 	`);
 
@@ -313,9 +316,35 @@ export function ensureSchema(db: Database): void {
 			created_at INTEGER NOT NULL,
 			last_used INTEGER,
 			usage_count INTEGER DEFAULT 0,
-			is_active INTEGER DEFAULT 1
+			is_active INTEGER DEFAULT 1,
+			allowed_accounts TEXT,
+			allowed_models TEXT,
+			allowed_providers TEXT,
+			limit_usd REAL,
+			limit_window TEXT,
+			limit_enforce TEXT,
+   limit_window_mode TEXT NOT NULL DEFAULT 'calendar' CHECK (limit_window_mode IN ('calendar', 'rolling')),
+   family_combo_overrides TEXT,
+   spend_reset_at INTEGER,
+   spend_reset_by TEXT
 		)
 	`);
+
+	// Multi-window limits are available on fresh installations before upgrades.
+	db.run(`CREATE TABLE IF NOT EXISTS api_key_limits (
+  id TEXT PRIMARY KEY,
+  api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+  scope_model TEXT,
+  "window" TEXT NOT NULL CHECK ("window" IN ('hour','day','week','month')),
+  limit_usd REAL NOT NULL CHECK (limit_usd > 0),
+  enforce TEXT NOT NULL CHECK (enforce IN ('block','warn')),
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  UNIQUE (api_key_id, scope_model, "window")
+ )`);
+	db.run(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_limits_scope ON api_key_limits(api_key_id, (COALESCE(scope_model, '')), "window")`,
+	);
 
 	// Create index for faster API key lookups
 	db.run(
@@ -1853,6 +1882,72 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		// installs). Idempotent, same rationale as above.
 		createWebToolCallsTable(db);
 
+		// Add the per-key restriction columns to api_keys if they don't exist.
+		//
+		// Three nullable TEXT columns, each holding a JSON array, rather than a
+		// join table with ON DELETE CASCADE: with a join table, deleting the
+		// last allowed account would empty the list and silently turn a
+		// restricted key back into an unrestricted one. NULL means
+		// "unrestricted" and '[]' means "deny all", a distinction a cascade
+		// cannot express. Same TEXT-JSON shape the accounts table already uses
+		// for model_mappings / model_fallbacks.
+		//
+		// No DEFAULT and no NOT NULL on purpose: every existing key must come
+		// out of this migration unrestricted, which is exactly NULL.
+		const apiKeysColumnsNow = (
+			db.prepare("PRAGMA table_info(api_keys)").all() as Array<{
+				name: string;
+			}>
+		).map((col) => col.name);
+		for (const column of [
+			"allowed_accounts",
+			"allowed_models",
+			"allowed_providers",
+		]) {
+			if (!apiKeysColumnsNow.includes(column)) {
+				db.prepare(`ALTER TABLE api_keys ADD COLUMN ${column} TEXT`).run();
+				log.info(`Added ${column} column to api_keys table`);
+			}
+		}
+
+		// Add the per-key spend-limit columns to api_keys if they don't exist.
+		//
+		// All three nullable with no DEFAULT, for the same reason the
+		// restriction columns above are: NULL on limit_usd is what "no limit"
+		// means, and every key that predates this migration must come out of it
+		// with no limit. A DEFAULT of any kind would give every existing key a
+		// budget it never asked for.
+		//
+		// limit_window and limit_enforce are ALSO nullable rather than
+		// NOT NULL DEFAULT: they are only meaningful alongside a limit, and the
+		// defaults ('rolling_30d' / 'block') are applied on READ in
+		// packages/types/src/api-key.ts so the two backends cannot drift on
+		// what a NULL there means.
+		//
+		// Note for future readers: the table-rebuild paths in this function
+		// rebuild `accounts` and `oauth_sessions`; none touches `api_keys`, so
+		// placement here — beside the restriction columns, against the same
+		// fresh PRAGMA read — is safe and idempotent.
+		//
+		// No new index. The counter's rollup query
+		// (SUM(cost_usd) WHERE api_key_id = ? AND timestamp > ?) is already
+		// served by idx_requests_api_key_timestamp, and it runs once per limited
+		// key at startup plus once per resync TTL — not per request — so a
+		// covering index on the largest table in the schema would buy a rare
+		// query a little latency at the cost of write amplification on every
+		// request.
+		const SPEND_LIMIT_COLUMNS: Array<[string, string]> = [
+			["limit_usd", "REAL"],
+			["limit_window", "TEXT"],
+			["limit_enforce", "TEXT"],
+		];
+		for (const [column, type] of SPEND_LIMIT_COLUMNS) {
+			if (!apiKeysColumnsNow.includes(column)) {
+				db.prepare(`ALTER TABLE api_keys ADD COLUMN ${column} ${type}`).run();
+				log.info(`Added ${column} column to api_keys table`);
+			}
+		}
+
 		// Add performance indexes
 		addPerformanceIndexes(db);
 		// Then drop indexes that are redundant or unusable (create-before-drop)
@@ -1929,6 +2024,28 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			).run();
 
 			log.info("Removed account_tier column from accounts table");
+		}
+
+		// Add plan_monthly_usd: the real dollar price of the account's monthly
+		// subscription (NULL = unknown / not a paid plan). Distinct from
+		// plan_cost_usd on requests, which is a counterfactual "what this plan
+		// traffic would have cost at API rates".
+		//
+		// This block sits AFTER both accounts-table rebuilds on purpose (the
+		// "make refresh_token nullable" rebuild and the account_tier removal
+		// directly above), and re-reads PRAGMA table_info instead of using
+		// initialAccountsColumnNames, which was captured before any DDL ran.
+		// Both rebuilds now carry the live column list, but adding the column
+		// last, against the live schema, keeps it immune to any rebuild that
+		// regresses to a fixed list — and keeps the check idempotent.
+		const accountsColumnsAfterRebuilds = (
+			db.prepare("PRAGMA table_info(accounts)").all() as Array<{
+				name: string;
+			}>
+		).map((col) => col.name);
+		if (!accountsColumnsAfterRebuilds.includes("plan_monthly_usd")) {
+			db.prepare("ALTER TABLE accounts ADD COLUMN plan_monthly_usd REAL").run();
+			log.info("Added plan_monthly_usd column to accounts table");
 		}
 
 		// Drop tier column from oauth_sessions table if it exists
@@ -2176,6 +2293,55 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		addPerformanceIndexes(db);
 		ensureUniqueAccountsIndex(db);
 		dropRedundantRequestIndexes(db);
+		// v2 key budgets. A first-run guard prevents a cleared child budget
+		// from being resurrected from the retained legacy columns on restart.
+		const limitV2Columns = (
+			db.prepare("PRAGMA table_info(api_keys)").all() as Array<{ name: string }>
+		).map((c) => c.name);
+		const migrateLegacyLimits = !limitV2Columns.includes("limit_window_mode");
+		const requestLimitColumns = (
+			db.prepare("PRAGMA table_info(requests)").all() as Array<{ name: string }>
+		).map((c) => c.name);
+		if (!requestLimitColumns.includes("limit_model"))
+			db.run("ALTER TABLE requests ADD COLUMN limit_model TEXT");
+		if (migrateLegacyLimits)
+			db.run(
+				"ALTER TABLE api_keys ADD COLUMN limit_window_mode TEXT NOT NULL DEFAULT 'calendar' CHECK (limit_window_mode IN ('calendar', 'rolling'))",
+			);
+		if (!limitV2Columns.includes("family_combo_overrides"))
+			db.run("ALTER TABLE api_keys ADD COLUMN family_combo_overrides TEXT");
+		db.run(`CREATE TABLE IF NOT EXISTS api_key_limits (
+          id TEXT PRIMARY KEY,
+          api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+          scope_model TEXT,
+          "window" TEXT NOT NULL CHECK ("window" IN ('hour','day','week','month')),
+          limit_usd REAL NOT NULL CHECK (limit_usd > 0),
+          enforce TEXT NOT NULL CHECK (enforce IN ('block','warn')),
+          created_at BIGINT NOT NULL,
+          updated_at BIGINT NOT NULL,
+          UNIQUE (api_key_id, scope_model, "window")
+        )`);
+		db.run(
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_limits_scope ON api_key_limits(api_key_id, (COALESCE(scope_model, '')), \"window\")",
+		);
+		if (migrateLegacyLimits) {
+			db.run(
+				"UPDATE api_keys SET limit_window_mode = CASE WHEN limit_window = 'calendar_month' THEN 'calendar' ELSE 'rolling' END WHERE limit_usd > 0",
+			);
+			db.run(`INSERT OR IGNORE INTO api_key_limits (id, api_key_id, scope_model, "window", limit_usd, enforce, created_at, updated_at)
+            SELECT 'legacy-' || id, id, NULL, CASE WHEN limit_window = 'rolling_7d' THEN 'week' ELSE 'month' END, limit_usd,
+              CASE WHEN limit_enforce = 'warn' THEN 'warn' ELSE 'block' END, created_at, created_at
+            FROM api_keys WHERE limit_usd > 0`);
+		}
+		if (!requestLimitColumns.includes("spend_recorded_at"))
+			db.run("ALTER TABLE requests ADD COLUMN spend_recorded_at INTEGER");
+		// Reset only the budget accounting boundary; request history stays intact.
+		for (const [column, type] of [
+			["spend_reset_at", "INTEGER"],
+			["spend_reset_by", "TEXT"],
+		])
+			if (!limitV2Columns.includes(column))
+				db.run(`ALTER TABLE api_keys ADD COLUMN ${column} ${type}`);
 	});
 
 	// Execute the migration transaction

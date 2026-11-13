@@ -104,14 +104,11 @@ export type RateLimitReason =
 	 *  the time this is detected the response has typically already been passed
 	 *  through to the client. */
 	| "extra_usage_exhausted"
-	/** Anthropic 429 that reports no rate-limit window at all — `x-should-retry:
-	 *  true` and not a single `anthropic-ratelimit-*` / `x-ratelimit-*` header or
-	 *  `retry-after`. Live measurement showed this to be request-scoped rather
-	 *  than account-wide: the same account served 200s seconds either side of the
-	 *  rejection on the same model, while every other account rejected the same
-	 *  request identically, and retries spanning 11s never once cleared it. The
-	 *  account is NOT benched — the request fails over and the account stays in
-	 *  rotation. */
+	/** Anthropic 429 without a quota window (`x-should-retry: true` and no
+	 *  `anthropic-ratelimit-*`, `x-ratelimit-*` or `retry-after` metadata).
+	 *  The rejected (account, upstream model) pair receives a short adaptive
+	 *  cooldown and fails over. Other models stay eligible on the account;
+	 *  account-wide rate-limit fields and the account streak are untouched. */
 	| "windowless_429"
 	/** Anthropic 403 `permission_error` — the account's ORGANIZATION forbids the
 	 *  request (OAuth disabled org-wide, Claude Code subscription access turned
@@ -382,6 +379,7 @@ export interface AccountRow {
 	cross_region_mode?: string | null; // Bedrock cross-region inference mode
 	model_fallbacks?: string | null; // JSON string for model family fallback mappings
 	billing_type?: string | null; // Per-account billing override
+	plan_monthly_usd?: number | null; // Actual monthly price of the account's subscription in USD; NULL = unknown / not a paid plan
 	pause_reason?: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
 	refresh_token_issued_at?: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
 	last_manual_reauth_at?: number | null; // Timestamp of the last MANUAL reauthentication (CLI --reauthenticate or dashboard OAuth callback); NOT updated by automatic token refresh
@@ -432,6 +430,7 @@ export interface Account {
 	cross_region_mode: string | null; // Bedrock cross-region inference mode
 	model_fallbacks: string | null; // JSON string for model family fallback mappings
 	billing_type: string | null;
+	plan_monthly_usd: number | null; // Actual monthly price of the account's subscription in USD; null = unknown / not a paid plan
 	pause_reason: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
 	refresh_token_issued_at: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
 	last_manual_reauth_at: number | null; // Timestamp of the last MANUAL reauthentication; NOT updated by automatic token refresh
@@ -498,6 +497,7 @@ export interface AccountResponse {
 	crossRegionMode?: string | null; // Cross-region inference mode for Bedrock accounts
 	modelFallbacks?: { [key: string]: string } | null;
 	billingType?: string | null;
+	planMonthlyUsd?: number | null; // Actual monthly subscription price in USD; null = unset
 	sessionStats: SessionStats | null;
 	isPrimary: boolean; // True if this is the account the load balancer would pick next
 	lastManualReauthAt: number | null;
@@ -606,6 +606,14 @@ function toNumOrNull(v: unknown): number | null {
 	return Number.isFinite(n) && n !== 0 ? n : v != null && v !== 0 ? n : null;
 }
 
+// `toNumOrNull` collapses 0 to null, which is wrong for a price: $0/month is a
+// real answer (a free plan) and has to round-trip distinctly from "unset".
+function toPriceOrNull(v: unknown): number | null {
+	if (v == null) return null;
+	const n = Number(v);
+	return Number.isFinite(n) ? n : null;
+}
+
 // Type mappers
 export function toAccount(row: AccountRow): Account {
 	return {
@@ -648,6 +656,7 @@ export function toAccount(row: AccountRow): Account {
 		cross_region_mode: row.cross_region_mode || null,
 		model_fallbacks: row.model_fallbacks || null,
 		billing_type: row.billing_type || null,
+		plan_monthly_usd: toPriceOrNull(row.plan_monthly_usd),
 		pause_reason: row.pause_reason || null,
 		refresh_token_issued_at: toNumOrNull(row.refresh_token_issued_at),
 		last_manual_reauth_at: toNumOrNull(row.last_manual_reauth_at),
@@ -765,6 +774,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		crossRegionMode: account.cross_region_mode,
 		modelFallbacks,
 		billingType: account.billing_type,
+		planMonthlyUsd: account.plan_monthly_usd,
 		sessionStats: null,
 		isPrimary: false,
 		lastManualReauthAt: account.last_manual_reauth_at,

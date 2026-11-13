@@ -28,10 +28,13 @@ for (const envPath of possibleEnvPaths) {
 }
 
 import {
+	type ApiKeyOptions,
 	addAccount,
 	analyzePerformance,
 	clearRequestHistory,
 	compactDatabase,
+	configureApiKey,
+	configureCostTracking,
 	deleteApiKey,
 	disableApiKey,
 	enableApiKey,
@@ -43,16 +46,23 @@ import {
 	getApiKeyStats,
 	handleRepairCommand,
 	listApiKeys,
+	parseApiKeyAllowList,
+	parseApiKeyLimit,
+	parseApiKeyLimitMode,
+	parseApiKeyRouting,
+	parseCostTrackingValue,
 	parseNightWindowValue,
 	pauseAccount,
 	reauthenticateAccount,
 	removeAccount,
 	resetAllStats,
+	resetApiKeySpend,
 	resumeAccount,
 	runDoctor,
 	setAccountNightWindow,
 	setAccountPriority,
 	setUsagePauseThresholds,
+	validateApiKeyOptions,
 } from "@better-ccflare/cli-commands";
 import { Config } from "@better-ccflare/config";
 import {
@@ -71,6 +81,7 @@ import { parseBedrockConfig } from "@better-ccflare/providers";
 import startServer from "@better-ccflare/server";
 
 interface ParsedArgs {
+	costTracking: string | null;
 	version: boolean;
 	help: boolean;
 	serve: boolean;
@@ -120,6 +131,9 @@ interface ParsedArgs {
 	getModel: boolean;
 	setModel: string | null;
 	generateApiKey: string | null;
+	updateApiKey: string | null;
+	resetSpend: string | null;
+	apiKeyOptions: ApiKeyOptions;
 	listApiKeys: boolean;
 	disableApiKey: string | null;
 	enableApiKey: string | null;
@@ -451,6 +465,7 @@ Legend:
  */
 function parseArgs(args: string[]): ParsedArgs {
 	const parsed: ParsedArgs = {
+		costTracking: null,
 		version: false,
 		help: false,
 		serve: false, // Keep for backwards compatibility but treat as no-op
@@ -483,6 +498,9 @@ function parseArgs(args: string[]): ParsedArgs {
 		getModel: false,
 		setModel: null,
 		generateApiKey: null,
+		updateApiKey: null,
+		resetSpend: null,
+		apiKeyOptions: {},
 		listApiKeys: false,
 		disableApiKey: null,
 		enableApiKey: null,
@@ -496,6 +514,10 @@ function parseArgs(args: string[]): ParsedArgs {
 		const arg = args[i];
 
 		switch (arg) {
+			case "--cost-tracking":
+				parseCostTrackingValue(args[i + 1]);
+				parsed.costTracking = args[++i];
+				break;
 			case "--version":
 			case "-v":
 				parsed.version = true;
@@ -852,8 +874,54 @@ function parseArgs(args: string[]): ParsedArgs {
 			case "--admin":
 				parsed.admin = true;
 				break;
+			case "--update-api-key":
+			case "--allow-models":
+			case "--allow-accounts":
+			case "--allow-providers":
+			case "--limit":
+			case "--limit-mode":
+			case "--routing": {
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					throw new Error(`${arg} requires a value`);
+				}
+				const value = args[++i];
+				if (arg === "--update-api-key") parsed.updateApiKey = value;
+				else if (arg === "--limit") {
+					parsed.apiKeyOptions.limits ??= [];
+					parsed.apiKeyOptions.limits.push(parseApiKeyLimit(value));
+				} else if (arg === "--limit-mode") {
+					parsed.apiKeyOptions.limitMode = parseApiKeyLimitMode(value);
+				} else if (arg === "--routing") {
+					const [family, comboId] = parseApiKeyRouting(value);
+					parsed.apiKeyOptions.familyComboOverrides ??= {};
+					parsed.apiKeyOptions.familyComboOverrides[family] = comboId;
+				} else {
+					const field =
+						arg === "--allow-models"
+							? "allowedModels"
+							: arg === "--allow-accounts"
+								? "allowedAccounts"
+								: "allowedProviders";
+					parsed.apiKeyOptions.restrictions ??= {};
+					parsed.apiKeyOptions.restrictions[field] =
+						parseApiKeyAllowList(value);
+				}
+				break;
+			}
+			case "--clear-limits":
+				parsed.apiKeyOptions.limits = [];
+				break;
+			case "--clear-routing":
+				parsed.apiKeyOptions.familyComboOverrides = null;
+				break;
 			case "--list-api-keys":
 				parsed.listApiKeys = true;
+				break;
+			case "--reset-spend":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					throw new Error("--reset-spend requires an API key name or ID");
+				}
+				parsed.resetSpend = args[++i];
 				break;
 			case "--disable-api-key":
 				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
@@ -902,6 +970,17 @@ function parseArgs(args: string[]): ParsedArgs {
 async function main() {
 	const args = process.argv.slice(2);
 	const parsed = parseArgs(args);
+	if (parsed.costTracking !== null) {
+		const result = await configureCostTracking(
+			new Config(),
+			parsed.costTracking,
+		);
+		console.log(
+			`Cost tracking ${result.enabled ? "enabled" : "disabled"}. ${result.notified ? "Local server updated." : "Saved; applies when the local server next starts."}`,
+		);
+		fastExit(0);
+		return;
+	}
 
 	// Handle version - check before any expensive initializations
 	if (parsed.version) {
@@ -930,6 +1009,7 @@ async function main() {
 Usage: better-ccflare [options]
 
 Options:
+	--cost-tracking <on|off> Persist cost tracking and notify the local server
   --version, -v       Show version number
   --serve              Start API server with dashboard
   --port <number>      Server port (default: 8080, or PORT env var)
@@ -981,7 +1061,17 @@ Options:
 API Key Management:
   --generate-api-key <name>  Generate a new API key
     --admin                  Grant admin privileges (dashboard access)
+  --update-api-key <name>    Update settings on an existing key
+    --allow-models <list>     Comma-separated model IDs/families; '*' = any, none = deny all
+    --allow-accounts <list>   Comma-separated account IDs; '*' = any, none = deny all
+    --allow-providers <list>  Comma-separated providers; '*' = any, none = deny all
+    --limit <spec>            Repeat: window=day,usd=5[,model=opus][,warn]; replaces limits
+    --limit-mode <mode>       calendar (Europe/Dublin, default) or rolling
+    --clear-limits            Remove every limit
+    --routing <family=id>     Repeat: family=combo-id; replaces routing overrides
+    --clear-routing           Use global routing assignments
   --list-api-keys            List all API keys
+  --reset-spend <key>        Reset spend against a key's limits; keep limits and history
   --disable-api-key <name>   Disable an API key
   --enable-api-key <name>    Enable a disabled API key
   --delete-api-key <name>    Delete an API key permanently
@@ -1002,6 +1092,8 @@ Examples:
   better-ccflare --stats                # View stats
   better-ccflare --generate-api-key "My App"  # Generate API-only key
   better-ccflare --generate-api-key "Admin Key" --admin  # Generate admin key
+  better-ccflare --generate-api-key app --allow-models opus --limit window=day,usd=5 --limit-mode calendar
+  better-ccflare --update-api-key app --routing opus=combo-id
   better-ccflare --list-api-keys               # List all API keys
   better-ccflare --disable-api-key "My App"    # Disable an API key
 `);
@@ -1048,6 +1140,18 @@ Examples:
 	}
 
 	// Initialize DI container and services for commands that need them
+	if (
+		Object.keys(parsed.apiKeyOptions).length > 0 &&
+		!parsed.generateApiKey &&
+		!parsed.updateApiKey
+	) {
+		throw new Error(
+			"API key settings require --generate-api-key or --update-api-key",
+		);
+	}
+	if (parsed.generateApiKey && parsed.updateApiKey) {
+		throw new Error("Choose --generate-api-key or --update-api-key");
+	}
 	const cliConfig = new Config();
 	container.registerInstance(SERVICE_KEYS.Config, cliConfig);
 	container.registerInstance(SERVICE_KEYS.Logger, new Logger("CLI"));
@@ -1462,11 +1566,18 @@ Examples:
 	// API Key management commands
 	if (parsed.generateApiKey) {
 		try {
+			await validateApiKeyOptions(dbOps, parsed.apiKeyOptions);
 			// Default to admin if this is the first key, otherwise api-only
 			const defaultRole =
 				(await dbOps.countActiveApiKeys()) === 0 ? "admin" : "api-only";
 			const role = parsed.admin ? ("admin" as const) : defaultRole;
-			const result = await generateApiKey(dbOps, parsed.generateApiKey, role);
+			const result = await generateApiKey(
+				dbOps,
+				parsed.generateApiKey,
+				role,
+				parsed.apiKeyOptions.restrictions,
+			);
+			await configureApiKey(dbOps, result.id, parsed.apiKeyOptions);
 			console.log(formatApiKeyGenerationResult(result));
 			await exitGracefully(0);
 		} catch (error: unknown) {
@@ -1477,15 +1588,26 @@ Examples:
 		}
 	}
 
+	if (parsed.updateApiKey) {
+		await configureApiKey(dbOps, parsed.updateApiKey, parsed.apiKeyOptions);
+		console.log(`✅ API key '${parsed.updateApiKey}' updated successfully`);
+		await exitGracefully(0);
+	}
+
 	if (parsed.listApiKeys) {
 		const apiKeys = await listApiKeys(dbOps);
 		if (apiKeys.length === 0) {
 			console.log("No API keys configured");
 		} else {
 			console.log("\nAPI Keys:");
-			apiKeys.forEach((apiKey) => {
-				console.log(formatApiKeyForDisplay(apiKey));
-			});
+			for (const apiKey of apiKeys) {
+				console.log(
+					formatApiKeyForDisplay(
+						apiKey,
+						await dbOps.getApiKeyLimits(apiKey.id),
+					),
+				);
+			}
 
 			// Show statistics
 			const stats = await getApiKeyStats(dbOps);
@@ -1495,6 +1617,29 @@ Examples:
 			console.log(`  Inactive: ${stats.inactive}`);
 		}
 		await exitGracefully(0);
+	}
+
+	if (parsed.resetSpend) {
+		try {
+			const result = await resetApiKeySpend(
+				dbOps,
+				parsed.resetSpend,
+				cliConfig,
+			);
+			console.log(
+				`✅ Spend reset for API key '${parsed.resetSpend}'. Limits and usage history kept.`,
+			);
+			if (!result.notified)
+				console.log(
+					"No running local server accepted the reset notification; the persisted reset will apply when it starts.",
+				);
+			await exitGracefully(0);
+		} catch (error: unknown) {
+			console.error(
+				`❌ Failed to reset API key spend: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			await exitGracefully(1);
+		}
 	}
 
 	if (parsed.disableApiKey) {

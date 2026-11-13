@@ -1,8 +1,12 @@
+import type { Config } from "@better-ccflare/config";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	type ApiKeyGenerationResult,
+	type ApiKeyLimitInput,
 	type ApiKeyResponse,
+	type ApiKeyRestrictions,
 	type ApiKeyRole,
+	type ApiKeySpendLimit,
 	NodeCryptoUtils,
 	toApiKeyResponse,
 } from "@better-ccflare/types";
@@ -14,6 +18,8 @@ export async function generateApiKey(
 	dbOps: DatabaseOperations,
 	name: string,
 	role: ApiKeyRole = "api-only",
+	restrictions?: Partial<ApiKeyRestrictions>,
+	spendLimit?: ApiKeySpendLimit | null,
 ): Promise<ApiKeyGenerationResult> {
 	// Validate name
 	if (!name || name.trim().length === 0) {
@@ -59,6 +65,8 @@ export async function generateApiKey(
 		createdAt: now,
 		isActive: true,
 		role,
+		restrictions,
+		spendLimit,
 	});
 
 	return {
@@ -279,6 +287,158 @@ export async function updateApiKeyRole(
 }
 
 /**
+ * Replace an API key's account / model / provider restrictions.
+ *
+ * Accepts an id or a name, like the other admin operations reached through
+ * `/api/api-keys/:idOrName/...`.
+ *
+ * No lockout guard here, deliberately, unlike `updateApiKeyRole`: these
+ * restrictions only narrow which upstream accounts and models a key may route
+ * to. Dashboard access is decided by `role` alone, so restricting a key — even
+ * the caller's own, even the last admin key — cannot lock anyone out.
+ */
+export async function updateApiKeyRestrictions(
+	dbOps: DatabaseOperations,
+	idOrName: string,
+	restrictions: ApiKeyRestrictions,
+): Promise<boolean> {
+	const apiKey =
+		(await dbOps.getApiKey(idOrName)) ??
+		(await dbOps.getApiKeyByName(idOrName));
+	if (!apiKey) {
+		throw new Error("API key not found");
+	}
+
+	const success = await dbOps.updateApiKeyRestrictions(apiKey.id, restrictions);
+	if (!success) {
+		throw new Error("Failed to update API key restrictions");
+	}
+
+	return true;
+}
+
+/**
+ * Replace an API key's spend limit. `null` clears it.
+ *
+ * Accepts an id or a name, like the other admin operations reached through
+ * `/api/api-keys/:idOrName/...`. No lockout guard, for the same reason
+ * `updateApiKeyRestrictions` has none: dashboard access is decided by `role`
+ * alone, so a budget — even a caller's own, even the last admin key's —
+ * cannot lock anyone out of the dashboard.
+ *
+ * Returns the key's id so the caller can drop its cached spend total: the
+ * in-memory counter is keyed by id, and leaving a stale entry behind would
+ * keep measuring a window the operator has just replaced.
+ */
+export async function updateApiKeySpendLimit(
+	dbOps: DatabaseOperations,
+	idOrName: string,
+	spendLimit: ApiKeySpendLimit | null,
+): Promise<string> {
+	const apiKey =
+		(await dbOps.getApiKey(idOrName)) ??
+		(await dbOps.getApiKeyByName(idOrName));
+	if (!apiKey) {
+		throw new Error("API key not found");
+	}
+
+	const success = await dbOps.updateApiKeySpendLimit(apiKey.id, spendLimit);
+	if (!success) {
+		throw new Error("Failed to update API key spend limit");
+	}
+
+	return apiKey.id;
+}
+
+/** Start limit spending again without changing limits or deleting usage history. */
+export async function resetApiKeySpend(
+	dbOps: DatabaseOperations,
+	idOrName: string,
+	config: Config,
+): Promise<{ id: string; resetAt: number; notified: boolean }> {
+	const key =
+		(await dbOps.getApiKey(idOrName)) ??
+		(await dbOps.getApiKeyByName(idOrName));
+	if (!key) throw new Error(`API key '${idOrName}' not found`);
+	const resetAt = Date.now();
+	if (!(await dbOps.resetApiKeySpend(key.id, resetAt, "CLI"))) {
+		throw new Error("Failed to reset API key spend");
+	}
+
+	// Reuse the account-command local-control channel so a running server drops
+	// old spend immediately. Offline servers rebuild from the persisted reset.
+	let notified = false;
+	try {
+		const secret = config.getLocalControlSecret();
+		const ports = [...new Set([config.getRuntime().port || 8080, 8080, 8081])];
+		await Promise.all(
+			ports.map(async (port) => {
+				try {
+					const response = await fetch(
+						`http://localhost:${port}/api/api-keys/${encodeURIComponent(key.id)}/reload-spend`,
+						{
+							method: "POST",
+							headers: { "x-better-ccflare-local-control-secret": secret },
+							signal: AbortSignal.timeout(1000),
+						},
+					);
+					if (response.ok) notified = true;
+					await response.body?.cancel();
+				} catch {
+					// Best-effort only: the persisted reset survives an offline server.
+				}
+			}),
+		);
+	} catch {
+		// A notification configuration error must not undo a persisted reset.
+	}
+	return { id: key.id, resetAt, notified };
+}
+
+/**
+ * Describe a key's spend limit in one short line, for CLI summaries.
+ *
+ * "warn only" is said out loud: a limit that never refuses looks identical to
+ * one that does in every other field, and that is the one thing an operator
+ * reading this line most needs to know.
+ */
+export function formatApiKeySpendLimit(apiKey: ApiKeyResponse): string {
+	if (apiKey.limitUsd == null) return "none";
+	const window = apiKey.limitWindow ?? "rolling_30d";
+	const enforce = apiKey.limitEnforce ?? "block";
+	return `$${apiKey.limitUsd} per ${window}${enforce === "warn" ? " (warn only)" : ""}`;
+}
+
+/**
+ * Describe a key's restrictions in one short line, for CLI and dashboard
+ * summaries. `null` reads as unrestricted; `[]` reads as a deny-all, which is
+ * a legitimate but drastic setting and must never look like "unrestricted".
+ */
+export function formatApiKeyRestrictions(apiKey: ApiKeyResponse): string {
+	const parts: string[] = [];
+	const describe = (
+		list: string[] | null,
+		singular: string,
+		plural: string,
+	) => {
+		if (list === null) return;
+		if (list.length === 0) {
+			parts.push(`no ${plural} (denies all requests)`);
+			return;
+		}
+		parts.push(
+			list.length === 1
+				? `1 ${singular}: ${list[0]}`
+				: `${list.length} ${plural}`,
+		);
+	};
+	describe(apiKey.allowedAccounts, "account", "accounts");
+	describe(apiKey.allowedModels, "model", "models");
+	describe(apiKey.allowedProviders, "provider", "providers");
+	return parts.length === 0 ? "unrestricted" : parts.join(", ");
+}
+
+/**
  * Get API key statistics
  */
 export async function getApiKeyStats(dbOps: DatabaseOperations): Promise<{
@@ -300,16 +460,38 @@ export async function getApiKeyStats(dbOps: DatabaseOperations): Promise<{
 /**
  * Format API key for display in CLI
  */
-export function formatApiKeyForDisplay(apiKey: ApiKeyResponse): string {
+export function formatApiKeyForDisplay(
+	apiKey: ApiKeyResponse,
+	limits?: ApiKeyLimitInput[],
+): string {
 	const status = apiKey.isActive ? "Active" : "Disabled";
 	const role = apiKey.role === "admin" ? "Admin" : "API-only";
 	const lastUsed = apiKey.lastUsed
 		? new Date(apiKey.lastUsed).toLocaleDateString()
 		: "Never";
+	const limitSummary = limits
+		? limits.length === 0
+			? "none"
+			: limits
+					.map(
+						(limit) =>
+							`$${limit.limitUsd}/${limit.window} (${limit.scopeModel ?? "whole key"}, ${limit.enforce})`,
+					)
+					.join("; ")
+		: formatApiKeySpendLimit(apiKey);
 
 	return `  ${apiKey.name} (${apiKey.prefixLast8})
     Status: ${status}
     Role: ${role}
+    Restrictions: ${formatApiKeyRestrictions(apiKey)}
+    Spend limits (${apiKey.limitWindowMode ?? "calendar"}): ${limitSummary}
+    Routing: ${
+			apiKey.familyComboOverrides
+				? Object.entries(apiKey.familyComboOverrides)
+						.map(([family, combo]) => `${family}=${combo}`)
+						.join(", ")
+				: "global assignments"
+		}
     Created: ${new Date(apiKey.createdAt).toLocaleDateString()}
     Last Used: ${lastUsed}
     Usage Count: ${apiKey.usageCount}`;

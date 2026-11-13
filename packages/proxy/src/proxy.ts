@@ -1,8 +1,18 @@
 import {
 	type AccountUsageSnapshot,
+	getCostTrackingEpoch,
+	getModelFamily,
+	getModelRates,
+	isCostTrackingEnabled,
+	LATEST_FABLE_MODEL,
+	LATEST_HAIKU_MODEL,
+	LATEST_OPUS_MODEL,
+	LATEST_SONNET_MODEL,
 	requestEvents,
 	runForceAccountModelExempt,
 	ServiceUnavailableError,
+	type SpendLimitExceededEvt,
+	spendLimitEvents,
 	splitModelRouting,
 	trackClientVersion,
 } from "@better-ccflare/core";
@@ -16,7 +26,13 @@ import {
 	type RequestObservation,
 	usageCache,
 } from "@better-ccflare/providers";
-import type { Account } from "@better-ccflare/types";
+import type {
+	Account,
+	ApiKeyLimit,
+	ApiKeyLimitWindowMode,
+	ApiKeyRestrictions,
+	ApiKeySpendLimit,
+} from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
 import {
 	createModelFamilyExhaustedResponse,
@@ -25,6 +41,8 @@ import {
 	createUsageThrottledResponse,
 	ERROR_MESSAGES,
 	getAccountUsageThrottleUntil,
+	getApiKeyRestrictionDenial,
+	getApiKeySpendCounter,
 	getComboSlotInfo,
 	getDeferredCandidates,
 	getModelFamilyExhaustionInfo,
@@ -32,6 +50,7 @@ import {
 	isComboSessionFallbackDisabled,
 	isForceAccountModelEnabled,
 	isInternalProbe,
+	isModelAllowedForApiKey,
 	isRefreshTokenLikelyExpired,
 	isVisionUnsupported,
 	markTrustedNativeResponses,
@@ -45,10 +64,14 @@ import {
 	recordXaiAffinitySuccess,
 	requestCarriesImageContent,
 	resolveEffectiveModel,
+	restrictsModels,
+	type SpendSnapshot,
 	selectAccountsForRequest,
 	setXaiConvId,
+	tryGetApiKeySpendCounter,
 	validateProviderPath,
 } from "./handlers";
+import { setApiKeyRoutedSpendCheck } from "./handlers/api-key-spend-routing";
 import {
 	completeRateLimitProbe,
 	getRateLimitProbeAdmission,
@@ -122,18 +145,211 @@ function createForceAccountModelResponse(model: string): Response {
 	);
 }
 
+/**
+ * The Anthropic-compatible envelope for a refusal caused by an API key's own
+ * restrictions.
+ *
+ * 403 with `type: "permission_error"`: that is the type the Anthropic Messages
+ * API uses for 403, and these responses go straight back to Claude Code
+ * clients, which read the envelope. (The repo's other 403, at
+ * apps/server/src/server.ts, says `authorization_error` — but that one sits on
+ * the management/authorization path guarding dashboard endpoints by key role,
+ * not on `/v1/messages`, where the promise is to look like Anthropic.)
+ *
+ * 403 and not 503: nothing about this is temporary and no retry will change it,
+ * so it must not carry the retry semantics the capacity refusals carry.
+ */
+function createApiKeyRestrictionResponse(
+	code: "api_key_model_restricted" | "api_key_account_restricted",
+	message: string,
+	extra: Record<string, unknown> = {},
+): Response {
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "permission_error",
+				code,
+				message,
+				...extra,
+			},
+		}),
+		{
+			status: 403,
+			headers: { "Content-Type": "application/json" },
+		},
+	);
+}
+
+// Same numbers, same meaning, as handlers/model-capacity.ts's
+// DEFAULT_RETRY_AFTER_SECONDS / MAX_RETRY_AFTER_SECONDS, which are module-
+// private there. Re-declared rather than exported across the module boundary
+// so the two refusals can be read side by side; if either moves, both should.
+const SPEND_LIMIT_DEFAULT_RETRY_AFTER_SECONDS = 60;
+const SPEND_LIMIT_MAX_RETRY_AFTER_SECONDS = 3600;
+
+/**
+ * The Anthropic-compatible envelope for a refusal caused by an API key's own
+ * spend limit.
+ *
+ * 429 with `type: "rate_limit_error"`, NOT the 403 `permission_error` its
+ * sibling above uses: a spend limit is a rate that resets, and a client that
+ * waits does eventually get served again — which is exactly what 429 plus
+ * Retry-After tells it. A 403 would tell a client to stop trying forever.
+ *
+ * The clamp on Retry-After is lifted verbatim from
+ * handlers/model-capacity.ts's `createModelFamilyExhaustedResponse`, which
+ * reuses those two constants: at least 1 second, at most an hour, and the
+ * 60-second default when no reset is known. The upper clamp matters here —
+ * a calendar-month window can be four weeks out, and handing a client a
+ * `Retry-After: 2419200` is not a useful instruction.
+ */
+function createApiKeySpendLimitResponse(info: {
+	limitUsd: number;
+	spentUsd: number;
+	reservedUsd?: number;
+	window: string;
+	resetMs: number | null;
+	scopeModel?: string | null;
+	fullRetryAfter?: boolean;
+}): Response {
+	const retryAfterSeconds =
+		info.resetMs != null && info.resetMs > Date.now()
+			? Math.max(
+					1,
+					Math.min(
+						info.fullRetryAfter
+							? 2_147_483_647
+							: SPEND_LIMIT_MAX_RETRY_AFTER_SECONDS,
+						Math.ceil((info.resetMs - Date.now()) / 1000),
+					),
+				)
+			: SPEND_LIMIT_DEFAULT_RETRY_AFTER_SECONDS;
+
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "rate_limit_error",
+				code: "api_key_limit_exceeded",
+				message: `This API key has exceeded its spend limit of $${info.limitUsd} over its ${info.window} window${info.scopeModel ? ` for model scope "${info.scopeModel}"` : " for the whole key"} ($${info.spentUsd.toFixed(4)} spent).`,
+				limit_usd: info.limitUsd,
+				spent_usd: info.spentUsd,
+				reserved_usd: info.reservedUsd ?? 0,
+				window: info.window,
+				scope_model: info.scopeModel ?? null,
+				resets_at:
+					info.resetMs != null ? new Date(info.resetMs).toISOString() : null,
+			},
+		}),
+		{
+			status: 429,
+			headers: {
+				"Content-Type": "application/json",
+				"Retry-After": String(retryAfterSeconds),
+			},
+		},
+	);
+}
+
+function createLimitCheckUnavailableResponse(): Response {
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "service_unavailable_error",
+				code: "api_key_limit_check_unavailable",
+				message: "Spend limits could not be checked. Please retry shortly.",
+			},
+		}),
+		{
+			status: 503,
+			headers: { "Content-Type": "application/json", "Retry-After": "60" },
+		},
+	);
+}
+
+/** Advisory reservation using prompt text, cache boundaries and the route's pricing. */
+async function estimateApiKeyRequestCost(
+	body: RequestJsonBody | null,
+	model: string | null,
+	requestedModel: string | null,
+): Promise<number> {
+	let rates = model ? await getModelRates(model) : null;
+	if (!rates) {
+		const family =
+			getModelFamily(model ?? "") ?? getModelFamily(requestedModel ?? "");
+		const familyModels = {
+			fable: LATEST_FABLE_MODEL,
+			opus: LATEST_OPUS_MODEL,
+			sonnet: LATEST_SONNET_MODEL,
+			haiku: LATEST_HAIKU_MODEL,
+		};
+		if (family) rates = await getModelRates(familyModels[family]);
+	}
+	// There is no image-pricing rule in the catalogue. Binary image data must
+	// never masquerade as text; actual provider usage replaces this estimate.
+	let inputBytes = 0;
+	let cachedBytes = 0;
+	const encoder = new TextEncoder();
+	const visit = (value: unknown): void => {
+		if (typeof value === "string") {
+			inputBytes += encoder.encode(value).byteLength;
+			return;
+		}
+		if (Array.isArray(value)) {
+			for (const item of value) visit(item);
+			return;
+		}
+		if (value == null || typeof value !== "object") return;
+		const block = value as Record<string, unknown>;
+		if (["image", "input_image", "image_url"].includes(String(block.type)))
+			return;
+		for (const [key, item] of Object.entries(block)) {
+			if (key !== "cache_control") visit(item);
+		}
+		// A cache boundary applies to the prompt prefix, including preceding tools
+		// and messages. Text following the last boundary retains the input rate.
+		if (block.cache_control) cachedBytes = inputBytes;
+	};
+	visit(body?.tools);
+	visit(body?.system);
+	visit(body?.messages);
+	if (body?.cache_control) cachedBytes = inputBytes;
+	const inputTokens = Math.ceil((inputBytes - cachedBytes) / 3);
+	const cachedTokens = Math.ceil(cachedBytes / 3);
+	const maxTokens =
+		typeof body?.max_tokens === "number" && Number.isFinite(body.max_tokens)
+			? Math.max(0, body.max_tokens)
+			: 4096;
+	const outputTokens = Math.min(maxTokens, 4096);
+	return (
+		(inputTokens * (rates?.input ?? 0) +
+			cachedTokens * (rates?.cacheRead ?? rates?.input ?? 0) +
+			outputTokens * (rates?.output ?? 0)) /
+		1_000_000
+	);
+}
+
 // ===== USAGE COLLECTOR MANAGEMENT =====
 
 export async function initProxy(
 	getStorePayloads: () => boolean,
 ): Promise<void> {
+	const dbOps = DatabaseFactory.getInstance();
 	await initUsageCollector(
 		getStorePayloads,
 		(summary) => {
 			requestEvents.emit("event", { type: "summary", payload: summary });
 		},
-		DatabaseFactory.getInstance(),
+		dbOps,
 	);
+	// Seed one spend total per key that has a limit, so the very first request
+	// after a restart is checked against the real spend rather than zero. Keys
+	// with no limit are not listed and get no counter. Failures inside seedAll
+	// are logged and swallowed — a key that could not be seeded here seeds
+	// lazily (and synchronously) the first time it is checked.
+	await getApiKeySpendCounter(dbOps).seedAll();
 }
 
 export async function drainUsageCollector(): Promise<void> {
@@ -190,7 +406,28 @@ export function handleProxy(
 	ctx: ProxyContext,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
-	options?: { trustedNativeResponses?: boolean },
+	options?: {
+		trustedNativeResponses?: boolean;
+		/** Original Responses model supplied by the trusted translator, never a client header. */
+		trustedRequestedModel?: string;
+		/**
+		 * The authenticated API key's account / model / provider allowlists,
+		 * resolved by the caller (apps/server/src/server.ts) from the key
+		 * record it already holds, so enforcement costs no extra DB read on the
+		 * hot path. `null`/absent means unrestricted — which is also what
+		 * zero-keys mode produces, since no key record exists there at all.
+		 */
+		restrictions?: ApiKeyRestrictions | null;
+		/**
+		 * The authenticated API key's spend limit, resolved by the caller from
+		 * the same key record for the same reason. `null`/absent means no limit
+		 * — which is also what zero-keys mode produces, since there is no key
+		 * there at all and so nothing to charge a budget to.
+		 */
+		spendLimit?: ApiKeySpendLimit | null;
+		limitWindowMode?: ApiKeyLimitWindowMode;
+		familyComboOverrides?: Record<string, string> | null;
+	},
 ): Promise<Response> {
 	let observation: RequestObservation | undefined;
 	try {
@@ -209,6 +446,20 @@ export function handleProxy(
 	} catch {
 		log.warn("Request observation failed", { capture_gap: true });
 	}
+	const reservationId = crypto.randomUUID();
+	const reservationState = { hasLimits: false };
+	const release = () => {
+		tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
+		req.signal.removeEventListener("abort", release);
+	};
+	const finish = () => {
+		// EOF can precede async usage pricing. Keep its estimate until real cost replaces it.
+		if (!tryGetUsageCollector()?.hasPendingRequest?.(reservationId)) {
+			tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
+		}
+		req.signal.removeEventListener("abort", release);
+	};
+	req.signal.addEventListener("abort", release, { once: true });
 	const run = () =>
 		handleProxyRequest(
 			req,
@@ -218,26 +469,69 @@ export function handleProxy(
 			apiKeyName,
 			options,
 			observation,
+			reservationId,
+			reservationState,
 		);
 	const result = isInternalProbe(req.headers, ctx)
 		? runForceAccountModelExempt(run)
 		: run();
-	if (!observation) return result;
-	return result.then(
+	const observed = observation
+		? result.then(
+				(response) => {
+					try {
+						observation.response(response);
+					} catch {
+						log.warn("Request observation failed", { capture_gap: true });
+					}
+					return response;
+				},
+				(error) => {
+					try {
+						observation.error(error);
+					} catch {
+						log.warn("Request observation failed", { capture_gap: true });
+					}
+					throw error;
+				},
+			)
+		: result;
+	return observed.then(
 		(response) => {
-			try {
-				observation.response(response);
-			} catch {
-				log.warn("Request observation failed", { capture_gap: true });
+			if (!reservationState.hasLimits) {
+				release();
+				return response;
 			}
-			return response;
+			if (response.status >= 400 || !response.body) {
+				finish();
+				return response;
+			}
+			const reader = response.body.getReader();
+			const body = new ReadableStream<Uint8Array>({
+				async pull(controller) {
+					try {
+						const next = await reader.read();
+						if (next.done) {
+							finish();
+							controller.close();
+						} else controller.enqueue(next.value);
+					} catch (error) {
+						release();
+						controller.error(error);
+					}
+				},
+				async cancel(reason) {
+					release();
+					await reader.cancel(reason);
+				},
+			});
+			return new Response(body, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: response.headers,
+			});
 		},
 		(error) => {
-			try {
-				observation.error(error);
-			} catch {
-				log.warn("Request observation failed", { capture_gap: true });
-			}
+			release();
 			throw error;
 		},
 	);
@@ -249,9 +543,27 @@ async function handleProxyRequest(
 	ctx: ProxyContext,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
-	options?: { trustedNativeResponses?: boolean },
+	options?: {
+		trustedNativeResponses?: boolean;
+		/** Original Responses model supplied by the trusted translator, never a client header. */
+		trustedRequestedModel?: string;
+		restrictions?: ApiKeyRestrictions | null;
+		spendLimit?: ApiKeySpendLimit | null;
+		limitWindowMode?: ApiKeyLimitWindowMode;
+		familyComboOverrides?: Record<string, string> | null;
+	},
 	observation?: RequestObservation,
+	reservationId = crypto.randomUUID(),
+	reservationState = { hasLimits: false },
 ): Promise<Response> {
+	const costTrackingEpoch =
+		(ctx.config.getCostTrackingEnabled?.() ?? isCostTrackingEnabled())
+			? getCostTrackingEpoch()
+			: null;
+	const trackingEnabledForRequest = () =>
+		(ctx.config.getCostTrackingEnabled?.() ?? true) &&
+		costTrackingEpoch !== null &&
+		costTrackingEpoch === getCostTrackingEpoch();
 	// 0. Silently ignore Claude Code internal endpoints (non-critical, not supported by all providers)
 	if (
 		url.pathname === "/api/event_logging/batch" ||
@@ -281,9 +593,198 @@ async function handleProxyRequest(
 	// Extract model from request body for family detection (used by combo routing)
 	// and reuse parsed body for /v1/messages validation (consolidate parses)
 	const parsedBody = requestBodyContext.getParsedJson();
-	const requestModel = requestBodyContext.getModel();
+	const routingModel = requestBodyContext.getModel();
+	const requestModel =
+		options?.trustedNativeResponses === true
+			? (options.trustedRequestedModel ?? routingModel)
+			: routingModel;
 	const { project, projectAttributionSource } =
 		extractProjectAttributionFromRequest(req.headers, parsedBody);
+
+	// Seam 5 — per-API-key model allowlist, EVALUATED HERE.
+	//
+	// This is the last point at which the model is the one the client actually
+	// asked for: the agent interceptor below rewrites it (agent preference),
+	// and combo slots override it again during selection. Enforcing on the
+	// client-requested model is the whole promise — it is the only thing a key
+	// holder can reason about, and a key restricted to "haiku" must not be
+	// denied because an agent preference silently upgraded the request to opus.
+	// Server-side rewrites are explicitly OUT OF SCOPE of this restriction.
+	//
+	// Internal probes are exempt: the schedulers send a compiled-in list of
+	// Claude model ids with no API key at all, and a probe answered with a
+	// refusal counts as a refresh failure — five of those pause a healthy
+	// account. `isInternalProbe` verifies the process-local probe secret.
+	// (Sibling of the exemptions in usage throttling and the forced-account
+	// model check.)
+	//
+	// The refusal itself is EMITTED further down, at the first point where
+	// `returnRefusal` is in scope: a refusal that vanishes without being
+	// recorded would leave the dashboard showing a quiet, healthy proxy while
+	// clients get 403s. Nothing between here and there contacts an upstream
+	// (the local web_search interception is skipped for a denied request).
+	const keyRestrictions =
+		options?.restrictions && !isInternalProbe(req.headers, ctx)
+			? options.restrictions
+			: null;
+	const modelRestrictionDenied =
+		restrictsModels(keyRestrictions) &&
+		!isModelAllowedForApiKey(requestModel, keyRestrictions);
+
+	// Per-API-key spend limit — EVALUATED HERE, for the same reasons the model
+	// allowlist above is: this is before any upstream contact and before any
+	// routing work, and the refusal is EMITTED further down where
+	// `returnRefusal` is in scope so it is recorded as a request.
+	//
+	// The same two carve-outs apply, verbatim:
+	//   - internal probes are exempt (`keyRestrictions` is gated on
+	//     `isInternalProbe` above; this reuses the same gate). A probe carries
+	//     no API key, and refusing one counts as a refresh failure — five of
+	//     those pause a healthy account.
+	//   - zero-key mode is a no-op: with no active keys there is no auth, no
+	//     key record and no `spendLimit`, so this is `null` and nothing runs.
+	//
+	// This awaits the counter, which awaits the database ONLY on the first
+	// call for a key (see SPEND_RESYNC_TTL_MS). Every later call is answered
+	// from memory with any refresh fired into the background.
+	const keySpendLimit =
+		trackingEnabledForRequest() &&
+		options?.spendLimit &&
+		!isInternalProbe(req.headers, ctx)
+			? options.spendLimit
+			: null;
+	let spendSnapshot: SpendSnapshot | null = null;
+	if (
+		keySpendLimit &&
+		apiKeyId &&
+		typeof ctx.dbOps.getApiKeyLimits !== "function"
+	) {
+		try {
+			spendSnapshot = await getApiKeySpendCounter(ctx.dbOps).getSnapshot(
+				apiKeyId,
+				keySpendLimit,
+			);
+		} catch (error) {
+			// Fail OPEN on a counter error, unlike the restriction checks which
+			// fail closed. A spend limit is a budget control, not an access
+			// control: a database hiccup must not turn into a proxy-wide outage
+			// for every key that has a budget. The next request re-tries the
+			// sync, and the overshoot is bounded by how long the failure lasts.
+			log.warn(
+				`Spend limit check failed for key ${apiKeyName ?? apiKeyId}; allowing the request: ${(error as Error).message}`,
+			);
+		}
+	}
+	let blockingLimit: { limit: ApiKeyLimit; snapshot: SpendSnapshot } | null =
+		null;
+	let limitCheckUnavailable = false;
+	let keyLimits: ApiKeyLimit[] = [];
+	const warnedLimitIds = new Set<string>();
+	const selectBlockingLimit = (
+		checks: Array<{ limit: ApiKeyLimit; snapshot: SpendSnapshot }>,
+	) => {
+		let latest: { limit: ApiKeyLimit; snapshot: SpendSnapshot } | null = null;
+		for (const check of checks) {
+			if (!check.snapshot.exceeded) continue;
+			if (check.limit.enforce === "block") {
+				if (
+					!latest ||
+					(check.snapshot.resetMs ?? Infinity) >
+						(latest.snapshot.resetMs ?? Infinity)
+				)
+					latest = check;
+			} else if (!warnedLimitIds.has(check.limit.id)) {
+				warnedLimitIds.add(check.limit.id);
+				log.warn(
+					`API key spend limit exceeded (warn only): key ${apiKeyName ?? apiKeyId}, scope ${check.limit.scopeModel ?? "whole key"}, ${check.limit.window}`,
+				);
+				spendLimitEvents.emit("event", {
+					limitId: check.limit.id,
+					apiKeyId: apiKeyId ?? "",
+					apiKeyName: apiKeyName ?? null,
+					spentUsd: check.snapshot.spentUsd,
+					limitUsd: check.limit.limitUsd,
+					window: `${check.limit.window}${check.limit.scopeModel ? ` (${check.limit.scopeModel})` : ""}`,
+				} satisfies SpendLimitExceededEvt);
+			}
+		}
+		return latest;
+	};
+	const checkModelSpend = async (servedModel: string | null) => {
+		if (!trackingEnabledForRequest()) {
+			tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
+			return null;
+		}
+		if (!apiKeyId || !keyLimits.length) return null;
+		const estimatedUsd = await estimateApiKeyRequestCost(
+			parsedBody,
+			servedModel ?? requestModel ?? null,
+			requestModel ?? null,
+		);
+		if (!trackingEnabledForRequest()) return null;
+		const checks = await getApiKeySpendCounter(ctx.dbOps).checkAndReserve(
+			apiKeyId,
+			reservationId,
+			keyLimits,
+			options?.limitWindowMode ?? "calendar",
+			requestModel ?? null,
+			servedModel,
+			estimatedUsd,
+			Date.now(),
+			req.signal,
+		);
+		if (!trackingEnabledForRequest()) {
+			tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
+			return null;
+		}
+		if (req.signal.aborted) {
+			tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
+			throw req.signal.reason ?? new Error("Request aborted");
+		}
+		return selectBlockingLimit(checks);
+	};
+	if (
+		trackingEnabledForRequest() &&
+		apiKeyId &&
+		!isInternalProbe(req.headers, ctx) &&
+		typeof ctx.dbOps.getApiKeyLimits === "function"
+	) {
+		try {
+			keyLimits = await getApiKeySpendCounter(ctx.dbOps).getLimitsForKey(
+				apiKeyId,
+				req.signal,
+			);
+			reservationState.hasLimits = keyLimits.length > 0;
+			blockingLimit = await checkModelSpend(null);
+		} catch (error) {
+			const counter = getApiKeySpendCounter(ctx.dbOps);
+			blockingLimit = selectBlockingLimit(
+				counter.getCachedChecks(
+					apiKeyId,
+					keyLimits,
+					options?.limitWindowMode ?? "calendar",
+					requestModel ?? null,
+					null,
+					Date.now(),
+					reservationId,
+				),
+			);
+			limitCheckUnavailable =
+				!blockingLimit &&
+				counter.shouldFailClosed(
+					apiKeyId,
+					keyLimits,
+					options?.limitWindowMode ?? "calendar",
+					requestModel ?? null,
+					null,
+				);
+			log.warn(
+				`Spend limit check unavailable for key ${apiKeyName ?? apiKeyId}: ${String(error)}`,
+			);
+		}
+	}
+
+	const spendLimitExceeded = spendSnapshot?.exceeded === true;
 
 	// 3a. Validate request body for /v1/messages endpoint
 	if (url.pathname === "/v1/messages" && requestBodyBuffer) {
@@ -323,7 +824,17 @@ async function handleProxyRequest(
 	// 3d. Serve `web_search` helper requests locally when a provider is configured.
 	// A null result means "not a search request" or "no provider could serve it",
 	// and the request continues upstream unchanged.
-	if (parsedBody) {
+	//
+	// Skipped when the API key may not use the requested model (seam 5) or is
+	// over a blocking spend limit: the local search path would otherwise
+	// serve — and spend search-provider quota on — a request the key is about
+	// to be refused for.
+	const keyRefusalPending =
+		modelRestrictionDenied ||
+		blockingLimit !== null ||
+		limitCheckUnavailable ||
+		(spendLimitExceeded && keySpendLimit?.limitEnforce === "block");
+	if (parsedBody && !keyRefusalPending) {
 		const webSearchResponse = await maybeInterceptWebSearch({
 			body: parsedBody,
 			pathname: url.pathname,
@@ -370,7 +881,8 @@ async function handleProxyRequest(
 	}
 
 	// 5. Create request metadata with agent info
-	const requestMeta = createRequestMetadata(req, url);
+	const requestMeta = { ...createRequestMetadata(req, url), costTrackingEpoch };
+	requestMeta.id = reservationId;
 	try {
 		observation?.bindRequestId(requestMeta.id);
 	} catch {
@@ -385,6 +897,7 @@ async function handleProxyRequest(
 	requestMeta.projectAttributionSource = projectAttributionSource;
 	requestMeta.clientSessionId = requestBodyContext.getClientId();
 	requestMeta.originalModel = originalModel;
+	requestMeta.limitModel = requestModel;
 	requestMeta.appliedModel = appliedModel;
 
 	// xAI cache-native conversation identity (issue #319 minimal slice):
@@ -413,17 +926,6 @@ async function handleProxyRequest(
 			return buildSessionRejectResponse(verdict);
 		}
 	}
-
-	// 6. Select accounts. Route on the model that will actually be sent
-	// upstream (post-interceptor-rewrite), not the model the client asked
-	// for — otherwise combo routing and family-based selection see a model
-	// that no longer matches the outgoing request.
-	const effectiveModel = resolveEffectiveModel(appliedModel, requestModel);
-	const selectedAccounts = await selectAccountsForRequest(
-		requestMeta,
-		ctx,
-		effectiveModel ?? undefined,
-	);
 
 	const applyUsageThrottling = (accounts: Account[]) => {
 		const settings = {
@@ -527,6 +1029,7 @@ async function handleProxyRequest(
 				method: req.method,
 				path: url.pathname,
 				timestamp: requestMeta.timestamp,
+				costTrackingEpoch: requestMeta.costTrackingEpoch,
 				requestHeaders: Object.fromEntries(req.headers.entries()),
 				requestBody: null,
 				project: project ?? null,
@@ -584,6 +1087,124 @@ async function handleProxyRequest(
 			comboName,
 		);
 
+	// Seam 5, emitted. Decided above on the un-rewritten client model; recorded
+	// through returnRefusal so it lands in request history and the dashboard
+	// fail-rate rather than silently vanishing.
+	//
+	// This sits immediately BEFORE account selection, not after: a request the
+	// key may not make should cost no routing work at all — no account read, no
+	// strategy run, and certainly no upstream contact. It could not be emitted
+	// at its decision point further up because `returnRefusal` needs the
+	// request metadata and the interceptor's applied/original model to record
+	// the request, and those do not exist yet there.
+	if (modelRestrictionDenied) {
+		log.warn(
+			`API key restrictions: refusing model "${requestModel}" — key ${apiKeyName ?? apiKeyId ?? "(unknown)"} is limited to a model allowlist`,
+		);
+		return await returnRefusal(
+			createApiKeyRestrictionResponse(
+				"api_key_model_restricted",
+				`This API key is not permitted to use the model "${requestModel}".`,
+				{ model: requestModel ?? null },
+			),
+			"api_key_model_restricted",
+			0,
+			null,
+		);
+	}
+
+	if (trackingEnabledForRequest() && limitCheckUnavailable) {
+		return await returnRefusal(
+			createLimitCheckUnavailableResponse(),
+			"api_key_limit_check_unavailable",
+			0,
+			null,
+		);
+	}
+
+	if (trackingEnabledForRequest() && blockingLimit) {
+		const { limit, snapshot } = blockingLimit;
+		return await returnRefusal(
+			createApiKeySpendLimitResponse({
+				limitUsd: limit.limitUsd,
+				spentUsd: snapshot.spentUsd,
+				reservedUsd: snapshot.reservedUsd,
+				window: limit.window,
+				scopeModel: limit.scopeModel,
+				resetMs: snapshot.resetMs,
+				fullRetryAfter: true,
+			}),
+			"api_key_limit_exceeded",
+			0,
+			null,
+		);
+	}
+
+	// Spend limit, emitted. Decided above from the in-memory counter; recorded
+	// through returnRefusal so a refused request lands in request history and
+	// the dashboard fail-rate rather than silently vanishing.
+	//
+	// It sits AFTER the model allowlist and BEFORE account selection. After,
+	// because a model this key may never use is the more fundamental denial
+	// and reporting a budget problem for it would send the caller after the
+	// wrong fix; before, because a request that is over budget should cost no
+	// routing work at all.
+	//
+	// `warn` NEVER refuses. It falls through to the alert below and the
+	// request proceeds exactly as it would with no limit set.
+	if (trackingEnabledForRequest() && spendLimitExceeded && spendSnapshot) {
+		if (keySpendLimit?.limitEnforce === "block") {
+			log.warn(
+				`API key spend limit: refusing request — key ${apiKeyName ?? apiKeyId ?? "(unknown)"} has spent ${spendSnapshot.spentUsd.toFixed(4)} of its ${spendSnapshot.limitUsd} limit`,
+			);
+			return await returnRefusal(
+				createApiKeySpendLimitResponse({
+					limitUsd: spendSnapshot.limitUsd,
+					spentUsd: spendSnapshot.spentUsd,
+					window: keySpendLimit.limitWindow,
+					resetMs: spendSnapshot.resetMs,
+				}),
+				"api_key_limit_exceeded",
+				0,
+				null,
+			);
+		}
+		// warn mode. The overage still has to be VISIBLE, or "warn" means
+		// "silently ignore": the dashboard gauge shows it on every key row, and
+		// this raises an alert through the existing alerts subsystem. The event
+		// bus is the established seam for exactly this (auth-failure-events.ts
+		// does the same thing from the refresh scheduler) — the alert service
+		// lives in http-api, which depends on this package and not the other
+		// way round, so the proxy emits and AlertService listens. No new
+		// notification mechanism, and AlertService's own cooldown bucketing
+		// stops a busy key from emitting one alert per request.
+		log.warn(
+			`API key spend limit exceeded (warn only) — key ${apiKeyName ?? apiKeyId ?? "(unknown)"} has spent ${spendSnapshot.spentUsd.toFixed(4)} of its ${spendSnapshot.limitUsd} limit`,
+		);
+		spendLimitEvents.emit("event", {
+			apiKeyId: apiKeyId ?? "",
+			apiKeyName: apiKeyName ?? null,
+			spentUsd: spendSnapshot.spentUsd,
+			limitUsd: spendSnapshot.limitUsd,
+			window: keySpendLimit?.limitWindow ?? "rolling_30d",
+		} satisfies SpendLimitExceededEvt);
+	}
+
+	// 6. Select accounts. Route on the model that will actually be sent
+	// upstream (post-interceptor-rewrite), not the model the client asked
+	// for — otherwise combo routing and family-based selection see a model
+	// that no longer matches the outgoing request.
+	const effectiveModel = resolveEffectiveModel(appliedModel, routingModel);
+	const selectedAccounts = await selectAccountsForRequest(
+		requestMeta,
+		ctx,
+		effectiveModel ?? undefined,
+		{
+			restrictions: keyRestrictions,
+			familyComboOverrides: options?.familyComboOverrides,
+		},
+	);
+
 	const { available: accounts, throttled: throttledAccounts } =
 		applyUsageThrottling(selectedAccounts);
 
@@ -591,6 +1212,32 @@ async function handleProxyRequest(
 	if (accounts.length === 0) {
 		if (requestMeta.comboName && isComboSessionFallbackDisabled(ctx)) {
 			return await returnComboSessionFallbackDisabled(requestMeta.comboName, 0);
+		}
+
+		// The API key's own account / provider allowlist emptied the pool
+		// (recorded by account-selector.ts — seams 1 and 2). This is a policy
+		// decision, not capacity, so it gets its own branch and must not fall
+		// through to the pool_exhausted 503 below: that answer advertises a
+		// Retry-After and invites a retry that can never succeed.
+		//
+		// It comes FIRST among the distinct branches on purpose. When the pool
+		// was emptied by policy, every other diagnosis below is wrong by
+		// construction — there was no capacity question to answer.
+		const restrictionDenial = getApiKeyRestrictionDenial(requestMeta);
+		if (restrictionDenial) {
+			const detail =
+				restrictionDenial.scope === "forced account"
+					? `The account requested via x-better-ccflare-account-id (${restrictionDenial.forcedAccountName ?? "unknown"}) is not permitted for this API key.`
+					: `This API key is restricted to specific ${restrictionDenial.scope}, and none of them can serve this request.`;
+			log.warn(`API key restrictions: ${detail}`);
+			return await returnRefusal(
+				createApiKeyRestrictionResponse("api_key_account_restricted", detail, {
+					restricted_by: restrictionDenial.scope,
+				}),
+				"api_key_account_restricted",
+				0,
+				null,
+			);
 		}
 
 		// Model-scoped capacity filter (account-selector.ts) emptied the
@@ -689,6 +1336,8 @@ async function handleProxyRequest(
 		const poolExhaustedResponse = createPoolExhaustedResponse(
 			allAccounts,
 			usageSnapshots,
+			"pool_exhausted",
+			effectiveModel,
 		);
 
 		// Skip request-log staging for synthetic auto-refresh probes that
@@ -712,6 +1361,7 @@ async function handleProxyRequest(
 				method: req.method,
 				path: url.pathname,
 				timestamp: requestMeta.timestamp,
+				costTrackingEpoch: requestMeta.costTrackingEpoch,
 				requestHeaders: Object.fromEntries(req.headers.entries()),
 				requestBody: null,
 				project: project ?? null,
@@ -1135,6 +1785,86 @@ async function handleProxyRequest(
 			: null;
 	};
 
+	const routedSpendRefusal = async (
+		modelOverride: string | null | undefined,
+	): Promise<Response | null> => {
+		if (!trackingEnabledForRequest()) return null;
+		try {
+			const model = splitModelRouting(
+				modelOverride || effectiveModel || requestModel || "",
+			).model;
+			const blocked = await checkModelSpend(model || null);
+			if (!blocked) return null;
+			return await returnRefusal(
+				createApiKeySpendLimitResponse({
+					limitUsd: blocked.limit.limitUsd,
+					spentUsd: blocked.snapshot.spentUsd,
+					reservedUsd: blocked.snapshot.reservedUsd,
+					window: blocked.limit.window,
+					scopeModel: blocked.limit.scopeModel,
+					resetMs: blocked.snapshot.resetMs,
+					fullRetryAfter: true,
+				}),
+				"api_key_limit_exceeded",
+				0,
+				requestMeta.comboName ?? null,
+			);
+		} catch (error) {
+			log.warn(`Routed spend limit check unavailable: ${String(error)}`);
+			if (!trackingEnabledForRequest()) return null;
+			const model = splitModelRouting(
+				modelOverride || effectiveModel || requestModel || "",
+			).model;
+			if (!apiKeyId) return null;
+			const counter = getApiKeySpendCounter(ctx.dbOps);
+			const blocked = selectBlockingLimit(
+				counter.getCachedChecks(
+					apiKeyId,
+					keyLimits,
+					options?.limitWindowMode ?? "calendar",
+					requestModel ?? null,
+					model || null,
+					Date.now(),
+					reservationId,
+				),
+			);
+			if (blocked)
+				return await returnRefusal(
+					createApiKeySpendLimitResponse({
+						limitUsd: blocked.limit.limitUsd,
+						spentUsd: blocked.snapshot.spentUsd,
+						reservedUsd: blocked.snapshot.reservedUsd,
+						window: blocked.limit.window,
+						scopeModel: blocked.limit.scopeModel,
+						resetMs: blocked.snapshot.resetMs,
+						fullRetryAfter: true,
+					}),
+					"api_key_limit_exceeded",
+					0,
+					requestMeta.comboName ?? null,
+				);
+			if (
+				!counter.shouldFailClosed(
+					apiKeyId,
+					keyLimits,
+					options?.limitWindowMode ?? "calendar",
+					requestModel ?? null,
+					model || null,
+				)
+			)
+				return null;
+			return await returnRefusal(
+				createLimitCheckUnavailableResponse(),
+				"api_key_limit_check_unavailable",
+				0,
+				requestMeta.comboName ?? null,
+			);
+		}
+	};
+
+	if (keyLimits.length)
+		setApiKeyRoutedSpendCheck(requestMeta, routedSpendRefusal);
+
 	for (let i = 0; i < accounts.length; i++) {
 		// For combo routing: enrich metadata with slot index and look up model override
 		let modelOverride: string | null = null;
@@ -1168,6 +1898,9 @@ async function handleProxyRequest(
 			);
 			continue;
 		}
+
+		const spendRefusal = await routedSpendRefusal(modelOverride);
+		if (spendRefusal) return spendRefusal;
 
 		const probeAdmission = getRateLimitProbeAdmission(accounts[i]);
 		if (probeAdmission === "suppressed") {
@@ -1290,6 +2023,8 @@ async function handleProxyRequest(
 			// leaves one that was never asked, and the verdict below stays
 			// retryable for it.
 			noteAttempted(accounts[i].id, modelOverride);
+			const spendRefusal = await routedSpendRefusal(modelOverride);
+			if (spendRefusal) return spendRefusal;
 			response = await proxyWithAccount(
 				req,
 				url,
@@ -1360,7 +2095,10 @@ async function handleProxyRequest(
 			requestMeta,
 			ctx,
 			effectiveModel ?? undefined,
-			{ skipCombo: true },
+			// The key's allowlist has to be repeated here: this re-selection is
+			// what actually serves the request when a combo falls back, and
+			// dropping it would make a combo failure a restriction bypass.
+			{ skipCombo: true, restrictions: keyRestrictions },
 		);
 		const {
 			available: filteredFallbackAccounts,
@@ -1407,6 +2145,8 @@ async function handleProxyRequest(
 					continue;
 				}
 
+				const spendRefusal = await routedSpendRefusal(null);
+				if (spendRefusal) return spendRefusal;
 				const probeAdmission = getRateLimitProbeAdmission(fallbackAccounts[i]);
 				if (probeAdmission === "suppressed") {
 					// As in the main loop: temporarily unavailable, so it holds the
@@ -1491,6 +2231,8 @@ async function handleProxyRequest(
 					// deferred — as in the main loop's ungated retry, this covers one
 					// suppressed candidate and no more.
 					noteAttempted(fallbackAccounts[i].id, null);
+					const spendRefusal = await routedSpendRefusal(null);
+					if (spendRefusal) return spendRefusal;
 					response = await proxyWithAccount(
 						req,
 						url,

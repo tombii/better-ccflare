@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -9,6 +9,11 @@ import {
 } from "../../codex-usage-history";
 import type { ProxyContext } from "../proxy-types";
 import { updateAccountMetadata } from "../response-processor";
+
+afterEach(() => {
+	resetCodexUsageHistoryThrottle();
+	usageCache.delete("codex-acct");
+});
 
 type SnapshotCall = {
 	accountId: string;

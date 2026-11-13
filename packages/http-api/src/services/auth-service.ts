@@ -55,6 +55,16 @@ const LOCAL_CONTROL_SECRET_HEADER = "x-better-ccflare-local-control-secret";
  * (clear an in-process cache / re-poll usage) triggered by the user's own CLI
  * against their own locally-running server, not a general auth bypass. */
 function isLocalControlNotifyPath(path: string): boolean {
+	// Local CLI invalidates the cached flag after persisting it to the same file.
+	if (path === "/api/config/cost-tracking/reload") return true;
+	const parts = path.split("/");
+	if (
+		parts.length === 5 &&
+		parts[1] === "api" &&
+		parts[2] === "api-keys" &&
+		parts[4] === "reload-spend"
+	)
+		return true;
 	return (
 		path.startsWith("/api/accounts/") &&
 		(path.endsWith("/reload") || path.endsWith("/force-reset-rate-limit"))
@@ -212,10 +222,28 @@ export class AuthService {
 	async authorizeEndpoint(
 		apiKey: ApiKey,
 		path: string,
-		_method: string,
+		method: string,
 	): Promise<{ authorized: boolean; reason?: string }> {
 		// Admin keys have full access
 		if (apiKey.role === "admin") {
+			return { authorized: true };
+		}
+		if (
+			method === "GET" &&
+			(path === "/api/config/cost-tracking" || path === "/api/auth/session")
+		)
+			return { authorized: true };
+
+		// A non-admin key can inspect its own usage. The usage handler resolves
+		// URL-encoded names and checks the resulting key id before reading data.
+		const parts = path.split("/");
+		if (
+			method === "GET" &&
+			parts.length === 5 &&
+			parts[1] === "api" &&
+			parts[2] === "api-keys" &&
+			parts[4] === "usage"
+		) {
 			return { authorized: true };
 		}
 
@@ -413,6 +441,12 @@ export class AuthService {
 		// API key management: Only allow initial key creation without auth if no keys exist
 		// All other operations require authentication
 		if (path.startsWith("/api/api-keys")) {
+			if (
+				method === "POST" &&
+				headers &&
+				this.isLocalControlRequest(headers, path)
+			)
+				return true;
 			// Only allow POST (key creation) without auth if no keys exist
 			if (path === "/api/api-keys" && method === "POST") {
 				return !(await this.isAuthenticationEnabled()); // Only exempt if no keys exist

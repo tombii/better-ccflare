@@ -21,10 +21,12 @@ import {
 	COLORS,
 	type TimeRange,
 } from "../../constants";
+import { useCostTracking } from "../../hooks/useCostTracking";
 import {
 	formatCompactCurrency,
 	formatCompactNumber,
 } from "../../lib/chart-utils";
+import { CostTrackingNotice } from "../CostTrackingNotice";
 import {
 	BaseAreaChart,
 	BaseBarChart,
@@ -91,6 +93,7 @@ export function MainMetricsChart({
 	modelBreakdown = false,
 	onModelBreakdownChange,
 }: MainMetricsChartProps) {
+	const { enabled: costTrackingEnabled } = useCostTracking();
 	// Process data for multi-model chart if model breakdown is enabled (not in cumulative mode)
 	const processedMultiModelData =
 		rawTimeSeries && modelBreakdown && viewMode !== "cumulative"
@@ -221,7 +224,9 @@ export function MainMetricsChart({
 							<SelectContent>
 								<SelectItem value="requests">Requests</SelectItem>
 								<SelectItem value="tokens">Token Usage</SelectItem>
-								<SelectItem value="cost">Cost ($)</SelectItem>
+								<SelectItem value="cost" disabled={!costTrackingEnabled}>
+									Cost ($)
+								</SelectItem>
 								<SelectItem value="responseTime">Response Time</SelectItem>
 								<SelectItem value="tokensPerSecond">Output Speed</SelectItem>
 							</SelectContent>
@@ -231,6 +236,8 @@ export function MainMetricsChart({
 			</CardHeader>
 			<CardContent>
 				{(() => {
+					if (!costTrackingEnabled && selectedMetric === "cost")
+						return <CostTrackingNotice />;
 					// Show multi-model chart if breakdown is enabled
 					if (modelBreakdown && processedMultiModelData) {
 						return (
@@ -659,6 +666,7 @@ export function ModelComparisonCharts({
 	loading,
 	timeRange,
 }: ModelComparisonChartsProps) {
+	const { enabled: costTrackingEnabled } = useCostTracking();
 	return (
 		<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 			{/* Model Performance */}
@@ -679,29 +687,31 @@ export function ModelComparisonCharts({
 			</Card>
 
 			{/* Cost by Model */}
-			<Card>
-				<CardHeader>
-					<CardTitle>Cost Analysis by Model</CardTitle>
-					<CardDescription>
-						Top models by cost in the last {timeRange}
-					</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<BaseBarChart
-						data={costByModel}
-						bars={{ dataKey: "cost", radius: [0, 4, 4, 0] }}
-						xAxisKey="model"
-						loading={loading}
-						height="medium"
-						layout="vertical"
-						yAxisWidth={120}
-						tooltipFormatter={(value, name) => {
-							if (name === "cost") return [formatCost(Number(value)), "Cost"];
-							return [formatNumber(value as number), "Requests"];
-						}}
-					/>
-				</CardContent>
-			</Card>
+			{costTrackingEnabled && (
+				<Card>
+					<CardHeader>
+						<CardTitle>Cost Analysis by Model</CardTitle>
+						<CardDescription>
+							Top models by cost in the last {timeRange}
+						</CardDescription>
+					</CardHeader>
+					<CardContent>
+						<BaseBarChart
+							data={costByModel}
+							bars={{ dataKey: "cost", radius: [0, 4, 4, 0] }}
+							xAxisKey="model"
+							loading={loading}
+							height="medium"
+							layout="vertical"
+							yAxisWidth={120}
+							tooltipFormatter={(value, name) => {
+								if (name === "cost") return [formatCost(Number(value)), "Cost"];
+								return [formatNumber(value as number), "Requests"];
+							}}
+						/>
+					</CardContent>
+				</Card>
+			)}
 		</div>
 	);
 }
@@ -711,6 +721,7 @@ interface CumulativeGrowthChartProps {
 }
 
 export function CumulativeGrowthChart({ data }: CumulativeGrowthChartProps) {
+	const { enabled: costTrackingEnabled } = useCostTracking();
 	const cumulativeTooltipFormatter = (value: number | string, name: string) => {
 		if (name === "Total Cost") return [formatCost(Number(value)), "Total Cost"];
 		return [formatTokens(value as number), "Total Tokens"];
@@ -723,7 +734,9 @@ export function CumulativeGrowthChart({ data }: CumulativeGrowthChartProps) {
 					Cumulative Growth Analysis
 				</CardTitle>
 				<CardDescription>
-					Token usage vs. cost accumulation over time
+					{costTrackingEnabled
+						? "Token usage vs. cost accumulation over time"
+						: "Token usage over time"}
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
@@ -772,13 +785,15 @@ export function CumulativeGrowthChart({ data }: CumulativeGrowthChartProps) {
 							stroke={COLORS.blue}
 							tickFormatter={formatCompactNumber}
 						/>
-						<YAxis
-							yAxisId="cost"
-							orientation="right"
-							className="text-xs"
-							stroke={COLORS.warning}
-							tickFormatter={formatCompactCurrency}
-						/>
+						{costTrackingEnabled && (
+							<YAxis
+								yAxisId="cost"
+								orientation="right"
+								className="text-xs"
+								stroke={COLORS.warning}
+								tickFormatter={formatCompactCurrency}
+							/>
+						)}
 						<Tooltip
 							labelClassName="font-bold"
 							contentStyle={{
@@ -809,17 +824,19 @@ export function CumulativeGrowthChart({ data }: CumulativeGrowthChartProps) {
 							filter="url(#glow)"
 							name="Total Tokens"
 						/>
-						<Area
-							yAxisId="cost"
-							type="monotone"
-							dataKey="cost"
-							stroke={COLORS.warning}
-							strokeWidth={3}
-							fillOpacity={1}
-							fill="url(#colorCost)"
-							filter="url(#glow)"
-							name="Total Cost"
-						/>
+						{costTrackingEnabled && (
+							<Area
+								yAxisId="cost"
+								type="monotone"
+								dataKey="cost"
+								stroke={COLORS.warning}
+								strokeWidth={3}
+								fillOpacity={1}
+								fill="url(#colorCost)"
+								filter="url(#glow)"
+								name="Total Cost"
+							/>
+						)}
 					</AreaChart>
 				</ResponsiveContainer>
 			</CardContent>

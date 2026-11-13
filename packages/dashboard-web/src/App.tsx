@@ -12,10 +12,12 @@ import { AccountsTab } from "./components/AccountsTab";
 import { AgentsTab } from "./components/AgentsTab";
 import { ApiKeyAuthDialog } from "./components/ApiKeyAuthDialog";
 import { ApiKeysTab } from "./components/ApiKeysTab";
+import { legacyApiKeyUsageLocation } from "./components/api-key-usage/tab-helpers";
 import { ComboFlowTab } from "./components/combo-flow/ComboFlowTab";
 import { CombosTab } from "./components/combos/CombosTab";
 import { DebugPanel } from "./components/DebugPanel";
 import { LogsTab } from "./components/LogsTab";
+import { ModelPricesTab } from "./components/ModelPricesTab";
 import { Navigation } from "./components/navigation";
 import { OverviewTab } from "./components/OverviewTab";
 import { RequestsTab } from "./components/RequestsTab";
@@ -39,6 +41,11 @@ const LazyInsightsTab = lazy(() =>
 const LazyUsageHistoryTab = lazy(() =>
 	import("./components/usage-history/UsageHistoryTab").then((m) => ({
 		default: m.UsageHistoryTab,
+	})),
+);
+const LazyApiKeyUsageTab = lazy(() =>
+	import("./components/api-key-usage/ApiKeyUsageTab").then((m) => ({
+		default: m.ApiKeyUsageTab,
 	})),
 );
 const LoadingSkeleton = () => (
@@ -65,8 +72,16 @@ const LoadingSkeleton = () => (
 
 // QueryClient will be created inside App component to have access to auth state
 
+export function LegacyApiKeyUsageRedirect() {
+	const location = useLocation();
+	return <Navigate to={legacyApiKeyUsageLocation(location.pathname)} replace />;
+}
+
 export function App() {
 	const location = useLocation();
+	const isUsagePage =
+		location.pathname === "/api-key-usage" ||
+		location.pathname.startsWith("/api-keys/");
 	// Build the dashboard routes once; released features remain reachable.
 	const routes = useMemo(() => {
 		const baseRoutes = [
@@ -119,6 +134,17 @@ export function App() {
 				subtitle: "Per-account usage windows over time, with limit prediction",
 			},
 			{
+				path: "/api-key-usage",
+				element: (
+					<Suspense fallback={<LoadingSkeleton />}>
+						<LazyApiKeyUsageTab />
+					</Suspense>
+				),
+				title: "API Key Usage",
+				subtitle:
+					"Per-key cost, plan efficiency and limits for one API key at a time",
+			},
+			{
 				path: "/agents",
 				element: <AgentsTab />,
 				title: "Agent Management",
@@ -129,6 +155,12 @@ export function App() {
 				element: <ApiKeysTab />,
 				title: "API Key Management",
 				subtitle: "Generate and manage API keys for authentication",
+			},
+			{
+				path: "/model-prices",
+				element: <ModelPricesTab />,
+				title: "Model prices",
+				subtitle: "The gateway's catalogue rates in USD per 1M tokens",
 			},
 			{
 				path: "/search",
@@ -169,9 +201,15 @@ export function App() {
 	}, []);
 
 	const currentRoute =
-		routes.find((route) => route.path === location.pathname) || routes[0];
+		routes.find(
+			(route) =>
+				route.path === location.pathname ||
+				(route.path === "/api-key-usage" &&
+					location.pathname.startsWith("/api-keys/")),
+		) || routes[0];
 	const [showAuthDialog, setShowAuthDialog] = useState(false);
 	const [isAuthenticated, setIsAuthenticated] = useState(false);
+	const [canManage, setCanManage] = useState(false);
 	const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 	const [authError, setAuthError] = useState<string | null>(null);
 	const [authRequired, setAuthRequired] = useState(false);
@@ -243,12 +281,22 @@ export function App() {
 	// Check if authentication is required
 	useEffect(() => {
 		const checkAuth = async () => {
-			setIsCheckingAuth(true);
+			// Subsequent navigation verifies auth without unmounting page state.
 
 			// Always verify with a test request, even if we have a stored key
 			// The stored key might be invalid, deleted, or expired
 			try {
-				await api.getStats();
+				if (isUsagePage) {
+					const session = await api.get<{
+						canManage: boolean;
+						apiKeyId: string | null;
+					}>("/api/auth/session");
+					queryClient.setQueryData(["auth-session"], session);
+					setCanManage(session.canManage);
+				} else {
+					await api.getStats();
+					setCanManage(true);
+				}
 				// If successful, we're authenticated (either no auth required, or valid key)
 				setIsAuthenticated(true);
 				// Auth is required only if we got here with a stored key
@@ -260,6 +308,10 @@ export function App() {
 					api.clearApiKey();
 					setAuthRequired(true);
 					setShowAuthDialog(true);
+				} else if (isUsagePage) {
+					setCanManage(false);
+					// The page presents missing-key and permission errors itself.
+					setIsAuthenticated(true);
 				}
 			} finally {
 				setIsCheckingAuth(false);
@@ -267,7 +319,7 @@ export function App() {
 		};
 
 		checkAuth();
-	}, []);
+	}, [isUsagePage, queryClient]);
 
 	// Listen for 401 errors from API client
 	useEffect(() => {
@@ -292,7 +344,17 @@ export function App() {
 
 		// Try to make a request to verify the key
 		try {
-			await api.getStats();
+			if (isUsagePage) {
+				const session = await api.get<{
+					canManage: boolean;
+					apiKeyId: string | null;
+				}>("/api/auth/session");
+				setCanManage(session.canManage);
+			} else {
+				await api.getStats();
+				setCanManage(true);
+			}
+			queryClient.clear();
 			setIsAuthenticated(true);
 			setShowAuthDialog(false);
 			return true;
@@ -308,6 +370,7 @@ export function App() {
 	};
 
 	const handleLogout = () => {
+		queryClient.clear();
 		api.clearApiKey();
 		setIsAuthenticated(false);
 		setShowAuthDialog(true);
@@ -335,7 +398,10 @@ export function App() {
 		<QueryClientProvider client={queryClient}>
 			<ThemeProvider>
 				<div className="min-h-screen bg-background">
-					<Navigation onLogout={authRequired ? handleLogout : undefined} />
+					<Navigation
+						canManage={isAuthenticated && canManage}
+						onLogout={authRequired ? handleLogout : undefined}
+					/>
 
 					{/* Main Content */}
 					<main className="lg:pl-64">
@@ -358,6 +424,10 @@ export function App() {
 							{!isCheckingAuth && isAuthenticated && (
 								<div className="animate-in fade-in-0 duration-200">
 									<Routes>
+										<Route
+											path="/api-keys/*"
+											element={<LegacyApiKeyUsageRedirect />}
+										/>
 										{routes.map((route) => (
 											<Route
 												key={route.path}

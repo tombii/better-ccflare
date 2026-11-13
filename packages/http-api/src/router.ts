@@ -1,5 +1,5 @@
 import { validateNumber } from "@better-ccflare/core";
-import { BadRequest, Unauthorized } from "@better-ccflare/errors";
+import { BadRequest, Forbidden, Unauthorized } from "@better-ccflare/errors";
 import { getPeakHoursState } from "@better-ccflare/proxy";
 import {
 	createAccountAddHandler,
@@ -14,6 +14,7 @@ import {
 	createAccountNightWindowHandler,
 	createAccountPauseHandler,
 	createAccountPeakHoursPauseHandler,
+	createAccountPlanPriceHandler,
 	createAccountPriorityUpdateHandler,
 	createAccountRefreshUsageHandler,
 	createAccountReloadHandler,
@@ -56,14 +57,23 @@ import {
 	createAlertsStreamHandler,
 } from "./handlers/alerts";
 import { createAnalyticsHandler } from "./handlers/analytics";
+import { createApiKeyUsageHandler } from "./handlers/api-key-usage";
 import {
 	createApiKeyDeleteHandler,
 	createApiKeyDisableHandler,
 	createApiKeyEnableHandler,
+	createApiKeyGetHandler,
+	createApiKeyLimitsGetHandler,
+	createApiKeyLimitsPutHandler,
+	createApiKeyReloadSpendHandler,
+	createApiKeyResetSpendHandler,
+	createApiKeyRoutingUpdateHandler,
 	createApiKeysGenerateHandler,
 	createApiKeysListHandler,
 	createApiKeysStatsHandler,
+	createApiKeyUpdateRestrictionsHandler,
 	createApiKeyUpdateRoleHandler,
+	createApiKeyUpdateSpendLimitHandler,
 } from "./handlers/api-keys";
 import {
 	createComboCreateHandler,
@@ -94,6 +104,7 @@ import {
 import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
 import { createCleanupHandler } from "./handlers/maintenance";
+import { modelPricesHandler } from "./handlers/model-prices";
 import {
 	createModelsHandler,
 	createModelsPreviewHandler,
@@ -503,6 +514,18 @@ export class APIRouter {
 		this.handlers.set("POST:/api/config/use-extra-usage", (req) =>
 			configHandlers.setUseExtraUsage(req),
 		);
+		this.handlers.set("GET:/api/config/cost-tracking", () =>
+			configHandlers.getCostTracking(),
+		);
+		this.handlers.set("POST:/api/config/cost-tracking", (req) =>
+			configHandlers.setCostTracking(req),
+		);
+		this.handlers.set("PUT:/api/config/cost-tracking", (req) =>
+			configHandlers.setCostTracking(req),
+		);
+		this.handlers.set("POST:/api/config/cost-tracking/reload", () =>
+			configHandlers.reloadCostTracking(),
+		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
 		this.handlers.set("GET:/api/version/check", () => versionCheckHandler());
@@ -575,6 +598,7 @@ export class APIRouter {
 		);
 
 		// Model catalog routes
+		this.handlers.set("GET:/api/model-prices", () => modelPricesHandler());
 		const modelsHandler = createModelsHandler(this.context);
 		const modelsRefreshHandler = createModelsRefreshHandler(this.context);
 		const modelsPreviewHandler = createModelsPreviewHandler();
@@ -649,6 +673,21 @@ export class APIRouter {
 			);
 		}
 
+		const keyActionParts = path.split("/");
+		const isSpendResetAction =
+			method === "POST" &&
+			keyActionParts.length === 5 &&
+			keyActionParts[1] === "api" &&
+			keyActionParts[2] === "api-keys" &&
+			(keyActionParts[4] === "reset-spend" ||
+				keyActionParts[4] === "reload-spend");
+		if (
+			isSpendResetAction &&
+			authResult.apiKeyId &&
+			authResult.role !== "admin"
+		)
+			return errorResponse(Forbidden("Only admins can reset API key spend"));
+
 		// Authorize the request based on API key role
 		if (authResult.apiKey) {
 			const authzResult = await this.authService.authorizeEndpoint(
@@ -676,6 +715,13 @@ export class APIRouter {
 				);
 				return jsonResponse({ token });
 			})(req, url);
+		}
+
+		if (path === "/api/auth/session" && method === "GET") {
+			return jsonResponse({
+				canManage: !authResult.apiKeyId || authResult.role === "admin",
+				apiKeyId: authResult.apiKeyId ?? null,
+			});
 		}
 
 		// Check for exact match
@@ -825,6 +871,16 @@ export class APIRouter {
 				)(req, url);
 			}
 
+			// Account monthly plan price
+			if (path.endsWith("/plan-price") && method === "POST") {
+				const planPriceHandler = createAccountPlanPriceHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					planPriceHandler(req, accountId),
+				)(req, url);
+			}
+
 			// Account auto-refresh toggle
 			if (path.endsWith("/auto-refresh") && method === "POST") {
 				const autoRefreshHandler = createAccountAutoRefreshHandler(
@@ -928,6 +984,60 @@ export class APIRouter {
 		if (path.startsWith("/api/api-keys/")) {
 			const parts = path.split("/");
 			const keyIdOrName = decodeURIComponent(parts[3]); // Decode URL-encoded IDs/names
+			if (parts.length === 5 && method === "POST" && parts[4] === "reset-spend")
+				return await createApiKeyResetSpendHandler(this.context.dbOps)(
+					keyIdOrName,
+					authResult.apiKeyName
+						? `API key ${authResult.apiKeyName} (${authResult.apiKeyId})`
+						: "dashboard session",
+				);
+			if (
+				parts.length === 5 &&
+				method === "POST" &&
+				parts[4] === "reload-spend"
+			)
+				return await createApiKeyReloadSpendHandler(this.context.dbOps)(
+					keyIdOrName,
+				);
+			if (parts.length === 4 && method === "GET") {
+				return await createApiKeyGetHandler(this.context.dbOps)(keyIdOrName);
+			}
+
+			// The handler verifies ownership after resolving either an id or name.
+			if (path.endsWith("/usage") && method === "GET") {
+				const usageHandler = createApiKeyUsageHandler(this.context);
+				return await this.wrapHandler((_req, reqUrl) =>
+					usageHandler(keyIdOrName, reqUrl.searchParams, authResult),
+				)(req, url);
+			}
+
+			if (
+				(parts.length === 5 &&
+					parts[4] === "limits" &&
+					(method === "GET" || method === "PUT")) ||
+				(parts.length === 5 && parts[4] === "routing" && method === "PATCH")
+			) {
+				if (authResult.apiKeyId && authResult.role !== "admin") {
+					return errorResponse(
+						Unauthorized(
+							"Only admin keys can manage API key limits and routing",
+						),
+					);
+				}
+				if (parts[4] === "routing")
+					return await createApiKeyRoutingUpdateHandler(this.context.dbOps)(
+						req,
+						keyIdOrName,
+					);
+				if (method === "PUT")
+					return await createApiKeyLimitsPutHandler(this.context.dbOps)(
+						req,
+						keyIdOrName,
+					);
+				return await createApiKeyLimitsGetHandler(this.context.dbOps)(
+					keyIdOrName,
+				);
+			}
 
 			// API key role update - Only admin keys can update roles
 			if (path.endsWith("/role") && method === "PATCH") {
@@ -944,6 +1054,44 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					updateRoleHandler(req, keyIdOrName, authResult.apiKeyId),
+				)(req, url);
+			}
+
+			// API key restrictions update - Only admin keys can change which
+			// accounts, models and providers another key may use. Same gate,
+			// same 401-not-403 house style, as the role update above.
+			if (path.endsWith("/restrictions") && method === "PATCH") {
+				if (authResult.role !== "admin") {
+					return errorResponse(
+						Unauthorized(
+							"Only admin keys can update API key restrictions. Your key has api-only access.",
+						),
+					);
+				}
+				const updateRestrictionsHandler = createApiKeyUpdateRestrictionsHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					updateRestrictionsHandler(req, keyIdOrName),
+				)(req, url);
+			}
+
+			// API key spend limit update - Only admin keys can set or clear
+			// another key's budget. Same gate, same 401-not-403 house style, as
+			// the role and restrictions routes above.
+			if (path.endsWith("/limit") && method === "PATCH") {
+				if (authResult.role !== "admin") {
+					return errorResponse(
+						Unauthorized(
+							"Only admin keys can update API key spend limits. Your key has api-only access.",
+						),
+					);
+				}
+				const updateSpendLimitHandler = createApiKeyUpdateSpendLimitHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					updateSpendLimitHandler(req, keyIdOrName),
 				)(req, url);
 			}
 

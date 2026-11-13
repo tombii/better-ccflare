@@ -108,7 +108,41 @@ export class ComboRepository extends BaseRepository<Combo> {
 	}
 
 	async delete(id: string): Promise<void> {
-		await this.run(`DELETE FROM combos WHERE id = ?`, [id]);
+		const keys = await this.query<{
+			id: string;
+			family_combo_overrides: string;
+		}>(
+			"SELECT id, family_combo_overrides FROM api_keys WHERE family_combo_overrides IS NOT NULL",
+		);
+		const statements = [
+			{ sql: "DELETE FROM combos WHERE id = ?", params: [id] as unknown[] },
+		];
+		for (const key of keys) {
+			let overrides: Record<string, string>;
+			try {
+				overrides = JSON.parse(key.family_combo_overrides);
+			} catch {
+				continue;
+			}
+			if (
+				!overrides ||
+				typeof overrides !== "object" ||
+				!Object.values(overrides).includes(id)
+			)
+				continue;
+			const remaining = Object.fromEntries(
+				Object.entries(overrides).filter(([, comboId]) => comboId !== id),
+			);
+			statements.push({
+				sql: "UPDATE api_keys SET family_combo_overrides = ? WHERE id = ? AND family_combo_overrides = ?",
+				params: [
+					Object.keys(remaining).length ? JSON.stringify(remaining) : null,
+					key.id,
+					key.family_combo_overrides,
+				],
+			});
+		}
+		await this.adapter.atomicStatements(statements);
 	}
 
 	// ── Slot management ──────────────────────────────────────────────────────

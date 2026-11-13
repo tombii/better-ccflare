@@ -8,6 +8,12 @@ import { TIME_CONSTANTS } from "@better-ccflare/core";
 import type {
 	Account,
 	AgentAttributionSource,
+	ApiKey,
+	ApiKeyLimit,
+	ApiKeyLimitInput,
+	ApiKeyLimitWindowMode,
+	ApiKeyRestrictions,
+	ApiKeySpendLimit,
 	Combo,
 	ComboFamily,
 	ComboFamilyAssignment,
@@ -26,7 +32,10 @@ import type {
 	WebToolCallSummary,
 	WebToolCallWriteInput,
 } from "@better-ccflare/types";
-import { toSearchProviderPublic } from "@better-ccflare/types";
+import {
+	serializeRestrictionList,
+	toSearchProviderPublic,
+} from "@better-ccflare/types";
 import {
 	BunSqlAdapter,
 	PG_CLIENT_QUERY_TIMEOUT_MS,
@@ -66,6 +75,10 @@ import {
 	setFreeSearchTiersEnabled,
 } from "./search-tier-seeding";
 import { runWalTruncateInWorker } from "./wal-truncate-runner";
+
+// Bound history scans by request start while precise accounting uses completion
+// time, allowing a day of completion/pricing lag before the window starts.
+const MAX_COMPLETION_LAG_MS = 24 * 60 * 60 * 1000;
 
 export interface DatabaseConfig {
 	/** Enable WAL (Write-Ahead Logging) mode for better concurrency */
@@ -1327,6 +1340,13 @@ OAuth tokens will need to be re-authenticated.
 		await this.accounts.setBillingType(accountId, billingType);
 	}
 
+	async setAccountPlanMonthlyUsd(
+		accountId: string,
+		planMonthlyUsd: number | null,
+	): Promise<void> {
+		await this.accounts.setPlanMonthlyUsd(accountId, planMonthlyUsd);
+	}
+
 	async updateAccountRequestCount(
 		accountId: string,
 		count: number,
@@ -1471,6 +1491,8 @@ OAuth tokens will need to be re-authenticated.
 		gatewayHintContextCompacted?: string | null,
 		/** When the request started (epoch ms); see RequestData.timestamp. */
 		timestamp?: number,
+		limitModel?: string | null,
+		spendRecordedAt?: number,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -1493,6 +1515,8 @@ OAuth tokens will need to be re-authenticated.
 					billingType,
 					comboName,
 					originalModel,
+					limitModel,
+					spendRecordedAt,
 					appliedModel,
 					projectAttributionSource,
 					agentAttributionSource,
@@ -2731,6 +2755,8 @@ OAuth tokens will need to be re-authenticated.
 		lastUsed?: number | null;
 		isActive: boolean;
 		role?: "admin" | "api-only";
+		restrictions?: Partial<ApiKeyRestrictions>;
+		spendLimit?: ApiKeySpendLimit | null;
 	}): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -2743,10 +2769,43 @@ OAuth tokens will need to be re-authenticated.
 					last_used: apiKey.lastUsed || null,
 					is_active: apiKey.isActive ? 1 : 0,
 					role: apiKey.role || "api-only",
+					// `?? null` throughout: an omitted restriction is NULL
+					// (unrestricted), which is not the same as '[]' (deny-all).
+					allowed_accounts: serializeRestrictionList(
+						apiKey.restrictions?.allowedAccounts ?? null,
+					),
+					allowed_models: serializeRestrictionList(
+						apiKey.restrictions?.allowedModels ?? null,
+					),
+					allowed_providers: serializeRestrictionList(
+						apiKey.restrictions?.allowedProviders ?? null,
+					),
+					// An omitted spend limit is NULL (no limit). The window and
+					// enforcement columns only travel with a limit — storing them
+					// alone would describe a budget that does not exist.
+					limit_usd: apiKey.spendLimit?.limitUsd ?? null,
+					limit_window: apiKey.spendLimit?.limitWindow ?? null,
+					limit_enforce: apiKey.spendLimit?.limitEnforce ?? null,
 				}),
 			this.retryConfig,
 			"createApiKey",
 		);
+		if (apiKey.spendLimit)
+			await this.replaceApiKeyLimits(
+				apiKey.id,
+				[
+					{
+						scopeModel: null,
+						window:
+							apiKey.spendLimit.limitWindow === "rolling_7d" ? "week" : "month",
+						limitUsd: apiKey.spendLimit.limitUsd,
+						enforce: apiKey.spendLimit.limitEnforce,
+					},
+				],
+				apiKey.spendLimit.limitWindow === "calendar_month"
+					? "calendar"
+					: "rolling",
+			);
 	}
 
 	async updateApiKeyUsage(id: string, timestamp: number): Promise<void> {
@@ -2790,6 +2849,296 @@ OAuth tokens will need to be re-authenticated.
 			this.retryConfig,
 			"updateApiKeyRole",
 		);
+	}
+
+	/**
+	 * Replace an API key's account / model / provider restrictions.
+	 * `null` on a field means unrestricted; `[]` means deny-all.
+	 */
+	async updateApiKeyRestrictions(
+		id: string,
+		restrictions: ApiKeyRestrictions,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.updateRestrictions(id, restrictions),
+			this.retryConfig,
+			"updateApiKeyRestrictions",
+		);
+	}
+
+	/**
+	 * Replace an API key's spend limit. `null` clears it entirely.
+	 */
+	async updateApiKeySpendLimit(
+		id: string,
+		spendLimit: ApiKeySpendLimit | null,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.updateSpendLimit(id, spendLimit),
+			this.retryConfig,
+			"updateApiKeySpendLimit",
+		);
+	}
+
+	/** Persist the accounting reset without deleting usage or changing limits. */
+	async resetApiKeySpend(
+		id: string,
+		timestamp: number,
+		actor: string,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.resetSpend(id, timestamp, actor),
+			this.retryConfig,
+			"resetApiKeySpend",
+		);
+	}
+
+	async getApiKeyLimits(id: string): Promise<ApiKeyLimit[]> {
+		return withDatabaseRetry(
+			() => this.apiKeys.getLimits(id),
+			this.retryConfig,
+			"getApiKeyLimits",
+		);
+	}
+	async replaceApiKeyLimits(
+		id: string,
+		limits: ApiKeyLimitInput[],
+		mode: ApiKeyLimitWindowMode,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.replaceLimits(id, limits, mode),
+			this.retryConfig,
+			"replaceApiKeyLimits",
+		);
+	}
+	async updateApiKeyRouting(
+		id: string,
+		overrides: Record<string, string> | null,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.updateRouting(id, overrides),
+			this.retryConfig,
+			"updateApiKeyRouting",
+		);
+	}
+	/**
+	 * Reconcile a key in one SQL snapshot. Calendar windows return grouped SUMs;
+	 * individual events are returned only for rolling expiry and the short local
+	 * completion acknowledgement tail. Cost-recorded time preserves budget attribution
+	 * across delayed pricing, asynchronous writes, and a process restart.
+	 */
+	async getApiKeySpendReconciliation(
+		apiKeyId: string,
+		windows: Array<{ window: string; startMs: number; endMs: number }>,
+		rollingSinceMs: number | null,
+		tailSinceMs: number,
+		nowMs: number,
+	): Promise<{
+		calendar: Array<{
+			window: string;
+			totals: Array<{
+				model: string | null;
+				requestedModel: string | null;
+				totalUsd: number;
+			}>;
+		}>;
+		events: Array<{
+			requestId: string;
+			timestamp: number;
+			costUsd: number;
+			model: string | null;
+			requestedModel: string | null;
+		}>;
+	}> {
+		const count = Math.max(1, windows.length);
+		const sums = Array.from({ length: count }, (_, index) =>
+			windows[index]
+				? `SUM(CASE WHEN completed_ms >= ? AND completed_ms < ? THEN cost_usd ELSE 0 END) AS total_${index}`
+				: `SUM(cost_usd) AS total_${index}`,
+		);
+		const eventCosts = Array.from({ length: count }, (_, index) =>
+			index === 0 ? "cost_usd" : "0",
+		);
+		const eventSinceMs = Math.min(tailSinceMs, rollingSinceMs ?? tailSinceMs);
+		const sinceMs = Math.min(
+			eventSinceMs,
+			...windows.map((window) => window.startMs),
+		);
+		const params: Array<string | number> = [
+			apiKeyId,
+			sinceMs - MAX_COMPLETION_LAG_MS,
+			nowMs,
+			sinceMs,
+			nowMs,
+			apiKeyId,
+		];
+		for (const window of windows) params.push(window.startMs, window.endMs);
+		params.push(eventSinceMs);
+		const rows = await withDatabaseRetry(
+			() =>
+				this.adapter.query<{
+					kind: string;
+					request_id: string | null;
+					completed_ms: number | null;
+					model: string | null;
+					requested_model: string | null;
+					[key: string]: string | number | null;
+				}>(
+					`
+			WITH completed AS (
+				SELECT id, COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) AS completed_ms,
+					cost_usd, model, COALESCE(limit_model, original_model) AS requested_model
+				FROM requests WHERE api_key_id = ? AND requests.timestamp >= ? AND requests.timestamp <= ? AND cost_usd > 0
+			), eligible AS (SELECT * FROM completed WHERE completed_ms >= ? AND completed_ms <= ? AND completed_ms >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0))
+			SELECT 'total' AS kind, NULL AS request_id, NULL AS completed_ms, model, requested_model, ${sums.join(", ")}
+			FROM eligible GROUP BY model, requested_model
+			UNION ALL
+			SELECT 'event' AS kind, id AS request_id, completed_ms, model, requested_model, ${eventCosts.join(", ")}
+			FROM eligible WHERE completed_ms >= ?
+		`,
+					params,
+				),
+			this.retryConfig,
+			"getApiKeySpendReconciliation",
+		);
+		return {
+			calendar: windows.map((window, index) => ({
+				window: window.window,
+				totals: rows
+					.filter((row) => row.kind === "total")
+					.map((row) => ({
+						model: row.model,
+						requestedModel: row.requested_model,
+						totalUsd: Number(row[`total_${index}`]),
+					})),
+			})),
+			events: rows
+				.filter((row) => row.kind === "event")
+				.map((row) => ({
+					requestId: row.request_id as string,
+					timestamp: Number(row.completed_ms),
+					costUsd: Number(row.total_0),
+					model: row.model,
+					requestedModel: row.requested_model,
+				})),
+		};
+	}
+
+	/** Cost events retained in memory for precise rolling relief and model scopes. */
+	async getApiKeySpendEventsSince(
+		apiKeyId: string,
+		sinceMs: number,
+		nowMs = Date.now(),
+	): Promise<
+		Array<{
+			requestId: string;
+			timestamp: number;
+			costUsd: number;
+			model: string | null;
+			requestedModel: string | null;
+		}>
+	> {
+		const rows = await withDatabaseRetry(
+			() =>
+				this.adapter.query<{
+					id: string;
+					timestamp: number;
+					cost_usd: number;
+					model: string | null;
+					requested_model: string | null;
+				}>(
+					"SELECT id, COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) AS timestamp, cost_usd, model, COALESCE(limit_model, original_model) AS requested_model FROM requests WHERE api_key_id = ? AND requests.timestamp >= ? AND requests.timestamp <= ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) >= ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) <= ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0) AND cost_usd > 0 ORDER BY timestamp",
+					[
+						apiKeyId,
+						sinceMs - MAX_COMPLETION_LAG_MS,
+						nowMs,
+						sinceMs,
+						nowMs,
+						apiKeyId,
+					],
+				),
+			this.retryConfig,
+			"getApiKeySpendEventsSince",
+		);
+		return rows.map((row) => ({
+			requestId: row.id,
+			timestamp: Number(row.timestamp),
+			costUsd: Number(row.cost_usd),
+			model: row.model,
+			requestedModel: row.requested_model,
+		}));
+	}
+
+	/** Every active key that carries a spend limit — the counter's seed set. */
+	async listApiKeysWithSpendLimits(): Promise<ApiKey[]> {
+		return withDatabaseRetry(
+			() => this.apiKeys.listWithSpendLimits(),
+			this.retryConfig,
+			"listApiKeysWithSpendLimits",
+		);
+	}
+
+	/**
+	 * Total API-cost-equivalent spend attributed to one API key since
+	 * `sinceMs`, plus the timestamp of the OLDEST request in that total.
+	 *
+	 * This is the spend counter's seed and resync query, and the only new SQL
+	 * this feature adds. Notes on its shape, all deliberate:
+	 *
+	 *  - Completion-time filtering is precise; additional absolute request-start
+	 *    bounds keep idx_requests_api_key_timestamp usable on both backends.
+	 *    The lower bound allows up to 24 hours for completion/pricing lag.
+	 *  - No `billing_type` predicate AT ALL. Every request in this codebase is
+	 *    priced at public pay-per-token rates regardless of whether the account
+	 *    is on a subscription, so `cost_usd` already IS the API-cost-equivalent
+	 *    the limit is expressed in. Filtering on billing_type would both change
+	 *    the meaning of the limit and walk into the `billing_type IS NULL` trap
+	 *    that a plain `= 'x'` / `!= 'x'` comparison hides. (The existing
+	 *    analytics queries are a separate question and are out of scope here.)
+	 *  - `cost_usd IS NOT NULL` so MIN(timestamp) reports the oldest row that
+	 *    actually CONTRIBUTES to the total: a zero-cost row ageing out relieves
+	 *    nothing, and reporting it would promise a reset that does not happen.
+	 *  - Served by the existing idx_requests_api_key_timestamp. The caller runs
+	 *    this once at startup and then on a TTL, never per request.
+	 */
+	async getApiKeySpendSince(
+		apiKeyId: string,
+		sinceMs: number,
+		nowMs = Date.now(),
+	): Promise<{ totalUsd: number; oldestMs: number | null }> {
+		const row = await withDatabaseRetry(
+			() =>
+				this.adapter.get<{
+					total: number | string | null;
+					oldest: number | string | null;
+				}>(
+					`SELECT SUM(cost_usd) AS total, MIN(COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0))) AS oldest
+					 FROM requests
+					 WHERE api_key_id = ? AND requests.timestamp >= ? AND requests.timestamp <= ?
+					 AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) > ?
+					 AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) <= ?
+					 AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0) AND cost_usd IS NOT NULL`,
+					[
+						apiKeyId,
+						sinceMs - MAX_COMPLETION_LAG_MS,
+						nowMs,
+						sinceMs,
+						nowMs,
+						apiKeyId,
+					],
+				),
+			this.retryConfig,
+			"getApiKeySpendSince",
+		);
+
+		// SUM() over no rows is SQL NULL, and PostgreSQL hands numerics back as
+		// strings, so both values are coerced rather than trusted.
+		const total = row?.total != null ? Number(row.total) : 0;
+		const oldest = row?.oldest != null ? Number(row.oldest) : null;
+		return {
+			totalUsd: Number.isFinite(total) ? total : 0,
+			oldestMs: oldest != null && Number.isFinite(oldest) ? oldest : null,
+		};
 	}
 
 	async countActiveApiKeys(): Promise<number> {

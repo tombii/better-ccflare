@@ -1,18 +1,10 @@
 import { isAnthropicOutOfCredits } from "@better-ccflare/providers";
 
 /**
- * Identifies a 429 whose scope is narrower than the account, so the caller can
- * fail the request over while leaving the account in rotation instead of
- * benching it.
- *
- * THE NAME IS HISTORICAL. `isRetryable429` was written when this module gated
- * an in-place retry of the same request against the same account. That retry is
- * gone — measurement showed the rejection does not clear within a request's
- * lifetime (three attempts spanning 11.2s returned three identical bare 429s) —
- * but the predicate turned out to be exactly the right discriminator for "this
- * rejection is not the account's fault", and it is pinned by 23 tests, so the
- * exported names are left alone. Nothing in here retries anything: a `true`
- * result means "fail over with NO account cooldown".
+ * Identifies Anthropic 429s without an upstream quota window. The caller
+ * fails over immediately and applies a short configurable cooldown to only
+ * the (account, upstream model) pair, leaving other models in rotation.
+ * The exported name is historical; there is no same-account in-place retry.
  */
 
 /**
@@ -99,8 +91,8 @@ export function hasRateLimitMetadata(headers: Headers): boolean {
 
 /**
  * True when a 429 reports no rate-limit window at all, which measurement showed
- * to mean the rejection is scoped to the request rather than to the account —
- * so the account must NOT be benched.
+ * to mean the rejection is narrower than the account — the rejected upstream
+ * model cools down while the account stays eligible for other models.
  *
  * Observed 2026-07-31 (issue #301): Anthropic 429s some requests with exactly
  * `{"x-robots-tag":"none","x-should-retry":"true"}` — an explicit retry

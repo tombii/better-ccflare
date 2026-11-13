@@ -84,7 +84,12 @@ interface FakeOpts {
 		combo_id: string | null;
 		enabled: boolean;
 	}>;
-	accounts?: Array<{ id: string; name: string; provider: string }>;
+	accounts?: Array<{
+		id: string;
+		name: string;
+		provider: string;
+		model_mappings?: string;
+	}>;
 }
 
 function makeOps(opts: FakeOpts = {}) {
@@ -262,6 +267,37 @@ describe("GET /api/combos/flow", () => {
 			accountName: null,
 			cooldownUntil: null,
 			available: false,
+		});
+	});
+
+	it("reads mapped upstream cooldowns without blocking an empty passthrough slot", async () => {
+		const until = Date.now() + 60_000;
+		markModelCooling("acc-1", "upstream-haiku", until);
+		const data = await getFlow({
+			combos: [combo("c1", "Main")],
+			slots: {
+				c1: [
+					slot("s1", "c1", "acc-1", "claude-haiku-5-5", 0),
+					slot("s2", "c1", "acc-1", "", 1),
+				],
+			},
+			accounts: [
+				{
+					...ACCOUNTS[0],
+					model_mappings: JSON.stringify({ haiku: "upstream-haiku" }),
+				},
+			],
+		});
+		expect(data.combos[0].slots[0]).toMatchObject({
+			model: "claude-haiku-5-5",
+			cooldownUntil: until,
+			available: false,
+		});
+		expect(data.combos[0].slots[1]).toMatchObject({
+			model: "",
+			cooldownUntil: null,
+			available: true,
+			cooldowns: [{ model: "upstream-haiku", until }],
 		});
 	});
 
