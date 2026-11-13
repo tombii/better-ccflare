@@ -3,6 +3,8 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 import type { ApiKeyLimit } from "@better-ccflare/types";
 import {
 	ApiKeySpendCounter,
+	SPEND_IDLE_TTL_MS,
+	SPEND_PENDING_TTL_MS,
 	SPEND_RESYNC_TTL_MS,
 } from "../handlers/api-key-spend";
 
@@ -36,7 +38,112 @@ function make(
 	counters.push(counter);
 	return { counter, db };
 }
+function retainedState(counter: ApiKeySpendCounter) {
+	return counter as unknown as {
+		pendingRecords: Map<string, Map<string, { timestamp: number }>>;
+		lastAccess: Map<string, number>;
+		keyLimits: Map<string, unknown>;
+		limitGenerations: Map<string, number>;
+		refreshTimer: ReturnType<typeof setTimeout> | null;
+	};
+}
 describe("spend counter review regressions", () => {
+	it("retains no completion history or activity timestamps for unlimited keys", async () => {
+		const clock = spyOn(Date, "now").mockReturnValue(NOW);
+		const counter = new ApiKeySpendCounter({
+			getApiKeyLimits: async () => [],
+		} as unknown as DatabaseOperations);
+		counters.push(counter);
+		for (let key = 0; key < 100; key++) {
+			for (let completion = 0; completion < 100; completion++) {
+				await counter.getLimitsForKey(`unlimited-${key}`);
+				counter.record(`unlimited-${key}`, 1, "opus", NOW);
+			}
+		}
+		const state = retainedState(counter);
+		expect(state.pendingRecords.size).toBe(0);
+		expect(state.lastAccess.size).toBe(0);
+		expect(counter.cachedLimitCount).toBe(0);
+		clock.mockReturnValue(NOW + SPEND_PENDING_TTL_MS + 1);
+		await counter.reconcileActiveKeys();
+		expect(state.keyLimits.size).toBe(0);
+		expect(state.limitGenerations.size).toBe(0);
+	});
+	it("prunes expired pending completions without any limit rows to reconcile", async () => {
+		const clock = spyOn(Date, "now").mockReturnValue(NOW);
+		const query = mock(async () => []);
+		const counter = new ApiKeySpendCounter({
+			getApiKeyLimits: async () => [row()],
+			getApiKeySpendEventsSince: query,
+		} as unknown as DatabaseOperations);
+		counters.push(counter);
+		await counter.getLimitsForKey("k");
+		counter.record("k", 1, "opus", NOW, "expired");
+		clock.mockReturnValue(NOW + SPEND_PENDING_TTL_MS + 1);
+		counter.record("k", 2, "opus", Date.now(), "fresh");
+		await counter.reconcileActiveKeys();
+		const state = retainedState(counter);
+		expect([...(state.pendingRecords.get("k")?.keys() ?? [])]).toEqual([
+			"fresh",
+		]);
+		expect(query).not.toHaveBeenCalled();
+		clock.mockReturnValue(NOW + 2 * SPEND_PENDING_TTL_MS + 2);
+		await counter.reconcileActiveKeys();
+		expect(state.pendingRecords.size).toBe(0);
+	});
+	it("keeps scheduled cleanup alive after forgetting the last limited key", async () => {
+		const clock = spyOn(Date, "now").mockReturnValue(NOW);
+		const timeouts = spyOn(globalThis, "setTimeout");
+		const counter = new ApiKeySpendCounter({
+			getApiKeyLimits: async () => [row()],
+		} as unknown as DatabaseOperations);
+		counters.push(counter);
+		await counter.getLimitsForKey("k");
+		counter.record("k", 1, "opus", NOW, "pending");
+		counter.forget("k");
+		const state = retainedState(counter);
+		async function fireRefresh(timestamp: number) {
+			const scheduled = timeouts.mock.calls.find(
+				([, delay]) => delay === SPEND_RESYNC_TTL_MS,
+			);
+			if (!scheduled) throw new Error("Missing scheduled spend cleanup");
+			timeouts.mockClear();
+			clock.mockReturnValue(timestamp);
+			if (state.refreshTimer) clearTimeout(state.refreshTimer);
+			scheduled[0]();
+			await Promise.resolve();
+			await Promise.resolve();
+		}
+		await fireRefresh(NOW + SPEND_RESYNC_TTL_MS);
+		expect(state.pendingRecords.size).toBe(1);
+		expect(state.refreshTimer).not.toBeNull();
+		await fireRefresh(NOW + SPEND_PENDING_TTL_MS + 1);
+		expect(state.pendingRecords.size).toBe(0);
+		expect(state.refreshTimer).not.toBeNull();
+		await fireRefresh(NOW + SPEND_IDLE_TTL_MS + 1);
+		expect(state.lastAccess.size).toBe(0);
+		expect(state.refreshTimer).toBeNull();
+	});
+	it("drops retained completions and activity when refreshed limits are empty", async () => {
+		const clock = spyOn(Date, "now").mockReturnValue(NOW);
+		const query = mock(async (): Promise<ApiKeyLimit[]> => [row()]);
+		const counter = new ApiKeySpendCounter({
+			getApiKeyLimits: query,
+			getApiKeySpendEventsSince: async () => [],
+		} as unknown as DatabaseOperations);
+		counters.push(counter);
+		await counter.getLimitsForKey("k");
+		await counter.getLimitSnapshot("k", row(), "calendar", NOW);
+		counter.record("k", 1, "opus", NOW, "old");
+		clock.mockReturnValue(NOW + SPEND_RESYNC_TTL_MS + 1);
+		query.mockResolvedValueOnce([]);
+		expect(await counter.getLimitsForKey("k")).toEqual([]);
+		counter.record("k", 2, "opus", Date.now(), "unlimited");
+		const state = retainedState(counter);
+		expect(state.pendingRecords.size).toBe(0);
+		expect(state.lastAccess.size).toBe(0);
+		expect(counter.cachedLimitCount).toBe(0);
+	});
 	it("retains completions recorded before a reconciliation while the writer lags", async () => {
 		spyOn(Date, "now").mockReturnValue(NOW);
 		const { counter } = make();

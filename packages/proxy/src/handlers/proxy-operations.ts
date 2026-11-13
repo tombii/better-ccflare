@@ -28,6 +28,7 @@ import {
 	isAnthropicOutOfCredits,
 	type Provider,
 	readCodeBuddyGatewayRejection,
+	readRequestJson,
 	recoverCodexMessagesContinuation,
 	UPSTREAM_402_OUT_OF_CREDITS_REASON,
 	usageCache,
@@ -1487,10 +1488,9 @@ export async function proxyWithAccount(
 					? outgoing.model
 					: target.body
 						? (
-								(await target
-									.clone()
-									.json()
-									.catch(() => null)) as { model?: unknown } | null
+								await readRequestJson<{ model?: unknown }>(target).catch(
+									() => null,
+								)
 							)?.model
 						: null;
 			if (target.body && typeof model === "string") {

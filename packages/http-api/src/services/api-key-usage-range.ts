@@ -3,6 +3,9 @@ import { BadRequest } from "@better-ccflare/errors";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
+const MAX_CUSTOM_RANGE_MS = 400 * DAY;
+const MIN_CUSTOM_DATE_MS = Date.UTC(2000, 0, 1);
+const MAX_CUSTOM_DATE_MS = Date.UTC(2100, 0, 1);
 
 /** Absolute bounds shared by every usage aggregate, including custom ranges. */
 export function apiKeyUsageRange(params: URLSearchParams, nowMs = Date.now()) {
@@ -21,7 +24,15 @@ export function apiKeyUsageRange(params: URLSearchParams, nowMs = Date.now()) {
 				"Custom range requires valid from and to dates, with from before to",
 			);
 		}
+		if (startMs < MIN_CUSTOM_DATE_MS || endMs > MAX_CUSTOM_DATE_MS) {
+			throw BadRequest(
+				"Custom range dates must be between 2000-01-01 and 2100-01-01",
+			);
+		}
 		const duration = endMs - startMs;
+		if (duration > MAX_CUSTOM_RANGE_MS) {
+			throw BadRequest("Custom range must not exceed 400 days");
+		}
 		return {
 			range: requested,
 			startMs,
@@ -67,12 +78,30 @@ export function apiKeyUsageRange(params: URLSearchParams, nowMs = Date.now()) {
 
 /** Fraction of Dublin calendar months intersected by a selected range. */
 export function calendarMonthFraction(startMs: number, endMs: number): number {
-	let fraction = 0;
-	for (let cursor = startMs; cursor < endMs; ) {
-		const month = apiKeyLimitWindowBounds("month", "calendar", cursor);
-		const segmentEnd = Math.min(endMs, month.endMs);
-		fraction += (segmentEnd - cursor) / (month.endMs - month.startMs);
-		cursor = segmentEnd;
+	if (
+		!Number.isFinite(startMs) ||
+		!Number.isFinite(endMs) ||
+		endMs <= startMs
+	) {
+		return 0;
 	}
-	return fraction;
+	const first = apiKeyLimitWindowBounds("month", "calendar", startMs);
+	const last = apiKeyLimitWindowBounds("month", "calendar", endMs - 1);
+	if (first.startMs === last.startMs) {
+		return (endMs - startMs) / (first.endMs - first.startMs);
+	}
+	// Summer month starts fall on the previous UTC date. A day into each
+	// Dublin month gives its UTC year/month without another timezone conversion.
+	const firstMonth = new Date(first.startMs + DAY);
+	const lastMonth = new Date(last.startMs + DAY);
+	const wholeMonths =
+		(lastMonth.getUTCFullYear() - firstMonth.getUTCFullYear()) * 12 +
+		lastMonth.getUTCMonth() -
+		firstMonth.getUTCMonth() -
+		1;
+	return (
+		(first.endMs - startMs) / (first.endMs - first.startMs) +
+		wholeMonths +
+		(endMs - last.startMs) / (last.endMs - last.startMs)
+	);
 }

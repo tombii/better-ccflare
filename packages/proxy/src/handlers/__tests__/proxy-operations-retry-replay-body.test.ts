@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	spyOn,
+} from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { preserveTestEnv } from "../../__tests__/preserve-test-env";
 import { proxyWithAccount } from "../proxy-operations";
@@ -346,6 +354,33 @@ describe("proxyWithAccount — an in-place retry replays the request actually in
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
 		resetRateLimitProbeGatesForTests();
+	});
+
+	it.each([
+		500, 529,
+	])("inspects rebuilt %i retry bodies without the Bun clone().json() leak", async (status) => {
+		const error = status === 500 ? serverError500 : overloaded529;
+		const bodies = scriptUpstream([error, error]);
+		const body = encode({
+			model: "claude-sonnet-4-5",
+			messages: [{ role: "user", content: "x".repeat(256 * 1024) }],
+			max_tokens: 10,
+		});
+		// Match the shared request-json leak guard: parsing output alone cannot
+		// distinguish the leaking native .json() read from JSON.parse(.text()).
+		const jsonSpy = spyOn(Request.prototype, "json");
+		const textSpy = spyOn(Request.prototype, "text");
+		try {
+			await runProxy(makeAccount({ id: `acc-leak-guard-${status}` }), body);
+
+			expect(bodies).toHaveLength(2);
+			expect(bodies[1]).toBe(bodies[0]);
+			expect(jsonSpy).not.toHaveBeenCalled();
+			expect(textSpy).toHaveBeenCalled();
+		} finally {
+			jsonSpy.mockRestore();
+			textSpy.mockRestore();
+		}
 	});
 
 	it("replays the fallback model, not the one the upstream just rejected (5xx)", async () => {

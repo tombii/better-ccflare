@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 // Side-effect import: load @better-ccflare/core before @better-ccflare/types.
 // types/agent.ts runtime-imports core while core/strategy.ts imports types, a
@@ -180,6 +180,42 @@ describe("createApiKeyUsageHandler", () => {
 	it("404s for an unknown key", async () => {
 		const res = await handler("nope", new URLSearchParams());
 		expect(res.status).toBe(404);
+	});
+
+	it("rejects excessive custom ranges before any database query", async () => {
+		await seedKey("key-1", "alpha");
+		const keyLookup = spyOn(dbOps, "getApiKey");
+		const get = spyOn(dbOps.getAdapter(), "get");
+		const query = spyOn(dbOps.getAdapter(), "query");
+		try {
+			for (const [from, to, message] of [
+				[
+					"2026-01-01",
+					"+100000-01-01T00:00:00Z",
+					"between 2000-01-01 and 2100-01-01",
+				],
+				["2026-01-01", "2028-01-01", "400 days"],
+				[
+					"1999-12-31T23:59:59Z",
+					"2000-01-01",
+					"between 2000-01-01 and 2100-01-01",
+				],
+			]) {
+				const response = await handler(
+					"key-1",
+					new URLSearchParams({ range: "custom", from, to }),
+				);
+				expect(response.status).toBe(400);
+				expect(await response.text()).toContain(message);
+			}
+			expect(keyLookup).not.toHaveBeenCalled();
+			expect(get).not.toHaveBeenCalled();
+			expect(query).not.toHaveBeenCalled();
+		} finally {
+			keyLookup.mockRestore();
+			get.mockRestore();
+			query.mockRestore();
+		}
 	});
 
 	it("resolves a key by name as well as by id", async () => {

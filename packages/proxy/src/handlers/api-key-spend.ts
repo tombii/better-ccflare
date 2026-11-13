@@ -216,7 +216,13 @@ export class ApiKeySpendCounter {
 	}
 	private scheduleRefresh(): void {
 		this.dispose();
-		if (!this.limitEntries.size && !this.keyLimits.size) return;
+		if (
+			!this.limitEntries.size &&
+			!this.keyLimits.size &&
+			!this.pendingRecords.size &&
+			!this.lastAccess.size
+		)
+			return;
 		const now = Date.now();
 		let next = now + SPEND_RESYNC_TTL_MS;
 		for (const entry of this.limitEntries.values())
@@ -244,6 +250,19 @@ export class ApiKeySpendCounter {
 	async reconcileActiveKeys(): Promise<void> {
 		const now = Date.now();
 		this.expireReservations(now);
+		// Cleanup must also run for keys without reconciled window rows.
+		for (const [apiKeyId, cached] of this.keyLimits) {
+			if (cached.limits.length) continue;
+			this.pendingRecords.delete(apiKeyId);
+			this.lastAccess.delete(apiKeyId);
+			if (now - cached.loadedMs >= SPEND_RESYNC_TTL_MS)
+				this.keyLimits.delete(apiKeyId);
+		}
+		for (const [apiKeyId, pending] of this.pendingRecords) {
+			for (const [id, event] of pending)
+				if (now - event.timestamp > SPEND_PENDING_TTL_MS) pending.delete(id);
+			if (!pending.size) this.pendingRecords.delete(apiKeyId);
+		}
 		for (const [apiKeyId, lastAccess] of this.lastAccess)
 			if (
 				now - lastAccess > SPEND_IDLE_TTL_MS &&
@@ -286,8 +305,8 @@ export class ApiKeySpendCounter {
 		apiKeyId: string,
 		signal?: AbortSignal,
 	): Promise<ApiKeyLimit[]> {
-		this.lastAccess.set(apiKeyId, Date.now());
 		const cached = this.keyLimits.get(apiKeyId);
+		if (cached?.limits.length) this.lastAccess.set(apiKeyId, Date.now());
 		if (cached && Date.now() - cached.loadedMs < SPEND_RESYNC_TTL_MS)
 			return cached.limits;
 		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
@@ -304,7 +323,17 @@ export class ApiKeySpendCounter {
 		}
 		if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
 			return this.getLimitsForKey(apiKeyId, signal);
+		if (
+			!limits.length &&
+			(this.lastAccess.has(apiKeyId) || this.entries.has(apiKeyId))
+		)
+			this.forget(apiKeyId);
 		this.keyLimits.set(apiKeyId, { loadedMs: Date.now(), limits });
+		if (limits.length) this.lastAccess.set(apiKeyId, Date.now());
+		else {
+			this.pendingRecords.delete(apiKeyId);
+			this.lastAccess.delete(apiKeyId);
+		}
 		if (!this.refreshTimer) this.scheduleRefresh();
 		return limits;
 	}
@@ -966,6 +995,7 @@ export class ApiKeySpendCounter {
 		}
 		this.releaseReservation(requestId);
 		if (timestamp < (this.spendResetPoints.get(apiKeyId) ?? 0)) return;
+		if (this.keyLimits.get(apiKeyId)?.limits.length === 0) return;
 		const recorded = {
 			requestId,
 			timestamp,
