@@ -248,7 +248,7 @@ label-addressed rows with no OAuth or request-accounting state. See
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | `id` | TEXT | PRIMARY KEY | Unique provider row id |
-| `provider` | TEXT | NOT NULL | Catalog kind: `tavily`, `exa`, `parallel`, `deepseek`, `serper`, `brave`, `perplexity` |
+| `provider` | TEXT | NOT NULL | Catalog kind: `tavily`, `exa`, `parallel`, `deepseek`, `serper`, `brave`, `tinyfish`, `firecrawl`, `keenable`, `nimble`, `linkup`, `perplexity` |
 | `label` | TEXT | NOT NULL, UNIQUE | Operator-facing name |
 | `api_key` | TEXT | nullable | API key (plaintext, like account API keys) |
 | `priority` | INTEGER | NOT NULL, DEFAULT 0 | Fallback order; lower is tried first |

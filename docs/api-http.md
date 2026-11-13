@@ -1355,7 +1355,7 @@ Create a provider. Responds `201` with `{ "success": true, "data": <provider> }`
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `provider` | string | yes | Catalog id: `tavily`, `exa`, `parallel`, `deepseek`, `serper`, `brave`, `perplexity` |
+| `provider` | string | yes | Catalog id: `tavily`, `exa`, `parallel`, `deepseek`, `serper`, `brave`, `tinyfish`, `firecrawl`, `keenable`, `nimble`, `linkup`, `perplexity` |
 | `label` | string | yes | Unique name, at most 64 characters (`409` on collision) |
 | `apiKey` | string | for keyed providers | Required unless the catalog entry has `requiresKey: false` |
 | `priority` | integer | no | 0–1000, lower tried first (default 0) |

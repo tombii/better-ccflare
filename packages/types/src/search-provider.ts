@@ -7,7 +7,10 @@
  * request-accounting state.
  */
 
-/** Provider ids the UI can offer. Phase 1 only implements `tavily` in the proxy. */
+/**
+ * Provider ids the UI can offer. Which of them the proxy can actually call is
+ * recorded per entry by {@link SearchProviderCatalogEntry.implemented}.
+ */
 export type SearchProviderId =
 	| "tavily"
 	| "exa"
@@ -18,6 +21,8 @@ export type SearchProviderId =
 	| "tinyfish"
 	| "firecrawl"
 	| "keenable"
+	| "nimble"
+	| "linkup"
 	| "perplexity";
 
 /**
@@ -73,7 +78,8 @@ export interface SearchProviderCatalogEntry {
 	extraConfigFields: SearchProviderExtraConfigField[];
 	/**
 	 * False for providers listed for discoverability but not yet implemented
-	 * by the proxy (phase 1 implements `tavily` only).
+	 * by the proxy. The source of truth for which ids have an adapter is the
+	 * registry in `packages/proxy/src/web-tools/adapters/index.ts`.
 	 */
 	implemented: boolean;
 	/** Tiers this provider supports. Absent means `["paid"]`. */
@@ -390,6 +396,52 @@ export const SEARCH_PROVIDER_CATALOG: readonly SearchProviderCatalogEntry[] = [
 				type: "number",
 				placeholder: "1000",
 				description: "Characters per result snippet (180–10000).",
+			},
+		],
+	},
+	{
+		id: "nimble",
+		label: "Nimble",
+		requiresKey: true,
+		docsUrl: "https://docs.nimbleway.com/nimble-sdk/web-tools/search",
+		implemented: true,
+		extraConfigFields: [
+			{
+				key: "search_depth",
+				label: "Search depth",
+				type: "select",
+				options: ["standard", "lite"],
+				defaultValue: "standard",
+				description:
+					"`standard` returns ~2K chars of page content per result; `lite` returns titles, URLs and snippets only (cheaper, more token-efficient).",
+			},
+			{
+				key: "focus",
+				label: "Focus",
+				type: "select",
+				options: ["general", "news"],
+				defaultValue: "general",
+				description:
+					"Nimble `focus` mode; `news` returns current-events results.",
+			},
+		],
+	},
+	{
+		id: "linkup",
+		label: "Linkup",
+		requiresKey: true,
+		docsUrl:
+			"https://docs.linkup.so/pages/documentation/endpoints/search/overview",
+		implemented: true,
+		extraConfigFields: [
+			{
+				key: "depth",
+				label: "Search depth",
+				type: "select",
+				options: ["fast", "standard", "deep", "flash"],
+				defaultValue: "standard",
+				description:
+					"`flash` is lowest latency (alpha), `fast`/`standard` are one-shot retrieval, `deep` runs several iterations at roughly 5x the per-call price.",
 			},
 		],
 	},
