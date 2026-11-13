@@ -1919,8 +1919,13 @@ export default async function startServer(options?: {
 					// (auth-service.ts) exactly — no trailing slash required on
 					// either — so this SPA-serving check and the auth-layer
 					// classification never drift apart.
+					// "/api" itself or "/api/…" only: the dashboard's own pages
+					// /api-keys and /api-key-usage also start with "/api", and a
+					// reload or bookmark of them fell through to the proxy (503
+					// pool_exhausted, or a forwarded upstream request).
 					const isApiOrProxyPath =
-						url.pathname.startsWith("/api") ||
+						url.pathname === "/api" ||
+						url.pathname.startsWith("/api/") ||
 						url.pathname.startsWith("/v1") ||
 						url.pathname.startsWith("/messages") ||
 						url.pathname === "/health";
