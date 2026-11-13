@@ -348,6 +348,8 @@ export function createApiKeyUsageHandler(context: APIContext) {
 				limits: keyResponse.limits ?? [],
 				totalCostUsd: apiCostUsd + planValueUsd,
 				apiKey: {
+					spendResetAt: keyResponse.spendResetAt ?? null,
+					spendResetBy: keyResponse.spendResetBy ?? null,
 					id: keyResponse.id,
 					name: keyResponse.name,
 					isActive: keyResponse.isActive,

@@ -54,6 +54,7 @@ import {
 	reauthenticateAccount,
 	removeAccount,
 	resetAllStats,
+	resetApiKeySpend,
 	resumeAccount,
 	runDoctor,
 	setAccountNightWindow,
@@ -128,6 +129,7 @@ interface ParsedArgs {
 	setModel: string | null;
 	generateApiKey: string | null;
 	updateApiKey: string | null;
+	resetSpend: string | null;
 	apiKeyOptions: ApiKeyOptions;
 	listApiKeys: boolean;
 	disableApiKey: string | null;
@@ -493,6 +495,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		setModel: null,
 		generateApiKey: null,
 		updateApiKey: null,
+		resetSpend: null,
 		apiKeyOptions: {},
 		listApiKeys: false,
 		disableApiKey: null,
@@ -906,6 +909,12 @@ function parseArgs(args: string[]): ParsedArgs {
 			case "--list-api-keys":
 				parsed.listApiKeys = true;
 				break;
+			case "--reset-spend":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					throw new Error("--reset-spend requires an API key name or ID");
+				}
+				parsed.resetSpend = args[++i];
+				break;
 			case "--disable-api-key":
 				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
 					console.error("❌ --disable-api-key requires an API key name");
@@ -1042,6 +1051,7 @@ API Key Management:
     --routing <family=id>     Repeat: family=combo-id; replaces routing overrides
     --clear-routing           Use global routing assignments
   --list-api-keys            List all API keys
+  --reset-spend <key>        Reset spend against a key's limits; keep limits and history
   --disable-api-key <name>   Disable an API key
   --enable-api-key <name>    Enable a disabled API key
   --delete-api-key <name>    Delete an API key permanently
@@ -1587,6 +1597,29 @@ Examples:
 			console.log(`  Inactive: ${stats.inactive}`);
 		}
 		await exitGracefully(0);
+	}
+
+	if (parsed.resetSpend) {
+		try {
+			const result = await resetApiKeySpend(
+				dbOps,
+				parsed.resetSpend,
+				cliConfig,
+			);
+			console.log(
+				`✅ Spend reset for API key '${parsed.resetSpend}'. Limits and usage history kept.`,
+			);
+			if (!result.notified)
+				console.log(
+					"No running local server accepted the reset notification; the persisted reset will apply when it starts.",
+				);
+			await exitGracefully(0);
+		} catch (error: unknown) {
+			console.error(
+				`❌ Failed to reset API key spend: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			await exitGracefully(1);
+		}
 	}
 
 	if (parsed.disableApiKey) {

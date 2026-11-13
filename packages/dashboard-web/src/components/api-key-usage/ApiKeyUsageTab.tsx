@@ -14,6 +14,10 @@ import { COLORS } from "../../constants";
 import { useApiKeys, useApiKeyUsage } from "../../hooks/queries";
 import { queryKeys } from "../../lib/query-keys";
 import { ApiKeyLimitsEditor } from "../api-keys/ApiKeyLimitsEditor";
+import {
+	ApiKeyResetSpendDialog,
+	type ResetSpendKey,
+} from "../api-keys/ApiKeyResetSpendDialog";
 import { ApiKeyRestrictionsEditor } from "../api-keys/ApiKeyRestrictionsEditor";
 import { ApiKeyRoutingEditor } from "../api-keys/ApiKeyRoutingEditor";
 import { ApiKeySpendGauge } from "../api-keys/ApiKeySpendGauge";
@@ -104,6 +108,9 @@ export function ApiKeyUsageTab() {
 			: undefined,
 	);
 	const [editingId, setEditingId] = useState("");
+	const [resetSpendKey, setResetSpendKey] = useState<ResetSpendKey | null>(
+		null,
+	);
 	const [restrictionsDraft, setRestrictionsDraft] =
 		useState<ApiKeyRestrictions>({
 			allowedAccounts: null,
@@ -342,10 +349,29 @@ export function ApiKeyUsageTab() {
 
 					{data ? (
 						<Card>
-							<CardHeader>
+							<CardHeader className="flex flex-row items-center justify-between gap-3">
 								<CardTitle className="text-sm">Current limits</CardTitle>
+								{data.canManage ? (
+									<Button
+										variant="outline"
+										size="sm"
+										disabled={!data.limits.length}
+										onClick={() =>
+											setResetSpendKey({ ...data.apiKey, limits: data.limits })
+										}
+									>
+										Reset spend
+									</Button>
+								) : null}
 							</CardHeader>
 							<CardContent>
+								{data.apiKey.spendResetAt != null ? (
+									<p className="mb-3 text-xs text-muted-foreground">
+										Spend reset at{" "}
+										{new Date(data.apiKey.spendResetAt).toLocaleString()} by{" "}
+										{data.apiKey.spendResetBy ?? "unknown"}
+									</p>
+								) : null}
 								{data.limits.length ? (
 									<ApiKeySpendGauge
 										apiKey={{
@@ -655,6 +681,11 @@ export function ApiKeyUsageTab() {
 					) : null}
 				</>
 			)}
+			<ApiKeyResetSpendDialog
+				key={resetSpendKey?.id ?? "closed"}
+				apiKey={resetSpendKey}
+				onClose={() => setResetSpendKey(null)}
+			/>
 		</div>
 	);
 }

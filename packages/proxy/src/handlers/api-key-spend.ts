@@ -146,6 +146,7 @@ export class ApiKeySpendCounter {
 			costUsd: number;
 		}
 	>();
+	private readonly spendResetPoints = new Map<string, number>();
 	private readonly reservationLocks = new Map<string, Promise<void>>();
 	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 	constructor(private readonly dbOps: DatabaseOperations) {}
@@ -239,12 +240,41 @@ export class ApiKeySpendCounter {
 	private identity(apiKeyId: string, limit: ApiKeyLimit): string {
 		return JSON.stringify([apiKeyId, limit.scopeModel, limit.window]);
 	}
+	/**
+	 * Reset completed spend immediately. Existing in-flight reservations remain:
+	 * their final cost is counted when recorded at/after this boundary, even if
+	 * the request started before it. Request history is never changed.
+	 */
+	applySpendReset(apiKeyId: string, timestamp: number): void {
+		if ((this.spendResetPoints.get(apiKeyId) ?? 0) >= timestamp) return;
+		this.spendResetPoints.set(apiKeyId, timestamp);
+		this.forget(apiKeyId);
+		const pending = this.pendingRecords.get(apiKeyId);
+		if (pending)
+			for (const [id, event] of pending)
+				if (event.timestamp < timestamp) pending.delete(id);
+	}
+
+	private async loadSpendReset(apiKeyId: string): Promise<number> {
+		if (typeof this.dbOps.getApiKey === "function") {
+			const key = await this.dbOps.getApiKey(apiKeyId);
+			const resetAt = key?.spendResetAt ?? 0;
+			if (resetAt > (this.spendResetPoints.get(apiKeyId) ?? 0))
+				this.applySpendReset(apiKeyId, resetAt);
+		}
+		return this.spendResetPoints.get(apiKeyId) ?? 0;
+	}
+
 	private async syncLimitKey(
 		apiKeyId: string,
 		limit: ApiKeyLimit,
 		mode: ApiKeyLimitWindowMode,
 		nowMs: number,
 	): Promise<void> {
+		const resetAt =
+			typeof this.dbOps.getApiKey === "function"
+				? await this.loadSpendReset(apiKeyId)
+				: (this.spendResetPoints.get(apiKeyId) ?? 0);
 		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
 		const keyLimits =
 			this.keyLimits.get(apiKeyId)?.limits ??
@@ -263,6 +293,10 @@ export class ApiKeySpendCounter {
 					{
 						window: row.window,
 						...apiKeyLimitWindowBounds(row.window, mode, nowMs),
+						startMs: Math.max(
+							apiKeyLimitWindowBounds(row.window, mode, nowMs).startMs,
+							resetAt,
+						),
 					},
 				]),
 			).values(),
@@ -292,7 +326,7 @@ export class ApiKeySpendCounter {
 							mode === "rolling"
 								? Math.min(...windows.map((window) => window.startMs))
 								: null,
-							nowMs - SPEND_PENDING_TTL_MS,
+							Math.max(nowMs - SPEND_PENDING_TTL_MS, resetAt),
 							nowMs,
 						)
 					: {
@@ -321,6 +355,7 @@ export class ApiKeySpendCounter {
 			// concurrent SQL snapshot may not have observed that commit yet.
 			const unpersisted = [...(outstanding?.values() ?? [])].filter(
 				(event) =>
+					event.timestamp >= resetAt &&
 					(!event.requestId || !seen.has(event.requestId)) &&
 					nowMs - event.timestamp <= SPEND_PENDING_TTL_MS,
 			);
@@ -330,6 +365,7 @@ export class ApiKeySpendCounter {
 			for (const row of limits) {
 				const bounds = apiKeyLimitWindowBounds(row.window, mode, nowMs);
 				const matches = (event: SpendEvent) =>
+					event.timestamp >= resetAt &&
 					(event.timestamp <= nowMs || unpersisted.includes(event)) &&
 					(mode === "rolling"
 						? event.timestamp > bounds.startMs
@@ -382,7 +418,7 @@ export class ApiKeySpendCounter {
 		this.lastAccess.set(apiKeyId, Date.now());
 		const identity = this.identity(apiKeyId, limit);
 		const bounds = apiKeyLimitWindowBounds(limit.window, mode, nowMs);
-		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
+		let generation = this.limitGenerations.get(apiKeyId) ?? 0;
 		let entry = this.limitEntries.get(identity);
 		if (
 			reconcile ||
@@ -392,6 +428,7 @@ export class ApiKeySpendCounter {
 			(mode === "calendar" && entry.startMs !== bounds.startMs)
 		) {
 			await this.syncLimitKey(apiKeyId, limit, mode, nowMs);
+			generation = this.limitGenerations.get(apiKeyId) ?? 0;
 			entry = this.limitEntries.get(identity);
 		} else if (nowMs - entry.lastSyncMs >= SPEND_RESYNC_TTL_MS) {
 			void this.syncLimitKey(apiKeyId, limit, mode, nowMs).catch((error) =>
@@ -664,6 +701,7 @@ export class ApiKeySpendCounter {
 			return;
 		}
 		this.releaseReservation(requestId);
+		if (timestamp < (this.spendResetPoints.get(apiKeyId) ?? 0)) return;
 		const recorded = {
 			requestId,
 			timestamp,
@@ -776,7 +814,8 @@ export class ApiKeySpendCounter {
 		if (existing) return existing;
 
 		const promise = this.sync(apiKeyId, limit, nowMs).finally(() => {
-			this.inflight.delete(apiKeyId);
+			if (this.inflight.get(apiKeyId) === promise)
+				this.inflight.delete(apiKeyId);
 		});
 		this.inflight.set(apiKeyId, promise);
 		return promise;
@@ -787,11 +826,21 @@ export class ApiKeySpendCounter {
 		limit: ApiKeySpendLimit,
 		nowMs: number,
 	): Promise<CounterEntry> {
-		const windowStartMs = computeSpendWindowStartMs(limit.limitWindow, nowMs);
+		const resetAt =
+			typeof this.dbOps.getApiKey === "function"
+				? await this.loadSpendReset(apiKeyId)
+				: (this.spendResetPoints.get(apiKeyId) ?? 0);
+		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
+		const windowStartMs = Math.max(
+			computeSpendWindowStartMs(limit.limitWindow, nowMs),
+			resetAt > 0 ? resetAt - 1 : 0,
+		);
 		const { totalUsd, oldestMs } = await this.dbOps.getApiKeySpendSince(
 			apiKeyId,
 			windowStartMs,
 		);
+		if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
+			throw new Error("Spend counter reset during reconciliation");
 		const entry: CounterEntry = {
 			windowKey: spendWindowInstanceKey(limit.limitWindow, nowMs),
 			windowStartMs,

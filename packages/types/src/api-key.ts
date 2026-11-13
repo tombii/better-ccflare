@@ -74,6 +74,8 @@ export function parseFamilyComboOverrides(
 
 // Database row type that matches actual database schema
 export interface ApiKeyRow {
+	spend_reset_at?: number | null;
+	spend_reset_by?: string | null;
 	limit_window_mode?: string;
 	family_combo_overrides?: string | null;
 	id: string;
@@ -238,6 +240,8 @@ export function coerceSpendLimitUsd(value: unknown): number | null {
 
 // Domain model - used throughout the application
 export interface ApiKey {
+	spendResetAt?: number | null;
+	spendResetBy?: string | null;
 	limitWindowMode?: ApiKeyLimitWindowMode;
 	familyComboOverrides?: Record<string, string> | null;
 	id: string;
@@ -262,6 +266,8 @@ export interface ApiKey {
 
 // API response type - what clients receive (excluding sensitive data)
 export interface ApiKeyResponse {
+	spendResetAt?: number | null;
+	spendResetBy?: string | null;
 	limitWindowMode?: ApiKeyLimitWindowMode;
 	familyComboOverrides?: Record<string, string> | null;
 	limits?: ApiKeyLimitStatus[];
@@ -442,6 +448,9 @@ export class NodeCryptoUtils implements CryptoUtils {
 // Converter functions
 export function toApiKey(row: ApiKeyRow): ApiKey {
 	return {
+		spendResetAt:
+			row.spend_reset_at == null ? null : Number(row.spend_reset_at),
+		spendResetBy: row.spend_reset_by ?? null,
 		limitWindowMode:
 			row.limit_window_mode === "rolling" ? "rolling" : "calendar",
 		familyComboOverrides: parseFamilyComboOverrides(row.family_combo_overrides),
@@ -475,6 +484,8 @@ export function toApiKey(row: ApiKeyRow): ApiKey {
 
 export function toApiKeyResponse(apiKey: ApiKey): ApiKeyResponse {
 	return {
+		spendResetAt: apiKey.spendResetAt ?? null,
+		spendResetBy: apiKey.spendResetBy ?? null,
 		limitWindowMode: apiKey.limitWindowMode ?? "calendar",
 		familyComboOverrides: apiKey.familyComboOverrides ?? null,
 		id: apiKey.id,

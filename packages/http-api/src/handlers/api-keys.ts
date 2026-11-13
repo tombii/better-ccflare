@@ -11,6 +11,7 @@ import {
 import { KNOWN_PATTERNS } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { BadRequest, NotFound } from "@better-ccflare/errors";
+import { Logger } from "@better-ccflare/logger";
 import {
 	getApiKeySpendCounter,
 	tryGetApiKeySpendCounter,
@@ -667,6 +668,55 @@ export function createApiKeyRoutingUpdateHandler(dbOps: DatabaseOperations) {
 				}),
 				{ headers: { "Content-Type": "application/json" } },
 			);
+		} catch (error) {
+			return errorResponse(error);
+		}
+	};
+}
+
+/** Admin reset: persist first, then replace the live accounting boundary immediately. */
+export function createApiKeyResetSpendHandler(dbOps: DatabaseOperations) {
+	return async (idOrName: string, actor: string): Promise<Response> => {
+		try {
+			const key = await resolveKey(dbOps, idOrName);
+			const resetAt = Date.now();
+			if (!(await dbOps.resetApiKeySpend(key.id, resetAt, actor)))
+				throw NotFound(`API key '${idOrName}' not found`);
+			// A concurrent reset may have persisted a later boundary while this
+			// request was writing; always publish the persisted winner.
+			const updated = await resolveKey(dbOps, key.id);
+			getApiKeySpendCounter(dbOps).applySpendReset(
+				key.id,
+				updated.spendResetAt ?? resetAt,
+			);
+			new Logger("ApiKeySpendReset").info(
+				`Spend reset for API key ${key.name} (${key.id}) at ${new Date(updated.spendResetAt ?? resetAt).toISOString()} by ${updated.spendResetBy ?? actor}`,
+			);
+			const [data] = await withSpendUsage(dbOps, [toApiKeyResponse(updated)]);
+			return new Response(
+				JSON.stringify({
+					success: true,
+					data,
+					message: `Spend reset for ${key.name}; limits and usage history kept.`,
+				}),
+				{ headers: { "Content-Type": "application/json" } },
+			);
+		} catch (error) {
+			return errorResponse(error);
+		}
+	};
+}
+
+/** CLI notification only: load an already-persisted reset without changing it. */
+export function createApiKeyReloadSpendHandler(dbOps: DatabaseOperations) {
+	return async (idOrName: string): Promise<Response> => {
+		try {
+			const key = await resolveKey(dbOps, idOrName);
+			if (key.spendResetAt != null)
+				getApiKeySpendCounter(dbOps).applySpendReset(key.id, key.spendResetAt);
+			return new Response(JSON.stringify({ success: true }), {
+				headers: { "Content-Type": "application/json" },
+			});
 		} catch (error) {
 			return errorResponse(error);
 		}

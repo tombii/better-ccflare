@@ -98,8 +98,30 @@ describe("API-only key page", () => {
 		expect(markup).not.toContain("Save restrictions");
 		expect(markup).not.toContain("Save limits");
 		expect(markup).not.toContain("Save routing");
+		expect(markup).not.toContain("Reset spend");
 		expect(markup).not.toContain('href="/accounts"');
 		expect(markup).not.toContain('href="/api-keys"');
+	});
+	it("offers an admin reset next to the gauges, disables it without limits, and shows its actor", () => {
+		const admin: ApiKeyUsageResponse = {
+			...usage,
+			canManage: true,
+			apiKey: {
+				...usage.apiKey,
+				spendResetAt: 1_795_000_000_000,
+				spendResetBy: "operator",
+			},
+		};
+		const markup = renderOwnPage("/api-keys/own", [["own", admin]]);
+		expect(markup).toContain("Reset spend</button>");
+		expect(markup).toContain("Spend reset at");
+		expect(markup).toContain("by operator");
+		const unlimited = renderOwnPage("/api-keys/own", [
+			["own", { ...admin, limits: [] }],
+		]);
+		expect(unlimited).toMatch(
+			/<button[^>]*disabled=""[^>]*>Reset spend<\/button>/,
+		);
 	});
 	it("keeps literal escaped slashes distinct from slashes when both key names exist", () => {
 		const escaped: ApiKeyUsageResponse = {

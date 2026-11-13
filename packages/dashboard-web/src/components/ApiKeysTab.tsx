@@ -10,6 +10,7 @@ import {
 	ChevronDown,
 	Gauge,
 	Plus,
+	RotateCcw,
 	Shield,
 	SlidersHorizontal,
 	ToggleLeft,
@@ -23,6 +24,7 @@ import { api } from "../api";
 import { useAccounts, useApiKeys } from "../hooks/queries";
 import { queryKeys } from "../lib/query-keys";
 import { ApiKeyLimitsEditor } from "./api-keys/ApiKeyLimitsEditor";
+import { ApiKeyResetSpendDialog } from "./api-keys/ApiKeyResetSpendDialog";
 import { ApiKeyRestrictionsEditor } from "./api-keys/ApiKeyRestrictionsEditor";
 import { ApiKeyRestrictionsSummary } from "./api-keys/ApiKeyRestrictionsSummary";
 import { ApiKeySpendGauge } from "./api-keys/ApiKeySpendGauge";
@@ -88,6 +90,9 @@ export function ApiKeysTab() {
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 	const [newKeyName, setNewKeyName] = useState("");
 	const [selectedKey, setSelectedKey] = useState<ApiKeyResponse | null>(null);
+	const [resetSpendKey, setResetSpendKey] = useState<ApiKeyResponse | null>(
+		null,
+	);
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
 	const [isAdminKey, setIsAdminKey] = useState(false);
 	const [showNewKeyRestrictions, setShowNewKeyRestrictions] = useState(false);
@@ -720,6 +725,13 @@ export function ApiKeysTab() {
 														<Gauge className="h-4 w-4 mr-2" />
 														Edit spend limits
 													</DropdownMenuItem>
+													<DropdownMenuItem
+														disabled={!key.limits?.length}
+														onClick={() => setResetSpendKey(key)}
+													>
+														<RotateCcw className="h-4 w-4 mr-2" />
+														Reset spend
+													</DropdownMenuItem>
 												</DropdownMenuContent>
 											</DropdownMenu>
 										</div>
@@ -984,6 +996,11 @@ export function ApiKeysTab() {
 					) : null}
 				</DialogContent>
 			</Dialog>
+			<ApiKeyResetSpendDialog
+				key={resetSpendKey?.id ?? "closed"}
+				apiKey={resetSpendKey}
+				onClose={() => setResetSpendKey(null)}
+			/>
 		</div>
 	);
 }

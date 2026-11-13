@@ -157,7 +157,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			gateway_hint_context_compacted TEXT,
 			provider_served TEXT,
 			completion_tier TEXT,
-			limit_model TEXT
+			limit_model TEXT,
+			spend_recorded_at BIGINT
 		)
 	`);
 
@@ -253,7 +254,9 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			limit_window TEXT,
 			limit_enforce TEXT,
    limit_window_mode TEXT NOT NULL DEFAULT 'calendar' CHECK (limit_window_mode IN ('calendar', 'rolling')),
-   family_combo_overrides TEXT
+   family_combo_overrides TEXT,
+   spend_reset_at BIGINT,
+   spend_reset_by TEXT
 		)
 	`);
 
@@ -1420,6 +1423,21 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		},
 		{
 			table: "requests",
+			column: "spend_recorded_at",
+			definition: "ALTER TABLE requests ADD COLUMN spend_recorded_at BIGINT",
+		},
+		{
+			table: "api_keys",
+			column: "spend_reset_at",
+			definition: "ALTER TABLE api_keys ADD COLUMN spend_reset_at BIGINT",
+		},
+		{
+			table: "api_keys",
+			column: "spend_reset_by",
+			definition: "ALTER TABLE api_keys ADD COLUMN spend_reset_by TEXT",
+		},
+		{
+			table: "requests",
 			column: "project",
 			definition: "ALTER TABLE requests ADD COLUMN project TEXT",
 		},
@@ -2285,6 +2303,7 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	}
 
 	await migrateApiKeyLimitsPg(adapter);
+	await migrateApiKeySpendResetPg(adapter);
 
 	// Refresh the planner statistics of the tables this run actually rewrote.
 	// Skipped entirely when nothing was rewritten (a fresh install, or a
@@ -2327,5 +2346,20 @@ export async function migrateApiKeyLimitsPg(
 	}
 	await adapter.atomicStatements(
 		statements.map((sql) => ({ sql, params: [] })),
+	);
+}
+
+/** Persist the budget reset boundary and the last actor on existing installations. */
+export async function migrateApiKeySpendResetPg(
+	adapter: BunSqlAdapter,
+): Promise<void> {
+	await adapter.unsafe(
+		"ALTER TABLE requests ADD COLUMN IF NOT EXISTS spend_recorded_at BIGINT",
+	);
+	await adapter.unsafe(
+		"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS spend_reset_at BIGINT",
+	);
+	await adapter.unsafe(
+		"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS spend_reset_by TEXT",
 	);
 }

@@ -136,6 +136,8 @@ export interface ApiKeyUsageResponse {
 	familyComboOverrides: Record<string, string> | null;
 	limits: ApiKeyLimitStatus[];
 	apiKey: {
+		spendResetAt?: number | null;
+		spendResetBy?: string | null;
 		id: string;
 		name: string;
 		isActive: boolean;

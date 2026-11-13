@@ -21,7 +21,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
 			FROM api_keys
 			ORDER BY created_at DESC
 		`);
@@ -37,7 +37,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
 			FROM api_keys
 			WHERE is_active = 1
 			ORDER BY created_at DESC
@@ -55,7 +55,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
 			FROM api_keys
 			WHERE id = ?
 		`,
@@ -75,7 +75,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
 			FROM api_keys
 			WHERE hashed_key = ? AND is_active = 1
 		`,
@@ -95,7 +95,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
 			FROM api_keys
 			WHERE name = ?
 		`,
@@ -156,6 +156,29 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				apiKey.limit_enforce ?? null,
 			],
 		);
+	}
+
+	/** Reset budget accounting and dismiss this key's current spend-limit alerts atomically. */
+	async resetSpend(
+		id: string,
+		timestamp: number,
+		actor: string,
+	): Promise<boolean> {
+		if (!(await this.findById(id))) return false;
+		await this.adapter.atomicStatements([
+			{
+				sql: "UPDATE api_keys SET spend_reset_at = ?, spend_reset_by = ? WHERE id = ? AND (spend_reset_at IS NULL OR spend_reset_at <= ?)",
+				params: [timestamp, actor, id, timestamp],
+			},
+			{
+				sql: "UPDATE alerts SET acknowledged = 1 WHERE type = 'api_key_spend_limit' AND acknowledged = 0 AND substr(id, 1, ?) = ?",
+				params: [
+					`api_key_spend_limit:${id}:`.length,
+					`api_key_spend_limit:${id}:`,
+				],
+			},
+		]);
+		return true;
 	}
 
 	/**
@@ -371,7 +394,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides, spend_reset_at, spend_reset_by
 			FROM api_keys
 			WHERE is_active = 1 AND EXISTS (SELECT 1 FROM api_key_limits WHERE api_key_id = api_keys.id)
 			ORDER BY created_at DESC

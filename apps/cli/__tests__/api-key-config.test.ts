@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -16,17 +16,27 @@ describe("API key CLI configuration", () => {
 	afterEach(() => rmSync(directory, { recursive: true, force: true }));
 
 	async function run(...args: string[]) {
-		const child = Bun.spawn([process.execPath, "run", cliPath, ...args], {
-			env: {
-				...process.env,
-				DATABASE_URL: "",
-				NODE_ENV: "test",
-				BETTER_CCFLARE_DB_PATH: dbPath,
-				BETTER_CCFLARE_LOG_DIR: directory,
+		const preloadPath = join(directory, "offline-fetch.ts");
+		writeFileSync(
+			preloadPath,
+			'globalThis.fetch = async () => { throw new Error("Offline CLI test"); };',
+		);
+		const child = Bun.spawn(
+			[process.execPath, "run", "--preload", preloadPath, cliPath, ...args],
+			{
+				env: {
+					...process.env,
+					DATABASE_URL: "",
+					NODE_ENV: "test",
+					BETTER_CCFLARE_DB_PATH: dbPath,
+					BETTER_CCFLARE_LOG_DIR: directory,
+					BETTER_CCFLARE_CONFIG_PATH: join(directory, "config.json"),
+					XDG_CONFIG_HOME: directory,
+				},
+				stdout: "ignore",
+				stderr: "pipe",
 			},
-			stdout: "ignore",
-			stderr: "pipe",
-		});
+		);
 		const stderr = await new Response(child.stderr).text();
 		return { code: await child.exited, stderr };
 	}
@@ -154,5 +164,47 @@ describe("API key CLI configuration", () => {
 		expect(orphan.stderr).toContain(
 			"require --generate-api-key or --update-api-key",
 		);
+	});
+
+	it("resets one key's spend while retaining its limits and request history", async () => {
+		expect(
+			(
+				await run(
+					"--generate-api-key",
+					"limited",
+					"--limit",
+					"window=day,usd=5",
+				)
+			).code,
+		).toBe(0);
+		const db = new Database(dbPath);
+		try {
+			db.run(
+				"INSERT INTO requests (id,timestamp,method,path,api_key_id,cost_usd) SELECT 'history',?, 'POST','/v1/messages',id,6 FROM api_keys WHERE name='limited'",
+				[Date.now() - 1_000],
+			);
+			const limits = db.query("SELECT * FROM api_key_limits").all();
+			const requests = db.query("SELECT * FROM requests").all();
+			const before = Date.now();
+			const reset = await run("--reset-spend", "limited");
+			expect(reset.code, reset.stderr).toBe(0);
+			const key = db
+				.query<{ spend_reset_at: number; spend_reset_by: string }, []>(
+					"SELECT spend_reset_at,spend_reset_by FROM api_keys",
+				)
+				.get();
+			expect(key?.spend_reset_at).toBeGreaterThanOrEqual(before);
+			expect(key?.spend_reset_by).toBe("CLI");
+			expect(db.query("SELECT * FROM api_key_limits").all()).toEqual(limits);
+			expect(db.query("SELECT * FROM requests").all()).toEqual(requests);
+			const missing = await run("--reset-spend", "missing");
+			expect(missing.code).toBe(1);
+			expect(missing.stderr).toContain("not found");
+			const noName = await run("--reset-spend");
+			expect(noName.code).toBe(1);
+			expect(noName.stderr).toContain("requires an API key");
+		} finally {
+			db.close();
+		}
 	});
 });

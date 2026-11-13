@@ -55,6 +55,14 @@ const LOCAL_CONTROL_SECRET_HEADER = "x-better-ccflare-local-control-secret";
  * (clear an in-process cache / re-poll usage) triggered by the user's own CLI
  * against their own locally-running server, not a general auth bypass. */
 function isLocalControlNotifyPath(path: string): boolean {
+	const parts = path.split("/");
+	if (
+		parts.length === 5 &&
+		parts[1] === "api" &&
+		parts[2] === "api-keys" &&
+		parts[4] === "reload-spend"
+	)
+		return true;
 	return (
 		path.startsWith("/api/accounts/") &&
 		(path.endsWith("/reload") || path.endsWith("/force-reset-rate-limit"))
@@ -426,6 +434,12 @@ export class AuthService {
 		// API key management: Only allow initial key creation without auth if no keys exist
 		// All other operations require authentication
 		if (path.startsWith("/api/api-keys")) {
+			if (
+				method === "POST" &&
+				headers &&
+				this.isLocalControlRequest(headers, path)
+			)
+				return true;
 			// Only allow POST (key creation) without auth if no keys exist
 			if (path === "/api/api-keys" && method === "POST") {
 				return !(await this.isAuthenticationEnabled()); // Only exempt if no keys exist

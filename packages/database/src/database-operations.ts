@@ -1488,6 +1488,7 @@ OAuth tokens will need to be re-authenticated.
 		/** When the request started (epoch ms); see RequestData.timestamp. */
 		timestamp?: number,
 		limitModel?: string | null,
+		spendRecordedAt?: number,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -1511,6 +1512,7 @@ OAuth tokens will need to be re-authenticated.
 					comboName,
 					originalModel,
 					limitModel,
+					spendRecordedAt,
 					appliedModel,
 					projectAttributionSource,
 					agentAttributionSource,
@@ -2874,6 +2876,19 @@ OAuth tokens will need to be re-authenticated.
 		);
 	}
 
+	/** Persist the accounting reset without deleting usage or changing limits. */
+	async resetApiKeySpend(
+		id: string,
+		timestamp: number,
+		actor: string,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.resetSpend(id, timestamp, actor),
+			this.retryConfig,
+			"resetApiKeySpend",
+		);
+	}
+
 	async getApiKeyLimits(id: string): Promise<ApiKeyLimit[]> {
 		return withDatabaseRetry(
 			() => this.apiKeys.getLimits(id),
@@ -2905,8 +2920,8 @@ OAuth tokens will need to be re-authenticated.
 	/**
 	 * Reconcile a key in one SQL snapshot. Calendar windows return grouped SUMs;
 	 * individual events are returned only for rolling expiry and the short local
-	 * completion acknowledgement tail. Completion time preserves window attribution
-	 * across an asynchronous write and a process restart.
+	 * completion acknowledgement tail. Cost-recorded time preserves budget attribution
+	 * across delayed pricing, asynchronous writes, and a process restart.
 	 */
 	async getApiKeySpendReconciliation(
 		apiKeyId: string,
@@ -2945,7 +2960,7 @@ OAuth tokens will need to be re-authenticated.
 			eventSinceMs,
 			...windows.map((window) => window.startMs),
 		);
-		const params: Array<string | number> = [apiKeyId, sinceMs, nowMs];
+		const params: Array<string | number> = [apiKeyId, sinceMs, nowMs, apiKeyId];
 		for (const window of windows) params.push(window.startMs, window.endMs);
 		params.push(eventSinceMs);
 		const rows = await withDatabaseRetry(
@@ -2960,10 +2975,10 @@ OAuth tokens will need to be re-authenticated.
 				}>(
 					`
 			WITH completed AS (
-				SELECT id, timestamp + COALESCE(response_time_ms, 0) AS completed_ms,
+				SELECT id, COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) AS completed_ms,
 					cost_usd, model, COALESCE(limit_model, original_model) AS requested_model
 				FROM requests WHERE api_key_id = ? AND cost_usd > 0
-			), eligible AS (SELECT * FROM completed WHERE completed_ms >= ? AND completed_ms <= ?)
+			), eligible AS (SELECT * FROM completed WHERE completed_ms >= ? AND completed_ms <= ? AND completed_ms >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0))
 			SELECT 'total' AS kind, NULL AS request_id, NULL AS completed_ms, model, requested_model, ${sums.join(", ")}
 			FROM eligible GROUP BY model, requested_model
 			UNION ALL
@@ -3020,8 +3035,8 @@ OAuth tokens will need to be re-authenticated.
 					model: string | null;
 					requested_model: string | null;
 				}>(
-					"SELECT id, timestamp + COALESCE(response_time_ms, 0) AS timestamp, cost_usd, model, COALESCE(limit_model, original_model) AS requested_model FROM requests WHERE api_key_id = ? AND timestamp + COALESCE(response_time_ms, 0) >= ? AND cost_usd > 0 ORDER BY timestamp",
-					[apiKeyId, sinceMs],
+					"SELECT id, COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) AS timestamp, cost_usd, model, COALESCE(limit_model, original_model) AS requested_model FROM requests WHERE api_key_id = ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) >= ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0) AND cost_usd > 0 ORDER BY timestamp",
+					[apiKeyId, sinceMs, apiKeyId],
 				),
 			this.retryConfig,
 			"getApiKeySpendEventsSince",
@@ -3078,10 +3093,11 @@ OAuth tokens will need to be re-authenticated.
 					total: number | string | null;
 					oldest: number | string | null;
 				}>(
-					`SELECT SUM(cost_usd) AS total, MIN(timestamp) AS oldest
+					`SELECT SUM(cost_usd) AS total, MIN(COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0))) AS oldest
 					 FROM requests
-					 WHERE api_key_id = ? AND timestamp > ? AND cost_usd IS NOT NULL`,
-					[apiKeyId, sinceMs],
+					 WHERE api_key_id = ? AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) > ?
+					 AND COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0) AND cost_usd IS NOT NULL`,
+					[apiKeyId, sinceMs, apiKeyId],
 				),
 			this.retryConfig,
 			"getApiKeySpendSince",

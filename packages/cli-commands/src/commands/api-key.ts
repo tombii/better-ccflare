@@ -1,3 +1,4 @@
+import type { Config } from "@better-ccflare/config";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	type ApiKeyGenerationResult,
@@ -347,6 +348,51 @@ export async function updateApiKeySpendLimit(
 	}
 
 	return apiKey.id;
+}
+
+/** Start limit spending again without changing limits or deleting usage history. */
+export async function resetApiKeySpend(
+	dbOps: DatabaseOperations,
+	idOrName: string,
+	config: Config,
+): Promise<{ id: string; resetAt: number; notified: boolean }> {
+	const key =
+		(await dbOps.getApiKey(idOrName)) ??
+		(await dbOps.getApiKeyByName(idOrName));
+	if (!key) throw new Error(`API key '${idOrName}' not found`);
+	const resetAt = Date.now();
+	if (!(await dbOps.resetApiKeySpend(key.id, resetAt, "CLI"))) {
+		throw new Error("Failed to reset API key spend");
+	}
+
+	// Reuse the account-command local-control channel so a running server drops
+	// old spend immediately. Offline servers rebuild from the persisted reset.
+	let notified = false;
+	try {
+		const secret = config.getLocalControlSecret();
+		const ports = [...new Set([config.getRuntime().port || 8080, 8080, 8081])];
+		await Promise.all(
+			ports.map(async (port) => {
+				try {
+					const response = await fetch(
+						`http://localhost:${port}/api/api-keys/${encodeURIComponent(key.id)}/reload-spend`,
+						{
+							method: "POST",
+							headers: { "x-better-ccflare-local-control-secret": secret },
+							signal: AbortSignal.timeout(1000),
+						},
+					);
+					if (response.ok) notified = true;
+					await response.body?.cancel();
+				} catch {
+					// Best-effort only: the persisted reset survives an offline server.
+				}
+			}),
+		);
+	} catch {
+		// A notification configuration error must not undo a persisted reset.
+	}
+	return { id: key.id, resetAt, notified };
 }
 
 /**

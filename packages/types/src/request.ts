@@ -113,6 +113,8 @@ export function toStreamTerminalState(
 export interface RequestRow {
 	id: string;
 	timestamp: number;
+	/** Limit accounting time; legacy rows fall back to response completion. */
+	spend_recorded_at?: number | null;
 	method: string;
 	path: string;
 	account_used: string | null;

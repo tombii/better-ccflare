@@ -1,5 +1,5 @@
 import { validateNumber } from "@better-ccflare/core";
-import { BadRequest, Unauthorized } from "@better-ccflare/errors";
+import { BadRequest, Forbidden, Unauthorized } from "@better-ccflare/errors";
 import { getPeakHoursState } from "@better-ccflare/proxy";
 import {
 	createAccountAddHandler,
@@ -65,6 +65,8 @@ import {
 	createApiKeyGetHandler,
 	createApiKeyLimitsGetHandler,
 	createApiKeyLimitsPutHandler,
+	createApiKeyReloadSpendHandler,
+	createApiKeyResetSpendHandler,
 	createApiKeyRoutingUpdateHandler,
 	createApiKeysGenerateHandler,
 	createApiKeysListHandler,
@@ -657,6 +659,21 @@ export class APIRouter {
 			);
 		}
 
+		const keyActionParts = path.split("/");
+		const isSpendResetAction =
+			method === "POST" &&
+			keyActionParts.length === 5 &&
+			keyActionParts[1] === "api" &&
+			keyActionParts[2] === "api-keys" &&
+			(keyActionParts[4] === "reset-spend" ||
+				keyActionParts[4] === "reload-spend");
+		if (
+			isSpendResetAction &&
+			authResult.apiKeyId &&
+			authResult.role !== "admin"
+		)
+			return errorResponse(Forbidden("Only admins can reset API key spend"));
+
 		// Authorize the request based on API key role
 		if (authResult.apiKey) {
 			const authzResult = await this.authService.authorizeEndpoint(
@@ -946,6 +963,21 @@ export class APIRouter {
 		if (path.startsWith("/api/api-keys/")) {
 			const parts = path.split("/");
 			const keyIdOrName = decodeURIComponent(parts[3]); // Decode URL-encoded IDs/names
+			if (parts.length === 5 && method === "POST" && parts[4] === "reset-spend")
+				return await createApiKeyResetSpendHandler(this.context.dbOps)(
+					keyIdOrName,
+					authResult.apiKeyName
+						? `API key ${authResult.apiKeyName} (${authResult.apiKeyId})`
+						: "dashboard session",
+				);
+			if (
+				parts.length === 5 &&
+				method === "POST" &&
+				parts[4] === "reload-spend"
+			)
+				return await createApiKeyReloadSpendHandler(this.context.dbOps)(
+					keyIdOrName,
+				);
 			if (parts.length === 4 && method === "GET") {
 				return await createApiKeyGetHandler(this.context.dbOps)(keyIdOrName);
 			}

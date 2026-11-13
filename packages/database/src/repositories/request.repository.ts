@@ -129,6 +129,8 @@ export interface RequestData {
 	 * pricing-window boundary. Defaults to `Date.now()`.
 	 */
 	timestamp?: number;
+	/** When final cost became known, independently of request start/latency. */
+	spendRecordedAt?: number;
 	method: string;
 	path: string;
 	accountUsed: string | null;
@@ -244,9 +246,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				stream_terminal_state, client_session_id,
 				gateway_hint_request_class, gateway_hint_agent_type,
 				gateway_hint_prev_tool_durations, gateway_hint_compaction,
-				gateway_hint_context_compacted, provider_served, completion_tier, limit_model
+				gateway_hint_context_compacted, provider_served, completion_tier, limit_model, spend_recorded_at
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET
 				timestamp = EXCLUDED.timestamp,
 				method = EXCLUDED.method,
@@ -273,6 +275,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				combo_name = COALESCE(EXCLUDED.combo_name, requests.combo_name),
 				original_model = COALESCE(EXCLUDED.original_model, requests.original_model),
 				limit_model = COALESCE(EXCLUDED.limit_model, requests.limit_model),
+				spend_recorded_at = COALESCE(EXCLUDED.spend_recorded_at, requests.spend_recorded_at),
 				applied_model = COALESCE(EXCLUDED.applied_model, requests.applied_model),
 				-- (project, project_attribution_source) and (agent_used, agent_attribution_source)
 				-- move in LOCKSTEP and are resolved by SOURCE AUTHORITY, not preserve-first or
@@ -355,6 +358,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				usage?.providerServed || null,
 				usage?.completionTier || null,
 				data.limitModel || null,
+				data.spendRecordedAt ?? null,
 			],
 		);
 	}

@@ -217,7 +217,8 @@ export function ensureSchema(db: Database): void {
 			gateway_hint_context_compacted TEXT,
 			provider_served TEXT,
 			completion_tier TEXT,
-			limit_model TEXT
+			limit_model TEXT,
+			spend_recorded_at INTEGER
 		)
 	`);
 
@@ -323,7 +324,9 @@ export function ensureSchema(db: Database): void {
 			limit_window TEXT,
 			limit_enforce TEXT,
    limit_window_mode TEXT NOT NULL DEFAULT 'calendar' CHECK (limit_window_mode IN ('calendar', 'rolling')),
-   family_combo_overrides TEXT
+   family_combo_overrides TEXT,
+   spend_reset_at INTEGER,
+   spend_reset_by TEXT
 		)
 	`);
 
@@ -2330,6 +2333,15 @@ export function runMigrations(db: Database, dbPath?: string): void {
               CASE WHEN limit_enforce = 'warn' THEN 'warn' ELSE 'block' END, created_at, created_at
             FROM api_keys WHERE limit_usd > 0`);
 		}
+		if (!requestLimitColumns.includes("spend_recorded_at"))
+			db.run("ALTER TABLE requests ADD COLUMN spend_recorded_at INTEGER");
+		// Reset only the budget accounting boundary; request history stays intact.
+		for (const [column, type] of [
+			["spend_reset_at", "INTEGER"],
+			["spend_reset_by", "TEXT"],
+		])
+			if (!limitV2Columns.includes(column))
+				db.run(`ALTER TABLE api_keys ADD COLUMN ${column} ${type}`);
 	});
 
 	// Execute the migration transaction

@@ -830,6 +830,7 @@ export class UsageCollector {
 		this.freeRequestState(state);
 
 		// Calculate total tokens and cost
+		let spendRecordedAt: number | undefined;
 		if (state.usage.model) {
 			const model = state.usage.model;
 			// Use provider's authoritative count if available, fallback to computed
@@ -868,6 +869,10 @@ export class UsageCollector {
 				}
 				throw error;
 			}
+			// Spend becomes chargeable when pricing finishes, which can be after
+			// EOF and an operator's reset. Keep this separate from response latency
+			// and persist the same instant even when the async writer runs later.
+			spendRecordedAt = Date.now();
 
 			// Per-API-key spend counter: the request's cost has just become
 			// known, and this is the only place in the process where that is
@@ -887,7 +892,7 @@ export class UsageCollector {
 				startMessage.apiKeyId,
 				state.usage.costUsd,
 				state.usage.model,
-				startMessage.timestamp + responseTime,
+				spendRecordedAt,
 				startMessage.requestId,
 				startMessage.limitModel ?? startMessage.originalModel ?? null,
 			);
@@ -1049,6 +1054,7 @@ export class UsageCollector {
 					// same way (e.g. peak vs off-peak near a window boundary).
 					startMessage.timestamp,
 					startMessage.limitModel ?? null,
+					spendRecordedAt,
 				);
 			} catch (error) {
 				log.error(
