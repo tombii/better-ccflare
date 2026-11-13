@@ -41,6 +41,8 @@ interface ModelCooldown {
 	until: number;
 	windowlessStreak?: number;
 	windowless?: boolean;
+	windowlessClaims?: number;
+	previous?: ModelCooldown;
 }
 const cooldowns = new Map<string, ModelCooldown>();
 const log = new Logger("ModelCooldown");
@@ -65,6 +67,22 @@ function pruneExpired(now: number): void {
 	}
 }
 
+function claimWindowlessCooldown(
+	key: string,
+	entry: ModelCooldown,
+): () => void {
+	entry.windowlessClaims = (entry.windowlessClaims ?? 0) + 1;
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		entry.windowlessClaims = (entry.windowlessClaims ?? 1) - 1;
+		if (entry.windowlessClaims > 0 || cooldowns.get(key) !== entry) return;
+		if (entry.previous) cooldowns.set(key, entry.previous);
+		else cooldowns.delete(key);
+	};
+}
+
 /**
  * Records that (accountId, model) is cooling down until `untilMs`. A missing,
  * non-numeric or already-past `untilMs` falls back to
@@ -80,6 +98,7 @@ export function markModelCooling(
 	untilMs?: number | null,
 	now: number = Date.now(),
 ): void {
+	if (!normalizeModel(model)) return;
 	const until =
 		typeof untilMs === "number" && untilMs > now
 			? Math.min(untilMs, now + MAX_MODEL_COOLDOWN_MS)
@@ -99,30 +118,45 @@ export function markModelCooling(
 }
 
 /** Windowless rejections keep their streak after expiry until this pair succeeds.
- * The existing bounded store owns both the deadline and backoff state. */
+ * Concurrent rejections share the active deadline and do not escalate its streak.
+ * Each request claims its own evidence in the current burst. Its callback
+ * removes only that claim; the deadline disappears once every claim has been
+ * disproven. An explicit cooldown replacing this generation stays intact. */
 export function markWindowlessModelCooling(
 	accountId: string,
 	model: string,
 	now: number = Date.now(),
-): void {
-	if (!model.trim()) return;
+): (() => void) | undefined {
+	if (!normalizeModel(model)) return;
 	const key = cooldownKey(accountId, model);
 	const previous = cooldowns.get(key);
+	if (previous && previous.until > now) {
+		return previous.windowless
+			? claimWindowlessCooldown(key, previous)
+			: undefined;
+	}
 	const streak = (previous?.windowlessStreak ?? 0) + 1;
 	const until = now + computeWindowless429CooldownMs(streak);
-	const storedUntil = Math.max(until, previous?.until ?? 0);
 	markModelCooling(accountId, model, until, now);
-	cooldowns.set(key, {
-		until: storedUntil,
+	const entry: ModelCooldown = {
+		until,
 		windowlessStreak: streak,
-		windowless:
-			previous?.until && previous.until > until ? previous.windowless : true,
-	});
-	if (!previous || previous.until <= now || !previous.windowlessStreak) {
-		log.warn(
-			`account=${accountId} model=${normalizeModel(model)} windowless_429 paused until ${new Date(storedUntil).toISOString()}`,
-		);
-	}
+		windowless: true,
+		// Only the expired state is needed for undo, not its historical claims
+		// or previous generations, so repeated expiry cannot grow a chain.
+		previous: previous
+			? {
+					until: previous.until,
+					windowlessStreak: previous.windowlessStreak,
+					windowless: previous.windowless,
+				}
+			: undefined,
+	};
+	cooldowns.set(key, entry);
+	log.warn(
+		`account=${accountId} model=${normalizeModel(model)} windowless_429 paused until ${new Date(until).toISOString()}`,
+	);
+	return claimWindowlessCooldown(key, entry);
 }
 
 /** A success heals only this upstream pair, never another model on the account. */
@@ -159,6 +193,18 @@ export function getModelCooldownUntil(
 		return null;
 	}
 	return entry.until;
+}
+
+/** Explicit combo cooldowns remain binding; only windowless hints allow retry. */
+export function isWindowlessModelCooling(
+	accountId: string,
+	model: string,
+	now: number = Date.now(),
+): boolean {
+	return (
+		getModelCooldownUntil(accountId, model, now) !== null &&
+		cooldowns.get(cooldownKey(accountId, model))?.windowless === true
+	);
 }
 
 /**

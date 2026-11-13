@@ -1336,6 +1336,8 @@ async function handleProxyRequest(
 		const poolExhaustedResponse = createPoolExhaustedResponse(
 			allAccounts,
 			usageSnapshots,
+			"pool_exhausted",
+			effectiveModel,
 		);
 
 		// Skip request-log staging for synthetic auto-refresh probes that

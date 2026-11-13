@@ -25,6 +25,13 @@ function renderPrices(children: React.ReactNode, enabled = true) {
 				rates: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
 			},
 			{
+				id: "partial-cache-price",
+				name: "Missing cache write price",
+				provider: "other",
+				family: "other",
+				rates: { input: 2, output: 6, cacheRead: 0.2, cacheWrite: null },
+			},
+			{
 				id: "unpriced",
 				name: "No known price",
 				provider: "other",
@@ -46,6 +53,17 @@ function renderPrices(children: React.ReactNode, enabled = true) {
 }
 
 describe("model prices view and shared hints", () => {
+	it("marks missing cache prices and explains that cache-token requests record zero cost", () => {
+		const markup = renderPrices(<ModelPricesTab />);
+		const partialRow = markup.match(
+			/<tr[^>]*>(?:(?!<\/tr>).)*partial-cache-price(?:(?!<\/tr>).)*<\/tr>/,
+		)?.[0];
+		expect(partialRow).toContain("Cache prices incomplete");
+		expect(partialRow).toContain("Unknown");
+		expect(markup).toContain(
+			"Requests using cache tokens on models with missing cache prices are currently recorded at $0",
+		);
+	});
 	it("renders a searchable catalogue with family, all token rates, and unknown prices", () => {
 		const markup = renderPrices(<ModelPricesTab />);
 		expect(markup).toContain('aria-label="Search model prices"');

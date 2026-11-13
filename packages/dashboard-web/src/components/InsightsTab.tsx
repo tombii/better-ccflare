@@ -6,6 +6,7 @@ import {
 	useCacheInsights,
 	useContextInsights,
 } from "../hooks/queries";
+import { CostTrackingNotice } from "./CostTrackingNotice";
 import { AlertsView } from "./insights/AlertsView";
 import { AnomaliesView } from "./insights/AnomaliesView";
 import { CacheEfficiencyView } from "./insights/CacheEfficiencyView";
@@ -31,6 +32,7 @@ export const InsightsTab = React.memo(() => {
 
 	return (
 		<div className="space-y-6">
+			<CostTrackingNotice />
 			{/* Controls */}
 			<div className="flex flex-col sm:flex-row gap-4 justify-between">
 				<TimeRangeSelector

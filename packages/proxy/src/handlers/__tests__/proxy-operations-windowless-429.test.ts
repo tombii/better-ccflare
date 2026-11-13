@@ -12,9 +12,11 @@ import { Logger } from "@better-ccflare/logger";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import * as usageCollectorModule from "../../usage-collector";
+import { selectAccountsForRequest } from "../account-selector";
 import { clearFamilyExhaustionCache } from "../model-capacity";
 import {
 	getModelCooldownUntil,
+	markModelCooling,
 	resetModelCooldownsForTests,
 } from "../model-cooldown";
 import { proxyWithAccount } from "../proxy-operations";
@@ -190,12 +192,13 @@ async function runProxy(
 	ctx: ProxyContext,
 	req: Request,
 	body: ArrayBuffer,
+	meta = makeRequestMeta(),
 ) {
 	return proxyWithAccount(
 		req,
 		new URL("https://proxy.local/v1/messages"),
 		account,
-		makeRequestMeta(),
+		meta,
 		body,
 		() => undefined,
 		0,
@@ -232,6 +235,123 @@ describe("proxyWithAccount — windowless 429 cooldown", () => {
 		clearFamilyExhaustionCache();
 		resetModelCooldownsForTests();
 		setSystemTime();
+	});
+
+	it("undoes this request's cooldown after a second account rejects and stops cooling later accounts", async () => {
+		globalThis.fetch = mock(async () => burst429());
+		const meta = makeRequestMeta();
+		const body = makeRequestBody();
+		const ctx = makeCtx();
+		const first = makeAccount({ id: "first" });
+		const second = makeAccount({ id: "second" });
+		const third = makeAccount({ id: "third" });
+		markModelCooling(first.id, "another-model", Date.now() + 300_000);
+		await runProxy(first, ctx, makeRequest(body), body, meta);
+		expect(getModelCooldownUntil(first.id, "claude-sonnet-4-5")).not.toBeNull();
+		await runProxy(second, ctx, makeRequest(body), body, meta);
+		await runProxy(third, ctx, makeRequest(body), body, meta);
+		for (const account of [first, second, third]) {
+			expect(getModelCooldownUntil(account.id, "claude-sonnet-4-5")).toBeNull();
+		}
+		expect(getModelCooldownUntil(first.id, "another-model")).not.toBeNull();
+		expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+	});
+
+	it("counts distinct accounts and rolls back every model this request cooled on its first account", async () => {
+		globalThis.fetch = mock(async () => burst429());
+		const meta = makeRequestMeta();
+		const ctx = makeCtx();
+		const first = makeAccount({ id: "first" });
+		const body = makeRequestBody();
+		const otherBody = makeRequestBody("claude-haiku-5-5");
+		await runProxy(first, ctx, makeRequest(body), body, meta);
+		await runProxy(first, ctx, makeRequest(otherBody), otherBody, meta);
+		expect(getModelCooldownUntil(first.id, "claude-sonnet-4-5")).not.toBeNull();
+		expect(getModelCooldownUntil(first.id, "claude-haiku-5-5")).not.toBeNull();
+		await runProxy(
+			makeAccount({ id: "second" }),
+			ctx,
+			makeRequest(body),
+			body,
+			meta,
+		);
+		expect(getModelCooldownUntil(first.id, "claude-sonnet-4-5")).toBeNull();
+		expect(getModelCooldownUntil(first.id, "claude-haiku-5-5")).toBeNull();
+	});
+
+	it("preserves a same-pair cooldown that predates the request", async () => {
+		globalThis.fetch = mock(async () => burst429());
+		const meta = makeRequestMeta();
+		const ctx = makeCtx();
+		const first = makeAccount({ id: "first" });
+		ctx.strategy = { select: () => [first] } as never;
+		ctx.dbOps.getAllAccounts = async () => [first];
+		ctx.dbOps.getActiveComboForFamily = async () => null;
+		const body = makeRequestBody();
+		const until = Date.now() + 60_000;
+		markModelCooling(first.id, "claude-sonnet-4-5", until);
+		await selectAccountsForRequest(meta, ctx, "claude-sonnet-4-5");
+		await runProxy(first, ctx, makeRequest(body), body, meta);
+		await runProxy(
+			makeAccount({ id: "second" }),
+			ctx,
+			makeRequest(body),
+			body,
+			meta,
+		);
+		expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+		expect(getModelCooldownUntil(first.id, "claude-sonnet-4-5")).toBe(until);
+		expect(getModelCooldownUntil("second", "claude-sonnet-4-5")).toBeNull();
+	});
+
+	it("preserves an explicit cooldown installed after this request's first rejection", async () => {
+		globalThis.fetch = mock(async () => burst429());
+		const meta = makeRequestMeta();
+		const body = makeRequestBody();
+		const ctx = makeCtx();
+		const first = makeAccount({ id: "first" });
+		await runProxy(first, ctx, makeRequest(body), body, meta);
+		const explicitUntil = Date.now() + 600_000;
+		markModelCooling(first.id, "claude-sonnet-4-5", explicitUntil);
+		await runProxy(
+			makeAccount({ id: "second" }),
+			ctx,
+			makeRequest(body),
+			body,
+			meta,
+		);
+		expect(getModelCooldownUntil(first.id, "claude-sonnet-4-5")).toBe(
+			explicitUntil,
+		);
+		expect(getModelCooldownUntil("second", "claude-sonnet-4-5")).toBeNull();
+	});
+
+	it.each([
+		false,
+		true,
+	])("tries a single cooled account selected as fallback (cooldown added after selection: %s)", async (afterSelection) => {
+		const account = makeAccount();
+		const meta = makeRequestMeta();
+		const ctx = makeCtx();
+		ctx.strategy = { select: () => [account] } as never;
+		ctx.dbOps.getAllAccounts = async () => [account];
+		ctx.dbOps.getActiveComboForFamily = async () => null;
+		const body = makeRequestBody();
+		if (!afterSelection)
+			markModelCooling(account.id, "claude-sonnet-4-5", Date.now() + 60_000);
+		const selected = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
+		if (afterSelection)
+			markModelCooling(account.id, "claude-sonnet-4-5", Date.now() + 60_000);
+		globalThis.fetch = mock(async () => ok200());
+		expect(selected).toHaveLength(1);
+		expect(
+			(await runProxy(selected[0], ctx, makeRequest(body), body, meta))?.status,
+		).toBe(200);
+		expect(globalThis.fetch).toHaveBeenCalledTimes(1);
 	});
 
 	it("cools only the upstream model and leaves every account quota field untouched", async () => {

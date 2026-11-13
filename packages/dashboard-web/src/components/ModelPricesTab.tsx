@@ -35,6 +35,10 @@ export function ModelPricesTab() {
 					Family rates can vary by model. These are API-cost-equivalent rates;
 					account subscriptions and negotiated provider charges may differ.
 				</p>
+				<p className="text-sm text-amber-700">
+					Requests using cache tokens on models with missing cache prices are
+					currently recorded at $0.
+				</p>
 				<Input
 					aria-label="Search model prices"
 					placeholder="Search by model, family, or provider"
@@ -75,6 +79,11 @@ export function ModelPricesTab() {
 											</code>
 											{!model.rates ? (
 												<div className="text-amber-700">No price available</div>
+											) : model.rates.cacheRead == null ||
+												model.rates.cacheWrite == null ? (
+												<div className="text-amber-700">
+													Cache prices incomplete
+												</div>
 											) : null}
 										</td>
 										<td className="p-2">{model.family}</td>

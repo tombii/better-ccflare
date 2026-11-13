@@ -8,7 +8,10 @@ import {
 	expect,
 	it,
 } from "bun:test";
-import { resetNanoGPTPricingCacheForTest } from "@better-ccflare/core";
+import {
+	resetNanoGPTPricingCacheForTest,
+	setCostTrackingEnabled,
+} from "@better-ccflare/core";
 import {
 	BunSqlAdapter,
 	ensureSchema,
@@ -95,7 +98,28 @@ const sonnetAccountRow: SqlRow = {
 
 const sonnetProjectRow: SqlRow = { ...sonnetAccountRow, dimension_key: "proj" };
 
+afterEach(() => setCostTrackingEnabled(true));
+
 describe("cache insights handler (mock adapter)", () => {
+	it("keeps token metrics but omits dollar estimates while cost tracking is disabled", async () => {
+		setCostTrackingEnabled(false);
+		const context = createMockContext([sonnetAccountRow], [sonnetProjectRow]);
+		const data = await (
+			await createCacheInsightsHandler(context)(new URLSearchParams())
+		).json();
+		expect(data.totals.requests).toBe(12);
+		expect(data.totals.cacheReadInputTokens).toBe(2_000_000);
+		for (const row of [
+			data.totals,
+			...data.byModel,
+			...data.byAccount,
+			...data.byProject,
+		]) {
+			expect(row.actualCacheCostUsd).toBeNull();
+			expect(row.counterfactualCostUsd).toBeNull();
+			expect(row.savingsUsd).toBeNull();
+		}
+	});
 	it("returns meta/totals/byModel/byAccount/byProject with defaults surfaced in meta", async () => {
 		const context = createMockContext([sonnetAccountRow], [sonnetProjectRow]);
 		const response = await createCacheInsightsHandler(context)(

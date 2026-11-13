@@ -6,6 +6,7 @@ import {
 	isModelCooling,
 	MAX_MODEL_COOLDOWN_MS,
 	markModelCooling,
+	markWindowlessModelCooling,
 	resetModelCooldownsForTests,
 } from "../model-cooldown";
 
@@ -17,6 +18,13 @@ beforeEach(() => {
 });
 
 describe("markModelCooling / isModelCooling", () => {
+	it("ignores an empty or whitespace-only model instead of cooling the account", () => {
+		for (const model of ["", "   "]) {
+			markModelCooling("accountA", model, NOW + MINUTE, NOW);
+			expect(getModelCooldownUntil("accountA", "", NOW)).toBeNull();
+		}
+	});
+
 	it("marks a model cooling until the given time and expires at the boundary", () => {
 		markModelCooling("accountA", "deepseek-v4.1-flash", NOW + 10 * MINUTE, NOW);
 
@@ -119,6 +127,61 @@ describe("markModelCooling / isModelCooling", () => {
 				NOW,
 			),
 		).toBe(true);
+	});
+});
+
+describe("markWindowlessModelCooling", () => {
+	it("keeps one burst at its original 60-second deadline and streak", () => {
+		for (let index = 0; index < 5; index++) {
+			markWindowlessModelCooling("accountA", "m", NOW + index * 1000);
+			expect(getModelCooldownUntil("accountA", "m", NOW)).toBe(NOW + MINUTE);
+		}
+		markWindowlessModelCooling("accountA", "m", NOW + MINUTE);
+		expect(getModelCooldownUntil("accountA", "m", NOW + MINUTE)).toBe(
+			NOW + 3 * MINUTE,
+		);
+	});
+
+	it("does not extend an existing explicit cooldown", () => {
+		markModelCooling("accountA", "m", NOW + 30_000, NOW);
+		markWindowlessModelCooling("accountA", "m", NOW + 1000);
+		expect(getModelCooldownUntil("accountA", "m", NOW)).toBe(NOW + 30_000);
+	});
+
+	it("can undo only the windowless state this request created", () => {
+		markWindowlessModelCooling("accountA", "m", NOW);
+		const undo = markWindowlessModelCooling("accountA", "m", NOW + MINUTE);
+		expect(typeof undo).toBe("function");
+		undo?.();
+		expect(getModelCooldownUntil("accountA", "m", NOW + MINUTE)).toBeNull();
+		markWindowlessModelCooling("accountA", "m", NOW + MINUTE);
+		expect(getModelCooldownUntil("accountA", "m", NOW + MINUTE)).toBe(
+			NOW + 3 * MINUTE,
+		);
+	});
+
+	it("preserves cooldown evidence from a concurrent rejection when undoing", () => {
+		const undo = markWindowlessModelCooling("accountA", "m", NOW);
+		markWindowlessModelCooling("accountA", "m", NOW + 1000);
+		undo?.();
+		expect(getModelCooldownUntil("accountA", "m", NOW)).toBe(NOW + MINUTE);
+	});
+
+	it("preserves a newer explicit cooldown when undoing", () => {
+		const undo = markWindowlessModelCooling("accountA", "m", NOW);
+		markModelCooling("accountA", "m", NOW + 10 * MINUTE, NOW + 1000);
+		undo?.();
+		expect(getModelCooldownUntil("accountA", "m", NOW)).toBe(NOW + 10 * MINUTE);
+	});
+
+	it("clears a burst when every concurrent request's rejection was request-scoped", () => {
+		const undoFirst = markWindowlessModelCooling("accountA", "m", NOW);
+		const undoSecond = markWindowlessModelCooling("accountA", "m", NOW + 1000);
+		expect(typeof undoSecond).toBe("function");
+		undoFirst?.();
+		expect(getModelCooldownUntil("accountA", "m", NOW)).toBe(NOW + MINUTE);
+		undoSecond?.();
+		expect(getModelCooldownUntil("accountA", "m", NOW)).toBeNull();
 	});
 });
 

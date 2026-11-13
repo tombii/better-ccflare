@@ -8,6 +8,7 @@ import {
 	isUsageExhausted,
 	logError,
 	type ModelRouting,
+	mapModelName,
 	ProviderError,
 	parseNightWindow,
 	splitModelRouting,
@@ -50,7 +51,11 @@ import {
 import { forwardToClient as defaultForwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
 import { applyAccountRequestTransformer } from "./account-request-transformer";
-import { getComboSlotInfo, getXaiConvId } from "./account-selector";
+import {
+	getComboSlotInfo,
+	getXaiConvId,
+	isModelCooldownFallback,
+} from "./account-selector";
 import {
 	ApiKeyRoutedSpendRefusal,
 	getApiKeyRoutedSpendCheck,
@@ -83,6 +88,50 @@ const log = new Logger("ProxyOperations");
 
 /** Internal control flow: skip a cooled pair without an upstream attempt. */
 class ModelCooldownSkip extends Error {}
+
+/** Failover attempts share metadata, so a second account can identify a
+ * request-scoped refusal without penalizing any other request on this model. */
+const windowlessRejections = new WeakMap<
+	RequestMeta,
+	{
+		accounts: Set<string>;
+		pairs: Set<string>;
+		rollbacks: Array<() => void>;
+		requestScoped: boolean;
+	}
+>();
+
+function recordWindowlessModelRejection(
+	meta: RequestMeta,
+	accountId: string,
+	model: string,
+): void {
+	model = stripModelRouting(model).trim();
+	if (!model) return;
+	let state = windowlessRejections.get(meta);
+	if (!state) {
+		state = {
+			accounts: new Set(),
+			pairs: new Set(),
+			rollbacks: [],
+			requestScoped: false,
+		};
+		windowlessRejections.set(meta, state);
+	}
+	if (state.requestScoped) return;
+	state.accounts.add(accountId);
+	if (state.accounts.size > 1) {
+		state.requestScoped = true;
+		for (const rollback of state.rollbacks) rollback();
+		state.rollbacks = [];
+		return;
+	}
+	const pair = `${accountId}:${model}`;
+	if (state.pairs.has(pair)) return;
+	state.pairs.add(pair);
+	const rollback = markWindowlessModelCooling(accountId, model);
+	if (rollback) state.rollbacks.push(rollback);
+}
 
 /**
  * Resolve the forwarding step for this context.
@@ -1446,8 +1495,10 @@ export async function proxyWithAccount(
 						: null;
 			if (target.body && typeof model === "string") {
 				if (
+					model.trim().length > 0 &&
 					!isInternalProbe(req.headers, ctx) &&
-					getModelCooldownUntil(account.id, model) !== null
+					getModelCooldownUntil(account.id, model) !== null &&
+					!isModelCooldownFallback(requestMeta, account.id, model)
 				) {
 					throw new ModelCooldownSkip();
 				}
@@ -2404,7 +2455,12 @@ export async function proxyWithAccount(
 				// this account was asked for; other models remain healthy.
 				if (isRetryable429(rawResponse, isClaudeProvider)) {
 					const reason: RateLimitReason = "windowless_429";
-					markWindowlessModelCooling(account.id, outgoing.model);
+					recordWindowlessModelRejection(
+						requestMeta,
+						account.id,
+						outgoing.model ||
+							(requestedModel ? mapModelName(requestedModel, account) : ""),
+					);
 					const responseTime = Date.now() - requestMeta.timestamp;
 					const modelRewrite = isModelRewrite(
 						requestMeta.originalModel,
@@ -2536,7 +2592,7 @@ export async function proxyWithAccount(
 				) {
 					markModelCooling(
 						account.id,
-						outgoing.model,
+						outgoing.model || mapModelName(requestedModel, account),
 						resetIsInferred ? null : cooldown.until,
 					);
 					log.warn(
@@ -3928,6 +3984,7 @@ export type PoolExhaustionAccountReason =
 	| "paused"
 	| "usage_exhausted"
 	| "rate_limited"
+	| "model_cooling"
 	| "circuit_open"
 	| "vision_unsupported"
 	| "unavailable";
@@ -3981,6 +4038,7 @@ export function createPoolExhaustedResponse(
 	accounts: Account[],
 	usageSnapshots?: ReadonlyMap<string, AccountUsageSnapshot>,
 	kind: PoolExhaustionKind = "pool_exhausted",
+	requestedModel?: string | null,
 ): Response {
 	const now = Date.now();
 	const isCircuitOpen = kind === "circuit_open";
@@ -3993,6 +4051,13 @@ export function createPoolExhaustedResponse(
 	// the account's own state is irrelevant to why this request was refused.
 	const accountInfos = accounts.map((account) => {
 		const usage = usageSnapshots?.get(account.id);
+		const modelCooldown = requestedModel
+			? getModelCooldownUntil(
+					account.id,
+					mapModelName(requestedModel, account),
+					now,
+				)
+			: null;
 		const usageExhausted =
 			usage !== undefined &&
 			isUsageExhausted(
@@ -4016,7 +4081,9 @@ export function createPoolExhaustedResponse(
 							? "usage_exhausted"
 							: account.rate_limited_until && account.rate_limited_until > now
 								? "rate_limited"
-								: "unavailable";
+								: modelCooldown !== null
+									? "model_cooling"
+									: "unavailable";
 
 		let availableAt: string | null = null;
 		// Neither override kind advertises a recovery time: the breaker's own
@@ -4031,6 +4098,13 @@ export function createPoolExhaustedResponse(
 				account.rate_limited_until > now
 			) {
 				availableAt = new Date(account.rate_limited_until).toISOString();
+			} else if (modelCooldown !== null) {
+				availableAt = new Date(modelCooldown).toISOString();
+			}
+			if (modelCooldown !== null && availableAt !== null) {
+				availableAt = new Date(
+					Math.max(Date.parse(availableAt), modelCooldown),
+				).toISOString();
 			}
 		}
 
@@ -4051,6 +4125,32 @@ export function createPoolExhaustedResponse(
 	// usage cap).
 	const recoveryCandidates: number[] = [];
 	for (const account of accounts) {
+		const modelCooldown = requestedModel
+			? getModelCooldownUntil(
+					account.id,
+					mapModelName(requestedModel, account),
+					now,
+				)
+			: null;
+		// Every gate on this pair must recover before it is available. Choose
+		// the later gate within a route, then the earliest route across accounts.
+		if (modelCooldown !== null) {
+			const usage = usageSnapshots?.get(account.id);
+			const usageReset =
+				usage &&
+				isUsageExhausted(
+					usage.utilization,
+					usage.resetMs,
+					now,
+					usage.extraUsageAvailable,
+				)
+					? (usage.resetMs ?? 0)
+					: 0;
+			recoveryCandidates.push(
+				Math.max(modelCooldown, account.rate_limited_until ?? 0, usageReset),
+			);
+			continue;
+		}
 		if (account.rate_limited_until && account.rate_limited_until > now) {
 			recoveryCandidates.push(account.rate_limited_until);
 		}

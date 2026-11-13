@@ -16,6 +16,7 @@ import {
 	PiggyBank,
 } from "lucide-react";
 import type { TimeRange } from "../../constants";
+import { useCostTracking } from "../../hooks/useCostTracking";
 import { BasePieChart } from "../charts";
 import { Badge } from "../ui/badge";
 import {
@@ -50,6 +51,7 @@ interface BreakdownTableProps {
 }
 
 function BreakdownTable({ rows, nameLabel }: BreakdownTableProps) {
+	const { enabled: costTrackingEnabled } = useCostTracking();
 	if (rows.length === 0) {
 		return (
 			<p className="text-sm text-muted-foreground py-4">
@@ -103,14 +105,20 @@ function BreakdownTable({ rows, nameLabel }: BreakdownTableProps) {
 								{formatPercentage(row.cacheHitRate)}
 							</td>
 							<td className="px-3 py-2 text-right">
-								{row.pricingKnown && row.savingsUsd !== null ? (
+								{costTrackingEnabled &&
+								row.pricingKnown &&
+								row.savingsUsd !== null ? (
 									<span className={savingsColorClass(row.savingsUsd)}>
 										{formatSignedCost(row.savingsUsd)}
 									</span>
 								) : (
 									<span
 										className="text-muted-foreground"
-										title="No pricing data for this model"
+										title={
+											costTrackingEnabled
+												? "No pricing data for this model"
+												: "Cost tracking is disabled"
+										}
 									>
 										—
 									</span>
@@ -129,6 +137,7 @@ export function CacheEfficiencyView({
 	loading = false,
 	timeRange,
 }: CacheEfficiencyViewProps) {
+	const { enabled: costTrackingEnabled } = useCostTracking();
 	const totals = data?.totals;
 
 	const tokenComposition = [
@@ -162,9 +171,11 @@ export function CacheEfficiencyView({
 					</CardHeader>
 					<CardContent>
 						<div
-							className={`text-2xl font-bold ${savingsColorClass(totals?.savingsUsd ?? 0)}`}
+							className={`text-2xl font-bold ${costTrackingEnabled ? savingsColorClass(totals?.savingsUsd ?? 0) : ""}`}
 						>
-							{formatSignedCost(totals?.savingsUsd ?? 0)}
+							{costTrackingEnabled
+								? formatSignedCost(totals?.savingsUsd ?? 0)
+								: "—"}
 						</div>
 						<p className="text-xs text-muted-foreground">
 							Estimated vs. running uncached in the last {timeRange}
@@ -215,11 +226,20 @@ export function CacheEfficiencyView({
 					</CardHeader>
 					<CardContent>
 						<div className="text-2xl font-bold">
-							{formatCost(totals?.actualCacheCostUsd ?? 0)}
+							{costTrackingEnabled
+								? formatCost(totals?.actualCacheCostUsd ?? 0)
+								: "—"}
 						</div>
 						<p className="text-xs text-muted-foreground">
-							Cache read/write tokens only, vs{" "}
-							{formatCost(totals?.counterfactualCostUsd ?? 0)} without caching
+							{costTrackingEnabled ? (
+								<>
+									Cache read/write tokens only, vs{" "}
+									{formatCost(totals?.counterfactualCostUsd ?? 0)} without
+									caching
+								</>
+							) : (
+								"Cost tracking is disabled"
+							)}
 						</p>
 					</CardContent>
 				</Card>
@@ -296,13 +316,15 @@ export function CacheEfficiencyView({
 
 			{/* Footnotes */}
 			<div className="space-y-1">
-				{totals && totals.unknownPricingModels.length > 0 && (
-					<p className="text-xs text-muted-foreground">
-						<AlertTriangle className="h-3 w-3 inline mr-1" />
-						No pricing data for: {totals.unknownPricingModels.join(", ")}.
-						Savings exclude this traffic.
-					</p>
-				)}
+				{costTrackingEnabled &&
+					totals &&
+					totals.unknownPricingModels.length > 0 && (
+						<p className="text-xs text-muted-foreground">
+							<AlertTriangle className="h-3 w-3 inline mr-1" />
+							No pricing data for: {totals.unknownPricingModels.join(", ")}.
+							Savings exclude this traffic.
+						</p>
+					)}
 				<p className="text-xs text-muted-foreground">
 					Savings on plan-billed (subscription) traffic are notional — they
 					reflect what the same usage would cost at API rates, not money
