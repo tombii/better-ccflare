@@ -5,12 +5,18 @@ import {
 	expect,
 	it,
 	mock,
+	setSystemTime,
 	spyOn,
 } from "bun:test";
+import { Logger } from "@better-ccflare/logger";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import * as usageCollectorModule from "../../usage-collector";
 import { clearFamilyExhaustionCache } from "../model-capacity";
+import {
+	getModelCooldownUntil,
+	resetModelCooldownsForTests,
+} from "../model-cooldown";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 
@@ -216,6 +222,7 @@ describe("proxyWithAccount — windowless 429 cooldown", () => {
 	beforeEach(() => {
 		originalFetch = globalThis.fetch;
 		collectorSpy = stubUsageCollector();
+		resetModelCooldownsForTests();
 	});
 
 	afterEach(() => {
@@ -223,80 +230,193 @@ describe("proxyWithAccount — windowless 429 cooldown", () => {
 		collectorSpy.mockRestore();
 		usageCache.clear();
 		clearFamilyExhaustionCache();
+		resetModelCooldownsForTests();
+		setSystemTime();
 	});
 
-	// Fail over immediately while benching repeated windowless failures.
-	it("benches briefly and fails over on a bare 429", async () => {
-		let calls = 0;
-		globalThis.fetch = mock(async () => {
-			calls++;
-			return burst429();
-		});
-
+	it("cools only the upstream model and leaves every account quota field untouched", async () => {
+		globalThis.fetch = mock(async () => burst429());
 		const ctx = makeCtx();
-		const account = makeAccount();
-		const body = makeRequestBody();
-
-		const result = await runProxy(account, ctx, makeRequest(body), body);
-
-		// Exactly one upstream call — no in-place retry.
-		expect(calls).toBe(1);
-		// null = fail over to the next account.
-		expect(result).toBeNull();
-		expect(marks(ctx)).toBe(1);
-		expect((account.rate_limited_until ?? 0) - Date.now()).toBeGreaterThan(
-			59_000,
-		);
-		expect(account.rate_limited_reason).toBe("windowless_429");
-		expect(account.consecutive_rate_limits).toBe(1);
+		const account = makeAccount({
+			consecutive_rate_limits: 3,
+			rate_limited_until: Date.now() + 3_600_000,
+			rate_limited_reason: "upstream_429_with_reset",
+			rate_limited_at: Date.now() - 1_000,
+			rate_limit_reset: Date.now() + 3_600_000,
+			rate_limit_status: "allowed",
+			rate_limit_remaining: 42,
+		});
+		const before = { ...account };
+		const body = makeRequestBody("claude-haiku-5-5");
+		expect(await runProxy(account, ctx, makeRequest(body), body)).toBeNull();
+		expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+		expect(marks(ctx)).toBe(0);
+		for (const field of [
+			"rate_limited_until",
+			"rate_limited_reason",
+			"rate_limited_at",
+			"rate_limit_reset",
+			"rate_limit_status",
+			"rate_limit_remaining",
+			"consecutive_rate_limits",
+		] as const) {
+			expect(account[field]).toBe(before[field]);
+		}
+		expect(
+			(getModelCooldownUntil(account.id, "claude-haiku-5-5") ?? 0) - Date.now(),
+		).toBeGreaterThan(59_000);
+		expect(getModelCooldownUntil(account.id, "claude-opus-5-5")).toBeNull();
 		expect(saveReasons(ctx)).toContain("windowless_429");
-		expect(saveReasons(ctx)).not.toContain("model_fallback_429");
-		// The audit row must stay correlated with its originating client session,
-		// exactly as the out_of_credits and model_fallback_429 rows do.
 		expect(lastSaveArg(ctx)).toBe("sess-1");
 	});
 
-	// An eventual real success clears both the bench and exponential streak.
-	it("resets the windowless streak after a successful user response", async () => {
-		let calls = 0;
-		globalThis.fetch = mock(async () => {
-			calls++;
-			return calls === 1 ? burst429() : ok200();
+	it("skips the cooled mapped haiku pair without an upstream call while opus still uses the account", async () => {
+		const now = Date.now();
+		setSystemTime(now);
+		const sent: string[] = [];
+		globalThis.fetch = mock(async (input: Request | string | URL) => {
+			const model = (await (input as Request).json()).model as string;
+			sent.push(model);
+			return model === "claude-haiku-5-5" ? burst429() : ok200();
+		}) as unknown as typeof fetch;
+		const account = makeAccount({
+			model_mappings: JSON.stringify({ haiku: "claude-haiku-5-5" }),
 		});
-
 		const ctx = makeCtx();
-		const account = makeAccount();
-		const body = makeRequestBody();
-
+		const body = makeRequestBody("claude-haiku-alias");
 		expect(await runProxy(account, ctx, makeRequest(body), body)).toBeNull();
+		expect(getModelCooldownUntil(account.id, "claude-haiku-alias")).toBeNull();
+		expect(
+			getModelCooldownUntil(account.id, "claude-haiku-5-5"),
+		).not.toBeNull();
+		expect(await runProxy(account, ctx, makeRequest(body), body)).toBeNull();
+		const opusBody = makeRequestBody("claude-opus-5-5");
+		expect(
+			(await runProxy(account, ctx, makeRequest(opusBody), opusBody))?.status,
+		).toBe(200);
+		expect(sent).toEqual(["claude-haiku-5-5", "claude-opus-5-5"]);
+		expect(
+			getModelCooldownUntil(account.id, "claude-haiku-5-5"),
+		).not.toBeNull();
+		setSystemTime(now + 60_000);
+		await runProxy(account, ctx, makeRequest(body), body);
+		// Opus succeeded, but Haiku's own consecutive streak still doubles.
+		expect(getModelCooldownUntil(account.id, "claude-haiku-5-5")).toBe(
+			now + 180_000,
+		);
+	});
 
-		const second = await runProxy(account, ctx, makeRequest(body), body);
-		expect(second?.status).toBe(200);
-		expect(marks(ctx)).toBe(1);
+	it("fails over immediately and records the mapped pair even with configured model fallbacks", async () => {
+		globalThis.fetch = mock(async () => burst429());
+		const account = makeAccount({
+			model_mappings: JSON.stringify({
+				haiku: ["claude-haiku-5-5", "claude-opus-5-5"],
+			}),
+		});
+		const body = makeRequestBody("claude-haiku-alias");
+		expect(
+			await runProxy(account, makeCtx(), makeRequest(body), body),
+		).toBeNull();
+		expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+		expect(
+			getModelCooldownUntil(account.id, "claude-haiku-5-5"),
+		).not.toBeNull();
 		expect(account.rate_limited_until).toBeNull();
+	});
+
+	it("scopes a windowless 429 reached after a model-not-found fallback to that fallback model", async () => {
+		let calls = 0;
+		globalThis.fetch = mock(async () =>
+			++calls === 1
+				? new Response(
+						JSON.stringify({
+							error: { type: "not_found_error", message: "model not found" },
+						}),
+						{ status: 404, headers: { "content-type": "application/json" } },
+					)
+				: burst429(),
+		);
+		const account = makeAccount({
+			model_mappings: JSON.stringify({
+				haiku: ["claude-haiku-missing", "claude-haiku-5-5"],
+			}),
+		});
+		const body = makeRequestBody("claude-haiku-alias");
+		const ctx = makeCtx();
+		expect(await runProxy(account, ctx, makeRequest(body), body)).toBeNull();
+		expect(calls).toBe(2);
+		expect(
+			getModelCooldownUntil(account.id, "claude-haiku-5-5"),
+		).not.toBeNull();
+		expect(
+			getModelCooldownUntil(account.id, "claude-haiku-missing"),
+		).toBeNull();
+		expect(marks(ctx)).toBe(0);
 		expect(account.consecutive_rate_limits).toBe(0);
 	});
 
-	it("doubles repeated windowless cooldowns and caps at fifteen minutes", async () => {
-		globalThis.fetch = mock(async () => burst429());
-		for (const [streak, expectedMs] of [
-			[1, 120000],
-			[2, 240000],
-			[8, 900000],
-		]) {
-			const account = makeAccount({ consecutive_rate_limits: streak });
+	it("logs one bench and one recovery while cooled requests stay silent", async () => {
+		const warn = spyOn(Logger.prototype, "warn").mockImplementation(() => {});
+		const info = spyOn(Logger.prototype, "info").mockImplementation(() => {});
+		try {
+			const account = makeAccount();
+			const body = makeRequestBody("claude-haiku-5-5");
 			const ctx = makeCtx();
-			const body = makeRequestBody();
-			const before = Date.now();
+			let now = Date.now();
+			setSystemTime(now);
+			globalThis.fetch = mock(async () => burst429());
 			await runProxy(account, ctx, makeRequest(body), body);
-			expect((account.rate_limited_until ?? 0) - before).toBeGreaterThanOrEqual(
-				expectedMs,
-			);
-			expect((account.rate_limited_until ?? 0) - before).toBeLessThan(
-				expectedMs + 1000,
-			);
-			expect(markCalls(ctx)[0][2]).toBe("windowless_429");
+			await runProxy(account, ctx, makeRequest(body), body);
+			expect(
+				warn.mock.calls.filter(([message]) =>
+					String(message).includes("windowless_429 paused"),
+				),
+			).toHaveLength(1);
+			now += 60_000;
+			setSystemTime(now);
+			globalThis.fetch = mock(async () => ok200());
+			await runProxy(account, ctx, makeRequest(body), body);
+			await runProxy(account, ctx, makeRequest(body), body);
+			expect(
+				info.mock.calls.filter(([message]) =>
+					String(message).includes("recovered from windowless_429"),
+				),
+			).toHaveLength(1);
+		} finally {
+			warn.mockRestore();
+			info.mockRestore();
 		}
+	});
+
+	it("doubles across natural expiry, caps at fifteen minutes, and resets only on that pair's success", async () => {
+		let now = Date.now();
+		setSystemTime(now);
+		const account = makeAccount();
+		const ctx = makeCtx();
+		const body = makeRequestBody("claude-haiku-5-5");
+		globalThis.fetch = mock(async () => burst429());
+		for (const expectedMs of [
+			60_000, 120_000, 240_000, 480_000, 900_000, 900_000,
+		]) {
+			await runProxy(account, ctx, makeRequest(body), body);
+			expect(getModelCooldownUntil(account.id, "claude-haiku-5-5")).toBe(
+				now + expectedMs,
+			);
+			now += expectedMs;
+			setSystemTime(now);
+			expect(getModelCooldownUntil(account.id, "claude-haiku-5-5")).toBeNull();
+		}
+		globalThis.fetch = mock(async () => ok200());
+		expect(
+			(await runProxy(account, ctx, makeRequest(body), body))?.status,
+		).toBe(200);
+		globalThis.fetch = mock(async () => burst429());
+		await runProxy(account, ctx, makeRequest(body), body);
+		expect(getModelCooldownUntil(account.id, "claude-haiku-5-5")).toBe(
+			now + 60_000,
+		);
+		expect(marks(ctx)).toBe(0);
+		expect(account.consecutive_rate_limits).toBe(0);
 	});
 
 	// Regression guard: a 429 that reports a reset is a REAL window limit and
@@ -428,5 +548,6 @@ describe("proxyWithAccount — windowless 429 cooldown", () => {
 		expect(marks(ctx)).toBe(0);
 		expect(account.rate_limited_until).toBeNull();
 		expect(saveReasons(ctx)).toHaveLength(0);
+		expect(getModelCooldownUntil(account.id, "claude-sonnet-4-5")).toBeNull();
 	});
 });

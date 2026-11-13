@@ -80,9 +80,9 @@ const KNOWN_ERROR_META: Record<
 	windowless_429: {
 		title: "Attempt rejected (no rate-limit window)",
 		description:
-			"The upstream returned 429 without a quota window. The attempt failed over to another account and may have succeeded there. This account receives a short cooldown, doubling on repeat rejections up to 15 minutes by default.",
+			"The upstream returned 429 without a quota window. The attempt failed over to another account and may have succeeded there. Only this account and upstream model pair receives a short cooldown, doubling on repeat rejections up to 15 minutes by default. The account stays available for other models.",
 		suggestion:
-			"Inspect successful attempts and failover counts before treating this as a client-visible failure. A successful user response resets the cooldown streak.",
+			"Inspect successful attempts and failover counts before treating this as a client-visible failure. A successful user response for the same account and upstream model resets its cooldown streak.",
 		severity: "warning",
 	},
 	extra_usage_exhausted: {

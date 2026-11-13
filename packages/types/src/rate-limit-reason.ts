@@ -37,8 +37,8 @@
  * - `extra_usage_exhausted` — third-party OAuth extra-usage depletion.
  *   Scoped, not account-wide. Does NOT trip the breaker.
  * - `windowless_429` — 429 reporting no rate-limit window at all; measured
- *   without a reliable quota deadline. Short exponential cooldown, reset on
- *   a successful user response. Does NOT trip the breaker.
+ *   without a reliable quota deadline. Short per-(account, upstream model)
+ *   exponential cooldown, reset on that pair’s successful user response. Does NOT trip the breaker.
  * - `upstream_5xx_server_error` — transient upstream server error
  *   (500/502/503/504) that survived an in-place retry. The account is
  *   benched briefly and the request fails over. Counts as a circuit failure.

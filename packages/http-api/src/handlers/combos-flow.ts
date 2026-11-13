@@ -1,4 +1,4 @@
-import { isAccountAvailable } from "@better-ccflare/core";
+import { isAccountAvailable, mapModelName } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	getRepresentativeUsageSnapshotForProvider,
@@ -273,7 +273,11 @@ async function buildCombo(
 	const slots: ComboFlowSlot[] = slotRows
 		.map((s) => {
 			const account = accountById.get(s.account_id) ?? null;
-			const cooldownUntil = getModelCooldownUntil(s.account_id, s.model);
+			const model =
+				s.model && account ? mapModelName(s.model, account) : s.model;
+			const cooldownUntil = model
+				? getModelCooldownUntil(s.account_id, model)
+				: null;
 			// A passthrough slot has no model of its own, so the (account, model)
 			// cooldown keyed on "" can never match — enumerate the account's
 			// per-model cooldowns instead, since any of them can still skip the

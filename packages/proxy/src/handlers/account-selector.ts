@@ -3,6 +3,7 @@ import {
 	getModelFamily,
 	isAccountAvailable,
 	isUsageExhausted,
+	mapModelName,
 	providerAcceptsClientModel,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
@@ -1059,7 +1060,10 @@ export async function selectAccountsForRequest(
 						// slot (empty model) sends the request's own model.
 						const slotModel = slot.model?.trim() ? slot.model : model;
 						const cooldownUntil = slotModel
-							? getModelCooldownUntil(account.id, slotModel)
+							? getModelCooldownUntil(
+									account.id,
+									mapModelName(slotModel, account),
+								)
 							: null;
 						if (cooldownUntil !== null) {
 							log.info(
@@ -1352,6 +1356,16 @@ export async function selectAccountsForRequest(
 			.map((account) => ({ accountId: account.id, modelOverride: null }));
 		addDeferredCandidates(meta, deferred);
 	};
+
+	// Ordinary routing shares the combo store. Mapping selects the upstream id;
+	// proxyWithAccount also checks the final transformed request before every fetch.
+	if (model && !isInternalProbe(meta.headers, ctx)) {
+		orderedAccounts = orderedAccounts.filter(
+			(account) =>
+				getModelCooldownUntil(account.id, mapModelName(model, account)) ===
+				null,
+		);
+	}
 
 	// Model-scoped capacity filter for the non-combo (or combo-inactive/
 	// combo-exhausted-fallthrough) path: drop accounts whose weekly per-model

@@ -58,7 +58,10 @@ import {
 import { markFamilyExhausted } from "./model-capacity";
 import {
 	DEFAULT_MODEL_COOLDOWN_TTL_MS,
+	getModelCooldownUntil,
 	markModelCooling,
+	markWindowlessModelCooling,
+	recoverWindowlessModel,
 } from "./model-cooldown";
 import { forwardObservedUpstream } from "./observed-upstream";
 import {
@@ -77,6 +80,9 @@ import { markVisionUnsupported } from "./vision-capability";
 import { peekSseForZai1305 } from "./zai-1305";
 
 const log = new Logger("ProxyOperations");
+
+/** Internal control flow: skip a cooled pair without an upstream attempt. */
+class ModelCooldownSkip extends Error {}
 
 /**
  * Resolve the forwarding step for this context.
@@ -1424,12 +1430,29 @@ export async function proxyWithAccount(
 		// abort this same fetch later.
 		const forwardUpstream = async (target: Request) => {
 			const checkSpend = getApiKeyRoutedSpendCheck(requestMeta);
-			if (checkSpend && target.body) {
-				const body = (await target.clone().json()) as { model?: unknown };
-				if (typeof body.model === "string") {
-					const refusal = await checkSpend(body.model);
-					if (refusal) throw new ApiKeyRoutedSpendRefusal(refusal);
+			// The buffered descriptor avoids another clone/parse on the healthy path.
+			// Rebuilt fallback requests may not have been adopted yet, so inspect
+			// their own body safely; a non-JSON endpoint still passes through.
+			const model =
+				target === outgoing.request
+					? outgoing.model
+					: target.body
+						? (
+								(await target
+									.clone()
+									.json()
+									.catch(() => null)) as { model?: unknown } | null
+							)?.model
+						: null;
+			if (target.body && typeof model === "string") {
+				if (
+					!isInternalProbe(req.headers, ctx) &&
+					getModelCooldownUntil(account.id, model) !== null
+				) {
+					throw new ModelCooldownSkip();
 				}
+				const refusal = await checkSpend?.(model);
+				if (refusal) throw new ApiKeyRoutedSpendRefusal(refusal);
 			}
 			const signal = AbortSignal.any([req.signal, drainAbortController.signal]);
 			return forwardObservedUpstream(
@@ -2352,7 +2375,7 @@ export async function proxyWithAccount(
 
 		/**
 		 * The 429 branch taken when this account has no fallback model to cycle
-		 * to: keepalive burst, windowless (request-scoped) 429, or a genuine
+		 * to: keepalive burst, windowless (model-scoped) 429, or a genuine
 		 * window that benches the account. Answers NOT_CLASSIFIED for any other
 		 * status so the caller can fall through to its model-not-found handling.
 		 */
@@ -2377,17 +2400,11 @@ export async function proxyWithAccount(
 					return null;
 				}
 
-				// No quota window was reported. Fail over immediately, and bench
-				// briefly so a persistently rejecting account is not tried first
-				// on every user request. Synthetic keepalive bypasses this above.
+				// No quota window was reported. Cool only the upstream model
+				// this account was asked for; other models remain healthy.
 				if (isRetryable429(rawResponse, isClaudeProvider)) {
 					const reason: RateLimitReason = "windowless_429";
-					applyRateLimitCooldown(account, { reason }, ctx);
-					log.warn(
-						`Account ${account.name} returned a windowless 429 (${
-							requestedModel ? `model=${requestedModel}, ` : ""
-						}x-should-retry with no rate-limit window) — applying short cooldown and failing over`,
-					);
+					markWindowlessModelCooling(account.id, outgoing.model);
 					const responseTime = Date.now() - requestMeta.timestamp;
 					const modelRewrite = isModelRewrite(
 						requestMeta.originalModel,
@@ -2519,7 +2536,7 @@ export async function proxyWithAccount(
 				) {
 					markModelCooling(
 						account.id,
-						requestedModel,
+						outgoing.model,
 						resetIsInferred ? null : cooldown.until,
 					);
 					log.warn(
@@ -2853,6 +2870,9 @@ export async function proxyWithAccount(
 			// is not re-entered here. Practically unreachable anyway — /v1/messages
 			// rejects a body without `model`.
 			if (!requestedModel) return NOT_CLASSIFIED;
+			if (isRetryable429(retried, isClaudeProvider)) {
+				return classifyNoFallback429(retried, requestedModel);
+			}
 			const modelList = getModelList(requestedModel, account);
 			if (modelList && modelList.length > 1) return NOT_CLASSIFIED;
 			return classifyNoFallback429(retried, requestedModel);
@@ -2932,6 +2952,16 @@ export async function proxyWithAccount(
 			if (!visionRoutingUnrepresentedInKey) {
 				markVisionUnsupported(account.id, visionKeyModel);
 			}
+		}
+
+		// Windowless errors fail over immediately even when this account has a
+		// model fallback list. A fallback success says nothing about the failed pair.
+		if (isRetryable429(rawResponse, isClaudeProvider)) {
+			const windowlessOutcome = await classifyNoFallback429(
+				rawResponse,
+				effectiveBodyContext.getModel(),
+			);
+			if (windowlessOutcome !== NOT_CLASSIFIED) return windowlessOutcome;
 		}
 
 		if (visionUnsupported || (await isModelUnavailableError(rawResponse))) {
@@ -3147,6 +3177,13 @@ export async function proxyWithAccount(
 						log,
 					);
 					zai1305AlreadyChecked = true;
+					if (isRetryable429(rawResponse, isClaudeProvider)) {
+						const windowlessOutcome = await classifyNoFallback429(
+							rawResponse,
+							outgoing.model,
+						);
+						if (windowlessOutcome !== NOT_CLASSIFIED) return windowlessOutcome;
+					}
 					if (!(await isModelUnavailableError(rawResponse.clone()))) {
 						break; // Success — stop cycling
 					}
@@ -3695,6 +3732,10 @@ export async function proxyWithAccount(
 			}
 		}
 
+		if (response.ok && !isSyntheticInternal) {
+			recoverWindowlessModel(account.id, outgoing.model);
+		}
+
 		// Check for rate limit using account-specific provider.
 		//
 		// The clone exists only for the terminal-529 path, where `response`
@@ -3804,6 +3845,7 @@ export async function proxyWithAccount(
 			{ ...ctx, provider },
 		);
 	} catch (err) {
+		if (err instanceof ModelCooldownSkip) return null;
 		if (err instanceof ApiKeyRoutedSpendRefusal) return err.response;
 		// A client disconnect now aborts the upstream fetch by design. That is
 		// not an account failure: returning null would send the proxy through

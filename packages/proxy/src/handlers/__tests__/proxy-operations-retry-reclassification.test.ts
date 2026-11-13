@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { clearFamilyExhaustionCache } from "../model-capacity";
+import { resetModelCooldownsForTests } from "../model-cooldown";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 import { resetRateLimitProbeGatesForTests } from "../rate-limit-cooldown";
@@ -294,6 +295,7 @@ const markCalls = (ctx: ProxyContext) =>
  * responses and returns everything the classification is observable through.
  */
 async function runSequence(responses: Array<() => Response>) {
+	resetModelCooldownsForTests();
 	let callCount = 0;
 	globalThis.fetch = mock(async () => {
 		const factory = responses[Math.min(callCount, responses.length - 1)];
@@ -327,6 +329,7 @@ describe("proxyWithAccount — a retried response is classified like a first res
 		delete process.env.CCFLARE_SERVER_ERROR_COOLDOWN_MS;
 		clearFamilyExhaustionCache();
 		resetRateLimitProbeGatesForTests();
+		resetModelCooldownsForTests();
 	});
 
 	afterEach(() => {
@@ -339,6 +342,7 @@ describe("proxyWithAccount — a retried response is classified like a first res
 		delete process.env.CCFLARE_SERVER_ERROR_COOLDOWN_MS;
 		clearFamilyExhaustionCache();
 		resetRateLimitProbeGatesForTests();
+		resetModelCooldownsForTests();
 	});
 
 	it("benches org_permission_denied and fails over when a 500 retry answers 403", async () => {

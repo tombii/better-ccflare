@@ -104,13 +104,11 @@ export type RateLimitReason =
 	 *  the time this is detected the response has typically already been passed
 	 *  through to the client. */
 	| "extra_usage_exhausted"
-	/** Anthropic 429 that reports no rate-limit window at all — `x-should-retry:
-	 *  true` and not a single `anthropic-ratelimit-*` / `x-ratelimit-*` header or
-	 *  `retry-after`. Live measurement showed this to be request-scoped rather
-	 *  than account-wide: the same account served 200s seconds either side of the
-	 *  rejection on the same model, while every other account rejected the same
-	 *  request identically, and retries spanning 11s never once cleared it. The
-	 *  account receives a short adaptive cooldown, and the request fails over. */
+	/** Anthropic 429 without a quota window (`x-should-retry: true` and no
+	 *  `anthropic-ratelimit-*`, `x-ratelimit-*` or `retry-after` metadata).
+	 *  The rejected (account, upstream model) pair receives a short adaptive
+	 *  cooldown and fails over. Other models stay eligible on the account;
+	 *  account-wide rate-limit fields and the account streak are untouched. */
 	| "windowless_429"
 	/** Anthropic 403 `permission_error` — the account's ORGANIZATION forbids the
 	 *  request (OAuth disabled org-wide, Claude Code subscription access turned

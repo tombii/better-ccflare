@@ -2,7 +2,8 @@ import { isAnthropicOutOfCredits } from "@better-ccflare/providers";
 
 /**
  * Identifies Anthropic 429s without an upstream quota window. The caller
- * fails over immediately and applies a short configurable adaptive cooldown.
+ * fails over immediately and applies a short configurable cooldown to only
+ * the (account, upstream model) pair, leaving other models in rotation.
  * The exported name is historical; there is no same-account in-place retry.
  */
 
@@ -90,8 +91,8 @@ export function hasRateLimitMetadata(headers: Headers): boolean {
 
 /**
  * True when a 429 reports no rate-limit window at all, which measurement showed
- * to mean the rejection is scoped to the request rather than to the account —
- * so the account must NOT be benched.
+ * to mean the rejection is narrower than the account — the rejected upstream
+ * model cools down while the account stays eligible for other models.
  *
  * Observed 2026-07-31 (issue #301): Anthropic 429s some requests with exactly
  * `{"x-robots-tag":"none","x-should-retry":"true"}` — an explicit retry

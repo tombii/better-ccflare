@@ -90,7 +90,7 @@ function makeCtx(opts: {
 }): ProxyContext {
 	return {
 		strategy: {
-			select: mock((_all: Account[], _meta: RequestMeta) => opts.accounts),
+			select: mock((all: Account[], _meta: RequestMeta) => all),
 		},
 		dbOps: {
 			getAllAccounts: mock(async () => opts.accounts),
@@ -130,6 +130,31 @@ afterEach(() => {
 // ── per-(account, model) scoping ──────────────────────────────────────────────
 
 describe("selectAccountsForRequest — combo model-scoped cooldown", () => {
+	it("checks a combo slot's mapped upstream model and preserves its healthy sibling", async () => {
+		const acc = makeAccount({
+			id: "acc-1",
+			model_mappings: JSON.stringify({
+				"claude-haiku-latest": "claude-haiku-5-5",
+			}),
+		});
+		const combo = makeCombo([
+			makeSlot("acc-1", "claude-haiku-latest", 0),
+			makeSlot("acc-1", "claude-opus-5-5", 1),
+		]);
+		markModelCooling("acc-1", "claude-haiku-5-5", FROZEN_NOW + MINUTE);
+		const ctx = makeCtx({ accounts: [acc], activeCombo: combo });
+		const meta = makeRequestMeta();
+
+		expect(
+			(await selectAccountsForRequest(meta, ctx, "claude-haiku-latest")).map(
+				(account) => account.id,
+			),
+		).toEqual(["acc-1"]);
+		expect(getComboSlotInfo(meta)?.slots).toEqual([
+			{ accountId: "acc-1", modelOverride: "claude-opus-5-5" },
+		]);
+	});
+
 	it("excludes a cooling (account, model) slot but keeps another model's slot on the SAME account", async () => {
 		const acc = makeAccount({ id: "acc-1" });
 		const combo = makeCombo([
@@ -254,6 +279,103 @@ describe("selectAccountsForRequest — combo model-scoped cooldown", () => {
 		);
 
 		expect(result.map((a) => a.id)).toEqual(["acc-1"]);
+	});
+});
+
+describe("selectAccountsForRequest — ordinary pool model cooldown", () => {
+	it("skips A for cooled Haiku while keeping A first for healthy Opus", async () => {
+		const accounts = [
+			makeAccount({ id: "acc-1" }),
+			makeAccount({ id: "acc-2" }),
+		];
+		const ctx = makeCtx({ accounts, activeCombo: null });
+		markModelCooling("acc-1", "claude-haiku-5-5", FROZEN_NOW + MINUTE);
+
+		const haiku = await selectAccountsForRequest(
+			makeRequestMeta(),
+			ctx,
+			"claude-haiku-5-5",
+		);
+		expect(haiku.map((account) => account.id)).toEqual(["acc-2"]);
+
+		const opus = await selectAccountsForRequest(
+			makeRequestMeta(),
+			ctx,
+			"claude-opus-5-5",
+		);
+		expect(opus.map((account) => account.id)).toEqual(["acc-1", "acc-2"]);
+	});
+
+	it("checks the mapped upstream model for an ordinary request alias", async () => {
+		const accounts = [
+			makeAccount({
+				id: "acc-1",
+				model_mappings: JSON.stringify({
+					"claude-haiku-latest": "claude-haiku-5-5",
+				}),
+			}),
+			makeAccount({ id: "acc-2" }),
+		];
+		const ctx = makeCtx({ accounts, activeCombo: null });
+		markModelCooling("acc-1", "claude-haiku-5-5", FROZEN_NOW + MINUTE);
+
+		const haiku = await selectAccountsForRequest(
+			makeRequestMeta(),
+			ctx,
+			"claude-haiku-latest",
+		);
+		expect(haiku.map((account) => account.id)).toEqual(["acc-2"]);
+
+		const opus = await selectAccountsForRequest(
+			makeRequestMeta(),
+			ctx,
+			"claude-opus-5-5",
+		);
+		expect(opus.map((account) => account.id)).toEqual(["acc-1", "acc-2"]);
+	});
+
+	it("does not confuse a request alias with a cooled upstream id when mapping to another model", async () => {
+		const account = makeAccount({
+			id: "acc-1",
+			model_mappings: JSON.stringify({ haiku: "claude-opus-5-5" }),
+		});
+		markModelCooling(account.id, "claude-haiku-5-5", FROZEN_NOW + MINUTE);
+		const result = await selectAccountsForRequest(
+			makeRequestMeta(),
+			makeCtx({ accounts: [account], activeCombo: null }),
+			"claude-haiku-5-5",
+		);
+		expect(result.map((candidate) => candidate.id)).toEqual([account.id]);
+	});
+
+	it("returns A to ordinary Haiku selection when its pair cooldown expires", async () => {
+		const accounts = [
+			makeAccount({ id: "acc-1" }),
+			makeAccount({ id: "acc-2" }),
+		];
+		const ctx = makeCtx({ accounts, activeCombo: null });
+		markModelCooling("acc-1", "claude-haiku-5-5", FROZEN_NOW + MINUTE);
+
+		expect(
+			(
+				await selectAccountsForRequest(
+					makeRequestMeta(),
+					ctx,
+					"claude-haiku-5-5",
+				)
+			).map((account) => account.id),
+		).toEqual(["acc-2"]);
+
+		setSystemTime(FROZEN_NOW + MINUTE);
+		expect(
+			(
+				await selectAccountsForRequest(
+					makeRequestMeta(),
+					ctx,
+					"claude-haiku-5-5",
+				)
+			).map((account) => account.id),
+		).toEqual(["acc-1", "acc-2"]);
 	});
 });
 

@@ -89,29 +89,6 @@ describe("AccountRepository.markAccountRateLimited — 529 forward guard (delta-
 		db.close();
 	});
 
-	it("does not shorten an active quota bench with a concurrent windowless 429", async () => {
-		insertAccount(db, "acc-1");
-		const longUntil = Date.now() + 3_600_000;
-		await repo.markAccountRateLimited(
-			"acc-1",
-			longUntil,
-			"upstream_429_with_reset",
-			true,
-		);
-		const result = await repo.markAccountRateLimited(
-			"acc-1",
-			Date.now() + 60_000,
-			"windowless_429",
-			true,
-		);
-		expect(result.applied).toBe(false);
-		expect(result.consecutiveRateLimits).toBe(1);
-		expect(getAudit(db, "acc-1")).toEqual({
-			rate_limited_until: longUntil,
-			rate_limited_reason: "upstream_429_with_reset",
-		});
-	});
-
 	it("applies an equal-expiry 529 write instead of silently dropping it (last writer wins on a tie, matching the in-process guard's strict '>' rejection)", async () => {
 		insertAccount(db, "acc-1");
 		const X = Date.now() + 5 * 60 * 1000;

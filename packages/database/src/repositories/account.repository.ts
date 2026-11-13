@@ -318,7 +318,7 @@ export class AccountRepository extends BaseRepository<Account> {
 		// expires, so the account would read as rate-limited forever.
 		let applied = true;
 		if (incrementStreak) {
-			const changes = await this.runWithChanges(
+			await this.run(
 				`UPDATE accounts
            SET consecutive_rate_limits = COALESCE(consecutive_rate_limits, 0) + 1,
                rate_limited_until      = ?,
@@ -327,16 +327,9 @@ export class AccountRepository extends BaseRepository<Account> {
                rate_limit_status       = NULL,
                rate_limit_reset        = NULL,
                rate_limit_reset_at     = NULL
-         WHERE id = ?${reason === "windowless_429" ? " AND (rate_limited_until IS NULL OR rate_limited_until <= ?)" : ""}`,
-				[
-					until,
-					reason,
-					Date.now(),
-					accountId,
-					...(reason === "windowless_429" ? [until] : []),
-				],
+         WHERE id = ?`,
+				[until, reason, Date.now(), accountId],
 			);
-			if (reason === "windowless_429") applied = changes > 0;
 		} else {
 			// 529 overload: cooldown state moves, but the 429 streak counter
 			// is left untouched — an overload is not a quota signal.

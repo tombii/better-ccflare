@@ -183,7 +183,7 @@ export function computeRateLimitBackoffMs(consecutiveCount: number): number {
 	return Math.min(base * 2 ** exponent, max);
 }
 
-/** Short bench for a windowless 429; resets on a successful user response. */
+/** Short per-model bench for a windowless 429; resets on that pair’s success. */
 export function computeWindowless429CooldownMs(
 	consecutiveCount: number,
 ): number {

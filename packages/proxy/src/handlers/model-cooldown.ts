@@ -1,7 +1,11 @@
-import { stripModelRouting } from "@better-ccflare/core";
+import {
+	computeWindowless429CooldownMs,
+	stripModelRouting,
+} from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
 
 /**
- * Per-(account, model) cooldown store for combo slots.
+ * Per-(account, upstream model) cooldown store for combos and ordinary requests.
  *
  * Combos route one request through ordered (account, model) slots. A 429 from
  * ONE slot says nothing about the account's other slots — a free model whose
@@ -17,7 +21,8 @@ import { stripModelRouting } from "@better-ccflare/core";
  * the first request to the recovered slot re-learns the 429 at the cost of
  * one extra upstream round-trip, which is cheaper than persisting and
  * expiring per-model state in the database. There is no periodic sweep —
- * entries self-expire on read and are opportunistically pruned on write.
+ * deadlines self-expire on read and entries are pruned on write. A windowless
+ * streak survives expiry until this pair succeeds; the size cap bounds memory.
  */
 
 /** Fallback TTL when a 429 carried no usable reset: long enough to stop
@@ -32,7 +37,13 @@ export const MAX_MODEL_COOLDOWN_MS = 8 * 24 * 60 * 60 * 1000;
 /** Hard cap on distinct (account, model) entries, mirroring MAX_PROBE_GATES. */
 const MAX_MODEL_COOLDOWN_ENTRIES = 10_000;
 
-const cooldowns = new Map<string, number>();
+interface ModelCooldown {
+	until: number;
+	windowlessStreak?: number;
+	windowless?: boolean;
+}
+const cooldowns = new Map<string, ModelCooldown>();
+const log = new Logger("ModelCooldown");
 
 /**
  * Normalizes the routing suffix off the model id (`stripModelRouting`) and
@@ -49,8 +60,8 @@ function cooldownKey(accountId: string, model: string): string {
 }
 
 function pruneExpired(now: number): void {
-	for (const [key, until] of cooldowns) {
-		if (until <= now) cooldowns.delete(key);
+	for (const [key, entry] of cooldowns) {
+		if (entry.until <= now && !entry.windowlessStreak) cooldowns.delete(key);
 	}
 }
 
@@ -80,7 +91,50 @@ export function markModelCooling(
 		if (oldest === undefined) break;
 		cooldowns.delete(oldest);
 	}
-	cooldowns.set(cooldownKey(accountId, model), until);
+	const key = cooldownKey(accountId, model);
+	cooldowns.set(key, {
+		until,
+		windowlessStreak: cooldowns.get(key)?.windowlessStreak,
+	});
+}
+
+/** Windowless rejections keep their streak after expiry until this pair succeeds.
+ * The existing bounded store owns both the deadline and backoff state. */
+export function markWindowlessModelCooling(
+	accountId: string,
+	model: string,
+	now: number = Date.now(),
+): void {
+	if (!model.trim()) return;
+	const key = cooldownKey(accountId, model);
+	const previous = cooldowns.get(key);
+	const streak = (previous?.windowlessStreak ?? 0) + 1;
+	const until = now + computeWindowless429CooldownMs(streak);
+	const storedUntil = Math.max(until, previous?.until ?? 0);
+	markModelCooling(accountId, model, until, now);
+	cooldowns.set(key, {
+		until: storedUntil,
+		windowlessStreak: streak,
+		windowless:
+			previous?.until && previous.until > until ? previous.windowless : true,
+	});
+	if (!previous || previous.until <= now || !previous.windowlessStreak) {
+		log.warn(
+			`account=${accountId} model=${normalizeModel(model)} windowless_429 paused until ${new Date(storedUntil).toISOString()}`,
+		);
+	}
+}
+
+/** A success heals only this upstream pair, never another model on the account. */
+export function recoverWindowlessModel(accountId: string, model: string): void {
+	const key = cooldownKey(accountId, model);
+	const entry = cooldowns.get(key);
+	if (!entry?.windowlessStreak) return;
+	if (entry.windowless) cooldowns.delete(key);
+	else cooldowns.set(key, { until: entry.until });
+	log.info(
+		`account=${accountId} model=${normalizeModel(model)} recovered from windowless_429`,
+	);
 }
 
 /**
@@ -88,8 +142,9 @@ export function markModelCooling(
  * is not cooling. Callers that surface the deadline to an operator — the combo
  * skip log line and the combo detail API — need the timestamp itself, not just
  * the yes/no answer `isModelCooling` gives: "skipped" without "until when" is
- * what made a cooling slot look permanently dead. An expired entry is deleted
- * on read, matching the negative cache in model-capacity.ts.
+ * what made a cooling slot look permanently dead. Expired deadlines stop
+ * blocking immediately; windowless streaks remain until
+ * success so the next rejection can back off even after natural expiry.
  */
 export function getModelCooldownUntil(
 	accountId: string,
@@ -97,13 +152,13 @@ export function getModelCooldownUntil(
 	now: number = Date.now(),
 ): number | null {
 	const key = cooldownKey(accountId, model);
-	const until = cooldowns.get(key);
-	if (until === undefined) return null;
-	if (until <= now) {
-		cooldowns.delete(key);
+	const entry = cooldowns.get(key);
+	if (entry === undefined) return null;
+	if (entry.until <= now) {
+		if (!entry.windowlessStreak) cooldowns.delete(key);
 		return null;
 	}
-	return until;
+	return entry.until;
 }
 
 /**
@@ -111,8 +166,8 @@ export function getModelCooldownUntil(
  * first). Combo passthrough slots have no model of their own, so
  * {@link getModelCooldownUntil}(accountId, "") can never match — this is how a
  * caller enumerates the pair cooldowns that can still block such a slot for the
- * model the client actually requested. Expired entries are deleted on read,
- * matching {@link getModelCooldownUntil}.
+ * model the client actually requested. Expired entries stop blocking, matching
+ * {@link getModelCooldownUntil}.
  */
 export function getModelCooldownsForAccount(
 	accountId: string,
@@ -120,13 +175,13 @@ export function getModelCooldownsForAccount(
 ): Array<{ model: string; until: number }> {
 	const prefix = `${accountId}:`;
 	const active: Array<{ model: string; until: number }> = [];
-	for (const [key, until] of cooldowns) {
+	for (const [key, entry] of cooldowns) {
 		if (!key.startsWith(prefix)) continue;
-		if (until <= now) {
-			cooldowns.delete(key);
+		if (entry.until <= now) {
+			if (!entry.windowlessStreak) cooldowns.delete(key);
 			continue;
 		}
-		active.push({ model: key.slice(prefix.length), until });
+		active.push({ model: key.slice(prefix.length), until: entry.until });
 	}
 	return active.sort((a, b) => a.until - b.until);
 }

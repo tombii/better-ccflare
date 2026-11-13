@@ -3,7 +3,6 @@ import {
 	computeOverloadWithResetCapMs,
 	computeRateLimitBackoffMs,
 	computeServerErrorCooldownMs,
-	computeWindowless429CooldownMs,
 	isExplicitResetHonoured,
 	isOverloadReason,
 	isServerErrorReason,
@@ -256,6 +255,8 @@ export function applyRateLimitCooldown(
 	ctx: ProxyContext,
 	breaker: CircuitBreaker = getDefaultCircuitBreaker(),
 ): void {
+	// Windowless rejections are scoped to an upstream model, never this account.
+	if (rateLimitInfo.reason === "windowless_429") return;
 	const now = Date.now();
 	// A reported-but-clamped window (honouring switched off) still says
 	// `upstream_429_with_reset`: the upstream did report one, the switch only
@@ -282,9 +283,7 @@ export function applyRateLimitCooldown(
 	const nextCount = account.consecutive_rate_limits + 1;
 
 	let cooldownUntil: number;
-	if (reason === "windowless_429") {
-		cooldownUntil = now + computeWindowless429CooldownMs(nextCount);
-	} else if (isOverloadNoReset) {
+	if (isOverloadNoReset) {
 		cooldownUntil = now + computeOverloadCooldownMs();
 	} else if (isServerError) {
 		// A Retry-After is honored literally when it is shorter than the fixed
@@ -335,7 +334,7 @@ export function applyRateLimitCooldown(
 	}
 
 	if (
-		(isTransientUpstream || reason === "windowless_429") &&
+		isTransientUpstream &&
 		account.rate_limited_until != null &&
 		account.rate_limited_until > cooldownUntil
 	) {
