@@ -1,18 +1,9 @@
 import { isAnthropicOutOfCredits } from "@better-ccflare/providers";
 
 /**
- * Identifies a 429 whose scope is narrower than the account, so the caller can
- * fail the request over while leaving the account in rotation instead of
- * benching it.
- *
- * THE NAME IS HISTORICAL. `isRetryable429` was written when this module gated
- * an in-place retry of the same request against the same account. That retry is
- * gone — measurement showed the rejection does not clear within a request's
- * lifetime (three attempts spanning 11.2s returned three identical bare 429s) —
- * but the predicate turned out to be exactly the right discriminator for "this
- * rejection is not the account's fault", and it is pinned by 23 tests, so the
- * exported names are left alone. Nothing in here retries anything: a `true`
- * result means "fail over with NO account cooldown".
+ * Identifies Anthropic 429s without an upstream quota window. The caller
+ * fails over immediately and applies a short configurable adaptive cooldown.
+ * The exported name is historical; there is no same-account in-place retry.
  */
 
 /**

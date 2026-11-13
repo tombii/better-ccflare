@@ -6,6 +6,7 @@ export {
 	computeOverloadWithResetCapMs,
 	computeRateLimitBackoffMs,
 	computeServerErrorCooldownMs,
+	computeWindowless429CooldownMs,
 	getOverloadRetryConfig,
 	getRateLimitResetStabilityMs,
 	getServerErrorRetryEnabled,

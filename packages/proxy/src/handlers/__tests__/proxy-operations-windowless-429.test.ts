@@ -158,6 +158,7 @@ function makeCtx(): ProxyContext {
 			),
 			saveRequest: mock((..._args: unknown[]) => Promise.resolve()),
 			updateAccountUsage: mock(() => Promise.resolve()),
+			resetConsecutiveRateLimits: mock(() => Promise.resolve()),
 			getAdapter: mock(() => ({
 				run: mock(() => Promise.resolve()),
 				get: mock(() => Promise.resolve(null)),
@@ -208,7 +209,7 @@ const markCalls = (ctx: ProxyContext) =>
 	(ctx.dbOps.markAccountRateLimited as ReturnType<typeof mock>).mock
 		.calls as unknown as [string, number, string, boolean][];
 
-describe("proxyWithAccount — windowless 429 is not benched (issue #301)", () => {
+describe("proxyWithAccount — windowless 429 cooldown", () => {
 	let originalFetch: typeof globalThis.fetch;
 	let collectorSpy: ReturnType<typeof stubUsageCollector>;
 
@@ -224,11 +225,8 @@ describe("proxyWithAccount — windowless 429 is not benched (issue #301)", () =
 		clearFamilyExhaustionCache();
 	});
 
-	// The core claim. A bare 429 is request-scoped, so it must fail over per
-	// request WITHOUT a cooldown, without touching the consecutive-429 counter,
-	// and without a second upstream attempt — three retries spanning 11.2s were
-	// measured returning three identical bare 429s, and not once did one succeed.
-	it("fails over without benching on a bare 429", async () => {
+	// Fail over immediately while benching repeated windowless failures.
+	it("benches briefly and fails over on a bare 429", async () => {
 		let calls = 0;
 		globalThis.fetch = mock(async () => {
 			calls++;
@@ -245,10 +243,12 @@ describe("proxyWithAccount — windowless 429 is not benched (issue #301)", () =
 		expect(calls).toBe(1);
 		// null = fail over to the next account.
 		expect(result).toBeNull();
-		expect(marks(ctx)).toBe(0);
-		expect(account.rate_limited_until).toBeNull();
-		expect(account.rate_limited_reason).toBeNull();
-		expect(account.consecutive_rate_limits).toBe(0);
+		expect(marks(ctx)).toBe(1);
+		expect((account.rate_limited_until ?? 0) - Date.now()).toBeGreaterThan(
+			59_000,
+		);
+		expect(account.rate_limited_reason).toBe("windowless_429");
+		expect(account.consecutive_rate_limits).toBe(1);
 		expect(saveReasons(ctx)).toContain("windowless_429");
 		expect(saveReasons(ctx)).not.toContain("model_fallback_429");
 		// The audit row must stay correlated with its originating client session,
@@ -256,10 +256,8 @@ describe("proxyWithAccount — windowless 429 is not benched (issue #301)", () =
 		expect(lastSaveArg(ctx)).toBe("sess-1");
 	});
 
-	// The operational point of not benching: the account is immediately routable
-	// again, exactly as production showed it to be (200s two seconds either side
-	// of the rejected request).
-	it("leaves the account routable for the very next request", async () => {
+	// An eventual real success clears both the bench and exponential streak.
+	it("resets the windowless streak after a successful user response", async () => {
 		let calls = 0;
 		globalThis.fetch = mock(async () => {
 			calls++;
@@ -274,8 +272,31 @@ describe("proxyWithAccount — windowless 429 is not benched (issue #301)", () =
 
 		const second = await runProxy(account, ctx, makeRequest(body), body);
 		expect(second?.status).toBe(200);
-		expect(marks(ctx)).toBe(0);
+		expect(marks(ctx)).toBe(1);
 		expect(account.rate_limited_until).toBeNull();
+		expect(account.consecutive_rate_limits).toBe(0);
+	});
+
+	it("doubles repeated windowless cooldowns and caps at fifteen minutes", async () => {
+		globalThis.fetch = mock(async () => burst429());
+		for (const [streak, expectedMs] of [
+			[1, 120000],
+			[2, 240000],
+			[8, 900000],
+		]) {
+			const account = makeAccount({ consecutive_rate_limits: streak });
+			const ctx = makeCtx();
+			const body = makeRequestBody();
+			const before = Date.now();
+			await runProxy(account, ctx, makeRequest(body), body);
+			expect((account.rate_limited_until ?? 0) - before).toBeGreaterThanOrEqual(
+				expectedMs,
+			);
+			expect((account.rate_limited_until ?? 0) - before).toBeLessThan(
+				expectedMs + 1000,
+			);
+			expect(markCalls(ctx)[0][2]).toBe("windowless_429");
+		}
 	});
 
 	// Regression guard: a 429 that reports a reset is a REAL window limit and

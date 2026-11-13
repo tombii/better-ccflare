@@ -2377,40 +2377,16 @@ export async function proxyWithAccount(
 					return null;
 				}
 
-				// ── windowless 429: request-scoped, NOT account-wide (issue #301) ──
-				// Anthropic 429s some requests with `x-should-retry: true` and no
-				// rate-limit metadata whatsoever — no `retry-after`, not one
-				// `anthropic-ratelimit-*` / `x-ratelimit-*` header. Live measurement
-				// on a production install showed this to be scoped to the REQUEST,
-				// not the account: the same account served 200s two seconds before
-				// and 38 seconds after on the same model, three in-place retries
-				// spanning 11.2s returned three identical bare 429s (never once a
-				// success), and the NEXT account rejected the same client request
-				// the same way. The rejected requests are session-initialising ones
-				// with no project attribution; ordinary conversation turns on the
-				// same account succeed throughout.
-				//
-				// So benching is simply the wrong response: it drains the pool one
-				// account per attempt until the operator has to force-reset every
-				// account before ordinary traffic works again. Treat it exactly like
-				// out_of_credits above (issue #261) — fail over per request with NO
-				// cooldown and NO consecutive-429 increment, leaving the account in
-				// rotation. Placed after the keepalive check so a synthetic probe
-				// still records nothing at all.
-				//
-				// The predicate is `isRetryable429` (header-only, synchronous,
-				// fail-closed: `x-should-retry: true`, no `retry-after`, and no
-				// header under either rate-limit prefix). Its name is now a slight
-				// misnomer — nothing is retried any more — but it is exactly the
-				// right discriminator and its module is reviewed and tested, so it
-				// keeps its name.
+				// No quota window was reported. Fail over immediately, and bench
+				// briefly so a persistently rejecting account is not tried first
+				// on every user request. Synthetic keepalive bypasses this above.
 				if (isRetryable429(rawResponse, isClaudeProvider)) {
 					const reason: RateLimitReason = "windowless_429";
+					applyRateLimitCooldown(account, { reason }, ctx);
 					log.warn(
 						`Account ${account.name} returned a windowless 429 (${
 							requestedModel ? `model=${requestedModel}, ` : ""
-						}x-should-retry with no rate-limit window) — request-scoped, ` +
-							`NOT benching account; failing over to next account`,
+						}x-should-retry with no rate-limit window) — applying short cooldown and failing over`,
 					);
 					const responseTime = Date.now() - requestMeta.timestamp;
 					const modelRewrite = isModelRewrite(

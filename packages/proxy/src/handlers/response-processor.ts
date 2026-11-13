@@ -609,6 +609,16 @@ export async function processProxyResponse(
 			!isInternalProbe(requestMeta?.headers, ctx, "auto-refresh")
 		) {
 			recordSuccess(circuitKeyFor(account));
+			if (
+				account.rate_limited_reason === "windowless_429" &&
+				account.consecutive_rate_limits > 0
+			) {
+				account.consecutive_rate_limits = 0;
+				account.rate_limited_at = null;
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.resetConsecutiveRateLimits(account.id),
+				);
+			}
 		}
 
 		// (a) Stability reset — gated only on rate_limited_at.

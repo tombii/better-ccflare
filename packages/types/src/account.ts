@@ -110,8 +110,7 @@ export type RateLimitReason =
 	 *  than account-wide: the same account served 200s seconds either side of the
 	 *  rejection on the same model, while every other account rejected the same
 	 *  request identically, and retries spanning 11s never once cleared it. The
-	 *  account is NOT benched — the request fails over and the account stays in
-	 *  rotation. */
+	 *  account receives a short adaptive cooldown, and the request fails over. */
 	| "windowless_429"
 	/** Anthropic 403 `permission_error` — the account's ORGANIZATION forbids the
 	 *  request (OAuth disabled org-wide, Claude Code subscription access turned

@@ -204,9 +204,9 @@ interface CircuitEntry {
  * request fails over naturally without tripping the breaker.
  *
  * `windowless_429` (a 429 reporting no rate-limit window at all) is scoped
- * to the individual request — no cooldown is applied and the account stays
- * in rotation — so counting it would open the breaker on an account that is
- * still serving traffic.
+ * without an account quota deadline. It receives a short adaptive bench,
+ * but does not trip the breaker: a request-specific rejection should not
+ * become an additional long-lived account outage.
  *
  * `org_permission_denied` (403 `permission_error` — the org forbids OAuth /
  * Claude Code access) is the opposite of the scoped kinds above: the account

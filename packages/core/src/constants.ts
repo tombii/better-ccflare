@@ -183,6 +183,22 @@ export function computeRateLimitBackoffMs(consecutiveCount: number): number {
 	return Math.min(base * 2 ** exponent, max);
 }
 
+/** Short bench for a windowless 429; resets on a successful user response. */
+export function computeWindowless429CooldownMs(
+	consecutiveCount: number,
+): number {
+	const base = readDurationOverrideMs(
+		process.env.CCFLARE_WINDOWLESS_429_COOLDOWN_MS,
+		60_000,
+	);
+	const max = readDurationOverrideMs(
+		process.env.CCFLARE_WINDOWLESS_429_MAX_MS,
+		15 * 60_000,
+	);
+	const exponent = Math.min(Math.max(0, consecutiveCount - 1), 52);
+	return Math.min(base * 2 ** exponent, max);
+}
+
 /**
  * Whether a 429 that names a real reset window benches the account until that
  * reset. Reads CCFLARE_RATE_LIMIT_HONOR_EXPLICIT_RESET (default true).

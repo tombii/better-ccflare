@@ -4,6 +4,7 @@ import {
 	computeOverloadWithResetCapMs,
 	computeRateLimitBackoffMs,
 	computeServerErrorCooldownMs,
+	computeWindowless429CooldownMs,
 	getOverloadRetryConfig,
 	getRateLimitResetStabilityMs,
 	getServerErrorRetryEnabled,
@@ -13,6 +14,8 @@ import {
 } from "@better-ccflare/core";
 
 const ENV_KEYS = [
+	"CCFLARE_WINDOWLESS_429_COOLDOWN_MS",
+	"CCFLARE_WINDOWLESS_429_MAX_MS",
 	"CCFLARE_OVERLOAD_COOLDOWN_MS",
 	"CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS",
 	"CCFLARE_OVERLOAD_WITH_RESET_MAX_MS",
@@ -181,5 +184,21 @@ describe("overload retry attempt count", () => {
 	it("clamps an oversized attempt count to 10", () => {
 		process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS = "50";
 		expect(getOverloadRetryConfig().maxAttempts).toBe(10);
+	});
+});
+
+describe("windowless 429 cooldown", () => {
+	it("starts at 60 seconds, doubles and caps at 15 minutes", () => {
+		expect([1, 2, 3, 5, 100].map(computeWindowless429CooldownMs)).toEqual([
+			60000, 120000, 240000, 900000, 900000,
+		]);
+	});
+	it("accepts positive environment overrides and rejects invalid values", () => {
+		process.env.CCFLARE_WINDOWLESS_429_COOLDOWN_MS = "1000";
+		process.env.CCFLARE_WINDOWLESS_429_MAX_MS = "4000";
+		expect(computeWindowless429CooldownMs(5)).toBe(4000);
+		process.env.CCFLARE_WINDOWLESS_429_COOLDOWN_MS = "-1";
+		process.env.CCFLARE_WINDOWLESS_429_MAX_MS = "NaN";
+		expect(computeWindowless429CooldownMs(1)).toBe(60000);
 	});
 });

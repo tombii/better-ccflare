@@ -3,6 +3,7 @@ import {
 	computeOverloadWithResetCapMs,
 	computeRateLimitBackoffMs,
 	computeServerErrorCooldownMs,
+	computeWindowless429CooldownMs,
 	isExplicitResetHonoured,
 	isOverloadReason,
 	isServerErrorReason,
@@ -281,7 +282,9 @@ export function applyRateLimitCooldown(
 	const nextCount = account.consecutive_rate_limits + 1;
 
 	let cooldownUntil: number;
-	if (isOverloadNoReset) {
+	if (reason === "windowless_429") {
+		cooldownUntil = now + computeWindowless429CooldownMs(nextCount);
+	} else if (isOverloadNoReset) {
 		cooldownUntil = now + computeOverloadCooldownMs();
 	} else if (isServerError) {
 		// A Retry-After is honored literally when it is shorter than the fixed
@@ -332,7 +335,7 @@ export function applyRateLimitCooldown(
 	}
 
 	if (
-		isTransientUpstream &&
+		(isTransientUpstream || reason === "windowless_429") &&
 		account.rate_limited_until != null &&
 		account.rate_limited_until > cooldownUntil
 	) {
