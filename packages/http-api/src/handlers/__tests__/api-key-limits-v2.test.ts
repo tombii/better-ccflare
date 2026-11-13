@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import "@better-ccflare/core";
+import { updateApiKeySpendLimit } from "@better-ccflare/cli-commands";
 import type { Config } from "@better-ccflare/config";
 import {
 	DatabaseFactory,
@@ -139,9 +140,10 @@ describe("API key multi-window management", () => {
 			[{ scopeModel: null, window: "day", limitUsd: 2, enforce: "block" }],
 			"calendar",
 		);
-		const failure = spyOn(dbOps, "getApiKeySpendEventsSince").mockRejectedValue(
-			new Error("database unavailable"),
-		);
+		const failure = spyOn(
+			dbOps,
+			"getApiKeySpendReconciliation",
+		).mockRejectedValue(new Error("database unavailable"));
 		try {
 			const response = await createApiKeyLimitsGetHandler(dbOps)("target");
 			expect(response.status).toBe(200);
@@ -200,12 +202,12 @@ describe("API key multi-window management", () => {
 		);
 	});
 
-	it("keeps the legacy PATCH as a month-row shim and preserves model limits", async () => {
+	it("maps the legacy PATCH to a week row and preserves model limits", async () => {
 		await key();
 		await dbOps.replaceApiKeyLimits(
 			"target",
 			[{ scopeModel: "opus", window: "day", limitUsd: 2, enforce: "warn" }],
-			"calendar",
+			"rolling",
 		);
 		const shim = createApiKeyUpdateSpendLimitHandler(dbOps);
 		expect(
@@ -221,7 +223,7 @@ describe("API key multi-window management", () => {
 		).toBe(200);
 		const rows = await dbOps.getApiKeyLimits("target");
 		expect(rows.find((row) => row.scopeModel === null)).toMatchObject({
-			window: "month",
+			window: "week",
 			limitUsd: 40,
 			enforce: "warn",
 		});
@@ -230,6 +232,183 @@ describe("API key multi-window management", () => {
 		expect(
 			(await dbOps.getApiKeyLimits("target")).map((row) => row.scopeModel),
 		).toEqual(["opus"]);
+	});
+
+	it("rejects legacy mode changes with other rows without partially updating the key", async () => {
+		await key();
+		const rows = [
+			{ scopeModel: "opus", window: "day", limitUsd: 2, enforce: "warn" },
+		] as const;
+		await dbOps.replaceApiKeyLimits("target", [...rows], "calendar");
+		const response = await createApiKeyUpdateSpendLimitHandler(dbOps)(
+			request({ limitUsd: 5, limitWindow: "rolling_7d" }, "PATCH"),
+			"target",
+		);
+		expect(response.status).toBe(409);
+		expect(await response.text()).toContain("PUT");
+		expect((await dbOps.getApiKey("target"))?.limitWindowMode).toBe("calendar");
+		expect((await dbOps.getApiKey("target"))?.limitUsd).toBeNull();
+		expect(await dbOps.getApiKeyLimits("target")).toHaveLength(1);
+	});
+
+	it("legacy updates and clearing only replace the matching key-wide window", async () => {
+		await key();
+		await dbOps.replaceApiKeyLimits(
+			"target",
+			[
+				{ scopeModel: null, window: "week", limitUsd: 1, enforce: "block" },
+				{ scopeModel: null, window: "month", limitUsd: 9, enforce: "block" },
+			],
+			"rolling",
+		);
+		await dbOps
+			.getAdapter()
+			.run(
+				"UPDATE api_keys SET limit_window = 'rolling_7d', limit_usd = 1, limit_enforce = 'block' WHERE id = 'target'",
+			);
+		const shim = createApiKeyUpdateSpendLimitHandler(dbOps);
+		expect(
+			(
+				await shim(
+					request({ limitUsd: 3, limitWindow: "rolling_7d" }, "PATCH"),
+					"target",
+				)
+			).status,
+		).toBe(200);
+		expect(
+			(await dbOps.getApiKeyLimits("target")).find((r) => r.window === "month")
+				?.limitUsd,
+		).toBe(9);
+		expect(
+			(await dbOps.getApiKeyLimits("target")).find((r) => r.window === "week")
+				?.limitUsd,
+		).toBe(3);
+		expect(
+			(await shim(request({ limitUsd: null }, "PATCH"), "target")).status,
+		).toBe(200);
+		expect(
+			(await dbOps.getApiKeyLimits("target")).map((r) => r.window),
+		).toEqual(["month"]);
+	});
+
+	it("CLI legacy limits map every window, clear migrated weeks, and reject incompatible mode edits", async () => {
+		await key();
+		await updateApiKeySpendLimit(dbOps, "target", {
+			limitUsd: 2,
+			limitWindow: "rolling_7d",
+			limitEnforce: "block",
+		});
+		expect(
+			(await dbOps.getApiKeyLimits("target")).map((r) => r.window),
+		).toEqual(["week"]);
+		await updateApiKeySpendLimit(dbOps, "target", {
+			limitUsd: 3,
+			limitWindow: "rolling_30d",
+			limitEnforce: "warn",
+		});
+		expect(
+			(await dbOps.getApiKeyLimits("target")).map((r) => r.window),
+		).toEqual(["month"]);
+		expect((await dbOps.getApiKey("target"))?.limitWindowMode).toBe("rolling");
+		await updateApiKeySpendLimit(dbOps, "target", {
+			limitUsd: 4,
+			limitWindow: "calendar_month",
+			limitEnforce: "block",
+		});
+		expect((await dbOps.getApiKey("target"))?.limitWindowMode).toBe("calendar");
+		await dbOps.replaceApiKeyLimits(
+			"target",
+			[{ scopeModel: "opus", window: "day", limitUsd: 1, enforce: "warn" }],
+			"calendar",
+		);
+		await expect(
+			updateApiKeySpendLimit(dbOps, "target", {
+				limitUsd: 4,
+				limitWindow: "rolling_7d",
+				limitEnforce: "block",
+			}),
+		).rejects.toThrow("use PUT");
+		await updateApiKeySpendLimit(dbOps, "target", null);
+		expect((await dbOps.getApiKeyLimits("target"))[0]?.scopeModel).toBe("opus");
+		expect((await dbOps.getApiKey("target"))?.limitWindowMode).toBe("calendar");
+	});
+
+	it("PUT drops stale legacy metadata before a later legacy clear", async () => {
+		await key();
+		await updateApiKeySpendLimit(dbOps, "target", {
+			limitUsd: 2,
+			limitWindow: "rolling_7d",
+			limitEnforce: "block",
+		});
+		const put = createApiKeyLimitsPutHandler(dbOps);
+		await put(
+			request({
+				mode: "calendar",
+				limits: [
+					{ scopeModel: null, window: "week", limitUsd: 10, enforce: "warn" },
+				],
+			}),
+			"target",
+		);
+		expect((await dbOps.getApiKey("target"))?.limitWindow).toBeNull();
+		await updateApiKeySpendLimit(dbOps, "target", null);
+		expect((await dbOps.getApiKeyLimits("target"))[0]?.limitUsd).toBe(10);
+	});
+
+	it("preserves row ids and creation times when limits are saved again", async () => {
+		await key();
+		const put = createApiKeyLimitsPutHandler(dbOps);
+		const row = {
+			scopeModel: "opus",
+			window: "day",
+			limitUsd: 2,
+			enforce: "warn",
+		};
+		await put(request({ mode: "calendar", limits: [row] }), "target");
+		const [before] = await dbOps.getApiKeyLimits("target");
+		await put(
+			request({ mode: "calendar", limits: [row, { ...row, window: "hour" }] }),
+			"target",
+		);
+		const after = (await dbOps.getApiKeyLimits("target")).find(
+			(r) => r.window === "day",
+		);
+		expect(after?.id).toBe(before.id);
+		expect(after?.createdAt).toBe(before.createdAt);
+		await put(
+			request({ mode: "calendar", limits: [{ ...row, limitUsd: 9 }] }),
+			"target",
+		);
+		expect((await dbOps.getApiKeyLimits("target"))[0].id).toBe(before.id);
+	});
+
+	it("rejects disabled overrides", async () => {
+		await key();
+		const removed = await dbOps.createCombo("Removed");
+		await dbOps.updateCombo(removed.id, { enabled: false });
+		const patch = createApiKeyRoutingUpdateHandler(dbOps);
+		expect(
+			(
+				await patch(
+					request({ familyComboOverrides: { opus: removed.id } }, "PATCH"),
+					"target",
+				)
+			).status,
+		).toBe(400);
+	});
+
+	it("cleans only deleted combo references", async () => {
+		await key();
+		const removed = await dbOps.createCombo("Removed");
+		const kept = await dbOps.createCombo("Kept");
+		await dbOps.updateApiKeyRouting("target", {
+			opus: removed.id,
+			sonnet: kept.id,
+		});
+		await dbOps.deleteCombo(removed.id);
+		expect((await dbOps.getApiKey("target"))?.familyComboOverrides).toEqual({
+			sonnet: kept.id,
+		});
 	});
 
 	it("stores and clears routing overrides and rejects unknown combos/families", async () => {
@@ -348,6 +527,63 @@ describe("API key usage authorization", () => {
 				})
 			)?.status,
 		).toBe(401);
+	});
+	it("hides account identities and other keys' subscription totals from own-key usage", async () => {
+		const own = await credential("own", "api-only");
+		const admin = await credential("admin", "admin");
+		const now = Date.now();
+		await dbOps
+			.getAdapter()
+			.run(
+				"INSERT INTO accounts (id, name, provider, created_at, plan_monthly_usd) VALUES (?, ?, ?, ?, ?)",
+				["private-account-id", "private-account-name", "anthropic", now, 200],
+			);
+		for (const [id, apiKeyId, cost] of [
+			["own-plan", "own", 2],
+			["other-plan", "admin", 98],
+		] as const) {
+			await dbOps
+				.getAdapter()
+				.run(
+					"INSERT INTO requests (id, timestamp, method, path, account_used, success, model, cost_usd, billing_type, api_key_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					[
+						id,
+						now - 1000,
+						"POST",
+						"/v1/messages",
+						"private-account-id",
+						1,
+						"claude-opus-4-6",
+						cost,
+						"plan",
+						apiKeyId,
+					],
+				);
+		}
+		await dbOps.updateApiKeyRestrictions("own", {
+			allowedAccounts: ["private-account-id"],
+			allowedModels: null,
+			allowedProviders: null,
+		});
+		const api = router();
+		const ownResponse = await call(api, "/api/api-keys/own/usage", own);
+		const body = await ownResponse?.json();
+		expect(body.planValueUsd).toBe(2);
+		expect(body.planCost.planCostUsd).toBeGreaterThan(0);
+		const serialized = JSON.stringify(body);
+		for (const hidden of [
+			"private-account-id",
+			"private-account-name",
+			"accountPlanValueUsd",
+			"planMonthlyUsd",
+			"proratedPriceUsd",
+		])
+			expect(serialized).not.toContain(hidden);
+		expect(body.accounts[0].accountName).toMatch(/^Account \d+$/);
+		const adminResponse = await call(api, "/api/api-keys/own/usage", admin);
+		const adminBody = await adminResponse?.json();
+		expect(adminBody.accounts[0].accountId).toBe("private-account-id");
+		expect(adminBody.planCost.accounts[0].accountPlanValueUsd).toBe(100);
 	});
 	it("allows admins to inspect every key and manage limits/routing", async () => {
 		const admin = await credential("admin", "admin");

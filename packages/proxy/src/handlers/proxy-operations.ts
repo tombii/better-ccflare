@@ -51,6 +51,10 @@ import { forwardToClient as defaultForwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
 import { applyAccountRequestTransformer } from "./account-request-transformer";
 import { getComboSlotInfo, getXaiConvId } from "./account-selector";
+import {
+	ApiKeyRoutedSpendRefusal,
+	getApiKeyRoutedSpendCheck,
+} from "./api-key-spend-routing";
 import { markFamilyExhausted } from "./model-capacity";
 import {
 	DEFAULT_MODEL_COOLDOWN_TTL_MS,
@@ -1417,7 +1421,15 @@ export async function proxyWithAccount(
 		// invariant that every provider has to remember. Merged with
 		// drainAbortController so the terminal-recovery drain deadline can also
 		// abort this same fetch later.
-		const forwardUpstream = (target: Request) => {
+		const forwardUpstream = async (target: Request) => {
+			const checkSpend = getApiKeyRoutedSpendCheck(requestMeta);
+			if (checkSpend && target.body) {
+				const body = (await target.clone().json()) as { model?: unknown };
+				if (typeof body.model === "string") {
+					const refusal = await checkSpend(body.model);
+					if (refusal) throw new ApiKeyRoutedSpendRefusal(refusal);
+				}
+			}
 			const signal = AbortSignal.any([req.signal, drainAbortController.signal]);
 			return forwardObservedUpstream(
 				provider,
@@ -3813,6 +3825,7 @@ export async function proxyWithAccount(
 			{ ...ctx, provider },
 		);
 	} catch (err) {
+		if (err instanceof ApiKeyRoutedSpendRefusal) return err.response;
 		// A client disconnect now aborts the upstream fetch by design. That is
 		// not an account failure: returning null would send the proxy through
 		// every remaining account and every fallback route for a request nobody

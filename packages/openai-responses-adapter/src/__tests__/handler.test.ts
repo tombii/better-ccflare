@@ -238,7 +238,10 @@ describe("handleResponsesRequest", () => {
 		expect(forwardedHeaders?.get("x-better-ccflare-native-responses")).toBe(
 			"true",
 		);
-		expect(forwardedOptions).toEqual({ trustedNativeResponses: true });
+		expect(forwardedOptions).toMatchObject({
+			trustedNativeResponses: true,
+			trustedRequestedModel: "gpt-5.6-sol",
+		});
 	});
 
 	test("does not attest cache controls when the exact expected set was not applied", async () => {
@@ -1264,5 +1267,28 @@ describe("handleResponsesRequest", () => {
 		);
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({ id: "resp_multiline" });
+	});
+});
+
+test("forwards the original GPT model in a trusted option, ignoring client passthrough spoofing", async () => {
+	let options: Parameters<HandleProxyFn>[5];
+	const proxy: HandleProxyFn = async (_req, _url, _ctx, _key, _name, opts) => {
+		options = opts;
+		return new Response(ANTHROPIC_MESSAGE_BODY, {
+			headers: { "content-type": "application/json" },
+		});
+	};
+	const req = new Request("http://localhost/v1/responses", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+			"x-better-ccflare-requested-model": "other-model",
+		},
+		body: JSON.stringify({ model: "gpt-5.4", input: "hello" }),
+	});
+	await handleResponsesRequest(req, new URL(req.url), proxy, {});
+	expect(options).toMatchObject({
+		trustedNativeResponses: true,
+		trustedRequestedModel: "gpt-5.4",
 	});
 });

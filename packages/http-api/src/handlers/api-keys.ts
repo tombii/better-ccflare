@@ -208,7 +208,7 @@ export async function withSpendUsage(
 	const now = Date.now();
 	await Promise.all(
 		apiKeys.map(async (key) => {
-			const limits = await dbOps.getApiKeyLimits(key.id);
+			const limits = await counter.getLimitsForKey(key.id);
 			key.limits = await Promise.all(
 				limits.map(async (limit) => {
 					try {
@@ -235,7 +235,9 @@ export async function withSpendUsage(
 	);
 	for (const key of apiKeys) {
 		const legacy = key.limits?.find(
-			(limit) => limit.scopeModel === null && limit.window === "month",
+			(limit) =>
+				limit.scopeModel === null &&
+				limit.window === (key.limitWindow === "rolling_7d" ? "week" : "month"),
 		);
 		if (key.limitUsd != null && legacy) {
 			key.spentUsd = legacy.spentUsd;
@@ -651,8 +653,9 @@ export function createApiKeyRoutingUpdateHandler(dbOps: DatabaseOperations) {
 					throw BadRequest("Unknown model family");
 				if (typeof comboId !== "string" || !comboId.trim())
 					throw BadRequest("Each routing override must name a combo id");
-				if (!(await dbOps.getCombo(comboId)))
-					throw BadRequest(`Combo '${comboId}' not found`);
+				const combo = await dbOps.getCombo(comboId);
+				if (!combo) throw BadRequest(`Combo '${comboId}' not found`);
+				if (!combo.enabled) throw BadRequest(`Combo '${comboId}' is disabled`);
 				if (mapping) mapping[family] = comboId;
 			}
 			const key = await resolveKey(dbOps, idOrName);

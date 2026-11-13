@@ -16,6 +16,7 @@ import {
 	mock,
 	spyOn,
 } from "bun:test";
+import * as core from "@better-ccflare/core";
 import { spendLimitEvents } from "@better-ccflare/core";
 import { usageCache } from "@better-ccflare/providers";
 import type {
@@ -24,7 +25,10 @@ import type {
 	ApiKeySpendLimit,
 } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
-import { resetApiKeySpendCounter } from "../handlers/api-key-spend";
+import {
+	getApiKeySpendCounter,
+	resetApiKeySpendCounter,
+} from "../handlers/api-key-spend";
 import { INTERNAL_PROBE_SECRET_HEADER } from "../handlers/proxy-types";
 import { handleProxy } from "../proxy";
 import * as usageCollectorModule from "../usage-collector";
@@ -168,6 +172,12 @@ beforeEach(() => {
 	usageCache.clear();
 	resetApiKeySpendCounter();
 	stubUsageCollector();
+	spyOn(core, "getModelRates").mockResolvedValue({
+		input: 5,
+		output: 25,
+		cacheRead: null,
+		cacheWrite: null,
+	});
 });
 
 afterEach(() => {
@@ -594,7 +604,7 @@ describe("multi-window row enforcement", () => {
 		expect(body.error.scope_model).toBe("opus");
 		expect(body.error.window).toBe("day");
 		expect(body.error.limit_usd).toBe(5);
-		expect(body.error.spent_usd).toBe(8);
+		expect(body.error.spent_usd).toBeGreaterThanOrEqual(8);
 		const retry = Number(response.headers.get("Retry-After"));
 		expect(
 			Math.abs(
@@ -678,5 +688,343 @@ describe("multi-window row enforcement", () => {
 		} finally {
 			spendLimitEvents.off("event", listener);
 		}
+	});
+});
+
+describe("review regressions: requested/routed scopes and relief", () => {
+	const row = (extra: Partial<ApiKeyLimit> = {}): ApiKeyLimit => ({
+		id: "limit-review",
+		apiKeyId: "key-1",
+		scopeModel: null,
+		window: "hour",
+		limitUsd: 5,
+		enforce: "block",
+		createdAt: 0,
+		updatedAt: 0,
+		...extra,
+	});
+	function context(rows: ApiKeyLimit[], model: string) {
+		const ctx = makeContext([]);
+		Object.assign(ctx.dbOps, {
+			getApiKeyLimits: mock(async () => rows),
+			getApiKeySpendEventsSince: mock(async () => [
+				{ requestId: "spent", timestamp: Date.now() - 1, costUsd: 8, model },
+			]),
+		});
+		return ctx;
+	}
+	it("enforces the trusted original Responses GPT model scope after translation", async () => {
+		const ctx = context([row({ scopeModel: "gpt-5.4" })], "gpt-5.4");
+		const response = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"budgeted",
+			{
+				trustedNativeResponses: true,
+				trustedRequestedModel: "gpt-5.4",
+				limitWindowMode: "calendar",
+			} as Parameters<typeof handleProxy>[5],
+		);
+		expect(response.status).toBe(429);
+	});
+	it("uses the latest relief time when hourly and monthly rows both block", async () => {
+		const ctx = context([row(), row({ id: "month", window: "month" })], "opus");
+		const response = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"budgeted",
+			{ limitWindowMode: "calendar" },
+		);
+		expect(response.status).toBe(429);
+		const body = await response.json();
+		const reset = new Date();
+		reset.setUTCDate(1);
+		reset.setUTCMonth(reset.getUTCMonth() + 1);
+		reset.setUTCHours(0, 0, 0, 0);
+		expect(body.error.resets_at).toBe(reset.toISOString());
+		expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(3600);
+	});
+	it("blocks a sonnet request before forwarding when a combo routes it to exhausted opus", async () => {
+		const ctx = context([row({ scopeModel: "opus" })], "claude-opus-4-5");
+		const account = makeAccount();
+		Object.assign(ctx.dbOps, {
+			getAllAccounts: mock(async () => [account]),
+			getActiveComboForFamily: mock(async () => ({
+				id: "combo",
+				name: "combo",
+				enabled: true,
+				slots: [
+					{
+						id: "slot",
+						combo_id: "combo",
+						account_id: account.id,
+						sort_order: 0,
+						model: "claude-opus-4-5",
+						model_override: "claude-opus-4-5",
+						enabled: true,
+					},
+				],
+			})),
+		});
+		const fetchSpy = spyOn(globalThis, "fetch").mockRejectedValue(
+			new Error("must not forward"),
+		);
+		const req = new Request(PROXY_URL, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-sonnet-4-5",
+				messages: [{ role: "user", content: "hello" }],
+				max_tokens: 16,
+			}),
+		});
+		const response = await handleProxy(
+			req,
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"budgeted",
+			{ limitWindowMode: "calendar" },
+		);
+		expect(response.status).toBe(429);
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+	it("fails closed when the first multi-window spend query times out", async () => {
+		const ctx = context([row()], "opus");
+		Object.assign(ctx.dbOps, {
+			getApiKeySpendEventsSince: mock(async () => {
+				throw new Error("PG timeout");
+			}),
+		});
+		const response = await handleProxy(makeRequest(), PROXY_URL, ctx, "key-1");
+		expect(response.status).toBe(503);
+		const body = await response.json();
+		expect(body.error.code).toBe("api_key_limit_check_unavailable");
+	});
+});
+
+describe("request reservation lifecycle", () => {
+	const row: ApiKeyLimit = {
+		id: "inflight",
+		apiKeyId: "key-1",
+		scopeModel: null,
+		window: "hour",
+		limitUsd: 5,
+		enforce: "block",
+		createdAt: 0,
+		updatedAt: 0,
+	};
+	function context() {
+		const ctx = makeContext([
+			makeAccount({
+				provider: "test" as Account["provider"],
+				expires_at: Date.now() + 3_600_000,
+			}),
+		]);
+		Object.assign(ctx.provider, {
+			name: "test",
+			buildUrl: () => "https://upstream.example/v1/messages",
+			prepareHeaders: () => new Headers(),
+			transformRequestBody: null,
+			processResponse: async (response: Response) => response,
+			parseRateLimit: () => ({ isRateLimited: false }),
+			isStreamingResponse: (response: Response) =>
+				response.headers.get("content-type")?.includes("event-stream") ?? false,
+		});
+		Object.assign(ctx.config, { getStorePayloads: () => false });
+		Object.assign(ctx.dbOps, {
+			getApiKeyLimits: mock(async () => [row]),
+			getApiKeySpendEventsSince: mock(async () => [
+				{
+					requestId: "history",
+					timestamp: Date.now() - 1000,
+					costUsd: 4.9,
+					model: "claude-opus-4-5",
+				},
+			]),
+		});
+		return ctx;
+	}
+	function request(signal?: AbortSignal) {
+		return new Request(PROXY_URL, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-5",
+				messages: [{ role: "user", content: "hello" }],
+				max_tokens: 2048,
+			}),
+			signal,
+		});
+	}
+	it("admits one of two parallel requests near a limit and releases a cancelled stream", async () => {
+		const ctx = context();
+		const forward = spyOn(globalThis, "fetch").mockImplementation(
+			async () =>
+				new Response(
+					new ReadableStream({
+						start(c) {
+							c.enqueue(new TextEncoder().encode("data: open\n\n"));
+						},
+					}),
+					{ headers: { "content-type": "text/event-stream" } },
+				),
+		);
+		const responses = await Promise.all([
+			handleProxy(request(), PROXY_URL, ctx, "key-1"),
+			handleProxy(request(), PROXY_URL, ctx, "key-1"),
+		]);
+		expect(responses.map((r) => r.status).sort()).toEqual([200, 429]);
+		expect(forward).toHaveBeenCalledTimes(1);
+		await responses.find((r) => r.status === 200)?.body?.cancel();
+		expect(
+			(
+				await getApiKeySpendCounter(ctx.dbOps).getLimitSnapshot(
+					"key-1",
+					row,
+					"calendar",
+				)
+			).spentUsd,
+		).toBe(4.9);
+	});
+	it("keeps the reservation after response EOF until detached usage pricing settles", async () => {
+		const ctx = context();
+		let price!: (cost: number) => void;
+		spyOn(core, "estimateCostUSD").mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					price = resolve;
+				}),
+		);
+		const collector = new usageCollectorModule.UsageCollector(
+			ctx.dbOps,
+			{
+				enqueue: () => {},
+				canAcceptPayload: () => false,
+				recordPayloadDrop: () => {},
+				dispose: async () => {},
+			} as never,
+			() => false,
+			() => {},
+		);
+		const ending = spyOn(collector, "handleEnd");
+		spyOn(usageCollectorModule, "getUsageCollector").mockReturnValue(collector);
+		spyOn(usageCollectorModule, "tryGetUsageCollector").mockReturnValue(
+			collector,
+		);
+		const stream = [
+			'event: message_start\ndata: {"type":"message_start","message":{"id":"msg","type":"message","role":"assistant","model":"claude-opus-4-5","usage":{"input_tokens":100,"output_tokens":0},"content":[]}}\n\n',
+			'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":20}}\n\n',
+			'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+		].join("");
+		spyOn(globalThis, "fetch").mockImplementation(
+			async () =>
+				new Response(stream, {
+					headers: { "content-type": "text/event-stream" },
+				}),
+		);
+		try {
+			const response = await handleProxy(request(), PROXY_URL, ctx, "key-1");
+			await response.text();
+			await Promise.resolve();
+			await Promise.resolve();
+			const before = await getApiKeySpendCounter(ctx.dbOps).getLimitSnapshot(
+				"key-1",
+				row,
+				"calendar",
+			);
+			expect(before.spentUsd).toBeGreaterThan(4.9);
+			expect(typeof price).toBe("function");
+			price(0.02);
+			await ending.mock.results[0].value;
+			expect(
+				(
+					await getApiKeySpendCounter(ctx.dbOps).getLimitSnapshot(
+						"key-1",
+						row,
+						"calendar",
+					)
+				).spentUsd,
+			).toBeCloseTo(4.92, 6);
+		} finally {
+			collector.dispose();
+		}
+	});
+	it("releases a validation failure before its response body is consumed", async () => {
+		const ctx = context();
+		const invalid = new Request(PROXY_URL, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ model: "claude-opus-4-5", max_tokens: 2048 }),
+		});
+		const response = await handleProxy(invalid, PROXY_URL, ctx, "key-1");
+		try {
+			expect(response.status).toBe(400);
+			expect(response.bodyUsed).toBe(false);
+			expect(
+				(
+					await getApiKeySpendCounter(ctx.dbOps).getLimitSnapshot(
+						"key-1",
+						row,
+						"calendar",
+					)
+				).spentUsd,
+			).toBe(4.9);
+		} finally {
+			await response.body?.cancel();
+		}
+	});
+	it("releases the reservation when forwarding throws", async () => {
+		const ctx = context();
+		spyOn(globalThis, "fetch").mockRejectedValue(new Error("forward failed"));
+		await expect(
+			handleProxy(request(), PROXY_URL, ctx, "key-1"),
+		).rejects.toThrow("All accounts failed");
+		expect(
+			(
+				await getApiKeySpendCounter(ctx.dbOps).getLimitSnapshot(
+					"key-1",
+					row,
+					"calendar",
+				)
+			).spentUsd,
+		).toBe(4.9);
+	});
+	it("releases an open stream's reservation immediately on client abort", async () => {
+		const ctx = context();
+		const abort = new AbortController();
+		spyOn(globalThis, "fetch").mockImplementation(
+			async () =>
+				new Response(
+					new ReadableStream({
+						start(c) {
+							c.enqueue(new TextEncoder().encode("data: open\n\n"));
+						},
+					}),
+					{ headers: { "content-type": "text/event-stream" } },
+				),
+		);
+		const response = await handleProxy(
+			request(abort.signal),
+			PROXY_URL,
+			ctx,
+			"key-1",
+		);
+		expect(response.status).toBe(200);
+		abort.abort();
+		expect(
+			(
+				await getApiKeySpendCounter(ctx.dbOps).getLimitSnapshot(
+					"key-1",
+					row,
+					"calendar",
+				)
+			).spentUsd,
+		).toBe(4.9);
+		await response.body?.cancel();
 	});
 });

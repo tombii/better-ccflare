@@ -391,6 +391,32 @@ export function createApiKeyUsageHandler(context: APIContext) {
 				},
 			};
 
+			if (!response.canManage) {
+				// Account labels are local to this response. Plan apportionment
+				// inputs (including share) reveal other keys' totals, so retain
+				// only this key's aggregate plan-cost contribution.
+				const labels = new Map<string, string>();
+				const label = (id: string) => {
+					if (!labels.has(id)) labels.set(id, `Account ${labels.size + 1}`);
+					return labels.get(id) as string;
+				};
+				response.accounts = response.accounts.map((account) => ({
+					...account,
+					accountId:
+						account.accountId == null ? null : label(account.accountId),
+					accountName:
+						account.accountId == null
+							? "Unattributed"
+							: label(account.accountId),
+				}));
+				response.restrictions.allowedAccounts =
+					response.restrictions.allowedAccounts?.map(label) ?? null;
+				response.planCost = {
+					...response.planCost,
+					accounts: [],
+					unpricedAccountIds: [],
+				};
+			}
 			return jsonResponse(response);
 		} catch (error) {
 			if (error instanceof HttpError) return errorResponse(error);

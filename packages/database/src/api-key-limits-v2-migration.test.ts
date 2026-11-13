@@ -190,7 +190,7 @@ describe("multi-window key budget migration", () => {
 			expect((await repo.getLimits("a"))[0].window).toBe("day");
 			await repo.updateSpendLimit("a", {
 				limitUsd: 12,
-				limitWindow: "rolling_30d",
+				limitWindow: "calendar_month",
 				limitEnforce: "warn",
 			});
 			expect(

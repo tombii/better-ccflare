@@ -678,7 +678,13 @@ export async function handleResponsesRequest(
 			ctx,
 			apiKeyId,
 			apiKeyName,
-			{ trustedNativeResponses: true, restrictions, spendLimit, ...keyPolicy },
+			{
+				trustedNativeResponses: true,
+				trustedRequestedModel: body.model,
+				restrictions,
+				spendLimit,
+				...keyPolicy,
+			},
 		);
 	} catch (err) {
 		const statusCode =

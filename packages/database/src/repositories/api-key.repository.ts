@@ -279,49 +279,83 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		id: string,
 		spendLimit: ApiKeySpendLimit | null,
 	): Promise<boolean> {
-		const changes = await this.runWithChanges(
-			`
-			UPDATE api_keys
-			SET limit_usd = ?,
-				limit_window = ?,
-				limit_enforce = ?
-			WHERE id = ?
-		`,
-			[
-				spendLimit?.limitUsd ?? null,
-				spendLimit?.limitWindow ?? null,
-				spendLimit?.limitEnforce ?? null,
-				id,
-			],
+		const key = await this.findById(id);
+		if (!key) return false;
+		const rows = await this.getLimits(id);
+		const oldWindow = key.limitWindow
+			? key.limitWindow === "rolling_7d"
+				? "week"
+				: "month"
+			: null;
+		const window = spendLimit
+			? spendLimit.limitWindow === "rolling_7d"
+				? "week"
+				: "month"
+			: oldWindow;
+		const remaining = rows.filter(
+			(row) =>
+				!(
+					row.scopeModel == null &&
+					(row.window === oldWindow || row.window === window)
+				),
 		);
-
-		if (changes > 0) {
-			const rows = await this.getLimits(id);
-			const remaining = rows.filter(
-				(row) => !(row.scopeModel == null && row.window === "month"),
-			);
-			if (spendLimit)
-				remaining.push({
-					id: "",
-					apiKeyId: id,
-					scopeModel: null,
-					window: "month",
-					limitUsd: spendLimit.limitUsd,
-					enforce: spendLimit.limitEnforce,
-					createdAt: 0,
-					updatedAt: 0,
-				});
-			await this.replaceLimits(
-				id,
-				remaining,
-				spendLimit
-					? spendLimit.limitWindow === "calendar_month"
-						? "calendar"
-						: "rolling"
-					: ((await this.findById(id))?.limitWindowMode ?? "calendar"),
+		const currentMode = key.limitWindowMode ?? "calendar";
+		const mode = spendLimit
+			? spendLimit.limitWindow === "calendar_month"
+				? "calendar"
+				: "rolling"
+			: currentMode;
+		if (mode !== currentMode && remaining.length > 0) {
+			throw Object.assign(
+				new Error(
+					"Legacy spend limit cannot change the window mode while other limits exist; use PUT /api/api-keys/:id/limits",
+				),
+				{ statusCode: 409 },
 			);
 		}
-		return changes > 0;
+		const now = Date.now();
+		const existing = rows.find(
+			(row) => row.scopeModel == null && row.window === window,
+		);
+		const statements = [
+			{
+				sql: "UPDATE api_keys SET limit_usd = ?, limit_window = ?, limit_enforce = ?, limit_window_mode = ? WHERE id = ?",
+				params: [
+					spendLimit?.limitUsd ?? null,
+					spendLimit?.limitWindow ?? null,
+					spendLimit?.limitEnforce ?? null,
+					mode,
+					id,
+				] as unknown[],
+			},
+		];
+		for (const row of rows) {
+			if (
+				row.scopeModel == null &&
+				(row.window === oldWindow || row.window === window)
+			) {
+				statements.push({
+					sql: "DELETE FROM api_key_limits WHERE id = ?",
+					params: [row.id],
+				});
+			}
+		}
+		if (spendLimit)
+			statements.push({
+				sql: 'INSERT INTO api_key_limits (id, api_key_id, scope_model, "window", limit_usd, enforce, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+				params: [
+					existing?.id ?? crypto.randomUUID(),
+					id,
+					null,
+					window,
+					spendLimit.limitUsd,
+					spendLimit.limitEnforce,
+					existing?.createdAt ?? now,
+					now,
+				],
+			});
+		await this.adapter.atomicStatements(statements);
+		return true;
 	}
 
 	/**
@@ -376,30 +410,53 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		limits: ApiKeyLimitInput[],
 		mode: ApiKeyLimitWindowMode,
 	): Promise<boolean> {
-		if (!(await this.findById(apiKeyId))) return false;
+		const key = await this.findById(apiKeyId);
+		if (!key) return false;
+		const legacyWindow = key.limitWindow === "rolling_7d" ? "week" : "month";
+		const legacyMode =
+			key.limitWindow === "calendar_month" ? "calendar" : "rolling";
+		const legacy =
+			key.limitWindow && mode === legacyMode
+				? limits.find(
+						(row) => row.scopeModel == null && row.window === legacyWindow,
+					)
+				: undefined;
+		const existing = await this.getLimits(apiKeyId);
 		const now = Date.now();
 		const statements = [
 			{
-				sql: "UPDATE api_keys SET limit_window_mode = ? WHERE id = ?",
-				params: [mode, apiKeyId] as unknown[],
+				sql: "UPDATE api_keys SET limit_window_mode = ?, limit_usd = ?, limit_window = ?, limit_enforce = ? WHERE id = ?",
+				params: [
+					mode,
+					legacy?.limitUsd ?? null,
+					legacy ? key.limitWindow : null,
+					legacy?.enforce ?? null,
+					apiKeyId,
+				] as unknown[],
 			},
 			{
 				sql: "DELETE FROM api_key_limits WHERE api_key_id = ?",
 				params: [apiKeyId] as unknown[],
 			},
-			...limits.map((limit) => ({
-				sql: 'INSERT INTO api_key_limits (id, api_key_id, scope_model, "window", limit_usd, enforce, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-				params: [
-					crypto.randomUUID(),
-					apiKeyId,
-					limit.scopeModel,
-					limit.window,
-					limit.limitUsd,
-					limit.enforce,
-					now,
-					now,
-				] as unknown[],
-			})),
+			...limits.map((limit) => {
+				const previous = existing.find(
+					(row) =>
+						row.scopeModel === limit.scopeModel && row.window === limit.window,
+				);
+				return {
+					sql: 'INSERT INTO api_key_limits (id, api_key_id, scope_model, "window", limit_usd, enforce, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+					params: [
+						previous?.id ?? crypto.randomUUID(),
+						apiKeyId,
+						limit.scopeModel,
+						limit.window,
+						limit.limitUsd,
+						limit.enforce,
+						previous?.createdAt ?? now,
+						now,
+					] as unknown[],
+				};
+			}),
 		];
 		await this.adapter.atomicStatements(statements);
 		return true;

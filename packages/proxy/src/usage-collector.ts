@@ -453,6 +453,7 @@ export class UsageCollector {
 	private readonly requests = new Map<string, RequestState>();
 	private readonly missingStateWarnings = new Set<string>();
 	private readonly pendingHandleEnds = new Set<Promise<void>>();
+	private readonly pendingRequestEnds = new Map<string, number>();
 	private readonly pendingPricingFallbacks = new Set<() => void>();
 	private cleanupInterval: Timer | null = null;
 	// Permanent once drain() is called — collector cannot estimate costs after this.
@@ -708,10 +709,27 @@ export class UsageCollector {
 		processStreamChunk(data, state, this.maxBufferSize);
 	}
 
+	hasPendingRequest(requestId: string): boolean {
+		return (
+			this.requests.has(requestId) || this.pendingRequestEnds.has(requestId)
+		);
+	}
+
 	handleEnd(msg: EndMessage): Promise<void> {
+		this.pendingRequestEnds.set(
+			msg.requestId,
+			(this.pendingRequestEnds.get(msg.requestId) ?? 0) + 1,
+		);
 		const promise = this._handleEndInternal(msg);
 		this.pendingHandleEnds.add(promise);
-		const cleanup = () => this.pendingHandleEnds.delete(promise);
+		const cleanup = () => {
+			this.pendingHandleEnds.delete(promise);
+			const remaining = (this.pendingRequestEnds.get(msg.requestId) ?? 1) - 1;
+			if (remaining > 0) this.pendingRequestEnds.set(msg.requestId, remaining);
+			else this.pendingRequestEnds.delete(msg.requestId);
+			if (!this.hasPendingRequest(msg.requestId))
+				tryGetApiKeySpendCounter()?.releaseReservation(msg.requestId);
+		};
 		promise.then(cleanup, cleanup);
 		return promise;
 	}
@@ -868,11 +886,10 @@ export class UsageCollector {
 			tryGetApiKeySpendCounter()?.record(
 				startMessage.apiKeyId,
 				state.usage.costUsd,
-				startMessage.limitModel ??
-					startMessage.originalModel ??
-					state.usage.model,
-				startMessage.timestamp,
+				state.usage.model,
+				startMessage.timestamp + responseTime,
 				startMessage.requestId,
+				startMessage.limitModel ?? startMessage.originalModel ?? null,
 			);
 
 			// Calculate tokens per second - zai specific vs other providers

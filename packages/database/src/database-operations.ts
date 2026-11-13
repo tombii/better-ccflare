@@ -2902,6 +2902,102 @@ OAuth tokens will need to be re-authenticated.
 			"updateApiKeyRouting",
 		);
 	}
+	/**
+	 * Reconcile a key in one SQL snapshot. Calendar windows return grouped SUMs;
+	 * individual events are returned only for rolling expiry and the short local
+	 * completion acknowledgement tail. Completion time preserves window attribution
+	 * across an asynchronous write and a process restart.
+	 */
+	async getApiKeySpendReconciliation(
+		apiKeyId: string,
+		windows: Array<{ window: string; startMs: number; endMs: number }>,
+		rollingSinceMs: number | null,
+		tailSinceMs: number,
+		nowMs: number,
+	): Promise<{
+		calendar: Array<{
+			window: string;
+			totals: Array<{
+				model: string | null;
+				requestedModel: string | null;
+				totalUsd: number;
+			}>;
+		}>;
+		events: Array<{
+			requestId: string;
+			timestamp: number;
+			costUsd: number;
+			model: string | null;
+			requestedModel: string | null;
+		}>;
+	}> {
+		const count = Math.max(1, windows.length);
+		const sums = Array.from({ length: count }, (_, index) =>
+			windows[index]
+				? `SUM(CASE WHEN completed_ms >= ? AND completed_ms < ? THEN cost_usd ELSE 0 END) AS total_${index}`
+				: `SUM(cost_usd) AS total_${index}`,
+		);
+		const eventCosts = Array.from({ length: count }, (_, index) =>
+			index === 0 ? "cost_usd" : "0",
+		);
+		const eventSinceMs = Math.min(tailSinceMs, rollingSinceMs ?? tailSinceMs);
+		const sinceMs = Math.min(
+			eventSinceMs,
+			...windows.map((window) => window.startMs),
+		);
+		const params: Array<string | number> = [apiKeyId, sinceMs, nowMs];
+		for (const window of windows) params.push(window.startMs, window.endMs);
+		params.push(eventSinceMs);
+		const rows = await withDatabaseRetry(
+			() =>
+				this.adapter.query<{
+					kind: string;
+					request_id: string | null;
+					completed_ms: number | null;
+					model: string | null;
+					requested_model: string | null;
+					[key: string]: string | number | null;
+				}>(
+					`
+			WITH completed AS (
+				SELECT id, timestamp + COALESCE(response_time_ms, 0) AS completed_ms,
+					cost_usd, model, COALESCE(limit_model, original_model) AS requested_model
+				FROM requests WHERE api_key_id = ? AND cost_usd > 0
+			), eligible AS (SELECT * FROM completed WHERE completed_ms >= ? AND completed_ms <= ?)
+			SELECT 'total' AS kind, NULL AS request_id, NULL AS completed_ms, model, requested_model, ${sums.join(", ")}
+			FROM eligible GROUP BY model, requested_model
+			UNION ALL
+			SELECT 'event' AS kind, id AS request_id, completed_ms, model, requested_model, ${eventCosts.join(", ")}
+			FROM eligible WHERE completed_ms >= ?
+		`,
+					params,
+				),
+			this.retryConfig,
+			"getApiKeySpendReconciliation",
+		);
+		return {
+			calendar: windows.map((window, index) => ({
+				window: window.window,
+				totals: rows
+					.filter((row) => row.kind === "total")
+					.map((row) => ({
+						model: row.model,
+						requestedModel: row.requested_model,
+						totalUsd: Number(row[`total_${index}`]),
+					})),
+			})),
+			events: rows
+				.filter((row) => row.kind === "event")
+				.map((row) => ({
+					requestId: row.request_id as string,
+					timestamp: Number(row.completed_ms),
+					costUsd: Number(row.total_0),
+					model: row.model,
+					requestedModel: row.requested_model,
+				})),
+		};
+	}
+
 	/** Cost events retained in memory for precise rolling relief and model scopes. */
 	async getApiKeySpendEventsSince(
 		apiKeyId: string,
@@ -2912,6 +3008,7 @@ OAuth tokens will need to be re-authenticated.
 			timestamp: number;
 			costUsd: number;
 			model: string | null;
+			requestedModel: string | null;
 		}>
 	> {
 		const rows = await withDatabaseRetry(
@@ -2921,8 +3018,9 @@ OAuth tokens will need to be re-authenticated.
 					timestamp: number;
 					cost_usd: number;
 					model: string | null;
+					requested_model: string | null;
 				}>(
-					"SELECT id, timestamp, cost_usd, COALESCE(limit_model, original_model, model) AS model FROM requests WHERE api_key_id = ? AND timestamp >= ? AND cost_usd > 0 ORDER BY timestamp",
+					"SELECT id, timestamp + COALESCE(response_time_ms, 0) AS timestamp, cost_usd, model, COALESCE(limit_model, original_model) AS requested_model FROM requests WHERE api_key_id = ? AND timestamp + COALESCE(response_time_ms, 0) >= ? AND cost_usd > 0 ORDER BY timestamp",
 					[apiKeyId, sinceMs],
 				),
 			this.retryConfig,
@@ -2933,6 +3031,7 @@ OAuth tokens will need to be re-authenticated.
 			timestamp: Number(row.timestamp),
 			costUsd: Number(row.cost_usd),
 			model: row.model,
+			requestedModel: row.requested_model,
 		}));
 	}
 

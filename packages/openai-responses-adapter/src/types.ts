@@ -360,6 +360,8 @@ export type HandleProxyFn = (
 	apiKeyName?: string | null,
 	options?: {
 		trustedNativeResponses?: boolean;
+		/** Original client model supplied by the translator, never a header. */
+		trustedRequestedModel?: string;
 		/** The calling API key's restrictions, forwarded verbatim so the
 		 * /v1/responses path enforces them exactly like /v1/messages does.
 		 * Omitting it here would make the Codex endpoint a bypass. */

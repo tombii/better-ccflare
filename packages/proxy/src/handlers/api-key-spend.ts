@@ -18,33 +18,9 @@
  * unseeded limited key is seen (a limit set while the process was running),
  * and then on a TTL to correct drift.
  *
- * ── TWO INHERENT INACCURACIES, both deliberate and neither fixable here ──
- *
- * 1. OVERSHOOT BY ONE IN-FLIGHT REQUEST. A request's cost is not known until
- *    it completes — it is computed from the response's token usage. The check
- *    therefore runs against the spend BEFORE this request, and a key can
- *    always exceed its limit by roughly the cost of whatever is in flight when
- *    it crosses. With concurrent clients it is one such cost per concurrent
- *    request. There is no version of a post-hoc cost that avoids this; the
- *    alternative would be pre-charging an estimate and refunding it, which
- *    would refuse requests that would have fit. The limit is a budget, not a
- *    hard cap, and the refusal message says "exceeded", not "would exceed".
- *
- * 2. DIVERGENCE ACROSS PROCESSES. Two instances sharing one database each keep
- *    their own counter and each see only their own traffic between resyncs, so
- *    their totals converge only at each TTL boundary and the combined spend can
- *    overshoot by up to one TTL of the other instance's traffic. This is the
- *    same class of in-process coordination state that
- *    packages/database/src/multi-instance-guard.ts already enumerates and warns
- *    about at startup (sticky session maps, recency penalties, the usage cache,
- *    the refresh mutex); this counter is another entry on that list, and the
- *    same single-instance-ownership assumption applies. The resync is what
- *    bounds the divergence rather than eliminating it.
- *
- * The resync also repairs drift from a third source: the request row is written
- * by AsyncDbWriter, which can drop a write under backpressure or on an abrupt
- * shutdown. The in-memory increment and the persisted row can therefore
- * disagree, and the database is the one that wins at the next resync.
+ * Local completions are retained until acknowledged by request ID (up to ten
+ * minutes), and open requests reserve an estimated cost. Separate instances
+ * still converge at reconciliation; reservations are process-local.
  */
 
 import {
@@ -90,6 +66,16 @@ import { isModelAllowedForApiKey } from "./api-key-restrictions";
  * that is already over its limit through until the seed lands.
  */
 export const SPEND_RESYNC_TTL_MS = 2 * 60 * 1000;
+export const SPEND_PENDING_TTL_MS = 10 * 60 * 1000;
+export const SPEND_IDLE_TTL_MS = 60 * 60 * 1000;
+
+interface SpendEvent {
+	requestId?: string;
+	timestamp: number;
+	costUsd: number;
+	model: string | null;
+	requestedModel?: string | null;
+}
 
 /** What a caller learns about a key's position against its limit. */
 export interface SpendSnapshot {
@@ -138,43 +124,41 @@ export class ApiKeySpendCounter {
 			lastSyncMs: number;
 			spentUsd: number;
 			cursor: number;
-			events: Array<{
-				requestId?: string;
-				timestamp: number;
-				costUsd: number;
-				model: string | null;
-			}>;
+			events: SpendEvent[];
 		}
 	>();
 	private readonly limitInflight = new Map<string, Promise<void>>();
 	private readonly limitGenerations = new Map<string, number>();
 	private readonly limitSyncTokens = new Map<string, symbol>();
-	private readonly pendingRecords = new Map<
-		string,
-		{
-			apiKeyId: string;
-			scopeModel: string | null;
-			events: Array<{
-				requestId: string;
-				timestamp: number;
-				costUsd: number;
-				model: string | null;
-			}>;
-		}
-	>();
+	/** Local completions remain authoritative until their request ID is persisted. */
+	private readonly pendingRecords = new Map<string, Map<string, SpendEvent>>();
 	private readonly keyLimits = new Map<
 		string,
 		{ loadedMs: number; limits: ApiKeyLimit[] }
 	>();
+	private readonly lastAccess = new Map<string, number>();
+	private readonly reservations = new Map<
+		string,
+		{
+			apiKeyId: string;
+			model: string | null;
+			requestedModel: string | null;
+			costUsd: number;
+		}
+	>();
+	private readonly reservationLocks = new Map<string, Promise<void>>();
 	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 	constructor(private readonly dbOps: DatabaseOperations) {}
 	dispose(): void {
 		if (this.refreshTimer) clearTimeout(this.refreshTimer);
 		this.refreshTimer = null;
 	}
+	get cachedLimitCount(): number {
+		return this.limitEntries.size;
+	}
 	private scheduleRefresh(): void {
 		this.dispose();
-		if (!this.limitEntries.size) return;
+		if (!this.limitEntries.size && !this.keyLimits.size) return;
 		const now = Date.now();
 		let next = now + SPEND_RESYNC_TTL_MS;
 		for (const entry of this.limitEntries.values())
@@ -186,27 +170,61 @@ export class ApiKeySpendCounter {
 		this.refreshTimer = setTimeout(
 			() => {
 				this.refreshTimer = null;
-				void Promise.all(
-					[...this.limitEntries.values()].map((entry) =>
-						this.getLimitSnapshot(
-							entry.apiKeyId,
-							entry.limit,
-							entry.mode,
-							Date.now(),
-							true,
-						).catch((error) =>
-							log.warn(
-								`Spend counter scheduled reconciliation failed: ${String(error)}`,
-							),
+				void this.reconcileActiveKeys()
+					.catch((error) =>
+						log.warn(
+							`Spend counter scheduled reconciliation failed: ${String(error)}`,
 						),
-					),
-				).finally(() => this.scheduleRefresh());
+					)
+					.finally(() => this.scheduleRefresh());
 			},
 			Math.max(1, next - now),
 		);
 		this.refreshTimer.unref();
 	}
+	/** One refresh per active key, rather than one scan per scope/window row. */
+	async reconcileActiveKeys(): Promise<void> {
+		const now = Date.now();
+		for (const [apiKeyId, lastAccess] of this.lastAccess)
+			if (
+				now - lastAccess > SPEND_IDLE_TTL_MS &&
+				![...this.reservations.values()].some(
+					(reservation) => reservation.apiKeyId === apiKeyId,
+				)
+			)
+				this.evict(apiKeyId);
+		const keys = new Map<
+			string,
+			{ limit: ApiKeyLimit; mode: ApiKeyLimitWindowMode }
+		>();
+		for (const entry of this.limitEntries.values())
+			keys.set(entry.apiKeyId, entry);
+		for (const [apiKeyId, entry] of keys) {
+			try {
+				if (typeof this.dbOps.getApiKey === "function") {
+					const key = await this.dbOps.getApiKey(apiKeyId);
+					if (!key?.isActive) {
+						this.evict(apiKeyId);
+						continue;
+					}
+				}
+				await this.syncLimitKey(apiKeyId, entry.limit, entry.mode, now);
+			} catch (error) {
+				log.warn(
+					`Spend counter resync failed for key ${apiKeyId}: ${String(error)}`,
+				);
+			}
+		}
+	}
+	private evict(apiKeyId: string): void {
+		this.forget(apiKeyId);
+		this.pendingRecords.delete(apiKeyId);
+		this.lastAccess.delete(apiKeyId);
+		for (const [id, reservation] of this.reservations)
+			if (reservation.apiKeyId === apiKeyId) this.reservations.delete(id);
+	}
 	async getLimitsForKey(apiKeyId: string): Promise<ApiKeyLimit[]> {
+		this.lastAccess.set(apiKeyId, Date.now());
 		const cached = this.keyLimits.get(apiKeyId);
 		if (cached && Date.now() - cached.loadedMs < SPEND_RESYNC_TTL_MS)
 			return cached.limits;
@@ -215,7 +233,142 @@ export class ApiKeySpendCounter {
 		if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
 			return this.getLimitsForKey(apiKeyId);
 		this.keyLimits.set(apiKeyId, { loadedMs: Date.now(), limits });
+		if (!this.refreshTimer) this.scheduleRefresh();
 		return limits;
+	}
+	private identity(apiKeyId: string, limit: ApiKeyLimit): string {
+		return JSON.stringify([apiKeyId, limit.scopeModel, limit.window]);
+	}
+	private async syncLimitKey(
+		apiKeyId: string,
+		limit: ApiKeyLimit,
+		mode: ApiKeyLimitWindowMode,
+		nowMs: number,
+	): Promise<void> {
+		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
+		const keyLimits =
+			this.keyLimits.get(apiKeyId)?.limits ??
+			[...this.limitEntries.values()]
+				.filter((entry) => entry.apiKeyId === apiKeyId)
+				.map((entry) => entry.limit);
+		const limits = [
+			...new Map(
+				[...keyLimits, limit].map((row) => [this.identity(apiKeyId, row), row]),
+			).values(),
+		];
+		const windows = [
+			...new Map(
+				limits.map((row) => [
+					row.window,
+					{
+						window: row.window,
+						...apiKeyLimitWindowBounds(row.window, mode, nowMs),
+					},
+				]),
+			).values(),
+		];
+		const inflightIdentity = JSON.stringify([
+			apiKeyId,
+			generation,
+			mode,
+			limits.map((row) => this.identity(apiKeyId, row)),
+			mode === "calendar" ? windows.map((window) => window.startMs) : null,
+		]);
+		const existing = this.limitInflight.get(inflightIdentity);
+		if (existing) return existing;
+		const token = Symbol();
+		for (const row of limits)
+			this.limitSyncTokens.set(this.identity(apiKeyId, row), token);
+		const pending = (async () => {
+			const local = this.pendingRecords.get(apiKeyId);
+			if (local)
+				for (const [id, event] of local)
+					if (nowMs - event.timestamp > SPEND_PENDING_TTL_MS) local.delete(id);
+			const reconciliation =
+				typeof this.dbOps.getApiKeySpendReconciliation === "function"
+					? await this.dbOps.getApiKeySpendReconciliation(
+							apiKeyId,
+							mode === "calendar" ? windows : [],
+							mode === "rolling"
+								? Math.min(...windows.map((window) => window.startMs))
+								: null,
+							nowMs - SPEND_PENDING_TTL_MS,
+							nowMs,
+						)
+					: {
+							calendar: null,
+							events: await this.dbOps.getApiKeySpendEventsSince(
+								apiKeyId,
+								Math.min(...windows.map((window) => window.startMs)),
+							),
+						};
+			if (
+				(this.limitGenerations.get(apiKeyId) ?? 0) !== generation ||
+				limits.some(
+					(row) =>
+						this.limitSyncTokens.get(this.identity(apiKeyId, row)) !== token,
+				)
+			)
+				throw new Error(
+					"Spend counter reconciliation superseded by updated settings",
+				);
+			const persisted = reconciliation.events;
+			const seen = new Set(
+				persisted.map((event) => event.requestId).filter(Boolean),
+			);
+			const outstanding = this.pendingRecords.get(apiKeyId);
+			// Keep acknowledged IDs for the same short tail as well: an older
+			// concurrent SQL snapshot may not have observed that commit yet.
+			const unpersisted = [...(outstanding?.values() ?? [])].filter(
+				(event) =>
+					(!event.requestId || !seen.has(event.requestId)) &&
+					nowMs - event.timestamp <= SPEND_PENDING_TTL_MS,
+			);
+			const merged = [...persisted, ...unpersisted].sort(
+				(a, b) => a.timestamp - b.timestamp,
+			);
+			for (const row of limits) {
+				const bounds = apiKeyLimitWindowBounds(row.window, mode, nowMs);
+				const matches = (event: SpendEvent) =>
+					(event.timestamp <= nowMs || unpersisted.includes(event)) &&
+					(mode === "rolling"
+						? event.timestamp > bounds.startMs
+						: event.timestamp >= bounds.startMs &&
+							event.timestamp < bounds.endMs) &&
+					this.matchesEventScope(event, row.scopeModel);
+				const events = merged.filter(matches);
+				const aggregate = reconciliation.calendar?.find(
+					(window) => window.window === row.window,
+				);
+				const spentUsd = aggregate
+					? aggregate.totals.reduce(
+							(sum, total) =>
+								sum +
+								(this.matchesEventScope(total, row.scopeModel)
+									? total.totalUsd
+									: 0),
+							0,
+						) +
+						unpersisted
+							.filter(matches)
+							.reduce((sum, event) => sum + event.costUsd, 0)
+					: events.reduce((sum, event) => sum + event.costUsd, 0);
+				this.limitEntries.set(this.identity(apiKeyId, row), {
+					apiKeyId,
+					limit: row,
+					mode,
+					...bounds,
+					lastSyncMs: nowMs,
+					spentUsd,
+					events: mode === "rolling" ? events : [],
+					cursor: 0,
+				});
+			}
+		})().finally(() => {
+			this.limitInflight.delete(inflightIdentity);
+		});
+		this.limitInflight.set(inflightIdentity, pending);
+		return pending;
 	}
 	async getLimitSnapshot(
 		apiKeyId: string,
@@ -223,99 +376,25 @@ export class ApiKeySpendCounter {
 		mode: ApiKeyLimitWindowMode,
 		nowMs = Date.now(),
 		reconcile = false,
+		excludeReservationId?: string,
+		proposedCostUsd = 0,
 	): Promise<SpendSnapshot> {
-		const identity = JSON.stringify([apiKeyId, limit.scopeModel, limit.window]);
+		this.lastAccess.set(apiKeyId, Date.now());
+		const identity = this.identity(apiKeyId, limit);
 		const bounds = apiKeyLimitWindowBounds(limit.window, mode, nowMs);
 		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
-		const inflightIdentity = JSON.stringify([
-			identity,
-			generation,
-			mode,
-			mode === "calendar" ? bounds.startMs : null,
-		]);
 		let entry = this.limitEntries.get(identity);
-		const sync = async () => {
-			let pending = this.limitInflight.get(inflightIdentity);
-			if (!pending) {
-				const token = Symbol();
-				this.limitSyncTokens.set(identity, token);
-				const buffered = {
-					apiKeyId,
-					scopeModel: limit.scopeModel,
-					events: [] as Array<{
-						requestId: string;
-						timestamp: number;
-						costUsd: number;
-						model: string | null;
-					}>,
-				};
-				this.pendingRecords.set(inflightIdentity, buffered);
-				pending = this.dbOps
-					.getApiKeySpendEventsSince(apiKeyId, bounds.startMs)
-					.then((events) => {
-						if (
-							(this.limitGenerations.get(apiKeyId) ?? 0) !== generation ||
-							this.limitSyncTokens.get(identity) !== token
-						)
-							throw new Error(
-								"Spend counter reconciliation superseded by updated settings",
-							);
-						// An async SQL snapshot can race a completed request's increment.
-						// Merge buffered completions by request ID so a query which already
-						// saw the persisted request neither loses nor duplicates that spend.
-						const seen = new Set(
-							events.map((event) => event.requestId).filter(Boolean),
-						);
-						const bufferedIds = new Set(
-							buffered.events.map((event) => event.requestId),
-						);
-						const merged = [
-							...events,
-							...buffered.events.filter((event) => !seen.has(event.requestId)),
-						].sort((a, b) => a.timestamp - b.timestamp);
-						const matching = merged.filter(
-							(event) =>
-								(event.timestamp <= nowMs ||
-									(event.requestId != null &&
-										bufferedIds.has(event.requestId))) &&
-								(mode !== "rolling" || event.timestamp > bounds.startMs) &&
-								(mode !== "calendar" || event.timestamp < bounds.endMs) &&
-								this.matchesScope(event.model, limit.scopeModel),
-						);
-						this.limitEntries.set(identity, {
-							apiKeyId,
-							limit,
-							mode,
-							...bounds,
-							lastSyncMs: nowMs,
-							events: matching,
-							cursor: 0,
-							spentUsd: matching.reduce(
-								(total, event) => total + event.costUsd,
-								0,
-							),
-						});
-					})
-					.finally(() => {
-						if (this.pendingRecords.get(inflightIdentity) === buffered)
-							this.pendingRecords.delete(inflightIdentity);
-						if (this.limitInflight.get(inflightIdentity) === pending)
-							this.limitInflight.delete(inflightIdentity);
-					});
-				this.limitInflight.set(inflightIdentity, pending);
-			}
-			await pending;
-		};
 		if (
 			reconcile ||
 			!entry ||
+			entry.lastSyncMs === 0 ||
 			entry.mode !== mode ||
 			(mode === "calendar" && entry.startMs !== bounds.startMs)
 		) {
-			await sync();
+			await this.syncLimitKey(apiKeyId, limit, mode, nowMs);
 			entry = this.limitEntries.get(identity);
 		} else if (nowMs - entry.lastSyncMs >= SPEND_RESYNC_TTL_MS) {
-			void sync().catch((error) =>
+			void this.syncLimitKey(apiKeyId, limit, mode, nowMs).catch((error) =>
 				log.warn(
 					`Spend counter resync failed for key ${apiKeyId}: ${String(error)}`,
 				),
@@ -330,15 +409,23 @@ export class ApiKeySpendCounter {
 			(mode === "rolling"
 				? entry.events[entry.cursor].timestamp <= bounds.startMs
 				: entry.events[entry.cursor].timestamp < bounds.startMs)
-		) {
+		)
 			entry.spentUsd -= entry.events[entry.cursor++].costUsd;
-		}
 		if (entry.cursor > 1000 && entry.cursor > entry.events.length / 2) {
 			entry.events = entry.events.slice(entry.cursor);
 			entry.cursor = 0;
 		}
-		const spentUsd = Math.max(0, entry.spentUsd);
-
+		let spentUsd = Math.max(0, entry.spentUsd);
+		for (const [id, reservation] of this.reservations)
+			if (
+				id !== excludeReservationId &&
+				reservation.apiKeyId === apiKeyId &&
+				this.matchesEventScope(reservation, limit.scopeModel)
+			)
+				spentUsd += reservation.costUsd;
+		const alreadyExceeded = spentUsd >= limit.limitUsd;
+		// A proposed request affects relief, but has no expiry before it completes.
+		spentUsd += proposedCostUsd;
 		let resetMs: number | null = bounds.endMs;
 		if (mode === "rolling") {
 			resetMs = null;
@@ -350,8 +437,19 @@ export class ApiKeySpendCounter {
 					nowMs + API_KEY_ROLLING_DURATION_MS[limit.window],
 					event.timestamp + API_KEY_ROLLING_DURATION_MS[limit.window],
 				);
-				if (remaining < limit.limitUsd) break;
+				if (
+					proposedCostUsd > 0
+						? remaining <= limit.limitUsd
+						: remaining < limit.limitUsd
+				)
+					break;
 			}
+			if (
+				proposedCostUsd > 0
+					? remaining > limit.limitUsd
+					: remaining >= limit.limitUsd
+			)
+				resetMs = null;
 		}
 		if (Math.abs(Date.now() - nowMs) < 1000 && !this.refreshTimer)
 			this.scheduleRefresh();
@@ -359,8 +457,75 @@ export class ApiKeySpendCounter {
 			spentUsd,
 			limitUsd: limit.limitUsd,
 			resetMs,
-			exceeded: spentUsd >= limit.limitUsd,
+			exceeded: alreadyExceeded || spentUsd > limit.limitUsd,
 		};
+	}
+	/** Check and reserve under one per-key lock so concurrent checks cannot oversubscribe. */
+	async checkAndReserve(
+		apiKeyId: string,
+		requestId: string,
+		limits: ApiKeyLimit[],
+		mode: ApiKeyLimitWindowMode,
+		requestedModel: string | null,
+		servedModel: string | null,
+		estimatedUsd: number,
+		nowMs = Date.now(),
+	): Promise<Array<{ limit: ApiKeyLimit; snapshot: SpendSnapshot }>> {
+		const previous = this.reservationLocks.get(apiKeyId) ?? Promise.resolve();
+		let unlock!: () => void;
+		const lock = new Promise<void>((resolve) => {
+			unlock = resolve;
+		});
+		this.reservationLocks.set(apiKeyId, lock);
+		await previous;
+		try {
+			const reservation = {
+				apiKeyId,
+				model: servedModel,
+				requestedModel,
+				costUsd: Math.max(0, estimatedUsd),
+			};
+			const snapshots: Array<{ limit: ApiKeyLimit; snapshot: SpendSnapshot }> =
+				[];
+			for (const limit of limits) {
+				if (!this.matchesEventScope(reservation, limit.scopeModel)) continue;
+				const snapshot = await this.getLimitSnapshot(
+					apiKeyId,
+					limit,
+					mode,
+					nowMs,
+					false,
+					requestId,
+					reservation.costUsd,
+				);
+				snapshots.push({ limit, snapshot });
+			}
+			if (
+				!snapshots.some(
+					({ limit, snapshot }) =>
+						limit.enforce === "block" && snapshot.exceeded,
+				)
+			)
+				this.reservations.set(requestId, reservation);
+			else this.reservations.delete(requestId);
+			return snapshots;
+		} finally {
+			unlock();
+			if (this.reservationLocks.get(apiKeyId) === lock)
+				this.reservationLocks.delete(apiKeyId);
+		}
+	}
+	releaseReservation(requestId: string): void {
+		this.reservations.delete(requestId);
+	}
+	private matchesEventScope(
+		event: { model?: string | null; requestedModel?: string | null },
+		scope: string | null,
+	): boolean {
+		return (
+			this.matchesScope(event.model, scope) ||
+			this.matchesScope(event.requestedModel, scope)
+		);
 	}
 	private matchesScope(
 		model: string | null | undefined,
@@ -490,21 +655,37 @@ export class ApiKeySpendCounter {
 		model?: string | null,
 		timestamp = Date.now(),
 		requestId: string = crypto.randomUUID(),
+		requestedModel: string | null = null,
 	) {
 		if (!apiKeyId) return;
 		if (typeof costUsd !== "number" || !Number.isFinite(costUsd)) return;
-		if (costUsd === 0) return;
-		const recorded = { requestId, timestamp, costUsd, model: model ?? null };
-		for (const pending of this.pendingRecords.values())
-			if (
-				pending.apiKeyId === apiKeyId &&
-				this.matchesScope(model, pending.scopeModel)
-			)
-				pending.events.push(recorded);
+		if (costUsd === 0) {
+			this.releaseReservation(requestId);
+			return;
+		}
+		this.releaseReservation(requestId);
+		const recorded = {
+			requestId,
+			timestamp,
+			costUsd,
+			model: model ?? null,
+			requestedModel,
+		};
+		if (this.lastAccess.has(apiKeyId) || this.entries.has(apiKeyId)) {
+			let pending = this.pendingRecords.get(apiKeyId);
+			if (!pending) {
+				pending = new Map();
+				this.pendingRecords.set(apiKeyId, pending);
+			}
+			if (pending.has(requestId)) return;
+			pending.set(requestId, recorded);
+			this.lastAccess.set(apiKeyId, Date.now());
+		}
+
 		for (const entry of this.limitEntries.values()) {
 			if (
 				entry.apiKeyId !== apiKeyId ||
-				!this.matchesScope(model, entry.limit.scopeModel)
+				!this.matchesEventScope(recorded, entry.limit.scopeModel)
 			)
 				continue;
 			const bounds = apiKeyLimitWindowBounds(
@@ -526,6 +707,10 @@ export class ApiKeySpendCounter {
 				(entry.mode === "calendar" && timestamp >= bounds.endMs)
 			)
 				continue;
+			if (entry.mode === "calendar") {
+				entry.spentUsd += costUsd;
+				continue;
+			}
 			const event = recorded;
 			// Requests may finish out of order; preserve timestamp ordering for expiry.
 			if (

@@ -1,5 +1,6 @@
 import {
 	type AccountUsageSnapshot,
+	getModelRates,
 	requestEvents,
 	runForceAccountModelExempt,
 	ServiceUnavailableError,
@@ -60,8 +61,10 @@ import {
 	type SpendSnapshot,
 	selectAccountsForRequest,
 	setXaiConvId,
+	tryGetApiKeySpendCounter,
 	validateProviderPath,
 } from "./handlers";
+import { setApiKeyRoutedSpendCheck } from "./handlers/api-key-spend-routing";
 import {
 	completeRateLimitProbe,
 	getRateLimitProbeAdmission,
@@ -208,7 +211,7 @@ function createApiKeySpendLimitResponse(info: {
 					1,
 					Math.min(
 						info.fullRetryAfter
-							? Number.POSITIVE_INFINITY
+							? 2_147_483_647
 							: SPEND_LIMIT_MAX_RETRY_AFTER_SECONDS,
 						Math.ceil((info.resetMs - Date.now()) / 1000),
 					),
@@ -237,6 +240,45 @@ function createApiKeySpendLimitResponse(info: {
 				"Retry-After": String(retryAfterSeconds),
 			},
 		},
+	);
+}
+
+function createLimitCheckUnavailableResponse(): Response {
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "service_unavailable_error",
+				code: "api_key_limit_check_unavailable",
+				message: "Spend limits could not be checked. Please retry shortly.",
+			},
+		}),
+		{
+			status: 503,
+			headers: { "Content-Type": "application/json", "Retry-After": "60" },
+		},
+	);
+}
+
+/** Conservative prompt estimate plus a bounded output allowance, priced for this route. */
+async function estimateApiKeyRequestCost(
+	body: RequestJsonBody | null,
+	model: string | null,
+): Promise<number> {
+	// Unknown model pricing uses the highest bundled Claude rates rather than a zero reservation.
+	const rates = model ? await getModelRates(model) : null;
+	const inputTokens = Math.ceil(
+		new TextEncoder().encode(JSON.stringify(body ?? {})).byteLength / 3,
+	);
+	const maxTokens =
+		typeof body?.max_tokens === "number" && Number.isFinite(body.max_tokens)
+			? Math.max(0, body.max_tokens)
+			: 4096;
+	const outputTokens = Math.min(maxTokens, 4096);
+	return (
+		(inputTokens * (rates?.input ?? 15) +
+			outputTokens * (rates?.output ?? 75)) /
+		1_000_000
 	);
 }
 
@@ -317,6 +359,8 @@ export function handleProxy(
 	apiKeyName?: string | null,
 	options?: {
 		trustedNativeResponses?: boolean;
+		/** Original Responses model supplied by the trusted translator, never a client header. */
+		trustedRequestedModel?: string;
 		/**
 		 * The authenticated API key's account / model / provider allowlists,
 		 * resolved by the caller (apps/server/src/server.ts) from the key
@@ -353,6 +397,20 @@ export function handleProxy(
 	} catch {
 		log.warn("Request observation failed", { capture_gap: true });
 	}
+	const reservationId = crypto.randomUUID();
+	const reservationState = { hasLimits: false };
+	const release = () => {
+		tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
+		req.signal.removeEventListener("abort", release);
+	};
+	const finish = () => {
+		// EOF can precede async usage pricing. Keep its estimate until real cost replaces it.
+		if (!tryGetUsageCollector()?.hasPendingRequest?.(reservationId)) {
+			tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
+		}
+		req.signal.removeEventListener("abort", release);
+	};
+	req.signal.addEventListener("abort", release, { once: true });
 	const run = () =>
 		handleProxyRequest(
 			req,
@@ -362,26 +420,69 @@ export function handleProxy(
 			apiKeyName,
 			options,
 			observation,
+			reservationId,
+			reservationState,
 		);
 	const result = isInternalProbe(req.headers, ctx)
 		? runForceAccountModelExempt(run)
 		: run();
-	if (!observation) return result;
-	return result.then(
+	const observed = observation
+		? result.then(
+				(response) => {
+					try {
+						observation.response(response);
+					} catch {
+						log.warn("Request observation failed", { capture_gap: true });
+					}
+					return response;
+				},
+				(error) => {
+					try {
+						observation.error(error);
+					} catch {
+						log.warn("Request observation failed", { capture_gap: true });
+					}
+					throw error;
+				},
+			)
+		: result;
+	return observed.then(
 		(response) => {
-			try {
-				observation.response(response);
-			} catch {
-				log.warn("Request observation failed", { capture_gap: true });
+			if (!reservationState.hasLimits) {
+				release();
+				return response;
 			}
-			return response;
+			if (response.status >= 400 || !response.body) {
+				finish();
+				return response;
+			}
+			const reader = response.body.getReader();
+			const body = new ReadableStream<Uint8Array>({
+				async pull(controller) {
+					try {
+						const next = await reader.read();
+						if (next.done) {
+							finish();
+							controller.close();
+						} else controller.enqueue(next.value);
+					} catch (error) {
+						release();
+						controller.error(error);
+					}
+				},
+				async cancel(reason) {
+					release();
+					await reader.cancel(reason);
+				},
+			});
+			return new Response(body, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: response.headers,
+			});
 		},
 		(error) => {
-			try {
-				observation.error(error);
-			} catch {
-				log.warn("Request observation failed", { capture_gap: true });
-			}
+			release();
 			throw error;
 		},
 	);
@@ -395,12 +496,16 @@ async function handleProxyRequest(
 	apiKeyName?: string | null,
 	options?: {
 		trustedNativeResponses?: boolean;
+		/** Original Responses model supplied by the trusted translator, never a client header. */
+		trustedRequestedModel?: string;
 		restrictions?: ApiKeyRestrictions | null;
 		spendLimit?: ApiKeySpendLimit | null;
 		limitWindowMode?: ApiKeyLimitWindowMode;
 		familyComboOverrides?: Record<string, string> | null;
 	},
 	observation?: RequestObservation,
+	reservationId = crypto.randomUUID(),
+	reservationState = { hasLimits: false },
 ): Promise<Response> {
 	// 0. Silently ignore Claude Code internal endpoints (non-critical, not supported by all providers)
 	if (
@@ -431,7 +536,11 @@ async function handleProxyRequest(
 	// Extract model from request body for family detection (used by combo routing)
 	// and reuse parsed body for /v1/messages validation (consolidate parses)
 	const parsedBody = requestBodyContext.getParsedJson();
-	const requestModel = requestBodyContext.getModel();
+	const routingModel = requestBodyContext.getModel();
+	const requestModel =
+		options?.trustedNativeResponses === true
+			? (options.trustedRequestedModel ?? routingModel)
+			: routingModel;
 	const { project, projectAttributionSource } =
 		extractProjectAttributionFromRequest(req.headers, parsedBody);
 
@@ -486,7 +595,11 @@ async function handleProxyRequest(
 			? options.spendLimit
 			: null;
 	let spendSnapshot: SpendSnapshot | null = null;
-	if (keySpendLimit && apiKeyId) {
+	if (
+		keySpendLimit &&
+		apiKeyId &&
+		typeof ctx.dbOps.getApiKeyLimits !== "function"
+	) {
 		try {
 			spendSnapshot = await getApiKeySpendCounter(ctx.dbOps).getSnapshot(
 				apiKeyId,
@@ -505,56 +618,75 @@ async function handleProxyRequest(
 	}
 	let blockingLimit: { limit: ApiKeyLimit; snapshot: SpendSnapshot } | null =
 		null;
+	let limitCheckUnavailable = false;
+	let keyLimits: ApiKeyLimit[] = [];
+	const warnedLimitIds = new Set<string>();
+	const selectBlockingLimit = (
+		checks: Array<{ limit: ApiKeyLimit; snapshot: SpendSnapshot }>,
+	) => {
+		let latest: { limit: ApiKeyLimit; snapshot: SpendSnapshot } | null = null;
+		for (const check of checks) {
+			if (!check.snapshot.exceeded) continue;
+			if (check.limit.enforce === "block") {
+				if (
+					!latest ||
+					(check.snapshot.resetMs ?? Infinity) >
+						(latest.snapshot.resetMs ?? Infinity)
+				)
+					latest = check;
+			} else if (!warnedLimitIds.has(check.limit.id)) {
+				warnedLimitIds.add(check.limit.id);
+				log.warn(
+					`API key spend limit exceeded (warn only): key ${apiKeyName ?? apiKeyId}, scope ${check.limit.scopeModel ?? "whole key"}, ${check.limit.window}`,
+				);
+				spendLimitEvents.emit("event", {
+					limitId: check.limit.id,
+					apiKeyId: apiKeyId ?? "",
+					apiKeyName: apiKeyName ?? null,
+					spentUsd: check.snapshot.spentUsd,
+					limitUsd: check.limit.limitUsd,
+					window: `${check.limit.window}${check.limit.scopeModel ? ` (${check.limit.scopeModel})` : ""}`,
+				} satisfies SpendLimitExceededEvt);
+			}
+		}
+		return latest;
+	};
+	const checkModelSpend = async (servedModel: string | null) => {
+		if (!apiKeyId || !keyLimits.length) return null;
+		const estimatedUsd = await estimateApiKeyRequestCost(
+			parsedBody,
+			servedModel ?? requestModel ?? null,
+		);
+		const checks = await getApiKeySpendCounter(ctx.dbOps).checkAndReserve(
+			apiKeyId,
+			reservationId,
+			keyLimits,
+			options?.limitWindowMode ?? "calendar",
+			requestModel ?? null,
+			servedModel,
+			estimatedUsd,
+		);
+		if (req.signal.aborted) {
+			tryGetApiKeySpendCounter()?.releaseReservation(reservationId);
+			throw req.signal.reason ?? new Error("Request aborted");
+		}
+		return selectBlockingLimit(checks);
+	};
 	if (
 		apiKeyId &&
 		!isInternalProbe(req.headers, ctx) &&
 		typeof ctx.dbOps.getApiKeyLimits === "function"
 	) {
 		try {
-			const counter = getApiKeySpendCounter(ctx.dbOps);
-			const limits = await counter.getLimitsForKey(apiKeyId);
-			for (const limit of limits) {
-				if (
-					limit.scopeModel != null &&
-					(!requestModel ||
-						!isModelAllowedForApiKey(requestModel, {
-							allowedModels: [limit.scopeModel],
-							allowedAccounts: null,
-							allowedProviders: null,
-						}))
-				)
-					continue;
-				try {
-					const snapshot = await counter.getLimitSnapshot(
-						apiKeyId,
-						limit,
-						options?.limitWindowMode ?? "calendar",
-					);
-					if (!snapshot.exceeded) continue;
-					if (limit.enforce === "block") {
-						blockingLimit ??= { limit, snapshot };
-					} else {
-						log.warn(
-							`API key spend limit exceeded (warn only): key ${apiKeyName ?? apiKeyId}, scope ${limit.scopeModel ?? "whole key"}, ${limit.window}, spent ${snapshot.spentUsd} of ${limit.limitUsd}`,
-						);
-						spendLimitEvents.emit("event", {
-							limitId: limit.id,
-							apiKeyId,
-							apiKeyName: apiKeyName ?? null,
-							spentUsd: snapshot.spentUsd,
-							limitUsd: limit.limitUsd,
-							window: `${limit.window}${limit.scopeModel ? ` (${limit.scopeModel})` : ""}`,
-						} satisfies SpendLimitExceededEvt);
-					}
-				} catch (error) {
-					log.warn(
-						`Spend limit check failed for key ${apiKeyName ?? apiKeyId}; allowing this window: ${String(error)}`,
-					);
-				}
-			}
+			keyLimits = await getApiKeySpendCounter(ctx.dbOps).getLimitsForKey(
+				apiKeyId,
+			);
+			reservationState.hasLimits = keyLimits.length > 0;
+			blockingLimit = await checkModelSpend(null);
 		} catch (error) {
+			limitCheckUnavailable = true;
 			log.warn(
-				`Spend limit lookup failed for key ${apiKeyName ?? apiKeyId}; allowing the request: ${String(error)}`,
+				`Spend limit check unavailable for key ${apiKeyName ?? apiKeyId}: ${String(error)}`,
 			);
 		}
 	}
@@ -607,6 +739,7 @@ async function handleProxyRequest(
 	const keyRefusalPending =
 		modelRestrictionDenied ||
 		blockingLimit !== null ||
+		limitCheckUnavailable ||
 		(spendLimitExceeded && keySpendLimit?.limitEnforce === "block");
 	if (parsedBody && !keyRefusalPending) {
 		const webSearchResponse = await maybeInterceptWebSearch({
@@ -656,6 +789,7 @@ async function handleProxyRequest(
 
 	// 5. Create request metadata with agent info
 	const requestMeta = createRequestMetadata(req, url);
+	requestMeta.id = reservationId;
 	try {
 		observation?.bindRequestId(requestMeta.id);
 	} catch {
@@ -885,6 +1019,15 @@ async function handleProxyRequest(
 		);
 	}
 
+	if (limitCheckUnavailable) {
+		return await returnRefusal(
+			createLimitCheckUnavailableResponse(),
+			"api_key_limit_check_unavailable",
+			0,
+			null,
+		);
+	}
+
 	if (blockingLimit) {
 		const { limit, snapshot } = blockingLimit;
 		return await returnRefusal(
@@ -956,7 +1099,7 @@ async function handleProxyRequest(
 	// upstream (post-interceptor-rewrite), not the model the client asked
 	// for — otherwise combo routing and family-based selection see a model
 	// that no longer matches the outgoing request.
-	const effectiveModel = resolveEffectiveModel(appliedModel, requestModel);
+	const effectiveModel = resolveEffectiveModel(appliedModel, routingModel);
 	const selectedAccounts = await selectAccountsForRequest(
 		requestMeta,
 		ctx,
@@ -1544,6 +1687,42 @@ async function handleProxyRequest(
 			: null;
 	};
 
+	const routedSpendRefusal = async (
+		modelOverride: string | null | undefined,
+	): Promise<Response | null> => {
+		try {
+			const model = splitModelRouting(
+				modelOverride || effectiveModel || requestModel || "",
+			).model;
+			const blocked = await checkModelSpend(model || null);
+			if (!blocked) return null;
+			return await returnRefusal(
+				createApiKeySpendLimitResponse({
+					limitUsd: blocked.limit.limitUsd,
+					spentUsd: blocked.snapshot.spentUsd,
+					window: blocked.limit.window,
+					scopeModel: blocked.limit.scopeModel,
+					resetMs: blocked.snapshot.resetMs,
+					fullRetryAfter: true,
+				}),
+				"api_key_limit_exceeded",
+				0,
+				requestMeta.comboName ?? null,
+			);
+		} catch (error) {
+			log.warn(`Routed spend limit check unavailable: ${String(error)}`);
+			return await returnRefusal(
+				createLimitCheckUnavailableResponse(),
+				"api_key_limit_check_unavailable",
+				0,
+				requestMeta.comboName ?? null,
+			);
+		}
+	};
+
+	if (keyLimits.length)
+		setApiKeyRoutedSpendCheck(requestMeta, routedSpendRefusal);
+
 	for (let i = 0; i < accounts.length; i++) {
 		// For combo routing: enrich metadata with slot index and look up model override
 		let modelOverride: string | null = null;
@@ -1577,6 +1756,9 @@ async function handleProxyRequest(
 			);
 			continue;
 		}
+
+		const spendRefusal = await routedSpendRefusal(modelOverride);
+		if (spendRefusal) return spendRefusal;
 
 		const probeAdmission = getRateLimitProbeAdmission(accounts[i]);
 		if (probeAdmission === "suppressed") {
@@ -1699,6 +1881,8 @@ async function handleProxyRequest(
 			// leaves one that was never asked, and the verdict below stays
 			// retryable for it.
 			noteAttempted(accounts[i].id, modelOverride);
+			const spendRefusal = await routedSpendRefusal(modelOverride);
+			if (spendRefusal) return spendRefusal;
 			response = await proxyWithAccount(
 				req,
 				url,
@@ -1819,6 +2003,8 @@ async function handleProxyRequest(
 					continue;
 				}
 
+				const spendRefusal = await routedSpendRefusal(null);
+				if (spendRefusal) return spendRefusal;
 				const probeAdmission = getRateLimitProbeAdmission(fallbackAccounts[i]);
 				if (probeAdmission === "suppressed") {
 					// As in the main loop: temporarily unavailable, so it holds the
@@ -1903,6 +2089,8 @@ async function handleProxyRequest(
 					// deferred — as in the main loop's ungated retry, this covers one
 					// suppressed candidate and no more.
 					noteAttempted(fallbackAccounts[i].id, null);
+					const spendRefusal = await routedSpendRefusal(null);
+					if (spendRefusal) return spendRefusal;
 					response = await proxyWithAccount(
 						req,
 						url,

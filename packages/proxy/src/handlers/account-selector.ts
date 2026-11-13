@@ -961,10 +961,13 @@ export async function selectAccountsForRequest(
 				const override = overrideId
 					? await ctx.dbOps.getCombo(overrideId)
 					: null;
-				const combo = overrideId
-					? override?.enabled
-						? { ...override, slots: await ctx.dbOps.getComboSlots(overrideId) }
-						: null
+				if (overrideId && !override?.enabled) {
+					log.warn(
+						`API key combo override ${overrideId} for ${family} is missing or disabled; using global assignment`,
+					);
+				}
+				const combo = override?.enabled
+					? { ...override, slots: await ctx.dbOps.getComboSlots(override.id) }
 					: await ctx.dbOps.getActiveComboForFamily(family as ComboFamily);
 
 				if (!combo) {
