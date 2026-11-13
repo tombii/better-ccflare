@@ -192,7 +192,7 @@ STORE_PAYLOADS=false                   # Disable storing request/response bodies
 
 # Night Window (cheaper completion tier for enabled accounts during these hours)
 NIGHT_WINDOW=22:00-08:00               # HH:MM-HH:MM, may wrap past midnight (unset = off)
-NIGHT_TZ=Europe/Kyiv                   # IANA zone the window is written in (default: UTC)
+NIGHT_TZ=Europe/Berlin                 # IANA zone the window is written in (default: UTC)
 ```
 
 **Security Notes**:
@@ -669,7 +669,7 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 
 ### 🔎 Local Web Search
 - **Serve `web_search` yourself** - Claude Code's built-in web search sub-request is answered by your own search provider instead of Anthropic, so it is billed at your provider's price
-- **Provider fallback chain** - Tavily, Exa, Parallel, DeepSeek, Serper and Brave, tried in priority order with automatic cooldown on credentials/quota failures
+- **Provider fallback chain** - Tavily, Exa, Parallel, DeepSeek, Serper, Brave, Nimble and Linkup, tried in priority order with automatic cooldown on credentials/quota failures
 - **Safe fall-through** - if no provider can serve a search, the request goes upstream unchanged; a missed interception never breaks the tool
 - **Search traces** - every search is recorded (provider, result count, latency, status) and shown under **Search** in the dashboard
 - See [Web Search](docs/web-search.md)
