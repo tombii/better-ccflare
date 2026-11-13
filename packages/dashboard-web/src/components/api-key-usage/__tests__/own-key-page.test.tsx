@@ -1,8 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import type { ApiKeyUsageResponse } from "@better-ccflare/types";
+import * as ReactQuery from "@tanstack/react-query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { api } from "../../../api";
 import { queryKeys } from "../../../lib/query-keys";
 import { ApiKeyUsageTab } from "../ApiKeyUsageTab";
 
@@ -63,16 +65,20 @@ const usage: ApiKeyUsageResponse = {
 	},
 };
 
-function renderOwnPage() {
+function renderOwnPage(
+	path = "/api-keys/team%20app",
+	entries: Array<[string, ApiKeyUsageResponse]> = [["team app", usage]],
+) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
-	client.setQueryData(queryKeys.apiKeyUsage("team app", "24h"), usage);
+	for (const [target, data] of entries)
+		client.setQueryData(queryKeys.apiKeyUsage(target, "24h"), data);
 	const markup = renderToStaticMarkup(
 		<QueryClientProvider client={client}>
-			<MemoryRouter initialEntries={["/api-keys/team%20app"]}>
+			<MemoryRouter initialEntries={[path]}>
 				<Routes>
-					<Route path="/api-keys/:name" element={<ApiKeyUsageTab />} />
+					<Route path="/api-keys/:keyId" element={<ApiKeyUsageTab />} />
 				</Routes>
 			</MemoryRouter>
 		</QueryClientProvider>,
@@ -94,5 +100,86 @@ describe("API-only key page", () => {
 		expect(markup).not.toContain("Save routing");
 		expect(markup).not.toContain('href="/accounts"');
 		expect(markup).not.toContain('href="/api-keys"');
+	});
+	it("keeps literal escaped slashes distinct from slashes when both key names exist", () => {
+		const escaped: ApiKeyUsageResponse = {
+			...usage,
+			apiKey: { ...usage.apiKey, id: "escaped-key-id", name: "team%2Fapp" },
+			canManage: true,
+		};
+		const slash: ApiKeyUsageResponse = {
+			...usage,
+			apiKey: { ...usage.apiKey, id: "slash-key-id", name: "team/app" },
+			canManage: true,
+		};
+		const entries: Array<[string, ApiKeyUsageResponse]> = [
+			[escaped.apiKey.name, escaped],
+			[slash.apiKey.name, slash],
+			[escaped.apiKey.id, escaped],
+			[slash.apiKey.id, slash],
+		];
+		for (const [path, ownId, otherId, ownName] of [
+			[
+				"/api-keys/team%252Fapp",
+				"escaped-key-id",
+				"slash-key-id",
+				"team%2Fapp",
+			],
+			["/api-keys/team%2Fapp", "slash-key-id", "escaped-key-id", "team/app"],
+			[
+				"/api-keys/escaped-key-id",
+				"escaped-key-id",
+				"slash-key-id",
+				"team%2Fapp",
+			],
+			["/api-keys/slash-key-id", "slash-key-id", "escaped-key-id", "team/app"],
+		]) {
+			const markup = renderOwnPage(path, entries);
+			expect(markup).toContain(`>${ownName}</h2>`);
+			expect(markup).toContain(`id="calendar-limits-${ownId}"`);
+			expect(markup).toContain(`id="routing-${ownId}-opus"`);
+			expect(markup).not.toContain(`id="calendar-limits-${otherId}"`);
+		}
+	});
+	it("saves restrictions by the resolved ID even when opened through a legacy escaped name", async () => {
+		const escaped: ApiKeyUsageResponse = {
+			...usage,
+			apiKey: { ...usage.apiKey, id: "escaped-key-id", name: "team%2Fapp" },
+			canManage: true,
+		};
+		const slash: ApiKeyUsageResponse = {
+			...usage,
+			apiKey: { ...usage.apiKey, id: "slash-key-id", name: "team/app" },
+			canManage: true,
+		};
+		const originalUseMutation = ReactQuery.useMutation;
+		const options: Parameters<typeof originalUseMutation>[0][] = [];
+		const mutationSpy = spyOn(ReactQuery, "useMutation").mockImplementation(((
+			...args: Parameters<typeof originalUseMutation>
+		) => {
+			options.push(args[0]);
+			return originalUseMutation(...args);
+		}) as typeof originalUseMutation);
+		const patch = spyOn(api, "patch").mockResolvedValue({});
+		try {
+			renderOwnPage("/api-keys/team%252Fapp", [
+				[escaped.apiKey.name, escaped],
+				[slash.apiKey.name, slash],
+			]);
+			const save = options.findLast(
+				(option) => option.mutationFn?.length === 1,
+			)?.mutationFn;
+			expect(save).toBeDefined();
+			await (save as (value: typeof usage.restrictions) => Promise<unknown>)(
+				usage.restrictions,
+			);
+			expect(patch).toHaveBeenCalledWith(
+				"/api/api-keys/escaped-key-id/restrictions",
+				usage.restrictions,
+			);
+		} finally {
+			patch.mockRestore();
+			mutationSpy.mockRestore();
+		}
 	});
 });

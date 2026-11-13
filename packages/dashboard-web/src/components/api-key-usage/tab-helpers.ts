@@ -142,7 +142,7 @@ export function buildCostSeries(
 	return { data, maxCost };
 }
 
-/** Resolve dashboard key links without changing names containing escaped slashes. */
+/** Resolve ID links and legacy name links, decoding their raw URL exactly once. */
 export function apiKeyPageTarget(pathname: string, search = ""): string | null {
 	if (pathname.startsWith("/api-keys/")) {
 		try {

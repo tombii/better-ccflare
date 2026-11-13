@@ -137,7 +137,7 @@ export function App() {
 					"Per-key cost, plan efficiency and limits for one API key at a time",
 			},
 			{
-				path: "/api-keys/:name",
+				path: "/api-keys/:keyId",
 				element: (
 					<Suspense fallback={<LoadingSkeleton />}>
 						<LazyApiKeyUsageTab />
@@ -201,7 +201,7 @@ export function App() {
 		routes.find(
 			(route) =>
 				route.path === location.pathname ||
-				(route.path === "/api-keys/:name" &&
+				(route.path === "/api-keys/:keyId" &&
 					location.pathname.startsWith("/api-keys/")),
 		) || routes[0];
 	const [showAuthDialog, setShowAuthDialog] = useState(false);

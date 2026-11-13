@@ -649,7 +649,7 @@ export function ApiKeysTab() {
 											<h3 className="font-medium">
 												<Link
 													className="hover:underline"
-													to={`/api-keys/${encodeURIComponent(key.name)}`}
+													to={`/api-keys/${encodeURIComponent(key.id)}`}
 												>
 													{key.name}
 												</Link>
@@ -756,7 +756,7 @@ export function ApiKeysTab() {
 									</div>
 									<div className="flex items-center gap-2">
 										<Button variant="outline" size="sm" asChild>
-											<Link to={`/api-keys/${encodeURIComponent(key.name)}`}>
+											<Link to={`/api-keys/${encodeURIComponent(key.id)}`}>
 												Stats
 											</Link>
 										</Button>

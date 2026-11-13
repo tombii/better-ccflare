@@ -8,12 +8,7 @@ import {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { useMemo, useState } from "react";
-import {
-	Link,
-	useNavigate,
-	useParams,
-	useSearchParams,
-} from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { COLORS } from "../../constants";
 import { useApiKeys, useApiKeyUsage } from "../../hooks/queries";
@@ -37,6 +32,7 @@ import {
 	SelectValue,
 } from "../ui/select";
 import {
+	apiKeyPageTarget,
 	buildCostSeries,
 	efficiencyCaption,
 	formatEfficiencyRatio,
@@ -83,9 +79,11 @@ function StatTile({ label, value, hint, className }: StatTileProps) {
 export function ApiKeyUsageTab() {
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
-	const { name } = useParams<{ name: string }>();
-	const [params] = useSearchParams();
-	const directKey = name || params.get("key") || "";
+	const location = useLocation();
+	// React Router decodes route parameters again after resolving encoded slashes.
+	// Read the raw path once so existing name links and stable ID links agree
+	// with the authentication lookup performed by App.
+	const directKey = apiKeyPageTarget(location.pathname, location.search) || "";
 	const { data: apiKeys } = useApiKeys({ enabled: !directKey });
 	const [range, setRange] = useState("24h");
 	const [from, setFrom] = useState("");
@@ -119,7 +117,7 @@ export function ApiKeyUsageTab() {
 	const saveRestrictions = useMutation({
 		mutationFn: (restrictions: ApiKeyRestrictions) =>
 			api.patch(
-				`/api/api-keys/${encodeURIComponent(selectedId)}/restrictions`,
+				`/api/api-keys/${encodeURIComponent(data?.apiKey.id ?? selectedId)}/restrictions`,
 				restrictions,
 			),
 		onSuccess: () => {
@@ -169,8 +167,7 @@ export function ApiKeyUsageTab() {
 					<Select
 						value={selectedId}
 						onValueChange={(id) => {
-							const key = apiKeys?.find((entry) => entry.id === id);
-							navigate(`/api-keys/${encodeURIComponent(key?.name ?? id)}`);
+							navigate(`/api-keys/${encodeURIComponent(id)}`);
 						}}
 					>
 						<SelectTrigger className="w-64">
