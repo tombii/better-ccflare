@@ -1,6 +1,7 @@
 import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	type ApiKeyGenerationResult,
+	type ApiKeyLimitInput,
 	type ApiKeyResponse,
 	type ApiKeyRestrictions,
 	type ApiKeyRole,
@@ -413,18 +414,38 @@ export async function getApiKeyStats(dbOps: DatabaseOperations): Promise<{
 /**
  * Format API key for display in CLI
  */
-export function formatApiKeyForDisplay(apiKey: ApiKeyResponse): string {
+export function formatApiKeyForDisplay(
+	apiKey: ApiKeyResponse,
+	limits?: ApiKeyLimitInput[],
+): string {
 	const status = apiKey.isActive ? "Active" : "Disabled";
 	const role = apiKey.role === "admin" ? "Admin" : "API-only";
 	const lastUsed = apiKey.lastUsed
 		? new Date(apiKey.lastUsed).toLocaleDateString()
 		: "Never";
+	const limitSummary = limits
+		? limits.length === 0
+			? "none"
+			: limits
+					.map(
+						(limit) =>
+							`$${limit.limitUsd}/${limit.window} (${limit.scopeModel ?? "whole key"}, ${limit.enforce})`,
+					)
+					.join("; ")
+		: formatApiKeySpendLimit(apiKey);
 
 	return `  ${apiKey.name} (${apiKey.prefixLast8})
     Status: ${status}
     Role: ${role}
     Restrictions: ${formatApiKeyRestrictions(apiKey)}
-    Spend limit: ${formatApiKeySpendLimit(apiKey)}
+    Spend limits (${apiKey.limitWindowMode ?? "calendar"}): ${limitSummary}
+    Routing: ${
+			apiKey.familyComboOverrides
+				? Object.entries(apiKey.familyComboOverrides)
+						.map(([family, combo]) => `${family}=${combo}`)
+						.join(", ")
+				: "global assignments"
+		}
     Created: ${new Date(apiKey.createdAt).toLocaleDateString()}
     Last Used: ${lastUsed}
     Usage Count: ${apiKey.usageCount}`;

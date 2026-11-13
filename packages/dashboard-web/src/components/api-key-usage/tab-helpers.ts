@@ -109,6 +109,7 @@ export interface CostChartPoint {
 	label: string;
 	apiCostUsd: number;
 	planValueUsd: number;
+	totalCostUsd: number;
 }
 
 /**
@@ -135,7 +136,22 @@ export function buildCostSeries(
 			label: formatSeriesTick(point.ts, bucketMs),
 			apiCostUsd: point.apiCostUsd,
 			planValueUsd: point.planValueUsd,
+			totalCostUsd: stacked,
 		};
 	}
 	return { data, maxCost };
+}
+
+/** Resolve dashboard key links without changing names containing escaped slashes. */
+export function apiKeyPageTarget(pathname: string, search = ""): string | null {
+	if (pathname.startsWith("/api-keys/")) {
+		try {
+			return decodeURIComponent(pathname.slice("/api-keys/".length)) || null;
+		} catch {
+			return null;
+		}
+	}
+	if (pathname === "/api-key-usage")
+		return new URLSearchParams(search).get("key");
+	return null;
 }

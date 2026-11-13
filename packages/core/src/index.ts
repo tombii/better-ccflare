@@ -39,6 +39,10 @@ export type ModelMappingData = {
 };
 export type ModelFallback = { [modelFamily: string]: string };
 export * from "./alert-events";
+export {
+	API_KEY_ROLLING_DURATION_MS,
+	apiKeyLimitWindowBounds,
+} from "./api-key-limit-window";
 export * from "./auth-failure-events";
 export * from "./extra-usage";
 export * from "./force-account-model";

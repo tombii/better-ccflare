@@ -279,15 +279,20 @@ export const useUsageHistory = (account: string, range: string) => {
  * operator leaves open, and the underlying query is index-served per key
  * rather than a scan, so a 60s refresh is cheap.
  */
-export const useApiKeyUsage = (keyId: string, range: string) => {
+export const useApiKeyUsage = (
+	keyId: string,
+	range: string,
+	from?: string,
+	to?: string,
+) => {
 	return useQuery({
-		queryKey: queryKeys.apiKeyUsage(keyId, range),
-		queryFn: () => api.getApiKeyUsage(keyId, range),
+		queryKey: queryKeys.apiKeyUsage(keyId, range, from, to),
+		queryFn: () => api.getApiKeyUsage(keyId, range, from, to),
 		staleTime: 45000,
 		refetchInterval: 60000,
 		refetchIntervalInBackground: false,
 		gcTime: 15 * 60 * 1000,
-		enabled: !!keyId,
+		enabled: !!keyId && (range !== "custom" || (!!from && !!to)),
 	});
 };
 
@@ -807,7 +812,7 @@ export const useReorderComboSlots = () => {
 	});
 };
 
-export const useAlerts = () => {
+export const useAlerts = (options?: { enabled?: boolean }) => {
 	return useQuery({
 		queryKey: queryKeys.insightsAlerts(),
 		queryFn: async () => {
@@ -817,6 +822,7 @@ export const useAlerts = () => {
 		staleTime: 15_000,
 		refetchInterval: 30_000,
 		refetchIntervalInBackground: false,
+		enabled: options?.enabled ?? true,
 	});
 };
 

@@ -22,6 +22,7 @@ import type {
 	RequestMeta,
 } from "@better-ccflare/types";
 import {
+	getComboSlotInfo,
 	getDeferredCandidates,
 	getModelFamilyExhaustionInfo,
 	selectAccountsForRequest,
@@ -688,5 +689,90 @@ describe("deferred candidates exclude accounts the key may not use", () => {
 		expect(
 			getDeferredCandidates(meta).map((candidate) => candidate.accountId),
 		).not.toContain("acc-1");
+	});
+});
+
+describe("API key family combo overrides", () => {
+	it("routes opus through that key's Codex combo while other keys use the global combo", async () => {
+		const accounts = [
+			makeAccount({ id: "anthropic", provider: "anthropic" }),
+			makeAccount({ id: "codex", provider: "codex" }),
+		];
+		const globalCombo = makeCombo([
+			{
+				id: "global-slot",
+				combo_id: "combo-1",
+				account_id: "anthropic",
+				model: "claude-opus-4-5",
+				priority: 0,
+				enabled: true,
+			},
+		]);
+		const overrideCombo = {
+			...makeCombo([
+				{
+					id: "sol-slot",
+					combo_id: "sol-combo",
+					account_id: "codex",
+					model: "gpt-sol",
+					priority: 0,
+					enabled: true,
+				},
+			]),
+			id: "sol-combo",
+			name: "GPT Sol",
+		};
+		const ctx = makeCtx({ accounts, activeCombo: globalCombo });
+		Object.assign(ctx.dbOps, {
+			getCombo: mock(async () => overrideCombo),
+			getComboSlots: mock(async () => overrideCombo.slots),
+		});
+		const overridden = makeRequestMeta({ id: "key-with-override" });
+		expect(
+			(
+				await selectAccountsForRequest(overridden, ctx, "claude-opus-4-5", {
+					familyComboOverrides: { opus: "sol-combo" },
+				})
+			).map((account) => account.id),
+		).toEqual(["codex"]);
+		expect(getComboSlotInfo(overridden)?.comboName).toBe("GPT Sol");
+		const ordinary = makeRequestMeta({ id: "other-key" });
+		expect(
+			(await selectAccountsForRequest(ordinary, ctx, "claude-opus-4-5")).map(
+				(account) => account.id,
+			),
+		).toEqual(["anthropic"]);
+		expect(getComboSlotInfo(ordinary)?.comboName).toBe("Test Combo");
+	});
+	it("still applies provider restrictions to an overridden combo", async () => {
+		const account = makeAccount({ id: "codex", provider: "codex" });
+		const combo = {
+			...makeCombo([
+				{
+					id: "sol-slot",
+					combo_id: "sol-combo",
+					account_id: "codex",
+					model: "gpt-sol",
+					priority: 0,
+					enabled: true,
+				},
+			]),
+			id: "sol-combo",
+		};
+		const ctx = makeCtx({ accounts: [account] });
+		Object.assign(ctx.dbOps, {
+			getCombo: mock(async () => combo),
+			getComboSlots: mock(async () => combo.slots),
+		});
+		const selected = await selectAccountsForRequest(
+			makeRequestMeta(),
+			ctx,
+			"claude-opus-4-5",
+			{
+				familyComboOverrides: { opus: "sol-combo" },
+				restrictions: restrictions({ allowedProviders: ["anthropic"] }),
+			},
+		);
+		expect(selected).toEqual([]);
 	});
 });

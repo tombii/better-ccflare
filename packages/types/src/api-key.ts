@@ -22,8 +22,60 @@ export interface ApiKeyRestrictions {
 	allowedProviders: string[] | null;
 }
 
+export type ApiKeyLimitWindow = "hour" | "day" | "week" | "month";
+export type ApiKeyLimitWindowMode = "calendar" | "rolling";
+export const API_KEY_LIMIT_WINDOWS: readonly ApiKeyLimitWindow[] = [
+	"hour",
+	"day",
+	"week",
+	"month",
+];
+export const API_KEY_LIMIT_WINDOW_MODES: readonly ApiKeyLimitWindowMode[] = [
+	"calendar",
+	"rolling",
+];
+export interface ApiKeyLimitInput {
+	scopeModel: string | null;
+	window: ApiKeyLimitWindow;
+	limitUsd: number;
+	enforce: ApiKeyLimitEnforcement;
+}
+export interface ApiKeyLimit extends ApiKeyLimitInput {
+	id: string;
+	apiKeyId: string;
+	createdAt: number;
+	updatedAt: number;
+}
+export interface ApiKeyLimitStatus extends ApiKeyLimit {
+	spentUsd?: number;
+	resetsAt: string | null;
+}
+
+export function parseFamilyComboOverrides(
+	raw: string | null | undefined,
+): Record<string, string> | null {
+	if (raw == null) return null;
+	try {
+		const value: unknown = JSON.parse(raw);
+		if (!value || typeof value !== "object" || Array.isArray(value))
+			return null;
+		return Object.fromEntries(
+			Object.entries(value).filter(
+				([family, id]) =>
+					["fable", "opus", "sonnet", "haiku"].includes(family) &&
+					typeof id === "string" &&
+					id.length > 0,
+			),
+		);
+	} catch {
+		return null;
+	}
+}
+
 // Database row type that matches actual database schema
 export interface ApiKeyRow {
+	limit_window_mode?: string;
+	family_combo_overrides?: string | null;
 	id: string;
 	name: string;
 	hashed_key: string;
@@ -186,6 +238,8 @@ export function coerceSpendLimitUsd(value: unknown): number | null {
 
 // Domain model - used throughout the application
 export interface ApiKey {
+	limitWindowMode?: ApiKeyLimitWindowMode;
+	familyComboOverrides?: Record<string, string> | null;
 	id: string;
 	name: string;
 	hashedKey: string;
@@ -208,6 +262,9 @@ export interface ApiKey {
 
 // API response type - what clients receive (excluding sensitive data)
 export interface ApiKeyResponse {
+	limitWindowMode?: ApiKeyLimitWindowMode;
+	familyComboOverrides?: Record<string, string> | null;
+	limits?: ApiKeyLimitStatus[];
 	id: string;
 	name: string;
 	prefixLast8: string;
@@ -385,6 +442,9 @@ export class NodeCryptoUtils implements CryptoUtils {
 // Converter functions
 export function toApiKey(row: ApiKeyRow): ApiKey {
 	return {
+		limitWindowMode:
+			row.limit_window_mode === "rolling" ? "rolling" : "calendar",
+		familyComboOverrides: parseFamilyComboOverrides(row.family_combo_overrides),
 		id: row.id,
 		name: row.name,
 		hashedKey: row.hashed_key,
@@ -415,6 +475,8 @@ export function toApiKey(row: ApiKeyRow): ApiKey {
 
 export function toApiKeyResponse(apiKey: ApiKey): ApiKeyResponse {
 	return {
+		limitWindowMode: apiKey.limitWindowMode ?? "calendar",
+		familyComboOverrides: apiKey.familyComboOverrides ?? null,
 		id: apiKey.id,
 		name: apiKey.name,
 		prefixLast8: apiKey.prefixLast8,

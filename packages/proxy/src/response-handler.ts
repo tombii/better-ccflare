@@ -118,6 +118,7 @@ export interface ResponseHandlerOptions {
 	apiKeyName?: string | null;
 	comboName?: string | null;
 	originalModel?: string | null;
+	limitModel?: string | null;
 	appliedModel?: string | null;
 	/**
 	 * Controller whose signal was merged into the upstream fetch's
@@ -158,6 +159,7 @@ export async function forwardToClient(
 		apiKeyName,
 		comboName,
 		originalModel,
+		limitModel,
 		appliedModel,
 		drainAbort,
 	} = options;
@@ -238,6 +240,7 @@ export async function forwardToClient(
 			accountName: account?.name ?? null,
 			agentUsed: agentUsed || null,
 			clientSessionId: clientSessionId ?? null,
+			limitModel: limitModel ?? null,
 			// Persist the pair only for an actual swap — an agent-detected but
 			// unmodified request would otherwise record two equal values that
 			// downstream cannot distinguish from a real rewrite.

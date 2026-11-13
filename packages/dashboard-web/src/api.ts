@@ -1293,8 +1293,12 @@ class API extends HttpClient {
 	async getApiKeyUsage(
 		keyIdOrName: string,
 		range = "24h",
+		from?: string,
+		to?: string,
 	): Promise<ApiKeyUsageResponse> {
 		const params = new URLSearchParams({ range });
+		if (from) params.set("from", from);
+		if (to) params.set("to", to);
 		return this.get<ApiKeyUsageResponse>(
 			`/api/api-keys/${encodeURIComponent(keyIdOrName)}/usage?${params.toString()}`,
 		);

@@ -31,7 +31,10 @@ import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ensureSchema, runMigrations } from "./migrations";
-import { ensureRequestsIndexesPg, NEW_REQUEST_INDEXES_PG } from "./migrations-pg";
+import {
+	ensureRequestsIndexesPg,
+	NEW_REQUEST_INDEXES_PG,
+} from "./migrations-pg";
 
 const PG_SOURCE_PATH = path.join(__dirname, "migrations-pg.ts");
 
@@ -142,7 +145,7 @@ function extractColumnNames(body: string): string[] {
 		if (!trimmed) continue;
 		const firstToken = trimmed.split(/\s+/)[0];
 		if (tableLevelKeywords.has(firstToken.toUpperCase())) continue;
-		columns.push(firstToken);
+		columns.push(firstToken.replace(/^"|"$/g, ""));
 	}
 	return columns;
 }
@@ -194,6 +197,14 @@ function parsePgColumnsToAdd(
 	while ((match = entryRe.exec(arrayBody)) !== null) {
 		entries.push({ table: match[1], column: match[2] });
 	}
+	// Standalone idempotent ALTERs carry migrations that need a first-run
+	// guard (for example, budget conversion keyed on a newly added mode).
+	for (const alter of source.matchAll(
+		/ALTER TABLE (\w+) ADD COLUMN IF NOT EXISTS (\w+)/g,
+	)) {
+		entries.push({ table: alter[1], column: alter[2] });
+	}
+
 	return entries;
 }
 
@@ -295,12 +306,12 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 	});
 
 	it("spot check: night_window_enabled is on accounts in both backends", () => {
-		expect(sqliteInventory.tables.get("accounts")?.has("night_window_enabled")).toBe(
-			true,
-		);
-		expect(pgInventory.tables.get("accounts")?.has("night_window_enabled")).toBe(
-			true,
-		);
+		expect(
+			sqliteInventory.tables.get("accounts")?.has("night_window_enabled"),
+		).toBe(true);
+		expect(
+			pgInventory.tables.get("accounts")?.has("night_window_enabled"),
+		).toBe(true);
 		// Upgrade path for existing PG databases, not just the CREATE TABLE.
 		expect(parsePgColumnsToAdd(pgSource)).toContainEqual({
 			table: "accounts",
@@ -461,10 +472,9 @@ describe("SQLite <-> PostgreSQL migration schema parity (static)", () => {
 							// Default: every migrated index exists and is valid, so the
 							// gated redundant-drop block runs. Derived from the list so
 							// adding an index doesn't silently disable the gate here.
-							return (opts.validNames ??
-								NEW_REQUEST_INDEXES_PG.map((i) => i.name)).map(
-								(relname) => ({ relname }),
-							);
+							return (
+								opts.validNames ?? NEW_REQUEST_INDEXES_PG.map((i) => i.name)
+							).map((relname) => ({ relname }));
 						return [];
 					},
 					release: () => {

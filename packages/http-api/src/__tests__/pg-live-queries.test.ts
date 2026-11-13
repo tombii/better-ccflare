@@ -96,6 +96,7 @@ import {
 import { createStatsHandler, createStatsResetHandler } from "../handlers/stats";
 import { createUsageHistoryHandler } from "../handlers/usage-history";
 import { AlertService } from "../services/alerts";
+import { calendarMonthFraction } from "../services/api-key-usage-range";
 import type { APIContext } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -1047,6 +1048,8 @@ describe.skipIf(!livePgAvailable)(
 				);
 				expect(res.status).toBe(200);
 				const body = (await readJson(res)) as {
+					windowStartMs: number;
+					windowEndMs: number;
 					requests: number;
 					successfulRequests: number;
 					apiCostUsd: number;
@@ -1070,8 +1073,11 @@ describe.skipIf(!livePgAvailable)(
 				expect(body.apiCostUsd).toBeCloseTo(0.25, 6);
 				expect(body.planValueUsd).toBeCloseTo(2.25, 6);
 				// acct-1: 1.5 of 6.0 = 0.25 share of a $300/mo plan prorated to
-				// 24h ($10) = $2.50. acct-2 is unpriced and contributes nothing.
-				expect(body.planCost.planCostUsd).toBeCloseTo(2.5, 4);
+				// 24h using the Dublin month duration. acct-2 is unpriced.
+				expect(body.planCost.planCostUsd).toBeCloseTo(
+					75 * calendarMonthFraction(body.windowStartMs, body.windowEndMs),
+					4,
+				);
 				expect(body.planCost.unpricedAccountIds).toEqual(["acct-2"]);
 				expect(body.efficiencyStatus).toBe("partial");
 				expect(body.models.some((row) => row.model === null)).toBe(true);

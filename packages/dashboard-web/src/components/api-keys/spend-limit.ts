@@ -21,7 +21,7 @@ export interface SpendLimitDraft {
 /** No limit: the zero-effort default, and what an omitted POST field means. */
 export const NO_SPEND_LIMIT: SpendLimitDraft = {
 	limitUsd: "",
-	limitWindow: DEFAULT_SPEND_WINDOW,
+	limitWindow: "calendar_month",
 	limitEnforce: DEFAULT_LIMIT_ENFORCEMENT,
 };
 

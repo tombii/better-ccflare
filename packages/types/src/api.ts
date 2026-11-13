@@ -49,6 +49,8 @@ export interface RequestMeta {
 	clientSessionId?: string | null;
 	/** Model the client originally requested, before any agent-preference rewrite. */
 	originalModel?: string | null;
+	/** Client model used for per-model budgets, preserved across combo routing. */
+	limitModel?: string | null;
 	/** Model actually forwarded upstream after an agent-preference rewrite (equal to originalModel when none occurred). */
 	appliedModel?: string | null;
 }

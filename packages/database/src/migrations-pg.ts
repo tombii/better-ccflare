@@ -156,7 +156,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			gateway_hint_compaction TEXT,
 			gateway_hint_context_compacted TEXT,
 			provider_served TEXT,
-			completion_tier TEXT
+			completion_tier TEXT,
+			limit_model TEXT
 		)
 	`);
 
@@ -250,9 +251,27 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			allowed_providers TEXT,
 			limit_usd REAL,
 			limit_window TEXT,
-			limit_enforce TEXT
+			limit_enforce TEXT,
+   limit_window_mode TEXT NOT NULL DEFAULT 'calendar' CHECK (limit_window_mode IN ('calendar', 'rolling')),
+   family_combo_overrides TEXT
 		)
 	`);
+
+	// Multi-window limits are available on fresh installations before upgrades.
+	await adapter.unsafe(`CREATE TABLE IF NOT EXISTS api_key_limits (
+  id TEXT PRIMARY KEY,
+  api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+  scope_model TEXT,
+  "window" TEXT NOT NULL CHECK ("window" IN ('hour','day','week','month')),
+  limit_usd REAL NOT NULL CHECK (limit_usd > 0),
+  enforce TEXT NOT NULL CHECK (enforce IN ('block','warn')),
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  UNIQUE (api_key_id, scope_model, "window")
+ )`);
+	await adapter.unsafe(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_limits_scope ON api_key_limits(api_key_id, (COALESCE(scope_model, '')), "window")`,
+	);
 
 	await adapter.unsafe(
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_hashed_key ON api_keys(hashed_key)`,
@@ -2265,10 +2284,48 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		// Ignore if fails
 	}
 
+	await migrateApiKeyLimitsPg(adapter);
+
 	// Refresh the planner statistics of the tables this run actually rewrote.
 	// Skipped entirely when nothing was rewritten (a fresh install, or a
 	// restart where every backfill matched zero rows).
 	await analyzeRewrittenTablesPg(adapter, backfillWork);
 
 	log.info("PostgreSQL migrations completed");
+}
+
+/** Add multi-window budgets and migrate the legacy budget exactly once. */
+export async function migrateApiKeyLimitsPg(
+	adapter: BunSqlAdapter,
+): Promise<void> {
+	const legacyModeColumn = await adapter.get<{ column_name: string }>(
+		"SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'api_keys' AND column_name = 'limit_window_mode'",
+	);
+	// Mode and its legacy backfill must commit together: a restart after adding
+	// mode must never skip an uncommitted conversion and silently lose a budget.
+	const statements = [
+		"ALTER TABLE requests ADD COLUMN IF NOT EXISTS limit_model TEXT",
+		"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS limit_window_mode TEXT NOT NULL DEFAULT 'calendar' CHECK (limit_window_mode IN ('calendar','rolling'))",
+		"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS family_combo_overrides TEXT",
+		`CREATE TABLE IF NOT EXISTS api_key_limits (
+   id TEXT PRIMARY KEY, api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+   scope_model TEXT, "window" TEXT NOT NULL CHECK ("window" IN ('hour','day','week','month')),
+   limit_usd REAL NOT NULL CHECK (limit_usd > 0), enforce TEXT NOT NULL CHECK (enforce IN ('block','warn')),
+   created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
+   UNIQUE (api_key_id, scope_model, "window")
+  )`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_limits_scope ON api_key_limits(api_key_id, (COALESCE(scope_model, '')), "window")`,
+	];
+	if (!legacyModeColumn) {
+		statements.push(
+			"UPDATE api_keys SET limit_window_mode = CASE WHEN limit_window = 'calendar_month' THEN 'calendar' ELSE 'rolling' END WHERE limit_usd > 0",
+			`INSERT INTO api_key_limits (id, api_key_id, scope_model, "window", limit_usd, enforce, created_at, updated_at)
+    SELECT 'legacy-' || id, id, NULL, CASE WHEN limit_window = 'rolling_7d' THEN 'week' ELSE 'month' END, limit_usd,
+    CASE WHEN limit_enforce = 'warn' THEN 'warn' ELSE 'block' END, created_at, created_at
+    FROM api_keys WHERE limit_usd > 0 ON CONFLICT DO NOTHING`,
+		);
+	}
+	await adapter.atomicStatements(
+		statements.map((sql) => ({ sql, params: [] })),
+	);
 }

@@ -3,12 +3,12 @@ import {
 	disableApiKey,
 	enableApiKey,
 	generateApiKey,
-	getApiKey,
 	listApiKeys,
 	updateApiKeyRestrictions,
 	updateApiKeyRole,
 	updateApiKeySpendLimit,
 } from "@better-ccflare/cli-commands";
+import { KNOWN_PATTERNS } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { BadRequest, NotFound } from "@better-ccflare/errors";
 import {
@@ -19,14 +19,15 @@ import {
 	API_KEY_LIMIT_ENFORCEMENTS,
 	API_KEY_SPEND_WINDOWS,
 	type ApiKeyGenerationResult,
-	type ApiKeyLimitEnforcement,
+	type ApiKeyLimitInput,
+	type ApiKeyLimitWindowMode,
 	type ApiKeyResponse,
 	type ApiKeyRestrictions,
 	type ApiKeySpendLimit,
-	type ApiKeySpendWindow,
 	DEFAULT_LIMIT_ENFORCEMENT,
 	DEFAULT_SPEND_WINDOW,
 	PROVIDER_NAMES,
+	toApiKeyResponse,
 } from "@better-ccflare/types";
 import { errorResponse } from "../utils/http-error";
 
@@ -188,12 +189,12 @@ function validateEnum<T extends string>(
 }
 
 /**
- * Attach live spend to each key that has a limit.
+ * Attach every child limit and its live spend to each key.
  *
  * Read from the SAME in-memory counter the proxy enforces against, so the
  * gauge and the refusal can never disagree, and so the dashboard's polling
- * does not re-run the expensive rollup on every poll. A key with no limit is
- * left exactly as it was: no extra fields, no work.
+ * does not re-run the expensive rollup on every poll. Unknown spend is left
+ * absent when a counter could not be loaded.
  *
  * Failures are swallowed per key. The list endpoint is how an operator finds
  * and fixes a broken key; it must not 500 because a spend total could not be
@@ -203,36 +204,44 @@ export async function withSpendUsage(
 	dbOps: DatabaseOperations,
 	apiKeys: ApiKeyResponse[],
 ): Promise<ApiKeyResponse[]> {
-	const limited = apiKeys.filter((key) => key.limitUsd != null);
-	if (limited.length === 0) return apiKeys;
-
 	const counter = getApiKeySpendCounter(dbOps);
 	const now = Date.now();
 	await Promise.all(
-		limited.map(async (key) => {
-			try {
-				const snapshot = await counter.getSnapshot(
-					key.id,
-					{
-						limitUsd: key.limitUsd as number,
-						limitWindow: (key.limitWindow ??
-							DEFAULT_SPEND_WINDOW) as ApiKeySpendWindow,
-						limitEnforce: (key.limitEnforce ??
-							DEFAULT_LIMIT_ENFORCEMENT) as ApiKeyLimitEnforcement,
-					},
-					now,
-				);
-				key.spentUsd = snapshot.spentUsd;
-				key.windowResetsAt =
-					snapshot.resetMs != null
-						? new Date(snapshot.resetMs).toISOString()
-						: null;
-			} catch {
-				// Leave spentUsd absent: the gauge renders "unknown" rather than
-				// a confident zero, which would read as "no spend yet".
-			}
+		apiKeys.map(async (key) => {
+			const limits = await dbOps.getApiKeyLimits(key.id);
+			key.limits = await Promise.all(
+				limits.map(async (limit) => {
+					try {
+						const snapshot = await counter.getLimitSnapshot(
+							key.id,
+							limit,
+							key.limitWindowMode ?? "calendar",
+							now,
+						);
+						return {
+							...limit,
+							spentUsd: snapshot.spentUsd,
+							resetsAt:
+								snapshot.resetMs == null
+									? null
+									: new Date(snapshot.resetMs).toISOString(),
+						};
+					} catch {
+						return { ...limit, resetsAt: null };
+					}
+				}),
+			);
 		}),
 	);
+	for (const key of apiKeys) {
+		const legacy = key.limits?.find(
+			(limit) => limit.scopeModel === null && limit.window === "month",
+		);
+		if (key.limitUsd != null && legacy) {
+			key.spentUsd = legacy.spentUsd;
+			key.windowResetsAt = legacy.resetsAt;
+		}
+	}
 	return apiKeys;
 }
 
@@ -314,12 +323,10 @@ export function createApiKeysGenerateHandler(dbOps: DatabaseOperations) {
 }
 
 export function createApiKeyGetHandler(dbOps: DatabaseOperations) {
-	return (name: string): Response => {
+	return async (name: string): Promise<Response> => {
 		try {
-			const apiKey = getApiKey(dbOps, name);
-			if (!apiKey) {
-				return errorResponse(NotFound(`API key '${name}' not found`));
-			}
+			const key = await resolveKey(dbOps, name);
+			const [apiKey] = await withSpendUsage(dbOps, [toApiKeyResponse(key)]);
 
 			const response = {
 				success: true,
@@ -508,6 +515,155 @@ export function createApiKeyUpdateSpendLimitHandler(dbOps: DatabaseOperations) {
 				status: 200,
 				headers: { "Content-Type": "application/json" },
 			});
+		} catch (error) {
+			return errorResponse(error);
+		}
+	};
+}
+
+async function resolveKey(dbOps: DatabaseOperations, idOrName: string) {
+	const key =
+		(await dbOps.getApiKey(idOrName)) ??
+		(await dbOps.getApiKeyByName(idOrName));
+	if (!key) throw NotFound(`API key '${idOrName}' not found`);
+	return key;
+}
+
+function readLimitRows(body: Record<string, unknown>): {
+	mode: ApiKeyLimitWindowMode;
+	limits: ApiKeyLimitInput[];
+} {
+	if (body.mode !== "calendar" && body.mode !== "rolling") {
+		throw BadRequest("mode must be calendar or rolling");
+	}
+	if (!Array.isArray(body.limits)) throw BadRequest("limits must be an array");
+	const seen = new Set<string>();
+	const limits = body.limits.map((raw): ApiKeyLimitInput => {
+		if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+			throw BadRequest("Each limit must be an object");
+		}
+		const row = raw as Record<string, unknown>;
+		const scopeModel = row.scopeModel ?? null;
+		if (
+			scopeModel !== null &&
+			(typeof scopeModel !== "string" ||
+				!scopeModel.trim() ||
+				scopeModel !== scopeModel.trim() ||
+				/\s/.test(scopeModel) ||
+				[...scopeModel].some((char) => char.charCodeAt(0) < 32))
+		) {
+			throw BadRequest(
+				"scopeModel must be null, an exact model id, or a family name",
+			);
+		}
+		const window = validateEnum(
+			row.window,
+			"window",
+			["hour", "day", "week", "month"] as const,
+			"month",
+		);
+		if (row.window == null) throw BadRequest("window is required");
+		if (
+			typeof row.limitUsd !== "number" ||
+			!Number.isFinite(row.limitUsd) ||
+			row.limitUsd <= 0
+		) {
+			throw BadRequest("limitUsd must be a finite number greater than 0");
+		}
+		const enforce = validateEnum(
+			row.enforce,
+			"enforce",
+			API_KEY_LIMIT_ENFORCEMENTS,
+			"block",
+		);
+		const identity = JSON.stringify([scopeModel, window]);
+		if (seen.has(identity))
+			throw BadRequest("Only one limit is allowed per model scope and window");
+		seen.add(identity);
+		return { scopeModel, window, limitUsd: row.limitUsd, enforce };
+	});
+	return { mode: body.mode, limits };
+}
+
+export function createApiKeyLimitsGetHandler(dbOps: DatabaseOperations) {
+	return async (idOrName: string): Promise<Response> => {
+		try {
+			const key = await resolveKey(dbOps, idOrName);
+			const [response] = await withSpendUsage(dbOps, [toApiKeyResponse(key)]);
+			return new Response(
+				JSON.stringify({
+					success: true,
+					data: {
+						mode: key.limitWindowMode ?? "calendar",
+						limits: response.limits ?? [],
+					},
+				}),
+				{ headers: { "Content-Type": "application/json" } },
+			);
+		} catch (error) {
+			return errorResponse(error);
+		}
+	};
+}
+
+export function createApiKeyLimitsPutHandler(dbOps: DatabaseOperations) {
+	return async (req: Request, idOrName: string): Promise<Response> => {
+		try {
+			const body: unknown = await req.json();
+			if (!body || typeof body !== "object" || Array.isArray(body))
+				throw BadRequest("Expected a limits object");
+			const { mode, limits } = readLimitRows(body as Record<string, unknown>);
+			const key = await resolveKey(dbOps, idOrName);
+			await dbOps.replaceApiKeyLimits(key.id, limits, mode);
+			tryGetApiKeySpendCounter()?.forget(key.id);
+			return await createApiKeyLimitsGetHandler(dbOps)(key.id);
+		} catch (error) {
+			return errorResponse(error);
+		}
+	};
+}
+
+export function createApiKeyRoutingUpdateHandler(dbOps: DatabaseOperations) {
+	return async (req: Request, idOrName: string): Promise<Response> => {
+		try {
+			const body: unknown = await req.json();
+			if (
+				!body ||
+				typeof body !== "object" ||
+				Array.isArray(body) ||
+				!("familyComboOverrides" in body)
+			) {
+				throw BadRequest(
+					"familyComboOverrides is required (send null to use global routing)",
+				);
+			}
+			const overrides = (body as Record<string, unknown>).familyComboOverrides;
+			if (
+				overrides !== null &&
+				(typeof overrides !== "object" || Array.isArray(overrides))
+			) {
+				throw BadRequest("familyComboOverrides must be an object or null");
+			}
+			const mapping: Record<string, string> | null =
+				overrides === null ? null : {};
+			for (const [family, comboId] of Object.entries(overrides ?? {})) {
+				if (!(KNOWN_PATTERNS as readonly string[]).includes(family))
+					throw BadRequest("Unknown model family");
+				if (typeof comboId !== "string" || !comboId.trim())
+					throw BadRequest("Each routing override must name a combo id");
+				if (!(await dbOps.getCombo(comboId)))
+					throw BadRequest(`Combo '${comboId}' not found`);
+				if (mapping) mapping[family] = comboId;
+			}
+			const key = await resolveKey(dbOps, idOrName);
+			await dbOps.updateApiKeyRouting(key.id, mapping);
+			return new Response(
+				JSON.stringify({
+					success: true,
+					data: { familyComboOverrides: mapping },
+				}),
+				{ headers: { "Content-Type": "application/json" } },
+			);
 		} catch (error) {
 			return errorResponse(error);
 		}

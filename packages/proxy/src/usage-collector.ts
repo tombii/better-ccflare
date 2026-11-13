@@ -868,6 +868,11 @@ export class UsageCollector {
 			tryGetApiKeySpendCounter()?.record(
 				startMessage.apiKeyId,
 				state.usage.costUsd,
+				startMessage.limitModel ??
+					startMessage.originalModel ??
+					state.usage.model,
+				startMessage.timestamp,
+				startMessage.requestId,
 			);
 
 			// Calculate tokens per second - zai specific vs other providers
@@ -1026,6 +1031,7 @@ export class UsageCollector {
 					// timestamp, and any reload must classify the same request the
 					// same way (e.g. peak vs off-peak near a window boundary).
 					startMessage.timestamp,
+					startMessage.limitModel ?? null,
 				);
 			} catch (error) {
 				log.error(
@@ -1083,6 +1089,7 @@ export class UsageCollector {
 			project: state.project ?? undefined,
 			billingType: state.billingType,
 			originalModel: startMessage.originalModel || undefined,
+			limitModel: startMessage.limitModel || undefined,
 			appliedModel: startMessage.appliedModel || undefined,
 			comboName: startMessage.comboName || undefined,
 			projectAttributionSource: state.projectAttributionSource ?? undefined,

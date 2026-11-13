@@ -63,6 +63,8 @@ export interface StartMessage {
 	// gate every write through isModelRewrite() so "agent detected but
 	// nothing rewritten" never records a pair of equal values.
 	originalModel: string | null;
+	/** Requested model for budgets, before combo/provider model changes. */
+	limitModel?: string | null;
 	appliedModel: string | null;
 
 	// Combo info

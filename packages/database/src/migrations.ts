@@ -216,7 +216,8 @@ export function ensureSchema(db: Database): void {
 			gateway_hint_compaction TEXT,
 			gateway_hint_context_compacted TEXT,
 			provider_served TEXT,
-			completion_tier TEXT
+			completion_tier TEXT,
+			limit_model TEXT
 		)
 	`);
 
@@ -320,9 +321,27 @@ export function ensureSchema(db: Database): void {
 			allowed_providers TEXT,
 			limit_usd REAL,
 			limit_window TEXT,
-			limit_enforce TEXT
+			limit_enforce TEXT,
+   limit_window_mode TEXT NOT NULL DEFAULT 'calendar' CHECK (limit_window_mode IN ('calendar', 'rolling')),
+   family_combo_overrides TEXT
 		)
 	`);
+
+	// Multi-window limits are available on fresh installations before upgrades.
+	db.run(`CREATE TABLE IF NOT EXISTS api_key_limits (
+  id TEXT PRIMARY KEY,
+  api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+  scope_model TEXT,
+  "window" TEXT NOT NULL CHECK ("window" IN ('hour','day','week','month')),
+  limit_usd REAL NOT NULL CHECK (limit_usd > 0),
+  enforce TEXT NOT NULL CHECK (enforce IN ('block','warn')),
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  UNIQUE (api_key_id, scope_model, "window")
+ )`);
+	db.run(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_limits_scope ON api_key_limits(api_key_id, (COALESCE(scope_model, '')), "window")`,
+	);
 
 	// Create index for faster API key lookups
 	db.run(
@@ -2271,6 +2290,46 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		addPerformanceIndexes(db);
 		ensureUniqueAccountsIndex(db);
 		dropRedundantRequestIndexes(db);
+		// v2 key budgets. A first-run guard prevents a cleared child budget
+		// from being resurrected from the retained legacy columns on restart.
+		const limitV2Columns = (
+			db.prepare("PRAGMA table_info(api_keys)").all() as Array<{ name: string }>
+		).map((c) => c.name);
+		const migrateLegacyLimits = !limitV2Columns.includes("limit_window_mode");
+		const requestLimitColumns = (
+			db.prepare("PRAGMA table_info(requests)").all() as Array<{ name: string }>
+		).map((c) => c.name);
+		if (!requestLimitColumns.includes("limit_model"))
+			db.run("ALTER TABLE requests ADD COLUMN limit_model TEXT");
+		if (migrateLegacyLimits)
+			db.run(
+				"ALTER TABLE api_keys ADD COLUMN limit_window_mode TEXT NOT NULL DEFAULT 'calendar' CHECK (limit_window_mode IN ('calendar', 'rolling'))",
+			);
+		if (!limitV2Columns.includes("family_combo_overrides"))
+			db.run("ALTER TABLE api_keys ADD COLUMN family_combo_overrides TEXT");
+		db.run(`CREATE TABLE IF NOT EXISTS api_key_limits (
+          id TEXT PRIMARY KEY,
+          api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+          scope_model TEXT,
+          "window" TEXT NOT NULL CHECK ("window" IN ('hour','day','week','month')),
+          limit_usd REAL NOT NULL CHECK (limit_usd > 0),
+          enforce TEXT NOT NULL CHECK (enforce IN ('block','warn')),
+          created_at BIGINT NOT NULL,
+          updated_at BIGINT NOT NULL,
+          UNIQUE (api_key_id, scope_model, "window")
+        )`);
+		db.run(
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_limits_scope ON api_key_limits(api_key_id, (COALESCE(scope_model, '')), \"window\")",
+		);
+		if (migrateLegacyLimits) {
+			db.run(
+				"UPDATE api_keys SET limit_window_mode = CASE WHEN limit_window = 'calendar_month' THEN 'calendar' ELSE 'rolling' END WHERE limit_usd > 0",
+			);
+			db.run(`INSERT OR IGNORE INTO api_key_limits (id, api_key_id, scope_model, "window", limit_usd, enforce, created_at, updated_at)
+            SELECT 'legacy-' || id, id, NULL, CASE WHEN limit_window = 'rolling_7d' THEN 'week' ELSE 'month' END, limit_usd,
+              CASE WHEN limit_enforce = 'warn' THEN 'warn' ELSE 'block' END, created_at, created_at
+            FROM api_keys WHERE limit_usd > 0`);
+		}
 	});
 
 	// Execute the migration transaction

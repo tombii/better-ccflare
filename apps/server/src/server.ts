@@ -101,7 +101,6 @@ import {
 	StrategyName,
 	type StrategyStore,
 	toApiKeyRestrictions,
-	toApiKeySpendLimit,
 } from "@better-ccflare/types";
 import { serve } from "bun";
 import { createCodexUsageRefresher } from "./codex-usage-refresher";
@@ -1997,13 +1996,8 @@ export default async function startServer(options?: {
 						? toApiKeyRestrictions(authResult.apiKey)
 						: null;
 
-					// Same reasoning for the key's spend limit: resolved once from
-					// the record already in hand, so the counter check on the proxy
-					// path costs no key lookup. Null for a key with no limit and
-					// null in zero-keys mode, both of which make it a no-op.
-					const apiKeySpendLimit = authResult.apiKey
-						? toApiKeySpendLimit(authResult.apiKey)
-						: null;
+					// The proxy caches child budget rows and receives the key's current
+					// window mode and routing overrides from this authenticated record.
 
 					try {
 						// Codex CLI first tries WebSocket transport for /v1/responses.
@@ -2043,7 +2037,13 @@ export default async function startServer(options?: {
 								authResult.apiKeyId,
 								authResult.apiKeyName,
 								apiKeyRestrictions,
-								apiKeySpendLimit,
+								null,
+								{
+									limitWindowMode:
+										authResult.apiKey?.limitWindowMode ?? "calendar",
+									familyComboOverrides:
+										authResult.apiKey?.familyComboOverrides ?? null,
+								},
 							);
 						}
 						return trackStreamForShutdown(
@@ -2055,7 +2055,10 @@ export default async function startServer(options?: {
 								authResult.apiKeyName,
 								{
 									restrictions: apiKeyRestrictions,
-									spendLimit: apiKeySpendLimit,
+									limitWindowMode:
+										authResult.apiKey?.limitWindowMode ?? "calendar",
+									familyComboOverrides:
+										authResult.apiKey?.familyComboOverrides ?? null,
 								},
 							),
 						);

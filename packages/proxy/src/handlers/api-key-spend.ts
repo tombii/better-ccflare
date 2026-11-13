@@ -48,15 +48,23 @@
  */
 
 import {
+	API_KEY_ROLLING_DURATION_MS,
+	apiKeyLimitWindowBounds,
 	computeSpendWindowResetMs,
 	computeSpendWindowStartMs,
 	spendWindowInstanceKey,
 } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
-import type { ApiKeySpendLimit } from "@better-ccflare/types";
+import type {
+	ApiKeyLimit,
+	ApiKeyLimitWindowMode,
+	ApiKeySpendLimit,
+} from "@better-ccflare/types";
 
 const log = new Logger("ApiKeySpend");
+
+import { isModelAllowedForApiKey } from "./api-key-restrictions";
 
 /**
  * How long a cached total may go without being re-read from the database.
@@ -119,7 +127,255 @@ export class ApiKeySpendCounter {
 	/** De-duplicates concurrent first-syncs for the same key. */
 	private readonly inflight = new Map<string, Promise<CounterEntry>>();
 
+	private readonly limitEntries = new Map<
+		string,
+		{
+			apiKeyId: string;
+			limit: ApiKeyLimit;
+			mode: ApiKeyLimitWindowMode;
+			startMs: number;
+			endMs: number;
+			lastSyncMs: number;
+			spentUsd: number;
+			cursor: number;
+			events: Array<{
+				requestId?: string;
+				timestamp: number;
+				costUsd: number;
+				model: string | null;
+			}>;
+		}
+	>();
+	private readonly limitInflight = new Map<string, Promise<void>>();
+	private readonly limitGenerations = new Map<string, number>();
+	private readonly limitSyncTokens = new Map<string, symbol>();
+	private readonly pendingRecords = new Map<
+		string,
+		{
+			apiKeyId: string;
+			scopeModel: string | null;
+			events: Array<{
+				requestId: string;
+				timestamp: number;
+				costUsd: number;
+				model: string | null;
+			}>;
+		}
+	>();
+	private readonly keyLimits = new Map<
+		string,
+		{ loadedMs: number; limits: ApiKeyLimit[] }
+	>();
+	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 	constructor(private readonly dbOps: DatabaseOperations) {}
+	dispose(): void {
+		if (this.refreshTimer) clearTimeout(this.refreshTimer);
+		this.refreshTimer = null;
+	}
+	private scheduleRefresh(): void {
+		this.dispose();
+		if (!this.limitEntries.size) return;
+		const now = Date.now();
+		let next = now + SPEND_RESYNC_TTL_MS;
+		for (const entry of this.limitEntries.values())
+			if (entry.mode === "calendar")
+				next = Math.min(
+					next,
+					apiKeyLimitWindowBounds(entry.limit.window, entry.mode, now).endMs,
+				);
+		this.refreshTimer = setTimeout(
+			() => {
+				this.refreshTimer = null;
+				void Promise.all(
+					[...this.limitEntries.values()].map((entry) =>
+						this.getLimitSnapshot(
+							entry.apiKeyId,
+							entry.limit,
+							entry.mode,
+							Date.now(),
+							true,
+						).catch((error) =>
+							log.warn(
+								`Spend counter scheduled reconciliation failed: ${String(error)}`,
+							),
+						),
+					),
+				).finally(() => this.scheduleRefresh());
+			},
+			Math.max(1, next - now),
+		);
+		this.refreshTimer.unref();
+	}
+	async getLimitsForKey(apiKeyId: string): Promise<ApiKeyLimit[]> {
+		const cached = this.keyLimits.get(apiKeyId);
+		if (cached && Date.now() - cached.loadedMs < SPEND_RESYNC_TTL_MS)
+			return cached.limits;
+		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
+		const limits = await this.dbOps.getApiKeyLimits(apiKeyId);
+		if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
+			return this.getLimitsForKey(apiKeyId);
+		this.keyLimits.set(apiKeyId, { loadedMs: Date.now(), limits });
+		return limits;
+	}
+	async getLimitSnapshot(
+		apiKeyId: string,
+		limit: ApiKeyLimit,
+		mode: ApiKeyLimitWindowMode,
+		nowMs = Date.now(),
+		reconcile = false,
+	): Promise<SpendSnapshot> {
+		const identity = JSON.stringify([apiKeyId, limit.scopeModel, limit.window]);
+		const bounds = apiKeyLimitWindowBounds(limit.window, mode, nowMs);
+		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
+		const inflightIdentity = JSON.stringify([
+			identity,
+			generation,
+			mode,
+			mode === "calendar" ? bounds.startMs : null,
+		]);
+		let entry = this.limitEntries.get(identity);
+		const sync = async () => {
+			let pending = this.limitInflight.get(inflightIdentity);
+			if (!pending) {
+				const token = Symbol();
+				this.limitSyncTokens.set(identity, token);
+				const buffered = {
+					apiKeyId,
+					scopeModel: limit.scopeModel,
+					events: [] as Array<{
+						requestId: string;
+						timestamp: number;
+						costUsd: number;
+						model: string | null;
+					}>,
+				};
+				this.pendingRecords.set(inflightIdentity, buffered);
+				pending = this.dbOps
+					.getApiKeySpendEventsSince(apiKeyId, bounds.startMs)
+					.then((events) => {
+						if (
+							(this.limitGenerations.get(apiKeyId) ?? 0) !== generation ||
+							this.limitSyncTokens.get(identity) !== token
+						)
+							throw new Error(
+								"Spend counter reconciliation superseded by updated settings",
+							);
+						// An async SQL snapshot can race a completed request's increment.
+						// Merge buffered completions by request ID so a query which already
+						// saw the persisted request neither loses nor duplicates that spend.
+						const seen = new Set(
+							events.map((event) => event.requestId).filter(Boolean),
+						);
+						const bufferedIds = new Set(
+							buffered.events.map((event) => event.requestId),
+						);
+						const merged = [
+							...events,
+							...buffered.events.filter((event) => !seen.has(event.requestId)),
+						].sort((a, b) => a.timestamp - b.timestamp);
+						const matching = merged.filter(
+							(event) =>
+								(event.timestamp <= nowMs ||
+									(event.requestId != null &&
+										bufferedIds.has(event.requestId))) &&
+								(mode !== "rolling" || event.timestamp > bounds.startMs) &&
+								(mode !== "calendar" || event.timestamp < bounds.endMs) &&
+								this.matchesScope(event.model, limit.scopeModel),
+						);
+						this.limitEntries.set(identity, {
+							apiKeyId,
+							limit,
+							mode,
+							...bounds,
+							lastSyncMs: nowMs,
+							events: matching,
+							cursor: 0,
+							spentUsd: matching.reduce(
+								(total, event) => total + event.costUsd,
+								0,
+							),
+						});
+					})
+					.finally(() => {
+						if (this.pendingRecords.get(inflightIdentity) === buffered)
+							this.pendingRecords.delete(inflightIdentity);
+						if (this.limitInflight.get(inflightIdentity) === pending)
+							this.limitInflight.delete(inflightIdentity);
+					});
+				this.limitInflight.set(inflightIdentity, pending);
+			}
+			await pending;
+		};
+		if (
+			reconcile ||
+			!entry ||
+			entry.mode !== mode ||
+			(mode === "calendar" && entry.startMs !== bounds.startMs)
+		) {
+			await sync();
+			entry = this.limitEntries.get(identity);
+		} else if (nowMs - entry.lastSyncMs >= SPEND_RESYNC_TTL_MS) {
+			void sync().catch((error) =>
+				log.warn(
+					`Spend counter resync failed for key ${apiKeyId}: ${String(error)}`,
+				),
+			);
+		}
+		if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
+			throw new Error("Spend counter settings changed during check");
+		if (!entry) throw new Error("Spend counter failed to initialize");
+		entry.limit = limit;
+		while (
+			entry.cursor < entry.events.length &&
+			(mode === "rolling"
+				? entry.events[entry.cursor].timestamp <= bounds.startMs
+				: entry.events[entry.cursor].timestamp < bounds.startMs)
+		) {
+			entry.spentUsd -= entry.events[entry.cursor++].costUsd;
+		}
+		if (entry.cursor > 1000 && entry.cursor > entry.events.length / 2) {
+			entry.events = entry.events.slice(entry.cursor);
+			entry.cursor = 0;
+		}
+		const spentUsd = Math.max(0, entry.spentUsd);
+
+		let resetMs: number | null = bounds.endMs;
+		if (mode === "rolling") {
+			resetMs = null;
+			let remaining = spentUsd;
+			for (let i = entry.cursor; i < entry.events.length; i++) {
+				const event = entry.events[i];
+				remaining -= event.costUsd;
+				resetMs = Math.min(
+					nowMs + API_KEY_ROLLING_DURATION_MS[limit.window],
+					event.timestamp + API_KEY_ROLLING_DURATION_MS[limit.window],
+				);
+				if (remaining < limit.limitUsd) break;
+			}
+		}
+		if (Math.abs(Date.now() - nowMs) < 1000 && !this.refreshTimer)
+			this.scheduleRefresh();
+		return {
+			spentUsd,
+			limitUsd: limit.limitUsd,
+			resetMs,
+			exceeded: spentUsd >= limit.limitUsd,
+		};
+	}
+	private matchesScope(
+		model: string | null | undefined,
+		scope: string | null,
+	): boolean {
+		return (
+			scope == null ||
+			(!!model &&
+				isModelAllowedForApiKey(model, {
+					allowedModels: [scope],
+					allowedAccounts: null,
+					allowedProviders: null,
+				}))
+		);
+	}
 
 	/**
 	 * Seed one total per key that currently has a limit.
@@ -133,6 +389,23 @@ export class ApiKeySpendCounter {
 		try {
 			const keys = await this.dbOps.listApiKeysWithSpendLimits();
 			for (const key of keys) {
+				if (typeof this.dbOps.getApiKeyLimits === "function") {
+					try {
+						const limits = await this.getLimitsForKey(key.id);
+						for (const limit of limits)
+							await this.getLimitSnapshot(
+								key.id,
+								limit,
+								key.limitWindowMode ?? "calendar",
+							);
+						seeded++;
+					} catch (error) {
+						log.warn(
+							`Failed to seed spend counter for key ${key.name}: ${String(error)}`,
+						);
+					}
+					continue;
+				}
 				const limit = {
 					limitUsd: key.limitUsd ?? 0,
 					limitWindow: key.limitWindow ?? "rolling_30d",
@@ -211,10 +484,64 @@ export class ApiKeySpendCounter {
 	 * consulted, in which case its first `getSnapshot` will read the true
 	 * total from the database including this very request.
 	 */
-	record(apiKeyId: string | null | undefined, costUsd: number | undefined) {
+	record(
+		apiKeyId: string | null | undefined,
+		costUsd: number | undefined,
+		model?: string | null,
+		timestamp = Date.now(),
+		requestId: string = crypto.randomUUID(),
+	) {
 		if (!apiKeyId) return;
 		if (typeof costUsd !== "number" || !Number.isFinite(costUsd)) return;
 		if (costUsd === 0) return;
+		const recorded = { requestId, timestamp, costUsd, model: model ?? null };
+		for (const pending of this.pendingRecords.values())
+			if (
+				pending.apiKeyId === apiKeyId &&
+				this.matchesScope(model, pending.scopeModel)
+			)
+				pending.events.push(recorded);
+		for (const entry of this.limitEntries.values()) {
+			if (
+				entry.apiKeyId !== apiKeyId ||
+				!this.matchesScope(model, entry.limit.scopeModel)
+			)
+				continue;
+			const bounds = apiKeyLimitWindowBounds(
+				entry.limit.window,
+				entry.mode,
+				Date.now(),
+			);
+			if (entry.mode === "calendar" && entry.startMs !== bounds.startMs) {
+				entry.events = [];
+				entry.spentUsd = 0;
+				entry.cursor = 0;
+				entry.startMs = bounds.startMs;
+				entry.endMs = bounds.endMs;
+				entry.lastSyncMs = 0;
+			}
+
+			if (
+				timestamp < bounds.startMs ||
+				(entry.mode === "calendar" && timestamp >= bounds.endMs)
+			)
+				continue;
+			const event = recorded;
+			// Requests may finish out of order; preserve timestamp ordering for expiry.
+			if (
+				entry.events.length &&
+				entry.events[entry.events.length - 1].timestamp > timestamp
+			) {
+				entry.events = entry.events.slice(entry.cursor);
+				entry.cursor = 0;
+				let index = entry.events.findIndex(
+					(current) => current.timestamp > timestamp,
+				);
+				if (index < 0) index = entry.events.length;
+				entry.events.splice(index, 0, event);
+			} else entry.events.push(event);
+			entry.spentUsd += costUsd;
+		}
 		const entry = this.entries.get(apiKeyId);
 		if (!entry) return;
 		entry.spentUsd += costUsd;
@@ -225,6 +552,13 @@ export class ApiKeySpendCounter {
 
 	/** Drop a key's cached total, e.g. after its limit is changed or cleared. */
 	forget(apiKeyId: string) {
+		this.limitGenerations.set(
+			apiKeyId,
+			(this.limitGenerations.get(apiKeyId) ?? 0) + 1,
+		);
+		this.keyLimits.delete(apiKeyId);
+		for (const [identity, entry] of this.limitEntries)
+			if (entry.apiKeyId === apiKeyId) this.limitEntries.delete(identity);
 		this.entries.delete(apiKeyId);
 		this.inflight.delete(apiKeyId);
 	}
@@ -312,5 +646,6 @@ export function tryGetApiKeySpendCounter(): ApiKeySpendCounter | null {
 
 /** Test seam. */
 export function resetApiKeySpendCounter(): void {
+	_counter?.dispose();
 	_counter = null;
 }

@@ -9,6 +9,9 @@ import type {
 	Account,
 	AgentAttributionSource,
 	ApiKey,
+	ApiKeyLimit,
+	ApiKeyLimitInput,
+	ApiKeyLimitWindowMode,
 	ApiKeyRestrictions,
 	ApiKeySpendLimit,
 	Combo,
@@ -1484,6 +1487,7 @@ OAuth tokens will need to be re-authenticated.
 		gatewayHintContextCompacted?: string | null,
 		/** When the request started (epoch ms); see RequestData.timestamp. */
 		timestamp?: number,
+		limitModel?: string | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -1506,6 +1510,7 @@ OAuth tokens will need to be re-authenticated.
 					billingType,
 					comboName,
 					originalModel,
+					limitModel,
 					appliedModel,
 					projectAttributionSource,
 					agentAttributionSource,
@@ -2779,6 +2784,22 @@ OAuth tokens will need to be re-authenticated.
 			this.retryConfig,
 			"createApiKey",
 		);
+		if (apiKey.spendLimit)
+			await this.replaceApiKeyLimits(
+				apiKey.id,
+				[
+					{
+						scopeModel: null,
+						window:
+							apiKey.spendLimit.limitWindow === "rolling_7d" ? "week" : "month",
+						limitUsd: apiKey.spendLimit.limitUsd,
+						enforce: apiKey.spendLimit.limitEnforce,
+					},
+				],
+				apiKey.spendLimit.limitWindow === "calendar_month"
+					? "calendar"
+					: "rolling",
+			);
 	}
 
 	async updateApiKeyUsage(id: string, timestamp: number): Promise<void> {
@@ -2851,6 +2872,68 @@ OAuth tokens will need to be re-authenticated.
 			this.retryConfig,
 			"updateApiKeySpendLimit",
 		);
+	}
+
+	async getApiKeyLimits(id: string): Promise<ApiKeyLimit[]> {
+		return withDatabaseRetry(
+			() => this.apiKeys.getLimits(id),
+			this.retryConfig,
+			"getApiKeyLimits",
+		);
+	}
+	async replaceApiKeyLimits(
+		id: string,
+		limits: ApiKeyLimitInput[],
+		mode: ApiKeyLimitWindowMode,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.replaceLimits(id, limits, mode),
+			this.retryConfig,
+			"replaceApiKeyLimits",
+		);
+	}
+	async updateApiKeyRouting(
+		id: string,
+		overrides: Record<string, string> | null,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.updateRouting(id, overrides),
+			this.retryConfig,
+			"updateApiKeyRouting",
+		);
+	}
+	/** Cost events retained in memory for precise rolling relief and model scopes. */
+	async getApiKeySpendEventsSince(
+		apiKeyId: string,
+		sinceMs: number,
+	): Promise<
+		Array<{
+			requestId: string;
+			timestamp: number;
+			costUsd: number;
+			model: string | null;
+		}>
+	> {
+		const rows = await withDatabaseRetry(
+			() =>
+				this.adapter.query<{
+					id: string;
+					timestamp: number;
+					cost_usd: number;
+					model: string | null;
+				}>(
+					"SELECT id, timestamp, cost_usd, COALESCE(limit_model, original_model, model) AS model FROM requests WHERE api_key_id = ? AND timestamp >= ? AND cost_usd > 0 ORDER BY timestamp",
+					[apiKeyId, sinceMs],
+				),
+			this.retryConfig,
+			"getApiKeySpendEventsSince",
+		);
+		return rows.map((row) => ({
+			requestId: row.id,
+			timestamp: Number(row.timestamp),
+			costUsd: Number(row.cost_usd),
+			model: row.model,
+		}));
 	}
 
 	/** Every active key that carries a spend limit — the counter's seed set. */

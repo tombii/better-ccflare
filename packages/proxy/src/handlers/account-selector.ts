@@ -655,7 +655,11 @@ export async function selectAccountsForRequest(
 	meta: RequestMeta,
 	ctx: ProxyContext,
 	model?: string,
-	options?: { skipCombo?: boolean; restrictions?: ApiKeyRestrictions | null },
+	options?: {
+		skipCombo?: boolean;
+		restrictions?: ApiKeyRestrictions | null;
+		familyComboOverrides?: Record<string, string> | null;
+	},
 ): Promise<Account[]> {
 	// Per-API-key restrictions, resolved ONCE here and reused by every
 	// account-side seam below (the forced-account header, the combo slots, the
@@ -951,9 +955,18 @@ export async function selectAccountsForRequest(
 			if (!validFamilies.includes(family)) {
 				log.warn(`Unknown model family "${family}", skipping combo lookup`);
 			} else {
-				const combo = await ctx.dbOps.getActiveComboForFamily(
-					family as ComboFamily,
-				);
+				const overrideId = !isInternalProbe(meta.headers, ctx)
+					? options?.familyComboOverrides?.[family]
+					: undefined;
+				const override = overrideId
+					? await ctx.dbOps.getCombo(overrideId)
+					: null;
+				const combo = overrideId
+					? override?.enabled
+						? { ...override, slots: await ctx.dbOps.getComboSlots(overrideId) }
+						: null
+					: await ctx.dbOps.getActiveComboForFamily(family as ComboFamily);
+
 				if (!combo) {
 					// Without this line the detour is silent: a family with no active
 					// combo falls into normal pool routing and can be served by any

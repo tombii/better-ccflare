@@ -212,10 +212,23 @@ export class AuthService {
 	async authorizeEndpoint(
 		apiKey: ApiKey,
 		path: string,
-		_method: string,
+		method: string,
 	): Promise<{ authorized: boolean; reason?: string }> {
 		// Admin keys have full access
 		if (apiKey.role === "admin") {
+			return { authorized: true };
+		}
+
+		// A non-admin key can inspect its own usage. The usage handler resolves
+		// URL-encoded names and checks the resulting key id before reading data.
+		const parts = path.split("/");
+		if (
+			method === "GET" &&
+			parts.length === 5 &&
+			parts[1] === "api" &&
+			parts[2] === "api-keys" &&
+			parts[4] === "usage"
+		) {
 			return { authorized: true };
 		}
 

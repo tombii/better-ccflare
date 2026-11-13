@@ -20,6 +20,8 @@ import {
 } from "@better-ccflare/providers";
 import type {
 	Account,
+	ApiKeyLimit,
+	ApiKeyLimitWindowMode,
 	ApiKeyRestrictions,
 	ApiKeySpendLimit,
 } from "@better-ccflare/types";
@@ -197,13 +199,17 @@ function createApiKeySpendLimitResponse(info: {
 	spentUsd: number;
 	window: string;
 	resetMs: number | null;
+	scopeModel?: string | null;
+	fullRetryAfter?: boolean;
 }): Response {
 	const retryAfterSeconds =
 		info.resetMs != null && info.resetMs > Date.now()
 			? Math.max(
 					1,
 					Math.min(
-						SPEND_LIMIT_MAX_RETRY_AFTER_SECONDS,
+						info.fullRetryAfter
+							? Number.POSITIVE_INFINITY
+							: SPEND_LIMIT_MAX_RETRY_AFTER_SECONDS,
 						Math.ceil((info.resetMs - Date.now()) / 1000),
 					),
 				)
@@ -215,10 +221,11 @@ function createApiKeySpendLimitResponse(info: {
 			error: {
 				type: "rate_limit_error",
 				code: "api_key_limit_exceeded",
-				message: `This API key has exceeded its spend limit of $${info.limitUsd} over its ${info.window} window ($${info.spentUsd.toFixed(4)} spent).`,
+				message: `This API key has exceeded its spend limit of $${info.limitUsd} over its ${info.window} window${info.scopeModel ? ` for model scope "${info.scopeModel}"` : " for the whole key"} ($${info.spentUsd.toFixed(4)} spent).`,
 				limit_usd: info.limitUsd,
 				spent_usd: info.spentUsd,
 				window: info.window,
+				scope_model: info.scopeModel ?? null,
 				resets_at:
 					info.resetMs != null ? new Date(info.resetMs).toISOString() : null,
 			},
@@ -325,6 +332,8 @@ export function handleProxy(
 		 * there at all and so nothing to charge a budget to.
 		 */
 		spendLimit?: ApiKeySpendLimit | null;
+		limitWindowMode?: ApiKeyLimitWindowMode;
+		familyComboOverrides?: Record<string, string> | null;
 	},
 ): Promise<Response> {
 	let observation: RequestObservation | undefined;
@@ -388,6 +397,8 @@ async function handleProxyRequest(
 		trustedNativeResponses?: boolean;
 		restrictions?: ApiKeyRestrictions | null;
 		spendLimit?: ApiKeySpendLimit | null;
+		limitWindowMode?: ApiKeyLimitWindowMode;
+		familyComboOverrides?: Record<string, string> | null;
 	},
 	observation?: RequestObservation,
 ): Promise<Response> {
@@ -492,6 +503,62 @@ async function handleProxyRequest(
 			);
 		}
 	}
+	let blockingLimit: { limit: ApiKeyLimit; snapshot: SpendSnapshot } | null =
+		null;
+	if (
+		apiKeyId &&
+		!isInternalProbe(req.headers, ctx) &&
+		typeof ctx.dbOps.getApiKeyLimits === "function"
+	) {
+		try {
+			const counter = getApiKeySpendCounter(ctx.dbOps);
+			const limits = await counter.getLimitsForKey(apiKeyId);
+			for (const limit of limits) {
+				if (
+					limit.scopeModel != null &&
+					(!requestModel ||
+						!isModelAllowedForApiKey(requestModel, {
+							allowedModels: [limit.scopeModel],
+							allowedAccounts: null,
+							allowedProviders: null,
+						}))
+				)
+					continue;
+				try {
+					const snapshot = await counter.getLimitSnapshot(
+						apiKeyId,
+						limit,
+						options?.limitWindowMode ?? "calendar",
+					);
+					if (!snapshot.exceeded) continue;
+					if (limit.enforce === "block") {
+						blockingLimit ??= { limit, snapshot };
+					} else {
+						log.warn(
+							`API key spend limit exceeded (warn only): key ${apiKeyName ?? apiKeyId}, scope ${limit.scopeModel ?? "whole key"}, ${limit.window}, spent ${snapshot.spentUsd} of ${limit.limitUsd}`,
+						);
+						spendLimitEvents.emit("event", {
+							limitId: limit.id,
+							apiKeyId,
+							apiKeyName: apiKeyName ?? null,
+							spentUsd: snapshot.spentUsd,
+							limitUsd: limit.limitUsd,
+							window: `${limit.window}${limit.scopeModel ? ` (${limit.scopeModel})` : ""}`,
+						} satisfies SpendLimitExceededEvt);
+					}
+				} catch (error) {
+					log.warn(
+						`Spend limit check failed for key ${apiKeyName ?? apiKeyId}; allowing this window: ${String(error)}`,
+					);
+				}
+			}
+		} catch (error) {
+			log.warn(
+				`Spend limit lookup failed for key ${apiKeyName ?? apiKeyId}; allowing the request: ${String(error)}`,
+			);
+		}
+	}
+
 	const spendLimitExceeded = spendSnapshot?.exceeded === true;
 
 	// 3a. Validate request body for /v1/messages endpoint
@@ -539,6 +606,7 @@ async function handleProxyRequest(
 	// to be refused for.
 	const keyRefusalPending =
 		modelRestrictionDenied ||
+		blockingLimit !== null ||
 		(spendLimitExceeded && keySpendLimit?.limitEnforce === "block");
 	if (parsedBody && !keyRefusalPending) {
 		const webSearchResponse = await maybeInterceptWebSearch({
@@ -602,6 +670,7 @@ async function handleProxyRequest(
 	requestMeta.projectAttributionSource = projectAttributionSource;
 	requestMeta.clientSessionId = requestBodyContext.getClientId();
 	requestMeta.originalModel = originalModel;
+	requestMeta.limitModel = requestModel;
 	requestMeta.appliedModel = appliedModel;
 
 	// xAI cache-native conversation identity (issue #319 minimal slice):
@@ -816,6 +885,23 @@ async function handleProxyRequest(
 		);
 	}
 
+	if (blockingLimit) {
+		const { limit, snapshot } = blockingLimit;
+		return await returnRefusal(
+			createApiKeySpendLimitResponse({
+				limitUsd: limit.limitUsd,
+				spentUsd: snapshot.spentUsd,
+				window: limit.window,
+				scopeModel: limit.scopeModel,
+				resetMs: snapshot.resetMs,
+				fullRetryAfter: true,
+			}),
+			"api_key_limit_exceeded",
+			0,
+			null,
+		);
+	}
+
 	// Spend limit, emitted. Decided above from the in-memory counter; recorded
 	// through returnRefusal so a refused request lands in request history and
 	// the dashboard fail-rate rather than silently vanishing.
@@ -875,7 +961,10 @@ async function handleProxyRequest(
 		requestMeta,
 		ctx,
 		effectiveModel ?? undefined,
-		{ restrictions: keyRestrictions },
+		{
+			restrictions: keyRestrictions,
+			familyComboOverrides: options?.familyComboOverrides,
+		},
 	);
 
 	const { available: accounts, throttled: throttledAccounts } =

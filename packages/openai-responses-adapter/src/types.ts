@@ -1,4 +1,5 @@
 import type {
+	ApiKeyLimitWindowMode,
 	ApiKeyRestrictions,
 	ApiKeySpendLimit,
 } from "@better-ccflare/types";
@@ -365,5 +366,7 @@ export type HandleProxyFn = (
 		restrictions?: ApiKeyRestrictions | null;
 		/** The calling API key's spend limit, forwarded for the same reason. */
 		spendLimit?: ApiKeySpendLimit | null;
+		limitWindowMode?: ApiKeyLimitWindowMode;
+		familyComboOverrides?: Record<string, string> | null;
 	},
 ) => Promise<Response>;

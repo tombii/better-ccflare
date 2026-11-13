@@ -18,7 +18,11 @@ import {
 } from "bun:test";
 import { spendLimitEvents } from "@better-ccflare/core";
 import { usageCache } from "@better-ccflare/providers";
-import type { Account, ApiKeySpendLimit } from "@better-ccflare/types";
+import type {
+	Account,
+	ApiKeyLimit,
+	ApiKeySpendLimit,
+} from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
 import { resetApiKeySpendCounter } from "../handlers/api-key-spend";
 import { INTERNAL_PROBE_SECRET_HEADER } from "../handlers/proxy-types";
@@ -540,5 +544,139 @@ describe("web_search interception and the spend limit", () => {
 		});
 
 		expect(getWebSearchEnabled.mock.calls.length).toBe(1);
+	});
+});
+
+describe("multi-window row enforcement", () => {
+	function row(overrides: Partial<ApiKeyLimit> = {}): ApiKeyLimit {
+		return {
+			id: "v2",
+			apiKeyId: "key-1",
+			scopeModel: null,
+			window: "month",
+			limitUsd: 5,
+			enforce: "block",
+			createdAt: 1,
+			updatedAt: 1,
+			...overrides,
+		};
+	}
+	function v2Context(
+		rows: ApiKeyLimit[],
+		events: Array<{ timestamp: number; costUsd: number; model: string | null }>,
+	) {
+		const ctx = makeContext([]);
+		Object.assign(ctx.dbOps, {
+			getApiKeyLimits: mock(async () => rows),
+			getApiKeySpendEventsSince: mock(async () => events),
+		});
+		return ctx;
+	}
+	it("names the first exceeded model scope and returns its calendar boundary without a one-hour clamp", async () => {
+		const now = Date.now();
+		const ctx = v2Context(
+			[
+				row({ limitUsd: 100 }),
+				row({ id: "model", scopeModel: "opus", window: "day", limitUsd: 5 }),
+			],
+			[{ timestamp: now - 1, costUsd: 8, model: "claude-opus-4-5" }],
+		);
+		const response = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"budgeted",
+			{ limitWindowMode: "calendar" },
+		);
+		expect(response.status).toBe(429);
+		const body = await response.json();
+		expect(body.error.scope_model).toBe("opus");
+		expect(body.error.window).toBe("day");
+		expect(body.error.limit_usd).toBe(5);
+		expect(body.error.spent_usd).toBe(8);
+		const retry = Number(response.headers.get("Retry-After"));
+		expect(
+			Math.abs(
+				retry -
+					Math.ceil((Date.parse(body.error.resets_at) - Date.now()) / 1000),
+			),
+		).toBeLessThanOrEqual(1);
+	});
+	it("uses the whole month Retry-After even when it exceeds one hour", async () => {
+		const ctx = v2Context(
+			[row()],
+			[{ timestamp: Date.now() - 1, costUsd: 8, model: "opus" }],
+		);
+		const response = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"budgeted",
+			{ limitWindowMode: "calendar" },
+		);
+		expect(response.status).toBe(429);
+		expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(3600);
+	});
+	it("returns rolling relief only after enough spend ages out", async () => {
+		const now = Date.now();
+		const ctx = v2Context(
+			[row({ window: "hour" })],
+			[
+				{ timestamp: now - 3_000_000, costUsd: 2, model: "opus" },
+				{ timestamp: now - 2_000_000, costUsd: 4, model: "opus" },
+				{ timestamp: now - 1_000_000, costUsd: 3, model: "opus" },
+			],
+		);
+		const response = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"budgeted",
+			{ limitWindowMode: "rolling" },
+		);
+		expect(response.status).toBe(429);
+		expect(
+			Math.abs(Number(response.headers.get("Retry-After")) - 1600),
+		).toBeLessThanOrEqual(1);
+	});
+	it("does not apply a different model scope", async () => {
+		const ctx = v2Context(
+			[row({ scopeModel: "sonnet" })],
+			[{ timestamp: Date.now() - 1, costUsd: 8, model: "sonnet" }],
+		);
+		expect(
+			(await handleProxy(makeRequest(), PROXY_URL, ctx, "key-1")).status,
+		).not.toBe(429);
+	});
+	it("allows requests when a row counter check fails", async () => {
+		const ctx = v2Context([row()], []);
+		Object.assign(ctx.dbOps, {
+			getApiKeySpendEventsSince: mock(async () => {
+				throw new Error("db unavailable");
+			}),
+		});
+		expect(
+			(await handleProxy(makeRequest(), PROXY_URL, ctx, "key-1")).status,
+		).not.toBe(429);
+	});
+	it("warns for an exceeded model row while allowing the request", async () => {
+		const listener = mock((_event: { window: string }) => {});
+		spendLimitEvents.on("event", listener);
+		try {
+			const ctx = v2Context(
+				[row({ scopeModel: "opus", enforce: "warn" })],
+				[{ timestamp: Date.now() - 1, costUsd: 8, model: "opus" }],
+			);
+			expect(
+				(await handleProxy(makeRequest(), PROXY_URL, ctx, "key-1")).status,
+			).not.toBe(429);
+			expect(listener).toHaveBeenCalledTimes(1);
+			expect(listener.mock.calls[0][0].window).toContain("opus");
+		} finally {
+			spendLimitEvents.off("event", listener);
+		}
 	});
 });

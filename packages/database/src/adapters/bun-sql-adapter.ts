@@ -355,6 +355,30 @@ export class BunSqlAdapter {
 		return (result as unknown as { count: number }).count ?? 0;
 	}
 
+	/** Execute parameterized statements atomically on one connection. */
+	async atomicStatements(
+		statements: Array<{ sql: string; params: unknown[] }>,
+	): Promise<void> {
+		if (this.isSQLite && this.sqliteDb) {
+			const db = this.sqliteDb;
+			db.transaction(() => {
+				for (const statement of statements) {
+					// biome-ignore lint/suspicious/noExplicitAny: SQLite binding types are checked by the driver
+					db.prepare(statement.sql).run(...(statement.params as any[]));
+				}
+			})();
+			return;
+		}
+		if (!this.sql) throw new Error("SQL client not available for transaction");
+		await this.sql.begin(async (tx) => {
+			for (const statement of statements)
+				await tx.unsafe(
+					convertPlaceholders(statement.sql),
+					statement.params as never[],
+				);
+		});
+	}
+
 	/**
 	 * Execute a function within a transaction.
 	 * For SQLite: uses bun:sqlite's synchronous transaction API.

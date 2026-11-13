@@ -3,6 +3,7 @@ import type {
 	ApiKeyUsagePlanAccountShare,
 	ApiKeyUsagePlanCost,
 } from "@better-ccflare/types";
+import { calendarMonthFraction } from "./api-key-usage-range";
 
 /**
  * Pure apportionment maths for the per-API-key usage endpoint.
@@ -18,15 +19,7 @@ export type {
 	ApiKeyUsagePlanCost,
 } from "@better-ccflare/types";
 
-/**
- * Subscription prices are quoted per month, and a month here is 30 days flat.
- *
- * Not a calendar month on purpose: the windows this endpoint offers are
- * rolling (1h … 30d) and never align to a calendar boundary, so prorating
- * against a length that changes with the date would make the same 24h of
- * traffic cost 3.5% more in February than in January for no reason the
- * operator could act on.
- */
+/** Default for unanchored estimates; the usage endpoint supplies calendar bounds. */
 export const PRORATION_DAYS = 30;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -47,8 +40,14 @@ export interface PlanAccountUsage {
 export function prorateMonthlyPrice(
 	planMonthlyUsd: number,
 	windowMs: number,
+	windowStartMs?: number,
 ): number {
-	return planMonthlyUsd * (windowMs / MS_PER_DAY / PRORATION_DAYS);
+	return (
+		planMonthlyUsd *
+		(windowStartMs === undefined
+			? windowMs / MS_PER_DAY / PRORATION_DAYS
+			: calendarMonthFraction(windowStartMs, windowStartMs + windowMs))
+	);
 }
 
 /**
@@ -68,7 +67,7 @@ function isUsablePrice(value: number | null | undefined): value is number {
  * For each account this key sent plan traffic to, in the window:
  *
  *   share        = key's plan value on that account / all keys' plan value there
- *   prorated     = account.plan_monthly_usd * windowDays / 30
+ *   prorated     = account.plan_monthly_usd * fraction of Dublin calendar months
  *   contribution = share * prorated
  *
  * and the plan cost is the sum of the contributions.
@@ -87,6 +86,7 @@ function isUsablePrice(value: number | null | undefined): value is number {
 export function computePlanCost(
 	accounts: PlanAccountUsage[],
 	windowMs: number,
+	windowStartMs?: number,
 ): ApiKeyUsagePlanCost {
 	const windowDays = windowMs / MS_PER_DAY;
 	const shares: ApiKeyUsagePlanAccountShare[] = [];
@@ -109,7 +109,11 @@ export function computePlanCost(
 
 		const priced = isUsablePrice(account.planMonthlyUsd);
 		const proratedPriceUsd = priced
-			? prorateMonthlyPrice(account.planMonthlyUsd as number, windowMs)
+			? prorateMonthlyPrice(
+					account.planMonthlyUsd as number,
+					windowMs,
+					windowStartMs,
+				)
 			: null;
 		const contributionUsd =
 			proratedPriceUsd !== null ? share * proratedPriceUsd : null;

@@ -28,10 +28,12 @@ for (const envPath of possibleEnvPaths) {
 }
 
 import {
+	type ApiKeyOptions,
 	addAccount,
 	analyzePerformance,
 	clearRequestHistory,
 	compactDatabase,
+	configureApiKey,
 	deleteApiKey,
 	disableApiKey,
 	enableApiKey,
@@ -43,6 +45,10 @@ import {
 	getApiKeyStats,
 	handleRepairCommand,
 	listApiKeys,
+	parseApiKeyAllowList,
+	parseApiKeyLimit,
+	parseApiKeyLimitMode,
+	parseApiKeyRouting,
 	parseNightWindowValue,
 	pauseAccount,
 	reauthenticateAccount,
@@ -53,6 +59,7 @@ import {
 	setAccountNightWindow,
 	setAccountPriority,
 	setUsagePauseThresholds,
+	validateApiKeyOptions,
 } from "@better-ccflare/cli-commands";
 import { Config } from "@better-ccflare/config";
 import {
@@ -120,6 +127,8 @@ interface ParsedArgs {
 	getModel: boolean;
 	setModel: string | null;
 	generateApiKey: string | null;
+	updateApiKey: string | null;
+	apiKeyOptions: ApiKeyOptions;
 	listApiKeys: boolean;
 	disableApiKey: string | null;
 	enableApiKey: string | null;
@@ -483,6 +492,8 @@ function parseArgs(args: string[]): ParsedArgs {
 		getModel: false,
 		setModel: null,
 		generateApiKey: null,
+		updateApiKey: null,
+		apiKeyOptions: {},
 		listApiKeys: false,
 		disableApiKey: null,
 		enableApiKey: null,
@@ -852,6 +863,46 @@ function parseArgs(args: string[]): ParsedArgs {
 			case "--admin":
 				parsed.admin = true;
 				break;
+			case "--update-api-key":
+			case "--allow-models":
+			case "--allow-accounts":
+			case "--allow-providers":
+			case "--limit":
+			case "--limit-mode":
+			case "--routing": {
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					throw new Error(`${arg} requires a value`);
+				}
+				const value = args[++i];
+				if (arg === "--update-api-key") parsed.updateApiKey = value;
+				else if (arg === "--limit") {
+					parsed.apiKeyOptions.limits ??= [];
+					parsed.apiKeyOptions.limits.push(parseApiKeyLimit(value));
+				} else if (arg === "--limit-mode") {
+					parsed.apiKeyOptions.limitMode = parseApiKeyLimitMode(value);
+				} else if (arg === "--routing") {
+					const [family, comboId] = parseApiKeyRouting(value);
+					parsed.apiKeyOptions.familyComboOverrides ??= {};
+					parsed.apiKeyOptions.familyComboOverrides[family] = comboId;
+				} else {
+					const field =
+						arg === "--allow-models"
+							? "allowedModels"
+							: arg === "--allow-accounts"
+								? "allowedAccounts"
+								: "allowedProviders";
+					parsed.apiKeyOptions.restrictions ??= {};
+					parsed.apiKeyOptions.restrictions[field] =
+						parseApiKeyAllowList(value);
+				}
+				break;
+			}
+			case "--clear-limits":
+				parsed.apiKeyOptions.limits = [];
+				break;
+			case "--clear-routing":
+				parsed.apiKeyOptions.familyComboOverrides = null;
+				break;
 			case "--list-api-keys":
 				parsed.listApiKeys = true;
 				break;
@@ -981,6 +1032,15 @@ Options:
 API Key Management:
   --generate-api-key <name>  Generate a new API key
     --admin                  Grant admin privileges (dashboard access)
+  --update-api-key <name>    Update settings on an existing key
+    --allow-models <list>     Comma-separated model IDs/families; '*' = any, none = deny all
+    --allow-accounts <list>   Comma-separated account IDs; '*' = any, none = deny all
+    --allow-providers <list>  Comma-separated providers; '*' = any, none = deny all
+    --limit <spec>            Repeat: window=day,usd=5[,model=opus][,warn]; replaces limits
+    --limit-mode <mode>       calendar (Europe/Dublin, default) or rolling
+    --clear-limits            Remove every limit
+    --routing <family=id>     Repeat: family=combo-id; replaces routing overrides
+    --clear-routing           Use global routing assignments
   --list-api-keys            List all API keys
   --disable-api-key <name>   Disable an API key
   --enable-api-key <name>    Enable a disabled API key
@@ -1002,6 +1062,8 @@ Examples:
   better-ccflare --stats                # View stats
   better-ccflare --generate-api-key "My App"  # Generate API-only key
   better-ccflare --generate-api-key "Admin Key" --admin  # Generate admin key
+  better-ccflare --generate-api-key app --allow-models opus --limit window=day,usd=5 --limit-mode calendar
+  better-ccflare --update-api-key app --routing opus=combo-id
   better-ccflare --list-api-keys               # List all API keys
   better-ccflare --disable-api-key "My App"    # Disable an API key
 `);
@@ -1048,6 +1110,18 @@ Examples:
 	}
 
 	// Initialize DI container and services for commands that need them
+	if (
+		Object.keys(parsed.apiKeyOptions).length > 0 &&
+		!parsed.generateApiKey &&
+		!parsed.updateApiKey
+	) {
+		throw new Error(
+			"API key settings require --generate-api-key or --update-api-key",
+		);
+	}
+	if (parsed.generateApiKey && parsed.updateApiKey) {
+		throw new Error("Choose --generate-api-key or --update-api-key");
+	}
 	const cliConfig = new Config();
 	container.registerInstance(SERVICE_KEYS.Config, cliConfig);
 	container.registerInstance(SERVICE_KEYS.Logger, new Logger("CLI"));
@@ -1462,11 +1536,18 @@ Examples:
 	// API Key management commands
 	if (parsed.generateApiKey) {
 		try {
+			await validateApiKeyOptions(dbOps, parsed.apiKeyOptions);
 			// Default to admin if this is the first key, otherwise api-only
 			const defaultRole =
 				(await dbOps.countActiveApiKeys()) === 0 ? "admin" : "api-only";
 			const role = parsed.admin ? ("admin" as const) : defaultRole;
-			const result = await generateApiKey(dbOps, parsed.generateApiKey, role);
+			const result = await generateApiKey(
+				dbOps,
+				parsed.generateApiKey,
+				role,
+				parsed.apiKeyOptions.restrictions,
+			);
+			await configureApiKey(dbOps, result.id, parsed.apiKeyOptions);
 			console.log(formatApiKeyGenerationResult(result));
 			await exitGracefully(0);
 		} catch (error: unknown) {
@@ -1477,15 +1558,26 @@ Examples:
 		}
 	}
 
+	if (parsed.updateApiKey) {
+		await configureApiKey(dbOps, parsed.updateApiKey, parsed.apiKeyOptions);
+		console.log(`✅ API key '${parsed.updateApiKey}' updated successfully`);
+		await exitGracefully(0);
+	}
+
 	if (parsed.listApiKeys) {
 		const apiKeys = await listApiKeys(dbOps);
 		if (apiKeys.length === 0) {
 			console.log("No API keys configured");
 		} else {
 			console.log("\nAPI Keys:");
-			apiKeys.forEach((apiKey) => {
-				console.log(formatApiKeyForDisplay(apiKey));
-			});
+			for (const apiKey of apiKeys) {
+				console.log(
+					formatApiKeyForDisplay(
+						apiKey,
+						await dbOps.getApiKeyLimits(apiKey.id),
+					),
+				);
+			}
 
 			// Show statistics
 			const stats = await getApiKeyStats(dbOps);

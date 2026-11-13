@@ -96,6 +96,7 @@ describe("forwardToClient usage-collector protocol", () => {
 				// Equal original/applied metadata is intentional: a provider can map
 				// this alias later, without an agent-preference rewrite.
 				originalModel: "claude-opus-4-6",
+				limitModel: "claude-opus-4-6",
 				appliedModel: "claude-opus-4-6",
 			},
 			ctx,
@@ -104,6 +105,7 @@ describe("forwardToClient usage-collector protocol", () => {
 		const clientJson = await response.json();
 		expect(clientJson.model).toBe("claude-opus-4-6");
 		expect(starts[0].originalModel).toBeNull();
+		expect(starts[0].limitModel).toBe("claude-opus-4-6");
 		expect(starts[0].appliedModel).toBeNull();
 		await waitFor(() => ends.length === 1);
 		expect(

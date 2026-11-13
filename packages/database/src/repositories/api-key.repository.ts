@@ -1,5 +1,8 @@
 import {
 	type ApiKey,
+	type ApiKeyLimit,
+	type ApiKeyLimitInput,
+	type ApiKeyLimitWindowMode,
 	type ApiKeyRestrictions,
 	type ApiKeyRow,
 	type ApiKeySpendLimit,
@@ -18,7 +21,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
 			FROM api_keys
 			ORDER BY created_at DESC
 		`);
@@ -34,7 +37,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
 			FROM api_keys
 			WHERE is_active = 1
 			ORDER BY created_at DESC
@@ -52,7 +55,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
 			FROM api_keys
 			WHERE id = ?
 		`,
@@ -72,7 +75,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
 			FROM api_keys
 			WHERE hashed_key = ? AND is_active = 1
 		`,
@@ -92,7 +95,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
 			FROM api_keys
 			WHERE name = ?
 		`,
@@ -292,6 +295,32 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			],
 		);
 
+		if (changes > 0) {
+			const rows = await this.getLimits(id);
+			const remaining = rows.filter(
+				(row) => !(row.scopeModel == null && row.window === "month"),
+			);
+			if (spendLimit)
+				remaining.push({
+					id: "",
+					apiKeyId: id,
+					scopeModel: null,
+					window: "month",
+					limitUsd: spendLimit.limitUsd,
+					enforce: spendLimit.limitEnforce,
+					createdAt: 0,
+					updatedAt: 0,
+				});
+			await this.replaceLimits(
+				id,
+				remaining,
+				spendLimit
+					? spendLimit.limitWindow === "calendar_month"
+						? "calendar"
+						: "rolling"
+					: ((await this.findById(id))?.limitWindowMode ?? "calendar"),
+			);
+		}
 		return changes > 0;
 	}
 
@@ -308,13 +337,83 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce
+				limit_usd, limit_window, limit_enforce, limit_window_mode, family_combo_overrides
 			FROM api_keys
-			WHERE is_active = 1 AND limit_usd IS NOT NULL
+			WHERE is_active = 1 AND EXISTS (SELECT 1 FROM api_key_limits WHERE api_key_id = api_keys.id)
 			ORDER BY created_at DESC
 		`);
 
 		return rows.map(toApiKey);
+	}
+
+	async getLimits(apiKeyId: string): Promise<ApiKeyLimit[]> {
+		const rows = await this.query<{
+			id: string;
+			api_key_id: string;
+			scope_model: string | null;
+			window: ApiKeyLimit["window"];
+			limit_usd: number;
+			enforce: ApiKeyLimit["enforce"];
+			created_at: number;
+			updated_at: number;
+		}>(
+			"SELECT * FROM api_key_limits WHERE api_key_id = ? ORDER BY created_at, id",
+			[apiKeyId],
+		);
+		return rows.map((row) => ({
+			id: row.id,
+			apiKeyId: row.api_key_id,
+			scopeModel: row.scope_model,
+			window: row.window,
+			limitUsd: Number(row.limit_usd),
+			enforce: row.enforce,
+			createdAt: Number(row.created_at),
+			updatedAt: Number(row.updated_at),
+		}));
+	}
+	async replaceLimits(
+		apiKeyId: string,
+		limits: ApiKeyLimitInput[],
+		mode: ApiKeyLimitWindowMode,
+	): Promise<boolean> {
+		if (!(await this.findById(apiKeyId))) return false;
+		const now = Date.now();
+		const statements = [
+			{
+				sql: "UPDATE api_keys SET limit_window_mode = ? WHERE id = ?",
+				params: [mode, apiKeyId] as unknown[],
+			},
+			{
+				sql: "DELETE FROM api_key_limits WHERE api_key_id = ?",
+				params: [apiKeyId] as unknown[],
+			},
+			...limits.map((limit) => ({
+				sql: 'INSERT INTO api_key_limits (id, api_key_id, scope_model, "window", limit_usd, enforce, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+				params: [
+					crypto.randomUUID(),
+					apiKeyId,
+					limit.scopeModel,
+					limit.window,
+					limit.limitUsd,
+					limit.enforce,
+					now,
+					now,
+				] as unknown[],
+			})),
+		];
+		await this.adapter.atomicStatements(statements);
+		return true;
+	}
+	async updateRouting(
+		apiKeyId: string,
+		overrides: Record<string, string> | null,
+	): Promise<boolean> {
+		return (
+			(await this.runWithChanges(
+				"UPDATE api_keys SET family_combo_overrides = ? WHERE id = ?",
+				[overrides == null ? null : JSON.stringify(overrides), apiKeyId],
+			)) > 0
+		);
 	}
 
 	/**

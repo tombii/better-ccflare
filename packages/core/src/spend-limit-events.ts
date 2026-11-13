@@ -9,6 +9,8 @@ import { EventEmitter } from "node:events";
  */
 export interface SpendLimitExceededEvt {
 	apiKeyId: string;
+	/** Child limit row; absent for callers using the legacy single limit. */
+	limitId?: string;
 	apiKeyName: string | null;
 	spentUsd: number;
 	limitUsd: number;

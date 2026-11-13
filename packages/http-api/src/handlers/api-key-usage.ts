@@ -2,6 +2,8 @@
 import { getModelRates } from "@better-ccflare/core";
 import {
 	errorResponse,
+	Forbidden,
+	HttpError,
 	InternalServerError,
 	jsonResponse,
 	NotFound,
@@ -19,8 +21,9 @@ import {
 	computePlanCost,
 	type PlanAccountUsage,
 } from "../services/api-key-usage";
+import { apiKeyUsageRange } from "../services/api-key-usage-range";
+import type { AuthenticationResult } from "../services/auth-service";
 import type { APIContext } from "../types";
-import { getRangeConfig } from "../utils/query-filters";
 import { withSpendUsage } from "./api-keys";
 
 const log = new Logger("ApiKeyUsageHandler");
@@ -73,6 +76,7 @@ interface AccountSqlRow {
 	account_name: string | null;
 	requests: number | string | null;
 	cost_usd: number | string | null;
+	plan_requests: number | string | null;
 	plan_value_usd: number | string | null;
 	plan_monthly_usd: number | string | null;
 }
@@ -89,32 +93,10 @@ interface SeriesSqlRow {
 	plan_value_usd: number | string | null;
 }
 
-/**
- * Bucket widths this endpoint will inline into SQL, keyed by the value
- * getRangeConfig hands back.
- *
- * The bucket size is written into the statement as an integer LITERAL rather
- * than bound, because it is the divisor of the time-bucket expression and that
- * expression appears in both SELECT and GROUP BY. A bind placeholder there is
- * exactly the shape that 500'd /api/stats on PostgreSQL (two `?` renumbered to
- * two different $N, two different parse trees, SQLSTATE 42803) and the static
- * scanner in pg-live-queries.test.ts rejects it outright.
- *
- * Inlining is safe ONLY because the value can never come from the request: it
- * is looked up in this frozen table and re-checked as a positive integer below.
- */
-const BUCKET_MS_BY_RANGE: Readonly<Record<string, number>> = Object.freeze({
-	"1h": 60_000,
-	"6h": 5 * 60_000,
-	"24h": 60 * 60_000,
-	"7d": 60 * 60_000,
-	"30d": 24 * 60 * 60_000,
-});
-
 /** Integer division on both dialects: `timestamp` is INTEGER/BIGINT everywhere. */
 function bucketExpression(bucketMs: number): string {
 	if (!Number.isSafeInteger(bucketMs) || bucketMs <= 0) {
-		// Unreachable via the frozen table above; a guard so a future edit
+		// Only fixed server-selected widths are used; guard so a future edit
 		// cannot smuggle a non-integer into the statement text.
 		throw new Error(`Invalid bucket size: ${bucketMs}`);
 	}
@@ -122,7 +104,7 @@ function bucketExpression(bucketMs: number): string {
 }
 
 /**
- * GET /api/api-keys/:idOrName/usage?range=<1h|6h|24h|7d|30d>
+ * GET /api/api-keys/:idOrName/usage?range=<1h|24h|7d|30d|this_month|last_month|custom>
  *
  * Everything the per-key monitoring page shows, for one key over one window.
  *
@@ -133,30 +115,21 @@ function bucketExpression(bucketMs: number): string {
  * of the whole requests table. That helper's behaviour is deliberately left
  * alone; this endpoint just does not use it.
  *
- * Reading is not admin-gated, matching the sibling GET /api/api-keys.
+ * Admins may read every key; other keys may read only their own usage.
  */
 export function createApiKeyUsageHandler(context: APIContext) {
 	return async (
 		keyIdOrName: string,
 		searchParams: URLSearchParams,
+		caller?: AuthenticationResult,
 	): Promise<Response> => {
 		const dbOps = context.dbOps;
 		const db = dbOps.getAdapter();
 
-		// getRangeConfig normalizes an unknown range to 24h and reports the
-		// effective value, so the window bounds and the echoed range agree.
-		const { startMs, range } = getRangeConfig(
-			searchParams.get("range") ?? "24h",
-		);
-		// Window bounds are computed HERE, in JavaScript, as epoch-ms. No SQL
-		// date/time function appears in any statement below: SQLite's
-		// strftime/julianday and PostgreSQL's date_trunc/now() share neither
-		// spelling nor semantics, and the repo stores every timestamp as a
-		// plain integer precisely so neither is ever needed.
-		const endMs = Date.now();
-		const windowMs = Math.max(0, endMs - startMs);
-
 		try {
+			const { startMs, endMs, range, bucketMs } =
+				apiKeyUsageRange(searchParams);
+			const windowMs = endMs - startMs;
 			const apiKey =
 				(await dbOps.getApiKey(keyIdOrName)) ??
 				(await dbOps.getApiKeyByName(keyIdOrName));
@@ -164,8 +137,16 @@ export function createApiKeyUsageHandler(context: APIContext) {
 				return errorResponse(NotFound(`API key '${keyIdOrName}' not found`));
 			}
 
+			if (
+				caller?.apiKeyId &&
+				caller.role !== "admin" &&
+				caller.apiKeyId !== apiKey.id
+			) {
+				return errorResponse(
+					Forbidden("API keys may only read their own usage"),
+				);
+			}
 			const keyId = apiKey.id;
-			const bucketMs = BUCKET_MS_BY_RANGE[range] ?? 60 * 60_000;
 
 			// -- Totals -----------------------------------------------------
 			// Params are spread once per `${…}`-free statement, in textual
@@ -183,9 +164,9 @@ export function createApiKeyUsageHandler(context: APIContext) {
 					${PLAN_VALUE_SUM} as plan_value_usd,
 					${API_COST_SUM} as api_cost_usd
 				FROM requests r
-				WHERE r.api_key_id = ? AND r.timestamp > ?
+				WHERE r.api_key_id = ? AND r.timestamp >= ? AND r.timestamp < ?
 			`,
-				[keyId, startMs],
+				[keyId, startMs, endMs],
 			);
 
 			const requests = num(totalsRow?.requests);
@@ -206,10 +187,10 @@ export function createApiKeyUsageHandler(context: APIContext) {
 					SUM(COALESCE(r.cost_usd, 0)) as cost_usd,
 					SUM(COALESCE(r.total_tokens, 0)) as total_tokens
 				FROM requests r
-				WHERE r.api_key_id = ? AND r.timestamp > ?
+				WHERE r.api_key_id = ? AND r.timestamp >= ? AND r.timestamp < ?
 				GROUP BY r.model
 			`,
-				[keyId, startMs],
+				[keyId, startMs, endMs],
 			);
 
 			// -- Per-account, plus this key's plan value on each --------------
@@ -221,13 +202,14 @@ export function createApiKeyUsageHandler(context: APIContext) {
 					COUNT(*) as requests,
 					SUM(COALESCE(r.cost_usd, 0)) as cost_usd,
 					${PLAN_VALUE_SUM} as plan_value_usd,
+					SUM(CASE WHEN r.billing_type = 'plan' THEN 1 ELSE 0 END) as plan_requests,
 					MAX(a.plan_monthly_usd) as plan_monthly_usd
 				FROM requests r
 				LEFT JOIN accounts a ON a.id = r.account_used
-				WHERE r.api_key_id = ? AND r.timestamp > ?
+				WHERE r.api_key_id = ? AND r.timestamp >= ? AND r.timestamp < ?
 				GROUP BY r.account_used, a.name
 			`,
-				[keyId, startMs],
+				[keyId, startMs, endMs],
 			);
 
 			// -- Apportionment denominator: ALL keys' plan value per account --
@@ -235,7 +217,7 @@ export function createApiKeyUsageHandler(context: APIContext) {
 			// account with no plan traffic from this key cannot receive a
 			// contribution, so asking about it would be work for nothing.
 			const planAccountIds = accountRows
-				.filter((row) => row.account_id != null && num(row.plan_value_usd) > 0)
+				.filter((row) => row.account_id != null && num(row.plan_requests) > 0)
 				.map((row) => row.account_id as string);
 
 			const accountPlanTotals = new Map<string, number>();
@@ -250,10 +232,10 @@ export function createApiKeyUsageHandler(context: APIContext) {
 						r.account_used as account_id,
 						${PLAN_VALUE_SUM} as plan_value_usd
 					FROM requests r
-					WHERE r.timestamp > ? AND r.account_used IN (${placeholders})
+					WHERE r.timestamp >= ? AND r.timestamp < ? AND r.account_used IN (${placeholders})
 					GROUP BY r.account_used
 				`,
-					[startMs, ...planAccountIds],
+					[startMs, endMs, ...planAccountIds],
 				);
 				for (const row of totals) {
 					if (row.account_id != null) {
@@ -275,16 +257,16 @@ export function createApiKeyUsageHandler(context: APIContext) {
 					${API_COST_SUM} as api_cost_usd,
 					${PLAN_VALUE_SUM} as plan_value_usd
 				FROM requests r
-				WHERE r.api_key_id = ? AND r.timestamp > ?
+				WHERE r.api_key_id = ? AND r.timestamp >= ? AND r.timestamp < ?
 				GROUP BY 1
 				ORDER BY 1
 			`,
-				[keyId, startMs],
+				[keyId, startMs, endMs],
 			);
 
 			// -- Apportionment ------------------------------------------------
 			const planAccounts: PlanAccountUsage[] = accountRows
-				.filter((row) => row.account_id != null && num(row.plan_value_usd) > 0)
+				.filter((row) => row.account_id != null && num(row.plan_requests) > 0)
 				.map((row) => {
 					const accountId = row.account_id as string;
 					const keyPlanValueUsd = num(row.plan_value_usd);
@@ -304,7 +286,7 @@ export function createApiKeyUsageHandler(context: APIContext) {
 					};
 				});
 
-			const planCost = computePlanCost(planAccounts, windowMs);
+			const planCost = computePlanCost(planAccounts, windowMs, startMs);
 			const { efficiencyRatio, efficiencyStatus } = computeEfficiency(planCost);
 
 			// -- Unknown pricing disclosure -------------------------------------
@@ -360,6 +342,11 @@ export function createApiKeyUsageHandler(context: APIContext) {
 			}));
 
 			const response: ApiKeyUsageResponse = {
+				canManage: !caller?.apiKeyId || caller.role === "admin",
+				limitWindowMode: keyResponse.limitWindowMode ?? "calendar",
+				familyComboOverrides: keyResponse.familyComboOverrides ?? null,
+				limits: keyResponse.limits ?? [],
+				totalCostUsd: apiCostUsd + planValueUsd,
 				apiKey: {
 					id: keyResponse.id,
 					name: keyResponse.name,
@@ -406,6 +393,7 @@ export function createApiKeyUsageHandler(context: APIContext) {
 
 			return jsonResponse(response);
 		} catch (error) {
+			if (error instanceof HttpError) return errorResponse(error);
 			// A NotFound raised above is returned directly, never thrown, so
 			// anything reaching here is a genuine failure.
 			log.error("API key usage error:", error);

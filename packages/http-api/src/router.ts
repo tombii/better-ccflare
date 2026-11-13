@@ -62,6 +62,10 @@ import {
 	createApiKeyDeleteHandler,
 	createApiKeyDisableHandler,
 	createApiKeyEnableHandler,
+	createApiKeyGetHandler,
+	createApiKeyLimitsGetHandler,
+	createApiKeyLimitsPutHandler,
+	createApiKeyRoutingUpdateHandler,
 	createApiKeysGenerateHandler,
 	createApiKeysListHandler,
 	createApiKeysStatsHandler,
@@ -942,16 +946,44 @@ export class APIRouter {
 		if (path.startsWith("/api/api-keys/")) {
 			const parts = path.split("/");
 			const keyIdOrName = decodeURIComponent(parts[3]); // Decode URL-encoded IDs/names
+			if (parts.length === 4 && method === "GET") {
+				return await createApiKeyGetHandler(this.context.dbOps)(keyIdOrName);
+			}
 
-			// API key usage - the per-key monitoring page's single read.
-			// NOT admin-gated: it is a read, and the sibling reads
-			// (GET /api/api-keys, GET /api/api-keys/stats) are not gated
-			// either. The write routes below are, and stay that way.
+			// The handler verifies ownership after resolving either an id or name.
 			if (path.endsWith("/usage") && method === "GET") {
 				const usageHandler = createApiKeyUsageHandler(this.context);
 				return await this.wrapHandler((_req, reqUrl) =>
-					usageHandler(keyIdOrName, reqUrl.searchParams),
+					usageHandler(keyIdOrName, reqUrl.searchParams, authResult),
 				)(req, url);
+			}
+
+			if (
+				(parts.length === 5 &&
+					parts[4] === "limits" &&
+					(method === "GET" || method === "PUT")) ||
+				(parts.length === 5 && parts[4] === "routing" && method === "PATCH")
+			) {
+				if (authResult.apiKeyId && authResult.role !== "admin") {
+					return errorResponse(
+						Unauthorized(
+							"Only admin keys can manage API key limits and routing",
+						),
+					);
+				}
+				if (parts[4] === "routing")
+					return await createApiKeyRoutingUpdateHandler(this.context.dbOps)(
+						req,
+						keyIdOrName,
+					);
+				if (method === "PUT")
+					return await createApiKeyLimitsPutHandler(this.context.dbOps)(
+						req,
+						keyIdOrName,
+					);
+				return await createApiKeyLimitsGetHandler(this.context.dbOps)(
+					keyIdOrName,
+				);
 			}
 
 			// API key role update - Only admin keys can update roles

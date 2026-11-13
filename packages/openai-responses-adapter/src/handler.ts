@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { Logger } from "@better-ccflare/logger";
 import type {
+	ApiKeyLimitWindowMode,
 	ApiKeyRestrictions,
 	ApiKeySpendLimit,
 } from "@better-ccflare/types";
@@ -398,6 +399,10 @@ export async function handleResponsesRequest(
 	/** The calling API key's spend limit, forwarded for the same reason:
 	 * leaving it out would make the Codex endpoint an unmetered bypass. */
 	spendLimit?: ApiKeySpendLimit | null,
+	keyPolicy?: {
+		limitWindowMode?: ApiKeyLimitWindowMode;
+		familyComboOverrides?: Record<string, string> | null;
+	},
 ): Promise<Response> {
 	// 1. Parse body — Codex CLI compresses request bodies (zstd, gzip, deflate).
 	// Bun decompresses response bodies automatically but not request bodies,
@@ -673,7 +678,7 @@ export async function handleResponsesRequest(
 			ctx,
 			apiKeyId,
 			apiKeyName,
-			{ trustedNativeResponses: true, restrictions, spendLimit },
+			{ trustedNativeResponses: true, restrictions, spendLimit, ...keyPolicy },
 		);
 	} catch (err) {
 		const statusCode =

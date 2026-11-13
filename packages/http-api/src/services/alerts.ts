@@ -394,9 +394,8 @@ export class AlertService {
 	 *
 	 * "warning", not "critical": nothing is broken and nothing is being
 	 * refused. The operator chose warn-only, and this reports what they asked
-	 * to be told. Cooldown-bucketed by key through the shared
-	 * `buildThresholdAlertId`, so a key that is over budget and busy raises one
-	 * alert per cooldown window rather than one per request.
+	 * to be told. Each limit row has its own cooldown, so an exceeded model
+	 * budget does not suppress a warning for another window on the same key.
 	 */
 	private async handleSpendLimitExceeded(
 		event: SpendLimitExceededEvt,
@@ -407,7 +406,7 @@ export class AlertService {
 		const alert: AlertEvent = {
 			id: buildThresholdAlertId(
 				"api_key_spend_limit",
-				event.apiKeyId,
+				event.limitId ? `${event.apiKeyId}:${event.limitId}` : event.apiKeyId,
 				timestamp,
 				config.cooldownMinutes,
 			),

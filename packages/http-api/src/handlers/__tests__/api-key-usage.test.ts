@@ -6,7 +6,9 @@ import { existsSync, unlinkSync } from "node:fs";
 import "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { DatabaseFactory } from "@better-ccflare/database";
+import { resetApiKeySpendCounter } from "@better-ccflare/proxy";
 import type { ApiKeyUsageResponse } from "@better-ccflare/types";
+import { calendarMonthFraction } from "../../services/api-key-usage-range";
 import type { APIContext } from "../../types";
 import { createApiKeyUsageHandler } from "../api-key-usage";
 
@@ -36,6 +38,7 @@ describe("createApiKeyUsageHandler", () => {
 
 	beforeEach(() => {
 		cleanupDbFiles();
+		resetApiKeySpendCounter();
 		DatabaseFactory.initialize(TEST_DB_PATH);
 		dbOps = DatabaseFactory.getInstance();
 		now = Date.now();
@@ -48,6 +51,7 @@ describe("createApiKeyUsageHandler", () => {
 		// SQLITE_IOERR_VNODE, which surfaces as an unhandled error between
 		// tests and can leave the next beforeEach unable to open the database.
 		DatabaseFactory.reset();
+		resetApiKeySpendCounter();
 		cleanupDbFiles();
 	});
 
@@ -323,9 +327,11 @@ describe("createApiKeyUsageHandler", () => {
 		expect(body.planValueUsd).toBeCloseTo(100, 10);
 		expect(body.planCost.accounts).toHaveLength(1);
 		expect(body.planCost.accounts[0].share).toBeCloseTo(0.25, 10);
-		expect(body.planCost.planCostUsd).toBeCloseTo(75, 6);
+		const expectedCost =
+			75 * calendarMonthFraction(body.windowStartMs, body.windowEndMs);
+		expect(body.planCost.planCostUsd).toBeCloseTo(expectedCost, 6);
 		expect(body.efficiencyStatus).toBe("ok");
-		expect(body.efficiencyRatio).toBeCloseTo(100 / 75, 6);
+		expect(body.efficiencyRatio).toBeCloseTo(100 / expectedCost, 6);
 	});
 
 	it("reports an unpriced account separately rather than as free", async () => {
@@ -384,6 +390,48 @@ describe("createApiKeyUsageHandler", () => {
 		expect(body.limit.limitEnforce).toBe("warn");
 		expect(body.apiKey.name).toBe("alpha");
 		expect(body.apiKey.role).toBe("admin");
+	});
+
+	it("bounds custom queries on both sides, including the denominator and series", async () => {
+		await seedKey("key-1", "alpha");
+		await seedKey("key-2", "beta");
+		await seedAccount("acc-1", "one", 300);
+		await seedRequest({
+			apiKeyId: "key-1",
+			accountId: "acc-1",
+			billingType: "plan",
+			costUsd: 10,
+			agoMs: 2 * HOUR,
+		});
+		await seedRequest({
+			apiKeyId: "key-2",
+			accountId: "acc-1",
+			billingType: "plan",
+			costUsd: 10,
+			agoMs: 2 * HOUR,
+		});
+		await seedRequest({
+			apiKeyId: "key-1",
+			accountId: "acc-1",
+			billingType: "plan",
+			costUsd: 100,
+			agoMs: 0,
+		});
+		const res = await handler(
+			"alpha",
+			new URLSearchParams({
+				range: "custom",
+				from: new Date(now - 3 * HOUR).toISOString(),
+				to: new Date(now - HOUR).toISOString(),
+			}),
+		);
+		const body = (await res.json()) as ApiKeyUsageResponse;
+		expect(res.status).toBe(200);
+		expect(body.requests).toBe(1);
+		expect(body.planValueUsd).toBe(10);
+		expect(body.totalCostUsd).toBe(10);
+		expect(body.planCost.accounts[0].share).toBe(0.5);
+		expect(body.series.reduce((sum, point) => sum + point.requests, 0)).toBe(1);
 	});
 
 	it("normalizes an unknown range to 24h", async () => {

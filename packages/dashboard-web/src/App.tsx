@@ -12,6 +12,7 @@ import { AccountsTab } from "./components/AccountsTab";
 import { AgentsTab } from "./components/AgentsTab";
 import { ApiKeyAuthDialog } from "./components/ApiKeyAuthDialog";
 import { ApiKeysTab } from "./components/ApiKeysTab";
+import { apiKeyPageTarget } from "./components/api-key-usage/tab-helpers";
 import { ComboFlowTab } from "./components/combo-flow/ComboFlowTab";
 import { CombosTab } from "./components/combos/CombosTab";
 import { DebugPanel } from "./components/DebugPanel";
@@ -72,6 +73,7 @@ const LoadingSkeleton = () => (
 
 export function App() {
 	const location = useLocation();
+	const usageKeyForAuth = apiKeyPageTarget(location.pathname, location.search);
 	// Build the dashboard routes once; released features remain reachable.
 	const routes = useMemo(() => {
 		const baseRoutes = [
@@ -135,6 +137,17 @@ export function App() {
 					"Per-key cost, plan efficiency and limits for one API key at a time",
 			},
 			{
+				path: "/api-keys/:name",
+				element: (
+					<Suspense fallback={<LoadingSkeleton />}>
+						<LazyApiKeyUsageTab />
+					</Suspense>
+				),
+				title: "API Key Usage",
+				subtitle:
+					"Per-key cost, plan efficiency and limits for one API key at a time",
+			},
+			{
 				path: "/agents",
 				element: <AgentsTab />,
 				title: "Agent Management",
@@ -185,9 +198,15 @@ export function App() {
 	}, []);
 
 	const currentRoute =
-		routes.find((route) => route.path === location.pathname) || routes[0];
+		routes.find(
+			(route) =>
+				route.path === location.pathname ||
+				(route.path === "/api-keys/:name" &&
+					location.pathname.startsWith("/api-keys/")),
+		) || routes[0];
 	const [showAuthDialog, setShowAuthDialog] = useState(false);
 	const [isAuthenticated, setIsAuthenticated] = useState(false);
+	const [canManage, setCanManage] = useState(false);
 	const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 	const [authError, setAuthError] = useState<string | null>(null);
 	const [authRequired, setAuthRequired] = useState(false);
@@ -264,7 +283,13 @@ export function App() {
 			// Always verify with a test request, even if we have a stored key
 			// The stored key might be invalid, deleted, or expired
 			try {
-				await api.getStats();
+				if (usageKeyForAuth) {
+					const usage = await api.getApiKeyUsage(usageKeyForAuth);
+					setCanManage(usage.canManage);
+				} else {
+					await api.getStats();
+					setCanManage(true);
+				}
 				// If successful, we're authenticated (either no auth required, or valid key)
 				setIsAuthenticated(true);
 				// Auth is required only if we got here with a stored key
@@ -276,6 +301,10 @@ export function App() {
 					api.clearApiKey();
 					setAuthRequired(true);
 					setShowAuthDialog(true);
+				} else if (usageKeyForAuth) {
+					setCanManage(false);
+					// The page presents missing-key and permission errors itself.
+					setIsAuthenticated(true);
 				}
 			} finally {
 				setIsCheckingAuth(false);
@@ -283,7 +312,7 @@ export function App() {
 		};
 
 		checkAuth();
-	}, []);
+	}, [usageKeyForAuth]);
 
 	// Listen for 401 errors from API client
 	useEffect(() => {
@@ -308,7 +337,14 @@ export function App() {
 
 		// Try to make a request to verify the key
 		try {
-			await api.getStats();
+			if (usageKeyForAuth) {
+				const usage = await api.getApiKeyUsage(usageKeyForAuth);
+				setCanManage(usage.canManage);
+			} else {
+				await api.getStats();
+				setCanManage(true);
+			}
+			queryClient.clear();
 			setIsAuthenticated(true);
 			setShowAuthDialog(false);
 			return true;
@@ -324,6 +360,7 @@ export function App() {
 	};
 
 	const handleLogout = () => {
+		queryClient.clear();
 		api.clearApiKey();
 		setIsAuthenticated(false);
 		setShowAuthDialog(true);
@@ -351,7 +388,10 @@ export function App() {
 		<QueryClientProvider client={queryClient}>
 			<ThemeProvider>
 				<div className="min-h-screen bg-background">
-					<Navigation onLogout={authRequired ? handleLogout : undefined} />
+					<Navigation
+						canManage={isAuthenticated && canManage}
+						onLogout={authRequired ? handleLogout : undefined}
+					/>
 
 					{/* Main Content */}
 					<main className="lg:pl-64">

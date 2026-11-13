@@ -1,6 +1,8 @@
 // packages/types/src/api-key-usage.ts
 import type {
 	ApiKeyLimitEnforcement,
+	ApiKeyLimitStatus,
+	ApiKeyLimitWindowMode,
 	ApiKeyRestrictions,
 	ApiKeyRole,
 	ApiKeySpendWindow,
@@ -66,7 +68,7 @@ export interface ApiKeyUsagePlanCost {
 	accounts: ApiKeyUsagePlanAccountShare[];
 	/** Account ids carrying plan traffic with no plan_monthly_usd set. */
 	unpricedAccountIds: string[];
-	/** Window length in days, the proration numerator (price * days / 30). */
+	/** Elapsed window length in days; prices use each Dublin calendar month's duration. */
 	windowDays: number;
 }
 
@@ -128,6 +130,11 @@ export interface ApiKeyUsageLimitState {
 }
 
 export interface ApiKeyUsageResponse {
+	/** Whether this caller can edit the key's limits, restrictions and routing. */
+	canManage: boolean;
+	limitWindowMode: ApiKeyLimitWindowMode;
+	familyComboOverrides: Record<string, string> | null;
+	limits: ApiKeyLimitStatus[];
 	apiKey: {
 		id: string;
 		name: string;
@@ -151,6 +158,8 @@ export interface ApiKeyUsageResponse {
 	apiCostUsd: number;
 	/** Counterfactual: what the plan traffic WOULD have cost at API rates. */
 	planValueUsd: number;
+	/** All traffic priced at pay-per-token rates, the basis for key limits. */
+	totalCostUsd: number;
 	planCost: ApiKeyUsagePlanCost;
 
 	/**
