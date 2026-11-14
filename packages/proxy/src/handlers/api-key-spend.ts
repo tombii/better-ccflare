@@ -135,6 +135,8 @@ export class ApiKeySpendCounter {
 			events: SpendEvent[];
 			/** Settled costs have a complete expiry tail only through this instant. */
 			expiryThroughMs: number;
+			/** Earliest scoped expiry known from the aggregate snapshot. */
+			nextExpiryMs: number | null;
 		}
 	>();
 	private readonly limitInflight = new Map<string, Promise<void>>();
@@ -513,6 +515,17 @@ export class ApiKeySpendCounter {
 							.filter(matches)
 							.reduce((sum, event) => sum + event.costUsd, 0)
 					: events.reduce((sum, event) => sum + event.costUsd, 0);
+				const firstTimestampMs = (aggregate?.totals ?? []).reduce(
+					(first, total) =>
+						this.matchesEventScope(total, row.scopeModel) &&
+						total.firstTimestampMs != null
+							? Math.min(first, total.firstTimestampMs)
+							: first,
+					events.reduce(
+						(first, event) => Math.min(first, event.timestamp),
+						Number.POSITIVE_INFINITY,
+					),
+				);
 				this.limitEntries.set(this.identity(apiKeyId, row), {
 					apiKeyId,
 					limit: row,
@@ -522,6 +535,10 @@ export class ApiKeySpendCounter {
 					spentUsd,
 					events: mode === "rolling" ? events : [],
 					cursor: 0,
+					nextExpiryMs:
+						mode === "rolling" && Number.isFinite(firstTimestampMs)
+							? firstTimestampMs + API_KEY_ROLLING_DURATION_MS[row.window]
+							: null,
 					// A second TTL lets normal refreshes stay in the background.
 					expiryThroughMs:
 						mode === "rolling" && aggregate
@@ -617,6 +634,7 @@ export class ApiKeySpendCounter {
 			cursor: number;
 			events: SpendEvent[];
 			expiryThroughMs: number;
+			nextExpiryMs: number | null;
 		},
 		excludeReservationId?: string,
 	): SpendSnapshot {
@@ -666,6 +684,15 @@ export class ApiKeySpendCounter {
 				if (remaining < limit.limitUsd) break;
 			}
 			if (remaining >= limit.limitUsd) resetMs = null;
+			// Below budget, the aggregate MIN gives the next drop even when it
+			// lies beyond the complete expiry edge. Once it has expired, only the
+			// retained edge can identify a successor until the next SQL snapshot.
+			if (
+				committedUsd < limit.limitUsd &&
+				entry.nextExpiryMs !== null &&
+				entry.nextExpiryMs > nowMs
+			)
+				resetMs = entry.nextExpiryMs;
 		}
 		if (Math.abs(Date.now() - nowMs) < 1000 && !this.refreshTimer)
 			this.scheduleRefresh();
@@ -1074,6 +1101,13 @@ export class ApiKeySpendCounter {
 				continue;
 			}
 			const event = recorded;
+			const expiresAt =
+				timestamp + API_KEY_ROLLING_DURATION_MS[entry.limit.window];
+			if (
+				entry.spentUsd === 0 ||
+				(entry.nextExpiryMs !== null && expiresAt < entry.nextExpiryMs)
+			)
+				entry.nextExpiryMs = expiresAt;
 			// Requests may finish out of order; preserve timestamp ordering for expiry.
 			if (
 				entry.events.length &&

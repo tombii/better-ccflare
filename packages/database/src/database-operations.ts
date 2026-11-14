@@ -2926,6 +2926,7 @@ OAuth tokens will need to be re-authenticated.
 				model: string | null;
 				requestedModel: string | null;
 				totalUsd: number;
+				firstTimestampMs?: number | null;
 			}>;
 		}>;
 		events: Array<{
@@ -2944,6 +2945,11 @@ OAuth tokens will need to be re-authenticated.
 		);
 		const eventCosts = Array.from({ length: count }, (_, index) =>
 			index === 0 ? "cost_usd" : "0",
+		);
+		const firstTimestamps = Array.from({ length: count }, (_, index) =>
+			windows[index]
+				? `MIN(CASE WHEN completed_ms ${rollingSinceMs === null ? ">=" : ">"} ? AND completed_ms < ? THEN completed_ms ELSE NULL END) AS first_${index}`
+				: `MIN(completed_ms) AS first_${index}`,
 		);
 		// Legacy callers without aggregate windows can still request full events.
 		// Normal reconciliation returns only acknowledgements and the oldest
@@ -2964,6 +2970,7 @@ OAuth tokens will need to be re-authenticated.
 			nowMs,
 			apiKeyId,
 		];
+		for (const window of windows) params.push(window.startMs, window.endMs);
 		for (const window of windows) params.push(window.startMs, window.endMs);
 		params.push(eventSinceMs);
 		const expiryClauses = boundedExpiry
@@ -2988,10 +2995,10 @@ OAuth tokens will need to be re-authenticated.
 					cost_usd, model, COALESCE(limit_model, original_model) AS requested_model
 				FROM requests WHERE api_key_id = ? AND requests.timestamp >= ? AND requests.timestamp <= ? AND cost_usd > 0
 			), eligible AS (SELECT * FROM completed WHERE completed_ms >= ? AND completed_ms <= ? AND completed_ms >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0))
-			SELECT 'total' AS kind, NULL AS request_id, NULL AS completed_ms, model, requested_model, ${sums.join(", ")}
+			SELECT 'total' AS kind, NULL AS request_id, NULL AS completed_ms, model, requested_model, ${sums.join(", ")}, ${firstTimestamps.join(", ")}
 			FROM eligible GROUP BY model, requested_model
 			UNION ALL
-			SELECT 'event' AS kind, id AS request_id, completed_ms, model, requested_model, ${eventCosts.join(", ")}
+			SELECT 'event' AS kind, id AS request_id, completed_ms, model, requested_model, ${eventCosts.join(", ")}, ${Array(count).fill("NULL").join(", ")}
 			FROM eligible WHERE completed_ms >= ?${expiryClauses.map((clause) => ` OR ${clause}`).join("")}
 		`,
 					params,
@@ -3008,6 +3015,14 @@ OAuth tokens will need to be re-authenticated.
 						model: row.model,
 						requestedModel: row.requested_model,
 						totalUsd: Number(row[`total_${index}`]),
+						...(rollingSinceMs !== null
+							? {
+									firstTimestampMs:
+										row[`first_${index}`] == null
+											? null
+											: Number(row[`first_${index}`]),
+								}
+							: {}),
 					})),
 			})),
 			events: rows

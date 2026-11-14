@@ -179,6 +179,7 @@ describe("budget reconciliation SQL", () => {
 			120000,
 		);
 		expect(result.calendar[0].totals[0].totalUsd).toBe(7);
+		expect(result.calendar[0].totals[0].firstTimestampMs).toBe(start + 1000);
 		expect(result.events.map(({ requestId }) => requestId).sort()).toEqual([
 			"ack",
 			"edge",

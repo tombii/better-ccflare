@@ -49,6 +49,94 @@ const aggregate = (totalUsd: number, events: unknown[] = []) => ({
 });
 
 describe("bounded rolling reconciliation", () => {
+	it("reports the next scoped expiry below budget without retaining settled history", async () => {
+		const duration = 30 * 86400000;
+		const firstTimestampMs = NOW - 86400000;
+		const c = counter({
+			getApiKeySpendReconciliation: async () => ({
+				calendar: [
+					{
+						window: "month",
+						totals: [
+							{
+								model: "opus",
+								requestedModel: null,
+								totalUsd: 0.5,
+								firstTimestampMs,
+							},
+							{
+								model: "sonnet",
+								requestedModel: null,
+								totalUsd: 0.1,
+								firstTimestampMs: NOW - 2 * 86400000,
+							},
+						],
+					},
+				],
+				events: [],
+			}),
+		});
+		const snapshot = await c.getLimitSnapshot(
+			"k",
+			{ ...limit, scopeModel: "opus" },
+			"rolling",
+			NOW,
+		);
+		expect(snapshot.spentUsd).toBe(0.5);
+		expect(snapshot.resetMs).toBe(firstTimestampMs + duration);
+	});
+	it("does not report a past aggregate expiry after its retained edge expires", async () => {
+		const duration = 30 * 86400000;
+		const firstTimestampMs = NOW - duration + 1000;
+		const c = counter({
+			getApiKeySpendReconciliation: async () => ({
+				calendar: [
+					{
+						window: "month",
+						totals: [
+							{
+								model: "opus",
+								requestedModel: null,
+								totalUsd: 0.5,
+								firstTimestampMs,
+							},
+						],
+					},
+				],
+				events: [
+					{
+						requestId: "edge",
+						timestamp: firstTimestampMs,
+						costUsd: 0.1,
+						model: "opus",
+						requestedModel: null,
+					},
+				],
+			}),
+		});
+		expect((await c.getLimitSnapshot("k", limit, "rolling", NOW)).resetMs).toBe(
+			NOW + 1000,
+		);
+		const snapshot = await c.getLimitSnapshot(
+			"k",
+			limit,
+			"rolling",
+			NOW + 1000,
+		);
+		expect(snapshot.spentUsd).toBeCloseTo(0.4);
+		expect(snapshot.resetMs).toBeNull();
+	});
+	it("reports a newly recorded next expiry after an empty aggregate snapshot", async () => {
+		spyOn(Date, "now").mockReturnValue(NOW);
+		const c = counter({
+			getApiKeySpendReconciliation: async () => aggregate(0),
+		});
+		await c.getLimitSnapshot("k", limit, "rolling", NOW);
+		c.record("k", 0.25, "opus", NOW, "local");
+		const snapshot = await c.getLimitSnapshot("k", limit, "rolling", NOW);
+		expect(snapshot.spentUsd).toBe(0.25);
+		expect(snapshot.resetMs).toBe(NOW + 30 * 86400000);
+	});
 	it("gives reset reads and reconciliation separate timeout budgets", async () => {
 		const c = counter(
 			{
