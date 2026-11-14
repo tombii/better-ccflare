@@ -2928,6 +2928,13 @@ OAuth tokens will need to be re-authenticated.
 				totalUsd: number;
 				firstTimestampMs?: number | null;
 			}>;
+			/** Omitted settled events, rounded up to hourly completion boundaries. */
+			buckets?: Array<{
+				timestamp: number;
+				costUsd: number;
+				model: string | null;
+				requestedModel: string | null;
+			}>;
 		}>;
 		events: Array<{
 			requestId: string;
@@ -2970,8 +2977,6 @@ OAuth tokens will need to be re-authenticated.
 			nowMs,
 			apiKeyId,
 		];
-		for (const window of windows) params.push(window.startMs, window.endMs);
-		for (const window of windows) params.push(window.startMs, window.endMs);
 		params.push(eventSinceMs);
 		const expiryClauses = boundedExpiry
 			? windows.map((window) => {
@@ -2979,6 +2984,13 @@ OAuth tokens will need to be re-authenticated.
 					return "(completed_ms > ? AND completed_ms <= ?)";
 				})
 			: [];
+		for (const window of windows) params.push(window.startMs, window.endMs);
+		for (const window of windows) params.push(window.startMs, window.endMs);
+		// Integer division works on both SQLite and PostgreSQL. Round up so
+		// these compact relief points can never expire a cost early.
+		const bucketEnd = "(CAST(completed_ms / 3600000 AS BIGINT) + 1) * 3600000";
+		if (boundedExpiry)
+			for (const window of windows) params.push(window.startMs, window.endMs);
 		const rows = await withDatabaseRetry(
 			() =>
 				this.adapter.query<{
@@ -2994,12 +3006,20 @@ OAuth tokens will need to be re-authenticated.
 				SELECT id, COALESCE(spend_recorded_at, timestamp + COALESCE(response_time_ms, 0)) AS completed_ms,
 					cost_usd, model, COALESCE(limit_model, original_model) AS requested_model
 				FROM requests WHERE api_key_id = ? AND requests.timestamp >= ? AND requests.timestamp <= ? AND cost_usd > 0
-			), eligible AS (SELECT * FROM completed WHERE completed_ms >= ? AND completed_ms <= ? AND completed_ms >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0))
+			), eligible AS (SELECT * FROM completed WHERE completed_ms >= ? AND completed_ms <= ? AND completed_ms >= COALESCE((SELECT spend_reset_at FROM api_keys WHERE id = ?), 0)),
+			classified AS (SELECT *, CASE WHEN completed_ms >= ?${expiryClauses.map((clause) => ` OR ${clause}`).join("")} THEN 1 ELSE 0 END AS exact_event FROM eligible)
 			SELECT 'total' AS kind, NULL AS request_id, NULL AS completed_ms, model, requested_model, ${sums.join(", ")}, ${firstTimestamps.join(", ")}
-			FROM eligible GROUP BY model, requested_model
+			FROM classified GROUP BY model, requested_model
 			UNION ALL
 			SELECT 'event' AS kind, id AS request_id, completed_ms, model, requested_model, ${eventCosts.join(", ")}, ${Array(count).fill("NULL").join(", ")}
-			FROM eligible WHERE completed_ms >= ?${expiryClauses.map((clause) => ` OR ${clause}`).join("")}
+			FROM classified WHERE exact_event = 1${
+				boundedExpiry
+					? `
+			UNION ALL
+			SELECT 'bucket' AS kind, NULL AS request_id, ${bucketEnd} AS completed_ms, model, requested_model, ${sums.join(", ")}, ${Array(count).fill("NULL").join(", ")}
+			FROM classified WHERE exact_event = 0 GROUP BY ${bucketEnd}, model, requested_model`
+					: ""
+			}
 		`,
 					params,
 				),
@@ -3024,6 +3044,21 @@ OAuth tokens will need to be re-authenticated.
 								}
 							: {}),
 					})),
+				...(boundedExpiry
+					? {
+							buckets: rows
+								.filter(
+									(row) =>
+										row.kind === "bucket" && Number(row[`total_${index}`]) > 0,
+								)
+								.map((row) => ({
+									timestamp: Number(row.completed_ms),
+									costUsd: Number(row[`total_${index}`]),
+									model: row.model,
+									requestedModel: row.requested_model,
+								})),
+						}
+					: {}),
 			})),
 			events: rows
 				.filter((row) => row.kind === "event")

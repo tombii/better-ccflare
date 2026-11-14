@@ -184,6 +184,88 @@ describe("budget reconciliation SQL", () => {
 			"ack",
 			"edge",
 		]);
+		expect(result.calendar[0].buckets).toEqual([
+			{
+				timestamp: (Math.floor((NOW - 86400000) / 3600000) + 1) * 3600000,
+				costUsd: 4,
+				model: "opus",
+				requestedModel: "sonnet",
+			},
+		]);
+	});
+	it("keeps hourly buckets disjoint from every rolling window edge and acknowledgement", async () => {
+		const monthStart = NOW - 30 * 86400000;
+		const dayStart = NOW - 86400000;
+		await event("month-edge", monthStart + 1000, 0, 1);
+		await event("day-edge", dayStart + 1000, 0, 2);
+		await event("middle-a", NOW - 3600000, 0, 4, "mapped", "opus");
+		await event("middle-b", NOW - 3600000 + 1000, 0, 8, "mapped", "opus");
+		await event("ack", NOW - 1000, 0, 16);
+		const query = spyOn(db.getAdapter(), "query");
+		try {
+			const result = await db.getApiKeySpendReconciliation(
+				"key",
+				[
+					{ window: "month", startMs: monthStart, endMs: NOW + 30 * 86400000 },
+					{ window: "day", startMs: dayStart, endMs: NOW + 86400000 },
+				],
+				monthStart,
+				NOW - 600000,
+				NOW,
+				120000,
+			);
+			expect(result.events.map(({ requestId }) => requestId).sort()).toEqual([
+				"ack",
+				"day-edge",
+				"month-edge",
+			]);
+			expect(
+				result.calendar.map(({ totals }) =>
+					totals.reduce((sum, row) => sum + row.totalUsd, 0),
+				),
+			).toEqual([31, 30]);
+			for (const window of result.calendar) {
+				expect(window.buckets).toEqual([
+					{
+						timestamp: Math.floor(NOW / 3600000) * 3600000,
+						costUsd: 12,
+						model: "mapped",
+						requestedModel: "opus",
+					},
+				]);
+			}
+			// This query is shared by both adapters; BIGINT integer arithmetic
+			// avoids SQLite-only datetime functions and PostgreSQL int overflow.
+			const [sql, params] = query.mock.calls[0];
+			expect(sql).toContain("CAST(completed_ms / 3600000 AS BIGINT)");
+			expect(sql.match(/\?/g)?.length).toBe(params?.length);
+		} finally {
+			query.mockRestore();
+		}
+	});
+	it("collapses a busy settled hour to one bucket, including its exact lower boundary", async () => {
+		const hourStart = Math.floor(NOW / 3600000) * 3600000 - 3600000;
+		for (let index = 0; index < 100; index++) {
+			await event(`settled-${index}`, hourStart + index, 0, 1);
+		}
+		const start = NOW - 30 * 86400000;
+		const result = await db.getApiKeySpendReconciliation(
+			"key",
+			[{ window: "month", startMs: start, endMs: NOW + 30 * 86400000 }],
+			start,
+			NOW - 600000,
+			NOW,
+			120000,
+		);
+		expect(result.events).toEqual([]);
+		expect(result.calendar[0].buckets).toEqual([
+			{
+				timestamp: hourStart + 3600000,
+				costUsd: 100,
+				model: "opus",
+				requestedModel: "sonnet",
+			},
+		]);
 	});
 	it("includes rolling costs recorded exactly at the reset boundary", async () => {
 		await db.createApiKey({

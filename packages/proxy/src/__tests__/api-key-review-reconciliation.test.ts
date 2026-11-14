@@ -372,30 +372,117 @@ describe("bounded rolling reconciliation", () => {
 		expect(state(c).spendResetPoints.size).toBe(0);
 		expect(state(c).limitGenerations.size).toBe(0);
 	});
-	it("does not infer relief across the omitted middle from acknowledgement events", async () => {
+	it("bounds middle-window relief by the hour end without double-counting exact events", async () => {
 		const duration = 30 * 86400000;
+		const hour = 3600000;
+		const middle = NOW - 10 * 86400000 + 1234;
+		const bucketEnd = (Math.floor(middle / hour) + 1) * hour;
 		const c = counter({
-			getApiKeySpendReconciliation: async () =>
-				aggregate(1.5, [
+			getApiKeySpendReconciliation: async () => ({
+				calendar: [
+					{
+						window: "month",
+						totals: [{ model: "opus", requestedModel: null, totalUsd: 1.7 }],
+						buckets: [
+							{
+								timestamp: bucketEnd,
+								costUsd: 1,
+								model: "mapped",
+								requestedModel: "opus",
+							},
+							{
+								timestamp: bucketEnd - hour,
+								costUsd: 99,
+								model: "sonnet",
+								requestedModel: null,
+							},
+						],
+					},
+				],
+				events: [
 					{
 						requestId: "edge",
 						timestamp: NOW - duration + 1000,
-						costUsd: 0.1,
+						costUsd: 0.5,
 						model: "opus",
 						requestedModel: null,
 					},
 					{
 						requestId: "ack",
 						timestamp: NOW - 1000,
-						costUsd: 1,
+						costUsd: 0.2,
 						model: "opus",
 						requestedModel: null,
 					},
-				]),
+				],
+			}),
+		});
+		const snapshot = await c.getLimitSnapshot(
+			"k",
+			{ ...limit, scopeModel: "opus" },
+			"rolling",
+			NOW,
+		);
+		expect(snapshot.spentUsd).toBe(1.7);
+		expect(snapshot.resetMs).toBe(bucketEnd + duration);
+		expect(snapshot.resetMs).toBeGreaterThanOrEqual(middle + duration);
+		expect(snapshot.resetMs).toBeLessThanOrEqual(middle + duration + hour);
+		expect([...state(c).limitEntries.values()][0].events).toHaveLength(2);
+		spyOn(Date, "now").mockReturnValue(NOW);
+		c.record("k", 0.9, "opus", NOW, "local");
+		const local = await c.getLimitSnapshot(
+			"k",
+			{ ...limit, scopeModel: "opus" },
+			"rolling",
+			NOW,
+		);
+		expect(local.spentUsd).toBeCloseTo(2.6);
+		// The new completion keeps the key blocked beyond the middle bucket.
+		expect(local.resetMs).toBe(NOW - 1000 + duration);
+	});
+	it("does not infer middle-window relief when an older adapter supplies no buckets", async () => {
+		const c = counter({
+			getApiKeySpendReconciliation: async () => aggregate(1.5),
 		});
 		expect(
 			(await c.getLimitSnapshot("k", limit, "rolling", NOW)).resetMs,
 		).toBeNull();
+	});
+	it("keeps reservations counted when deriving bucketed relief", async () => {
+		setCostTrackingEnabled(true);
+		spyOn(Date, "now").mockReturnValue(NOW);
+		const c = counter({
+			getApiKeySpendReconciliation: async () => ({
+				...aggregate(1.5),
+				calendar: [
+					{
+						window: "month",
+						totals: [{ model: "opus", requestedModel: null, totalUsd: 1.5 }],
+						buckets: [
+							{
+								timestamp: NOW - 10 * 86400000,
+								costUsd: 1.5,
+								model: "opus",
+								requestedModel: null,
+							},
+						],
+					},
+				],
+			}),
+		});
+		await c.checkAndReserve(
+			"k",
+			"inflight",
+			[{ ...limit, limitUsd: 10 }],
+			"rolling",
+			null,
+			"opus",
+			1,
+			NOW,
+		);
+		const snapshot = await c.getLimitSnapshot("k", limit, "rolling", NOW);
+		expect(snapshot.reservedUsd).toBe(1);
+		expect(snapshot.resetMs).toBeNull();
 	});
 	it("keeps in-flight reservations when a limit edit forgets cached totals", async () => {
 		setCostTrackingEnabled(true);

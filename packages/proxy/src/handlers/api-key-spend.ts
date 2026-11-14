@@ -133,6 +133,8 @@ export class ApiKeySpendCounter {
 			spentUsd: number;
 			cursor: number;
 			events: SpendEvent[];
+			/** Hourly relief points for settled costs omitted from exact events. */
+			reliefBuckets: Array<{ timestamp: number; costUsd: number }> | null;
 			/** Settled costs have a complete expiry tail only through this instant. */
 			expiryThroughMs: number;
 			/** Earliest scoped expiry known from the aggregate snapshot. */
@@ -549,6 +551,13 @@ export class ApiKeySpendCounter {
 					lastSyncMs: nowMs,
 					spentUsd,
 					events: mode === "rolling" ? events : [],
+					reliefBuckets: aggregate?.buckets
+						? aggregate.buckets
+								.filter((bucket) =>
+									this.matchesEventScope(bucket, row.scopeModel),
+								)
+								.sort((a, b) => a.timestamp - b.timestamp)
+						: null,
 					cursor: 0,
 					nextExpiryMs:
 						mode === "rolling" && Number.isFinite(firstTimestampMs)
@@ -648,6 +657,7 @@ export class ApiKeySpendCounter {
 			spentUsd: number;
 			cursor: number;
 			events: SpendEvent[];
+			reliefBuckets: Array<{ timestamp: number; costUsd: number }> | null;
 			expiryThroughMs: number;
 			nextExpiryMs: number | null;
 		},
@@ -682,19 +692,27 @@ export class ApiKeySpendCounter {
 		if (mode === "rolling") {
 			resetMs = null;
 			let remaining = committedUsd;
-			for (let i = entry.cursor; i < entry.events.length; i++) {
-				const event = entry.events[i];
-				// Acknowledgement-tail events lie after the omitted settled middle;
-				// only the complete oldest edge can establish exact rolling relief.
+			let eventIndex = entry.cursor;
+			let bucketIndex = 0;
+			const buckets = entry.reliefBuckets ?? [];
+			while (eventIndex < entry.events.length || bucketIndex < buckets.length) {
+				const event = entry.events[eventIndex];
+				const bucket = buckets[bucketIndex];
+				const next =
+					!event || (bucket && bucket.timestamp < event.timestamp)
+						? buckets[bucketIndex++]
+						: entry.events[eventIndex++];
+				// Old adapters without buckets only have a complete oldest edge.
 				if (
-					event.timestamp + API_KEY_ROLLING_DURATION_MS[limit.window] >
-					entry.expiryThroughMs
+					entry.reliefBuckets === null &&
+					next.timestamp + API_KEY_ROLLING_DURATION_MS[limit.window] >
+						entry.expiryThroughMs
 				)
 					break;
-				remaining -= event.costUsd;
-				resetMs = Math.min(
-					nowMs + API_KEY_ROLLING_DURATION_MS[limit.window],
-					event.timestamp + API_KEY_ROLLING_DURATION_MS[limit.window],
+				remaining -= next.costUsd;
+				resetMs = Math.max(
+					nowMs,
+					next.timestamp + API_KEY_ROLLING_DURATION_MS[limit.window],
 				);
 				if (remaining < limit.limitUsd) break;
 			}
