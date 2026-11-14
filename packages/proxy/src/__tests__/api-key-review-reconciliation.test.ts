@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { setCostTrackingEnabled } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import type { ApiKeyLimit } from "@better-ccflare/types";
 import {
@@ -190,12 +191,11 @@ describe("bounded rolling reconciliation", () => {
 		c.applySpendReset("k", NOW);
 		await c.getLimitSnapshot("k", limit, "rolling", NOW);
 		c.forget("k");
-		for (const map of [
-			state(c).spendResetPoints,
-			state(c).limitGenerations,
-			state(c).limitSyncTokens,
-		])
+		for (const map of [state(c).limitGenerations, state(c).limitSyncTokens])
 			expect(map.size).toBe(0);
+		// The reset boundary survives forget() for in-flight reservations; it is
+		// released by eviction below.
+		expect(state(c).spendResetPoints.get("k")).toBe(NOW);
 		await c.getLimitSnapshot("k", limit, "rolling", NOW);
 		await c.reconcileActiveKeys();
 		for (const map of [
@@ -396,5 +396,35 @@ describe("bounded rolling reconciliation", () => {
 		expect(
 			(await c.getLimitSnapshot("k", limit, "rolling", NOW)).resetMs,
 		).toBeNull();
+	});
+	it("keeps in-flight reservations when a limit edit forgets cached totals", async () => {
+		setCostTrackingEnabled(true);
+		spyOn(Date, "now").mockReturnValue(NOW);
+		const c = counter({
+			getApiKey: async () => ({ isActive: true, spendResetAt: NOW - 86400000 }),
+			getApiKeySpendReconciliation: async () => aggregate(0),
+		});
+		await c.checkAndReserve(
+			"k",
+			"inflight",
+			[limit],
+			"calendar",
+			null,
+			"opus",
+			0.6,
+			NOW,
+		);
+		// A limits PUT drops cached totals, not the persisted reset boundary that
+		// in-flight reservations were admitted under.
+		c.forget("k");
+		const snapshot = await c.getLimitSnapshot("k", limit, "calendar", NOW);
+		expect(snapshot.reservedUsd).toBeCloseTo(0.6);
+		expect(state(c).spendResetPoints.get("k")).toBe(NOW - 86400000);
+	});
+	it("releases a reset boundary once nothing for the key remains", async () => {
+		const c = counter({ getApiKeySpendEventsSince: async () => [] });
+		c.applySpendReset("idle", NOW);
+		await c.reconcileActiveKeys();
+		expect(state(c).spendResetPoints.size).toBe(0);
 	});
 });

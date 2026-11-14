@@ -225,7 +225,8 @@ export class ApiKeySpendCounter {
 			!this.limitEntries.size &&
 			!this.keyLimits.size &&
 			!this.pendingRecords.size &&
-			!this.lastAccess.size
+			!this.lastAccess.size &&
+			!this.spendResetPoints.size
 		)
 			return;
 		const now = Date.now();
@@ -276,6 +277,19 @@ export class ApiKeySpendCounter {
 				)
 			)
 				this.evict(apiKeyId);
+		// Reset boundaries outlive forget(), so a limit edit cannot make the next
+		// load re-apply an old reset and drop in-flight reservations. Release
+		// them once nothing admitted under them for the key remains.
+		for (const apiKeyId of this.spendResetPoints.keys())
+			if (
+				!this.keyLimits.has(apiKeyId) &&
+				!this.lastAccess.has(apiKeyId) &&
+				!this.entries.has(apiKeyId) &&
+				![...this.reservations.values()].some(
+					(reservation) => reservation.apiKeyId === apiKeyId,
+				)
+			)
+				this.spendResetPoints.delete(apiKeyId);
 		const keys = new Map<
 			string,
 			{ limit: ApiKeyLimit; mode: ApiKeyLimitWindowMode }
@@ -301,6 +315,7 @@ export class ApiKeySpendCounter {
 	}
 	private evict(apiKeyId: string): void {
 		this.forget(apiKeyId);
+		this.spendResetPoints.delete(apiKeyId);
 		this.pendingRecords.delete(apiKeyId);
 		this.lastAccess.delete(apiKeyId);
 		for (const [id, reservation] of this.reservations)
@@ -1136,7 +1151,6 @@ export class ApiKeySpendCounter {
 		// Generations are globally unique so removing a key cannot create an ABA
 		// match with an older in-flight read after that key is loaded again.
 		this.limitGenerations.delete(apiKeyId);
-		this.spendResetPoints.delete(apiKeyId);
 		const prefix = `${JSON.stringify([apiKeyId]).slice(0, -1)},`;
 		for (const identity of this.limitSyncTokens.keys())
 			if (identity.startsWith(prefix)) this.limitSyncTokens.delete(identity);
