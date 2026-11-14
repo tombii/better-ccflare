@@ -721,6 +721,14 @@ export function ApiKeysTab() {
 														Edit restrictions
 													</DropdownMenuItem>
 													<DropdownMenuItem
+														// Limits are absent only when their read failed for this
+														// key. An editor seeded from nothing would replace them.
+														disabled={key.limits === undefined}
+														title={
+															key.limits === undefined
+																? "Spend limits could not be loaded; refresh to edit them"
+																: undefined
+														}
 														onClick={() => setSpendLimitKey(key)}
 													>
 														<Gauge className="h-4 w-4 mr-2" />

@@ -106,3 +106,70 @@ describe("API key routing editor", () => {
 		}
 	});
 });
+
+describe("API key spend limits editor", () => {
+	it("cannot open the editor for a key whose limits failed to load", () => {
+		const key = (id: string, limits?: unknown[]) =>
+			({
+				id,
+				name: id,
+				role: "admin",
+				isActive: true,
+				createdAt: 1,
+				usageCount: 0,
+				prefixLast8: "12345678",
+				allowedAccounts: null,
+				allowedModels: null,
+				allowedProviders: null,
+				...(limits ? { limits } : {}),
+			}) as ApiKeyResponse;
+		const keys = [key("unreadable"), key("readable", [])];
+		const storage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+		Object.defineProperty(globalThis, "localStorage", {
+			configurable: true,
+			value: { getItem: () => null },
+		});
+		const client = new QueryClient();
+		const state = spyOn(React, "useState").mockImplementation(((
+			initial: unknown,
+		) => [
+			typeof initial === "function" ? initial() : initial,
+			() => {},
+		]) as typeof React.useState);
+		const effect = spyOn(React, "useEffect").mockImplementation(() => {});
+		const memo = spyOn(React, "useMemo").mockImplementation((factory) =>
+			factory(),
+		);
+		const query = spyOn(ReactQuery, "useQuery").mockImplementation(((options: {
+			queryKey: unknown[];
+		}) => ({
+			data: options.queryKey.includes("api-keys")
+				? keys
+				: options.queryKey.includes("accounts")
+					? []
+					: undefined,
+			isLoading: false,
+			error: null,
+		})) as never);
+		const queryClient = spyOn(ReactQuery, "useQueryClient").mockReturnValue(
+			client,
+		);
+		const mutation = spyOn(ReactQuery, "useMutation").mockReturnValue({
+			reset() {},
+		} as never);
+		try {
+			const items = elements(ApiKeysTab()).filter(
+				(node) =>
+					node.type === DropdownMenuItem &&
+					(node.props.children as unknown[]).includes("Edit spend limits"),
+			);
+			expect(items.map((item) => item.props.disabled)).toEqual([true, false]);
+		} finally {
+			for (const spy of [state, effect, memo, query, queryClient, mutation])
+				spy.mockRestore();
+			client.clear();
+			if (storage) Object.defineProperty(globalThis, "localStorage", storage);
+			else delete (globalThis as { localStorage?: unknown }).localStorage;
+		}
+	});
+});
