@@ -15,6 +15,15 @@ import {
 import { BaseRepository } from "./base.repository";
 
 /**
+ * A flat JSON object of string values, as updateRouting writes it. PostgreSQL
+ * has no safe ::jsonb cast before 16, so this guard keeps one malformed or
+ * non-object routing value from aborting every combo deletion (SQLite skips
+ * those rows with json_valid, and parseFamilyComboOverrides ignores them).
+ */
+const JSON_STRING = String.raw`"(?:[^"\\\u0001-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"`;
+export const FLAT_STRING_OBJECT_PATTERN = String.raw`^\s*\{\s*(?:${JSON_STRING}\s*:\s*${JSON_STRING}\s*(?:,\s*${JSON_STRING}\s*:\s*${JSON_STRING}\s*)*)?\}\s*$`;
+
+/**
  * Flattened row of the joined assignment→combo→slots query.
  * `slot_id` is NULL when the combo has no enabled slots.
  */
@@ -116,9 +125,14 @@ export class ComboRepository extends BaseRepository<Combo> {
 			), '{}') WHERE CASE WHEN json_valid(family_combo_overrides) THEN json_type(family_combo_overrides) = 'object' ELSE 0 END`
 			: `UPDATE api_keys SET family_combo_overrides = (
 				SELECT jsonb_object_agg(key, value)::text FROM jsonb_each_text(api_keys.family_combo_overrides::jsonb) WHERE value <> ?
-			) WHERE family_combo_overrides IS NOT NULL`;
+			) WHERE strpos(family_combo_overrides, ?) > 0 AND family_combo_overrides ~ ?`;
 		await this.adapter.atomicStatements([
-			{ sql: cleanup, params: [id] },
+			{
+				sql: cleanup,
+				params: this.adapter.isSQLite
+					? [id]
+					: [id, JSON.stringify(id), FLAT_STRING_OBJECT_PATTERN],
+			},
 			{ sql: "DELETE FROM combos WHERE id = ?", params: [id] },
 		]);
 	}

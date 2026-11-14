@@ -4,7 +4,10 @@ import type { SQL } from "bun";
 import { BunSqlAdapter } from "../../adapters/bun-sql-adapter";
 import { ensureSchema, runMigrations } from "../../migrations";
 import { ApiKeyRepository } from "../api-key.repository";
-import { ComboRepository } from "../combo.repository";
+import {
+	ComboRepository,
+	FLAT_STRING_OBJECT_PATTERN,
+} from "../combo.repository";
 
 const databases: Database[] = [];
 afterEach(() => {
@@ -180,5 +183,54 @@ describe("API key review atomicity regressions", () => {
 		);
 		expect(statements[0]).toContain("value <> $1");
 		expect(statements[1]).toBe("DELETE FROM combos WHERE id = $1");
+	});
+	it("skips malformed or non-object PostgreSQL routing values instead of failing the deletion", async () => {
+		const batches: Array<{ sql: string; params: unknown[] }> = [];
+		const client = {
+			begin: async (
+				fn: (tx: {
+					unsafe: (
+						sql: string,
+						params: unknown[],
+					) => Promise<{ count: number }>;
+				}) => Promise<unknown>,
+			) =>
+				fn({
+					unsafe: async (sql, params) => {
+						batches.push({ sql, params });
+						return { count: 0 };
+					},
+				}),
+		} as unknown as SQL;
+		await new ComboRepository(new BunSqlAdapter(client, false)).delete("gone");
+		expect(batches[0].sql).toContain(
+			"WHERE strpos(family_combo_overrides, $2) > 0 AND family_combo_overrides ~ $3",
+		);
+		expect(batches[0].params).toEqual([
+			"gone",
+			JSON.stringify("gone"),
+			FLAT_STRING_OBJECT_PATTERN,
+		]);
+		// Only values ::jsonb accepts as objects may reach jsonb_each_text.
+		const pattern = new RegExp(FLAT_STRING_OBJECT_PATTERN);
+		for (const value of [
+			JSON.stringify({ opus: "gone" }),
+			JSON.stringify({ opus: "gone", sonnet: 'k"\\\u0007é' }),
+			JSON.stringify({}),
+			' { "opus" : "gone" } ',
+		])
+			expect(pattern.test(value)).toBe(true);
+		for (const value of [
+			'{"opus":"gone"',
+			'["gone"]',
+			'"gone"',
+			"null",
+			'{"opus":"\\x"}',
+			'{"opus":"\\u12"}',
+			'{"opus":"gone",}',
+			'{"opus":1}',
+			'{"opus":"a\nb"}',
+		])
+			expect(pattern.test(value)).toBe(false);
 	});
 });
