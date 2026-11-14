@@ -27,6 +27,7 @@ import { ApiKeyLimitsEditor } from "./api-keys/ApiKeyLimitsEditor";
 import { ApiKeyResetSpendDialog } from "./api-keys/ApiKeyResetSpendDialog";
 import { ApiKeyRestrictionsEditor } from "./api-keys/ApiKeyRestrictionsEditor";
 import { ApiKeyRestrictionsSummary } from "./api-keys/ApiKeyRestrictionsSummary";
+import { ApiKeyRoutingEditor } from "./api-keys/ApiKeyRoutingEditor";
 import { ApiKeySpendGauge } from "./api-keys/ApiKeySpendGauge";
 import { ApiKeySpendLimitEditor } from "./api-keys/ApiKeySpendLimitEditor";
 import {
@@ -94,6 +95,7 @@ export function ApiKeysTab() {
 	const [resetSpendKey, setResetSpendKey] = useState<ApiKeyResponse | null>(
 		null,
 	);
+	const [routingKey, setRoutingKey] = useState<ApiKeyResponse | null>(null);
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
 	const [isAdminKey, setIsAdminKey] = useState(false);
 	const [showNewKeyRestrictions, setShowNewKeyRestrictions] = useState(false);
@@ -724,6 +726,10 @@ export function ApiKeysTab() {
 														<Gauge className="h-4 w-4 mr-2" />
 														Edit spend limits
 													</DropdownMenuItem>
+													<DropdownMenuItem onClick={() => setRoutingKey(key)}>
+														<SlidersHorizontal className="h-4 w-4 mr-2" />
+														Edit routing
+													</DropdownMenuItem>
 													<DropdownMenuItem
 														disabled={!key.limits?.length}
 														onClick={() => setResetSpendKey(key)}
@@ -986,6 +992,28 @@ export function ApiKeysTab() {
 							limits={spendLimitKey.limits ?? []}
 							mode={spendLimitKey.limitWindowMode}
 							onSaved={() => setSpendLimitKey(null)}
+						/>
+					) : null}
+				</DialogContent>
+			</Dialog>
+			<Dialog
+				open={!!routingKey}
+				onOpenChange={(open) => {
+					if (!open) setRoutingKey(null);
+				}}
+			>
+				<DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+					<DialogHeader>
+						<DialogTitle>Routing for "{routingKey?.name}"</DialogTitle>
+						<DialogDescription>
+							Choose a combo override for each model family.
+						</DialogDescription>
+					</DialogHeader>
+					{routingKey ? (
+						<ApiKeyRoutingEditor
+							key={routingKey.id}
+							keyId={routingKey.id}
+							overrides={routingKey.familyComboOverrides ?? null}
 						/>
 					) : null}
 				</DialogContent>

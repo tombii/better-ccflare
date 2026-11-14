@@ -12,7 +12,7 @@ export function useCostTracking() {
 		staleTime: 15_000,
 		refetchInterval: 30_000,
 	});
-	return { ...query, enabled: query.data?.enabled ?? true };
+	return { ...query, enabled: query.data?.enabled };
 }
 
 export function useSetCostTracking() {

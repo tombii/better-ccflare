@@ -2,7 +2,7 @@ import { useCostTracking } from "../hooks/useCostTracking";
 
 export function CostTrackingNotice({ limits = false }: { limits?: boolean }) {
 	const { enabled } = useCostTracking();
-	if (enabled) return null;
+	if (enabled !== false) return null;
 	return (
 		<div
 			role="status"

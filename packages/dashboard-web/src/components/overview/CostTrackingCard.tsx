@@ -29,7 +29,7 @@ export function CostTrackingCard() {
 					<label htmlFor="cost-tracking">Cost tracking</label>
 					<Switch
 						id="cost-tracking"
-						checked={enabled}
+						checked={enabled === true}
 						disabled={isLoading || update.isPending || !!error}
 						onCheckedChange={(value) => update.mutate(value)}
 					/>

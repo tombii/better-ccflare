@@ -36,8 +36,8 @@ export function ModelPricesTab() {
 					account subscriptions and negotiated provider charges may differ.
 				</p>
 				<p className="text-sm text-amber-700">
-					Requests using cache tokens on models with missing cache prices are
-					currently recorded at $0.
+					Missing token prices contribute $0 for that token kind; known input
+					and output prices still apply.
 				</p>
 				<Input
 					aria-label="Search model prices"

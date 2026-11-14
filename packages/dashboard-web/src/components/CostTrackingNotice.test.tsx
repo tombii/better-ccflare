@@ -7,11 +7,12 @@ import { ApiKeySpendGauge } from "./api-keys/ApiKeySpendGauge";
 import { CostTrackingNotice } from "./CostTrackingNotice";
 import { CostTrackingCard } from "./overview/CostTrackingCard";
 
-function render(enabled: boolean, children: React.ReactNode) {
+function render(enabled: boolean | undefined, children: React.ReactNode) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
-	client.setQueryData(COST_TRACKING_QUERY_KEY, { enabled, source: "file" });
+	if (enabled !== undefined)
+		client.setQueryData(COST_TRACKING_QUERY_KEY, { enabled, source: "file" });
 	try {
 		return renderToStaticMarkup(
 			<QueryClientProvider client={client}>{children}</QueryClientProvider>,
@@ -21,6 +22,32 @@ function render(enabled: boolean, children: React.ReactNode) {
 	}
 }
 describe("cost tracking dashboard", () => {
+	it("shows neither costs nor a disabled warning while tracking loads", () => {
+		expect(render(undefined, <CostTrackingNotice limits />)).toBe("");
+		const html = render(
+			undefined,
+			<ApiKeySpendGauge
+				apiKey={{
+					id: "key",
+					name: "budget",
+					limitWindowMode: "calendar",
+					limits: [
+						{
+							id: "limit",
+							apiKeyId: "key",
+							scopeModel: null,
+							window: "day",
+							limitUsd: 100,
+							enforce: "block",
+							spentUsd: 456.789,
+						},
+					],
+				}}
+			/>,
+		);
+		expect(html).not.toContain("456.789");
+		expect(html).not.toContain("Cost tracking is disabled");
+	});
 	it("shows a clear limit warning only while disabled", () => {
 		expect(render(true, <CostTrackingNotice limits />)).toBe("");
 		const html = render(false, <CostTrackingNotice limits />);
