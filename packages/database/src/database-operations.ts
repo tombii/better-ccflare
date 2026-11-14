@@ -2790,22 +2790,6 @@ OAuth tokens will need to be re-authenticated.
 			this.retryConfig,
 			"createApiKey",
 		);
-		if (apiKey.spendLimit)
-			await this.replaceApiKeyLimits(
-				apiKey.id,
-				[
-					{
-						scopeModel: null,
-						window:
-							apiKey.spendLimit.limitWindow === "rolling_7d" ? "week" : "month",
-						limitUsd: apiKey.spendLimit.limitUsd,
-						enforce: apiKey.spendLimit.limitEnforce,
-					},
-				],
-				apiKey.spendLimit.limitWindow === "calendar_month"
-					? "calendar"
-					: "rolling",
-			);
 	}
 
 	async updateApiKeyUsage(id: string, timestamp: number): Promise<void> {

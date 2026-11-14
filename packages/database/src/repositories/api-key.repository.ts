@@ -125,37 +125,62 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	 * Create a new API key
 	 */
 	async create(apiKey: Omit<ApiKeyRow, "usage_count">): Promise<void> {
-		await this.run(
-			`
+		const statements = [
+			{
+				sql: `
 			INSERT INTO api_keys (
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, is_active, role,
 				allowed_accounts, allowed_models, allowed_providers,
-				limit_usd, limit_window, limit_enforce
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				limit_usd, limit_window, limit_enforce, limit_window_mode
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
-			[
-				apiKey.id,
-				apiKey.name,
-				apiKey.hashed_key,
-				apiKey.prefix_last_8,
-				apiKey.created_at,
-				apiKey.last_used,
-				apiKey.is_active,
-				apiKey.role,
-				// `?? null` and not `|| null`: the columns are nullable on
-				// purpose and an absent restriction must land as SQL NULL
-				// (unrestricted), never as the string '[]' (deny-all).
-				apiKey.allowed_accounts ?? null,
-				apiKey.allowed_models ?? null,
-				apiKey.allowed_providers ?? null,
-				// Same `?? null` reasoning: a key created without a limit must
-				// land as SQL NULL, not as 0 (which would deny every request).
-				apiKey.limit_usd ?? null,
-				apiKey.limit_window ?? null,
-				apiKey.limit_enforce ?? null,
-			],
-		);
+				params: [
+					apiKey.id,
+					apiKey.name,
+					apiKey.hashed_key,
+					apiKey.prefix_last_8,
+					apiKey.created_at,
+					apiKey.last_used,
+					apiKey.is_active,
+					apiKey.role,
+					// `?? null` and not `|| null`: the columns are nullable on
+					// purpose and an absent restriction must land as SQL NULL
+					// (unrestricted), never as the string '[]' (deny-all).
+					apiKey.allowed_accounts ?? null,
+					apiKey.allowed_models ?? null,
+					apiKey.allowed_providers ?? null,
+					// Same `?? null` reasoning: a key created without a limit must
+					// land as SQL NULL, not as 0 (which would deny every request).
+					apiKey.limit_usd ?? null,
+					apiKey.limit_window ?? null,
+					apiKey.limit_enforce ?? null,
+					apiKey.limit_window && apiKey.limit_window !== "calendar_month"
+						? "rolling"
+						: "calendar",
+				] as unknown[],
+			},
+		];
+		if (
+			apiKey.limit_usd != null &&
+			apiKey.limit_window &&
+			apiKey.limit_enforce
+		) {
+			statements.push({
+				sql: 'INSERT INTO api_key_limits (id, api_key_id, scope_model, "window", limit_usd, enforce, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+				params: [
+					crypto.randomUUID(),
+					apiKey.id,
+					null,
+					apiKey.limit_window === "rolling_7d" ? "week" : "month",
+					apiKey.limit_usd,
+					apiKey.limit_enforce,
+					apiKey.created_at,
+					apiKey.created_at,
+				],
+			});
+		}
+		await this.adapter.atomicStatements(statements);
 	}
 
 	/** Reset budget accounting and resolve this key's spend-limit alerts atomically. */
@@ -164,22 +189,20 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		timestamp: number,
 		actor: string,
 	): Promise<boolean> {
-		if (!(await this.findById(id))) return false;
-		await this.adapter.atomicStatements([
+		const prefix = `api_key_spend_limit:${id}:`;
+		const changes = await this.adapter.atomicStatements([
 			{
 				sql: "UPDATE api_keys SET spend_reset_at = ?, spend_reset_by = ? WHERE id = ? AND (spend_reset_at IS NULL OR spend_reset_at <= ?)",
 				params: [timestamp, actor, id, timestamp],
 			},
 			{
-				// Removing cooldown identities lets newly incurred spend warn again.
-				sql: "DELETE FROM alerts WHERE type = 'api_key_spend_limit' AND substr(id, 1, ?) = ?",
-				params: [
-					`api_key_spend_limit:${id}:`.length,
-					`api_key_spend_limit:${id}:`,
-				],
+				// The guarded UPDATE holds the row lock through this cleanup.
+				// A stale reset cannot delete a newer epoch's alert cooldowns.
+				sql: "DELETE FROM alerts WHERE type = 'api_key_spend_limit' AND substr(id, 1, ?) = ? AND EXISTS (SELECT 1 FROM api_keys WHERE id = ? AND spend_reset_at = ? AND spend_reset_by = ?)",
+				params: [prefix.length, prefix, id, timestamp, actor],
 			},
 		]);
-		return true;
+		return changes[0] > 0;
 	}
 
 	/**

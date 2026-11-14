@@ -358,24 +358,28 @@ export class BunSqlAdapter {
 	/** Execute parameterized statements atomically on one connection. */
 	async atomicStatements(
 		statements: Array<{ sql: string; params: unknown[] }>,
-	): Promise<void> {
+	): Promise<number[]> {
 		if (this.isSQLite && this.sqliteDb) {
 			const db = this.sqliteDb;
-			db.transaction(() => {
-				for (const statement of statements) {
+			return db.transaction(() =>
+				statements.map((statement) => {
 					// biome-ignore lint/suspicious/noExplicitAny: SQLite binding types are checked by the driver
-					db.prepare(statement.sql).run(...(statement.params as any[]));
-				}
-			})();
-			return;
+					return db.prepare(statement.sql).run(...(statement.params as any[]))
+						.changes;
+				}),
+			)();
 		}
 		if (!this.sql) throw new Error("SQL client not available for transaction");
-		await this.sql.begin(async (tx) => {
-			for (const statement of statements)
-				await tx.unsafe(
+		return this.sql.begin(async (tx) => {
+			const changes: number[] = [];
+			for (const statement of statements) {
+				const result = await tx.unsafe(
 					convertPlaceholders(statement.sql),
 					statement.params as never[],
 				);
+				changes.push((result as unknown as { count: number }).count ?? 0);
+			}
+			return changes;
 		});
 	}
 
