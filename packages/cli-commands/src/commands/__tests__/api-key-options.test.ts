@@ -1,11 +1,12 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import type { DatabaseOperations } from "@better-ccflare/database";
+import { DatabaseOperations } from "@better-ccflare/database";
 import {
 	getProviderModelDefaultOverrides,
 	setProviderModelDefaultOverrides,
 } from "@better-ccflare/providers";
 import {
 	configureApiKey,
+	generateConfiguredApiKey,
 	parseApiKeyAllowList,
 	parseApiKeyLimit,
 	parseApiKeyLimitMode,
@@ -220,5 +221,173 @@ describe("API key CLI options", () => {
 		});
 		expect(writes[1]).toEqual(["key", [], "calendar"]);
 		expect(writes[2]).toEqual(["key", null]);
+	});
+
+	it.each([
+		"restrictions",
+		"limits",
+		"routing",
+	])("removes a newly generated key when applying %s fails", async (failure) => {
+		let saved: { id: string } | undefined;
+		let createdId: string | undefined;
+		const deleted: string[] = [];
+		const db = {
+			apiKeyNameExists: async () => false,
+			countActiveApiKeys: async () => 1,
+			createApiKey: async (key: { id: string }) => {
+				saved = key;
+				createdId = key.id;
+			},
+			getApiKey: async () => saved,
+			getCombo: async () => ({ id: "combo" }),
+			updateApiKeyRestrictions: async () => failure !== "restrictions",
+			replaceApiKeyLimits: async () => failure !== "limits",
+			updateApiKeyRouting: async () => {
+				if (failure === "routing") throw new Error("routing write failed");
+				return true;
+			},
+			deleteApiKey: async (id: string) => {
+				deleted.push(id);
+				saved = undefined;
+				return true;
+			},
+		} as unknown as DatabaseOperations;
+		await expect(
+			generateConfiguredApiKey(db, "new key", "api-only", {
+				restrictions: { allowedModels: ["opus"] },
+				limits: [parseApiKeyLimit("window=day,usd=5")],
+				familyComboOverrides: { opus: "combo" },
+			}),
+		).rejects.toThrow(
+			failure === "routing"
+				? "routing write failed"
+				: `Failed to update API key ${failure}`,
+		);
+		expect(createdId).toBeDefined();
+		expect(deleted).toEqual([createdId]);
+		expect(saved).toBeUndefined();
+	});
+
+	it("validates options before generating a key", async () => {
+		const create = spyOn({ create: async () => {} }, "create");
+		const db = {
+			getCombo: async () => null,
+			createApiKey: create,
+		} as unknown as DatabaseOperations;
+		await expect(
+			generateConfiguredApiKey(db, "new key", "api-only", {
+				familyComboOverrides: { opus: "missing" },
+			}),
+		).rejects.toThrow("not found");
+		expect(create).not.toHaveBeenCalled();
+	});
+
+	it("returns the generated secret after saving every setting without deleting the key", async () => {
+		const writes: string[] = [];
+		let saved: { id: string } | undefined;
+		const db = {
+			apiKeyNameExists: async () => false,
+			createApiKey: async (key: { id: string }) => {
+				saved = key;
+				writes.push("create");
+			},
+			getApiKey: async () => saved,
+			getCombo: async () => ({ id: "combo" }),
+			updateApiKeyRestrictions: async () => {
+				writes.push("restrictions");
+				return true;
+			},
+			replaceApiKeyLimits: async () => {
+				writes.push("limits");
+				return true;
+			},
+			updateApiKeyRouting: async () => {
+				writes.push("routing");
+				return true;
+			},
+			deleteApiKey: async () => {
+				writes.push("delete");
+				return true;
+			},
+		} as unknown as DatabaseOperations;
+		const result = await generateConfiguredApiKey(db, "new key", "admin", {
+			restrictions: { allowedModels: ["opus"] },
+			limits: [parseApiKeyLimit("window=day,usd=5")],
+			familyComboOverrides: { opus: "combo" },
+		});
+		expect(writes).toEqual(["create", "restrictions", "limits", "routing"]);
+		expect(result.id).toBe(saved?.id);
+		expect(result.apiKey.slice(-8)).toBe(result.prefixLast8);
+	});
+
+	it.each([
+		"limits",
+		"routing",
+	])("leaves no key or limits after a SQLite %s write fails", async (failure) => {
+		const previousUrl = process.env.DATABASE_URL;
+		delete process.env.DATABASE_URL;
+		const db = new DatabaseOperations(":memory:", undefined, { attempts: 1 });
+		const log = spyOn(console, "log").mockImplementation(() => {});
+		try {
+			const sqlite = db.getAdapter().getSQLiteDb();
+			sqlite.run(
+				"INSERT INTO combos (id,name,created_at,updated_at) VALUES ('combo','combo',1,1)",
+			);
+			sqlite.run(
+				failure === "limits"
+					? "CREATE TRIGGER fail_config BEFORE INSERT ON api_key_limits BEGIN SELECT RAISE(ABORT, 'limit write failed'); END"
+					: "CREATE TRIGGER fail_config BEFORE UPDATE OF family_combo_overrides ON api_keys BEGIN SELECT RAISE(ABORT, 'routing write failed'); END",
+			);
+			await expect(
+				generateConfiguredApiKey(db, "new key", "admin", {
+					restrictions: { allowedModels: ["opus"] },
+					limits: [parseApiKeyLimit("window=day,usd=5")],
+					familyComboOverrides: { opus: "combo" },
+				}),
+			).rejects.toThrow(
+				`${failure === "limits" ? "limit" : "routing"} write failed`,
+			);
+			expect(sqlite.query("SELECT COUNT(*) AS n FROM api_keys").get()).toEqual({
+				n: 0,
+			});
+			expect(
+				sqlite.query("SELECT COUNT(*) AS n FROM api_key_limits").get(),
+			).toEqual({ n: 0 });
+			expect(log).not.toHaveBeenCalled();
+		} finally {
+			log.mockRestore();
+			await db.close();
+			if (previousUrl === undefined) delete process.env.DATABASE_URL;
+			else process.env.DATABASE_URL = previousUrl;
+		}
+	});
+
+	it.each([
+		false,
+		"delete failed",
+	])("reports the configuration error when cleanup returns %s", async (cleanup) => {
+		const failure = new Error("configuration failed");
+		const db = {
+			apiKeyNameExists: async () => false,
+			createApiKey: async () => {},
+			getApiKey: async () => {
+				throw failure;
+			},
+			deleteApiKey: async () => {
+				if (cleanup) throw new Error(cleanup);
+				return false;
+			},
+		} as unknown as DatabaseOperations;
+		const error = await generateConfiguredApiKey(
+			db,
+			"new key",
+			"admin",
+			{},
+		).catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toContain(
+			"configuration failed; failed to remove newly created API key '",
+		);
+		expect((error as Error).cause).toBe(failure);
 	});
 });

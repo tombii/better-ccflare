@@ -15,11 +15,14 @@ import {
 } from "@better-ccflare/providers";
 import { getModelCatalog } from "@better-ccflare/proxy";
 import {
+	type ApiKeyGenerationResult,
 	type ApiKeyLimitInput,
 	type ApiKeyLimitWindowMode,
 	type ApiKeyRestrictions,
+	type ApiKeyRole,
 	PROVIDER_NAMES,
 } from "@better-ccflare/types";
+import { generateApiKey } from "./api-key";
 
 export interface ApiKeyOptions {
 	restrictions?: Partial<ApiKeyRestrictions>;
@@ -225,4 +228,37 @@ export async function configureApiKey(
 			throw new Error("Failed to update API key routing");
 		}
 	}
+}
+
+/** Return the one-time secret only after every CLI setting has been saved. */
+export async function generateConfiguredApiKey(
+	dbOps: DatabaseOperations,
+	name: string,
+	role: ApiKeyRole,
+	options: ApiKeyOptions,
+	providerDefaults: ProviderModelDefaultOverrides = {},
+): Promise<ApiKeyGenerationResult> {
+	await validateApiKeyOptions(dbOps, options, providerDefaults);
+	const result = await generateApiKey(dbOps, name, role, options.restrictions);
+	try {
+		await configureApiKey(dbOps, result.id, options, providerDefaults);
+	} catch (error) {
+		try {
+			if (!(await dbOps.deleteApiKey(result.id))) {
+				throw new Error("API key was not removed");
+			}
+		} catch (cleanupError) {
+			const message = error instanceof Error ? error.message : String(error);
+			const cleanupMessage =
+				cleanupError instanceof Error
+					? cleanupError.message
+					: String(cleanupError);
+			throw new Error(
+				`${message}; failed to remove newly created API key '${result.id}': ${cleanupMessage}`,
+				{ cause: error },
+			);
+		}
+		throw error;
+	}
+	return result;
 }

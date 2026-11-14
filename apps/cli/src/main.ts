@@ -41,7 +41,7 @@ import {
 	forceResetRateLimit,
 	formatApiKeyForDisplay,
 	formatApiKeyGenerationResult,
-	generateApiKey,
+	generateConfiguredApiKey,
 	getAccountsList,
 	getApiKeyStats,
 	handleRepairCommand,
@@ -62,7 +62,6 @@ import {
 	setAccountNightWindow,
 	setAccountPriority,
 	setUsagePauseThresholds,
-	validateApiKeyOptions,
 } from "@better-ccflare/cli-commands";
 import {
 	Config,
@@ -1579,24 +1578,14 @@ Examples:
 	// API Key management commands
 	if (parsed.generateApiKey) {
 		try {
-			await validateApiKeyOptions(
-				dbOps,
-				parsed.apiKeyOptions,
-				providerModelDefaults,
-			);
 			// Default to admin if this is the first key, otherwise api-only
 			const defaultRole =
 				(await dbOps.countActiveApiKeys()) === 0 ? "admin" : "api-only";
 			const role = parsed.admin ? ("admin" as const) : defaultRole;
-			const result = await generateApiKey(
+			const result = await generateConfiguredApiKey(
 				dbOps,
 				parsed.generateApiKey,
 				role,
-				parsed.apiKeyOptions.restrictions,
-			);
-			await configureApiKey(
-				dbOps,
-				result.id,
 				parsed.apiKeyOptions,
 				providerModelDefaults,
 			);
