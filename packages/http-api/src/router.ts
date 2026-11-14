@@ -1,5 +1,5 @@
 import { validateNumber } from "@better-ccflare/core";
-import { BadRequest, Forbidden, Unauthorized } from "@better-ccflare/errors";
+import { BadRequest, Unauthorized } from "@better-ccflare/errors";
 import { getPeakHoursState } from "@better-ccflare/proxy";
 import {
 	createAccountAddHandler,
@@ -686,7 +686,11 @@ export class APIRouter {
 			authResult.apiKeyId &&
 			authResult.role !== "admin"
 		)
-			return errorResponse(Forbidden("Only admins can reset API key spend"));
+			return errorResponse(
+				Unauthorized(
+					`Only admins can ${keyActionParts[4] === "reload-spend" ? "reload" : "reset"} API key spend`,
+				),
+			);
 
 		// Authorize the request based on API key role
 		if (authResult.apiKey) {

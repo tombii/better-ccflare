@@ -312,7 +312,7 @@ describe("reset API key spend", () => {
 				.query("SELECT id FROM alerts WHERE acknowledged=0 ORDER BY id"),
 		).toEqual([{ id: "api_key_spend_limit:other:123" }, { id: "other" }]);
 	});
-	it("returns 403 for api-only keys and permits admin and dashboard sessions", async () => {
+	it("returns 401 for api-only keys and permits admin and dashboard sessions", async () => {
 		await limits("calendar");
 		const cryptoUtils = new NodeCryptoUtils();
 		const keys: Record<string, string> = {};
@@ -349,7 +349,7 @@ describe("reset API key spend", () => {
 					}),
 				)
 			)?.status,
-		).toBe(403);
+		).toBe(401);
 		expect(
 			(
 				await router.handleRequest(
@@ -361,6 +361,22 @@ describe("reset API key spend", () => {
 				)
 			)?.status,
 		).toBe(200);
+		for (const action of ["reset-spend", "reload-spend"]) {
+			const actionUrl = new URL(
+				`http://localhost/api/api-keys/target/${action}`,
+			);
+			const denied = await router.handleRequest(
+				actionUrl,
+				new Request(actionUrl, {
+					method: "POST",
+					headers: { "x-api-key": keys["api-only"] },
+				}),
+			);
+			expect(denied?.status).toBe(401);
+			expect(await denied?.text()).toContain(
+				action === "reset-spend" ? "reset" : "reload",
+			);
+		}
 		// The same bypass signal the dashboard uses; no API key identity is present.
 		const auth = (
 			router as unknown as {

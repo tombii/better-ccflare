@@ -467,7 +467,11 @@ export class AuthService {
 		// API endpoints require authentication if enabled, except for
 		// correctly-marked local-control CLI-notify requests (#216).
 		if (path.startsWith("/api")) {
-			if (headers && this.isLocalControlRequest(headers, path)) {
+			if (
+				method === "POST" &&
+				headers &&
+				this.isLocalControlRequest(headers, path)
+			) {
 				return true;
 			}
 			return false;

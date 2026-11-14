@@ -2,7 +2,6 @@
 import { getModelRates } from "@better-ccflare/core";
 import {
 	errorResponse,
-	Forbidden,
 	HttpError,
 	InternalServerError,
 	jsonResponse,
@@ -134,21 +133,23 @@ export function createApiKeyUsageHandler(context: APIContext) {
 			const { startMs, endMs, range, bucketMs } =
 				apiKeyUsageRange(searchParams);
 			const windowMs = endMs - startMs;
-			const apiKey =
-				(await dbOps.getApiKey(keyIdOrName)) ??
-				(await dbOps.getApiKeyByName(keyIdOrName));
-			if (!apiKey) {
-				return errorResponse(NotFound(`API key '${keyIdOrName}' not found`));
-			}
-
+			// Authorize the supplied identifier before resolving it: another key's
+			// id/name must reveal no more than an identifier that does not exist.
 			if (
 				caller?.apiKeyId &&
 				caller.role !== "admin" &&
-				caller.apiKeyId !== apiKey.id
+				keyIdOrName !== caller.apiKeyId &&
+				keyIdOrName !== (caller.apiKeyName ?? caller.apiKey?.name)
 			) {
-				return errorResponse(
-					Forbidden("API keys may only read their own usage"),
-				);
+				return errorResponse(NotFound("API key not found"));
+			}
+			const apiKey =
+				caller?.apiKeyId && caller.role !== "admin"
+					? await dbOps.getApiKey(caller.apiKeyId)
+					: ((await dbOps.getApiKey(keyIdOrName)) ??
+						(await dbOps.getApiKeyByName(keyIdOrName)));
+			if (!apiKey) {
+				return errorResponse(NotFound("API key not found"));
 			}
 			const keyId = apiKey.id;
 

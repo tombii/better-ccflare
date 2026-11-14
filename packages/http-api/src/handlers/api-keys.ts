@@ -35,6 +35,25 @@ import { errorResponse } from "../utils/http-error";
 /** The authoritative provider list — the same 19 names the accounts table uses. */
 const PROVIDER_NAME_VALUES: readonly string[] = Object.values(PROVIDER_NAMES);
 
+// Management payload bounds: ample for a configured gateway while preventing
+// oversized persisted allowlists, unbounded counter fan-out and unusable budgets.
+const MAX_RESTRICTION_ENTRIES = 256;
+const MAX_MODEL_OR_ACCOUNT_LENGTH = 256;
+const MAX_LIMIT_ROWS = 128;
+const MAX_LIMIT_USD = 1_000_000;
+
+async function readObjectBody(req: Request): Promise<Record<string, unknown>> {
+	let body: unknown;
+	try {
+		body = await req.json();
+	} catch {
+		throw BadRequest("Invalid JSON body");
+	}
+	if (body === null || typeof body !== "object" || Array.isArray(body))
+		throw BadRequest("Expected a JSON object");
+	return body as Record<string, unknown>;
+}
+
 /**
  * Validate one restriction list out of a request body.
  *
@@ -55,11 +74,19 @@ function validateRestrictionList(
 		throw BadRequest(`${field} must be an array of strings, or null`);
 	}
 
+	if (value.length > MAX_RESTRICTION_ENTRIES)
+		throw BadRequest(
+			`${field} may contain at most ${MAX_RESTRICTION_ENTRIES} entries`,
+		);
 	const seen = new Set<string>();
 	for (const entry of value) {
 		if (typeof entry !== "string") {
 			throw BadRequest(`${field} entries must be strings`);
 		}
+		if (entry.length > MAX_MODEL_OR_ACCOUNT_LENGTH)
+			throw BadRequest(
+				`${field} entries may contain at most ${MAX_MODEL_OR_ACCOUNT_LENGTH} characters`,
+			);
 		const trimmed = entry.trim();
 		if (trimmed.length === 0) {
 			throw BadRequest(`${field} entries must be non-empty strings`);
@@ -149,8 +176,10 @@ function readSpendLimit(
 		// sanely and neither of which could ever be compared against a total.
 		throw BadRequest("limitUsd must be a finite number");
 	}
-	if (rawLimit <= 0) {
-		throw BadRequest("limitUsd must be greater than 0");
+	if (rawLimit <= 0 || rawLimit > MAX_LIMIT_USD) {
+		throw BadRequest(
+			`limitUsd must be greater than 0 and at most ${MAX_LIMIT_USD}`,
+		);
 	}
 
 	return {
@@ -209,30 +238,34 @@ export async function withSpendUsage(
 	const now = Date.now();
 	await Promise.all(
 		apiKeys.map(async (key) => {
-			const limits = await counter.getLimitsForKey(key.id);
-			key.limits = await Promise.all(
-				limits.map(async (limit) => {
-					try {
-						const snapshot = await counter.getLimitSnapshot(
-							key.id,
-							limit,
-							key.limitWindowMode ?? "calendar",
-							now,
-						);
-						return {
-							...limit,
-							spentUsd: snapshot.spentUsd,
-							reservedUsd: snapshot.reservedUsd ?? 0,
-							resetsAt:
-								snapshot.resetMs == null
-									? null
-									: new Date(snapshot.resetMs).toISOString(),
-						};
-					} catch {
-						return { ...limit, resetsAt: null };
-					}
-				}),
-			);
+			try {
+				const limits = await counter.getLimitsForKey(key.id);
+				key.limits = await Promise.all(
+					limits.map(async (limit) => {
+						try {
+							const snapshot = await counter.getLimitSnapshot(
+								key.id,
+								limit,
+								key.limitWindowMode ?? "calendar",
+								now,
+							);
+							return {
+								...limit,
+								spentUsd: snapshot.spentUsd,
+								reservedUsd: snapshot.reservedUsd ?? 0,
+								resetsAt:
+									snapshot.resetMs == null
+										? null
+										: new Date(snapshot.resetMs).toISOString(),
+							};
+						} catch {
+							return { ...limit, resetsAt: null };
+						}
+					}),
+				);
+			} catch {
+				// Keep this key and let the remaining keys expose their spend.
+			}
 		}),
 	);
 	for (const key of apiKeys) {
@@ -468,10 +501,11 @@ export function createApiKeyUpdateRestrictionsHandler(
 ) {
 	return async (req: Request, keyIdOrName: string): Promise<Response> => {
 		try {
-			const body = (await req.json()) as Record<string, unknown>;
+			const body = await readObjectBody(req);
 			const restrictions = readRestrictions(body, true);
 
-			await updateApiKeyRestrictions(dbOps, keyIdOrName, restrictions);
+			const key = await resolveKey(dbOps, keyIdOrName);
+			await updateApiKeyRestrictions(dbOps, key.id, restrictions);
 
 			const response = {
 				success: true,
@@ -492,14 +526,11 @@ export function createApiKeyUpdateRestrictionsHandler(
 export function createApiKeyUpdateSpendLimitHandler(dbOps: DatabaseOperations) {
 	return async (req: Request, keyIdOrName: string): Promise<Response> => {
 		try {
-			const body = (await req.json()) as Record<string, unknown>;
+			const body = await readObjectBody(req);
 			const spendLimit = readSpendLimit(body);
 
-			const keyId = await updateApiKeySpendLimit(
-				dbOps,
-				keyIdOrName,
-				spendLimit,
-			);
+			const key = await resolveKey(dbOps, keyIdOrName);
+			const keyId = await updateApiKeySpendLimit(dbOps, key.id, spendLimit);
 
 			// Drop the cached total. The counter caches the window the total was
 			// measured over, so a key whose window just changed from 7d to
@@ -542,6 +573,8 @@ function readLimitRows(body: Record<string, unknown>): {
 		throw BadRequest("mode must be calendar or rolling");
 	}
 	if (!Array.isArray(body.limits)) throw BadRequest("limits must be an array");
+	if (body.limits.length > MAX_LIMIT_ROWS)
+		throw BadRequest(`limits may contain at most ${MAX_LIMIT_ROWS} rows`);
 	const seen = new Set<string>();
 	const limits = body.limits.map((raw): ApiKeyLimitInput => {
 		if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -552,6 +585,7 @@ function readLimitRows(body: Record<string, unknown>): {
 		if (
 			scopeModel !== null &&
 			(typeof scopeModel !== "string" ||
+				scopeModel.length > MAX_MODEL_OR_ACCOUNT_LENGTH ||
 				!scopeModel.trim() ||
 				scopeModel !== scopeModel.trim() ||
 				/\s/.test(scopeModel) ||
@@ -571,9 +605,12 @@ function readLimitRows(body: Record<string, unknown>): {
 		if (
 			typeof row.limitUsd !== "number" ||
 			!Number.isFinite(row.limitUsd) ||
-			row.limitUsd <= 0
+			row.limitUsd <= 0 ||
+			row.limitUsd > MAX_LIMIT_USD
 		) {
-			throw BadRequest("limitUsd must be a finite number greater than 0");
+			throw BadRequest(
+				`limitUsd must be a finite number greater than 0 and at most ${MAX_LIMIT_USD}`,
+			);
 		}
 		const enforce = validateEnum(
 			row.enforce,
@@ -614,10 +651,8 @@ export function createApiKeyLimitsGetHandler(dbOps: DatabaseOperations) {
 export function createApiKeyLimitsPutHandler(dbOps: DatabaseOperations) {
 	return async (req: Request, idOrName: string): Promise<Response> => {
 		try {
-			const body: unknown = await req.json();
-			if (!body || typeof body !== "object" || Array.isArray(body))
-				throw BadRequest("Expected a limits object");
-			const { mode, limits } = readLimitRows(body as Record<string, unknown>);
+			const body = await readObjectBody(req);
+			const { mode, limits } = readLimitRows(body);
 			const key = await resolveKey(dbOps, idOrName);
 			await dbOps.replaceApiKeyLimits(key.id, limits, mode);
 			tryGetApiKeySpendCounter()?.forget(key.id);
@@ -631,18 +666,13 @@ export function createApiKeyLimitsPutHandler(dbOps: DatabaseOperations) {
 export function createApiKeyRoutingUpdateHandler(dbOps: DatabaseOperations) {
 	return async (req: Request, idOrName: string): Promise<Response> => {
 		try {
-			const body: unknown = await req.json();
-			if (
-				!body ||
-				typeof body !== "object" ||
-				Array.isArray(body) ||
-				!("familyComboOverrides" in body)
-			) {
+			const body = await readObjectBody(req);
+			if (!("familyComboOverrides" in body)) {
 				throw BadRequest(
 					"familyComboOverrides is required (send null to use global routing)",
 				);
 			}
-			const overrides = (body as Record<string, unknown>).familyComboOverrides;
+			const overrides = body.familyComboOverrides;
 			if (
 				overrides !== null &&
 				(typeof overrides !== "object" || Array.isArray(overrides))

@@ -7,16 +7,21 @@ import {
 	DatabaseFactory,
 	type DatabaseOperations,
 } from "@better-ccflare/database";
-import { resetApiKeySpendCounter } from "@better-ccflare/proxy";
+import {
+	getApiKeySpendCounter,
+	resetApiKeySpendCounter,
+} from "@better-ccflare/proxy";
 import { NodeCryptoUtils } from "@better-ccflare/types";
 import { APIRouter } from "../../router";
 import type { APIContext } from "../../types";
+import { createApiKeyUsageHandler } from "../api-key-usage";
 import {
 	createApiKeyGetHandler,
 	createApiKeyLimitsGetHandler,
 	createApiKeyLimitsPutHandler,
 	createApiKeyRoutingUpdateHandler,
 	createApiKeysListHandler,
+	createApiKeyUpdateRestrictionsHandler,
 	createApiKeyUpdateSpendLimitHandler,
 } from "../api-keys";
 
@@ -32,7 +37,7 @@ async function key(id = "target", name = "target-name", active = true) {
 	await dbOps.createApiKey({
 		id,
 		name,
-		hashedKey: "unused",
+		hashedKey: `unused-${id}`,
 		prefixLast8: "unused",
 		createdAt: Date.now(),
 		role: "api-only",
@@ -61,6 +66,121 @@ afterEach(async () => {
 });
 
 describe("API key multi-window management", () => {
+	it("keeps listing other keys when one limits read fails", async () => {
+		await key();
+		await key("other", "other-name");
+		const counter = getApiKeySpendCounter(dbOps);
+		const original = counter.getLimitsForKey.bind(counter);
+		const failure = spyOn(counter, "getLimitsForKey").mockImplementation(
+			(id) => {
+				if (id === "target")
+					return Promise.reject(new Error("database unavailable"));
+				return original(id);
+			},
+		);
+		try {
+			const response = await createApiKeysListHandler(dbOps)();
+			expect(response.status).toBe(200);
+			const { data } = await response.json();
+			expect(data).toHaveLength(2);
+			expect(
+				data.find((row: { id: string }) => row.id === "target").limits,
+			).toBeUndefined();
+			expect(
+				data.find((row: { id: string }) => row.id === "other").limits,
+			).toEqual([]);
+		} finally {
+			failure.mockRestore();
+		}
+	});
+
+	it("returns 404 for unknown keys on legacy limit and restriction PATCHes", async () => {
+		for (const [handler, body] of [
+			[createApiKeyUpdateSpendLimitHandler(dbOps), { limitUsd: 10 }],
+			[
+				createApiKeyUpdateRestrictionsHandler(dbOps),
+				{ allowedAccounts: null, allowedModels: null, allowedProviders: null },
+			],
+		] as const) {
+			expect((await handler(request(body, "PATCH"), "missing")).status).toBe(
+				404,
+			);
+		}
+	});
+
+	it("returns 400 for malformed and non-object JSON in every limit/restriction/routing writer", async () => {
+		await key();
+		for (const handler of [
+			createApiKeyUpdateRestrictionsHandler(dbOps),
+			createApiKeyUpdateSpendLimitHandler(dbOps),
+			createApiKeyLimitsPutHandler(dbOps),
+			createApiKeyRoutingUpdateHandler(dbOps),
+		]) {
+			for (const body of ["{", "null", "[]", '"text"']) {
+				const req = new Request("http://localhost/api/api-keys/target", {
+					method: "PATCH",
+					body,
+					headers: { "Content-Type": "application/json" },
+				});
+				expect((await handler(req, "target")).status).toBe(400);
+			}
+		}
+	});
+
+	it("bounds restriction lists, entries, limit rows, scopes and USD amounts", async () => {
+		await key();
+		const restrictions = createApiKeyUpdateRestrictionsHandler(dbOps);
+		for (const list of [
+			Array.from({ length: 257 }, (_, i) => `id-${i}`),
+			["x".repeat(257)],
+		]) {
+			expect(
+				(
+					await restrictions(
+						request({
+							allowedAccounts: list,
+							allowedModels: null,
+							allowedProviders: null,
+						}),
+						"target",
+					)
+				).status,
+			).toBe(400);
+		}
+		const put = createApiKeyLimitsPutHandler(dbOps);
+		const row = { window: "day", limitUsd: 1, scopeModel: null };
+		for (const limits of [
+			Array.from({ length: 129 }, (_, i) => ({
+				...row,
+				scopeModel: `model-${i}`,
+			})),
+			[{ ...row, scopeModel: "x".repeat(257) }],
+			[{ ...row, limitUsd: 1e300 }],
+		]) {
+			expect(
+				(await put(request({ mode: "calendar", limits }), "target")).status,
+			).toBe(400);
+		}
+		expect(
+			(
+				await createApiKeyUpdateSpendLimitHandler(dbOps)(
+					request({ limitUsd: 1e300 }),
+					"target",
+				)
+			).status,
+		).toBe(400);
+		expect(
+			(
+				await put(
+					request({
+						mode: "calendar",
+						limits: [{ ...row, limitUsd: 1_000_000 }],
+					}),
+					"target",
+				)
+			).status,
+		).toBe(200);
+	});
 	it("replaces limits and attaches per-scope spend and resets to GET/list", async () => {
 		await key();
 		const now = Date.now();
@@ -441,6 +561,31 @@ describe("API key multi-window management", () => {
 });
 
 describe("API key usage authorization", () => {
+	it("does not resolve another key's identifier or reveal whether it exists", async () => {
+		await key();
+		const getId = spyOn(dbOps, "getApiKey");
+		const getName = spyOn(dbOps, "getApiKeyByName");
+		try {
+			const handler = createApiKeyUsageHandler({ dbOps } as APIContext);
+			const responses = [];
+			for (const id of ["target", "target-name", "missing"]) {
+				const response = await handler(id, new URLSearchParams(), {
+					isAuthenticated: true,
+					apiKeyId: "own",
+					apiKeyName: "own-name",
+					role: "api-only",
+				});
+				expect(response.status).toBe(404);
+				responses.push(await response.text());
+			}
+			expect(new Set(responses).size).toBe(1);
+			expect(getId).not.toHaveBeenCalled();
+			expect(getName).not.toHaveBeenCalled();
+		} finally {
+			getId.mockRestore();
+			getName.mockRestore();
+		}
+	});
 	async function credential(id: string, role: "admin" | "api-only") {
 		const crypto = new NodeCryptoUtils();
 		const plain = await crypto.generateApiKey();
@@ -504,10 +649,10 @@ describe("API key usage authorization", () => {
 			expect(response?.status).toBe(200);
 			expect((await response?.json())?.canManage).toBe(false);
 		}
-		for (const identifier of ["target", "target-name"])
+		for (const identifier of ["target", "target-name", "missing"])
 			expect(
 				(await call(api, `/api/api-keys/${identifier}/usage`, own))?.status,
-			).toBe(403);
+			).toBe(404);
 		expect((await call(api, "/api/api-keys/own/usage"))?.status).toBe(401);
 		expect((await call(api, "/api/api-keys/own/limits", own))?.status).toBe(
 			401,
@@ -528,6 +673,18 @@ describe("API key usage authorization", () => {
 			)?.status,
 		).toBe(401);
 	});
+	it("resolves own-name usage to the authenticated key when it collides with another key's id", async () => {
+		const own = await credential("own", "api-only");
+		await key("own name", "victim");
+		const response = await call(
+			router(),
+			"/api/api-keys/own%20name/usage",
+			own,
+		);
+		expect(response?.status).toBe(200);
+		expect((await response?.json())?.apiKey.id).toBe("own");
+	});
+
 	it("hides account identities and other keys' subscription totals from own-key usage", async () => {
 		const own = await credential("own", "api-only");
 		const admin = await credential("admin", "admin");
