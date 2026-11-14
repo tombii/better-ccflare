@@ -164,4 +164,50 @@ describe("budget reconciliation SQL", () => {
 			"tail",
 		]);
 	});
+	it("returns rolling SUMs without materializing a month of settled history", async () => {
+		const start = NOW - 30 * 86400000;
+		await event("edge", start + 1000, 0, 2);
+		await event("settled", NOW - 86400000, 0, 4);
+		await event("ack", NOW - 1000, 0, 1);
+		await event("outside", start, 0, 99);
+		const result = await db.getApiKeySpendReconciliation(
+			"key",
+			[{ window: "month", startMs: start, endMs: NOW + 30 * 86400000 }],
+			start,
+			NOW - 600000,
+			NOW,
+			120000,
+		);
+		expect(result.calendar[0].totals[0].totalUsd).toBe(7);
+		expect(result.events.map(({ requestId }) => requestId).sort()).toEqual([
+			"ack",
+			"edge",
+		]);
+	});
+	it("includes rolling costs recorded exactly at the reset boundary", async () => {
+		await db.createApiKey({
+			id: "key",
+			name: "key",
+			hashedKey: "hash",
+			prefixLast8: "last8",
+			createdAt: 1,
+			isActive: true,
+		});
+		await db.resetApiKeySpend("key", NOW - 1000, "admin");
+		await event("boundary", NOW - 1000, 0, 3);
+		await event("before-reset", NOW - 1001, 0, 99);
+		const start = NOW - 3600000;
+		const result = await db.getApiKeySpendReconciliation(
+			"key",
+			[{ window: "hour", startMs: start, endMs: NOW + 3600000 }],
+			start,
+			NOW - 600000,
+			NOW,
+			120000,
+		);
+		expect(result.calendar[0].totals[0].totalUsd).toBe(3);
+		expect(result.events.map(({ requestId }) => requestId)).toEqual([
+			"boundary",
+		]);
+	});
 });

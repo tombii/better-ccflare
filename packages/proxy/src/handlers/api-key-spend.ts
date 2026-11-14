@@ -133,10 +133,13 @@ export class ApiKeySpendCounter {
 			spentUsd: number;
 			cursor: number;
 			events: SpendEvent[];
+			/** Settled costs have a complete expiry tail only through this instant. */
+			expiryThroughMs: number;
 		}
 	>();
 	private readonly limitInflight = new Map<string, Promise<void>>();
 	private readonly limitGenerations = new Map<string, number>();
+	private nextLimitGeneration = 0;
 	private readonly limitSyncTokens = new Map<string, symbol>();
 	/** Local completions remain authoritative until their request ID is persisted. */
 	private readonly pendingRecords = new Map<string, Map<string, SpendEvent>>();
@@ -280,7 +283,7 @@ export class ApiKeySpendCounter {
 		for (const [apiKeyId, entry] of keys) {
 			try {
 				if (typeof this.dbOps.getApiKey === "function") {
-					const key = await this.dbOps.getApiKey(apiKeyId);
+					const key = await this.bounded(this.dbOps.getApiKey(apiKeyId));
 					if (!key?.isActive) {
 						this.evict(apiKeyId);
 						continue;
@@ -309,25 +312,31 @@ export class ApiKeySpendCounter {
 		if (cached?.limits.length) this.lastAccess.set(apiKeyId, Date.now());
 		if (cached && Date.now() - cached.loadedMs < SPEND_RESYNC_TTL_MS)
 			return cached.limits;
-		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
+		const generation = this.generationFor(apiKeyId);
 		let limits: ApiKeyLimit[];
 		try {
 			limits = await this.bounded(this.dbOps.getApiKeyLimits(apiKeyId), signal);
 		} catch (error) {
 			const stale = this.keyLimits.get(apiKeyId);
+			// A failed first read has no active state for idle eviction to visit.
+			// Do not discard a generation that a concurrent spend sync now owns.
+			if (
+				!stale?.limits.length &&
+				this.limitGenerations.get(apiKeyId) === generation &&
+				!this.lastAccess.has(apiKeyId) &&
+				!this.entries.has(apiKeyId) &&
+				!this.inflight.has(apiKeyId)
+			)
+				this.limitGenerations.delete(apiKeyId);
 			if (!stale || signal?.aborted) throw error;
 			log.warn(
 				`Using cached spend limits for key ${apiKeyId} after refresh failed: ${String(error)}`,
 			);
 			return stale.limits;
 		}
-		if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
+		if (this.limitGenerations.get(apiKeyId) !== generation)
 			return this.getLimitsForKey(apiKeyId, signal);
-		if (
-			!limits.length &&
-			(this.lastAccess.has(apiKeyId) || this.entries.has(apiKeyId))
-		)
-			this.forget(apiKeyId);
+		if (!limits.length) this.forget(apiKeyId);
 		this.keyLimits.set(apiKeyId, { loadedMs: Date.now(), limits });
 		if (limits.length) this.lastAccess.set(apiKeyId, Date.now());
 		else {
@@ -336,6 +345,14 @@ export class ApiKeySpendCounter {
 		}
 		if (!this.refreshTimer) this.scheduleRefresh();
 		return limits;
+	}
+	private generationFor(apiKeyId: string): number {
+		let generation = this.limitGenerations.get(apiKeyId);
+		if (generation === undefined) {
+			generation = ++this.nextLimitGeneration;
+			this.limitGenerations.set(apiKeyId, generation);
+		}
+		return generation;
 	}
 	private identity(apiKeyId: string, limit: ApiKeyLimit): string {
 		return JSON.stringify([apiKeyId, limit.scopeModel, limit.window]);
@@ -347,8 +364,8 @@ export class ApiKeySpendCounter {
 	 */
 	applySpendReset(apiKeyId: string, timestamp: number): void {
 		if ((this.spendResetPoints.get(apiKeyId) ?? 0) >= timestamp) return;
-		this.spendResetPoints.set(apiKeyId, timestamp);
 		this.forget(apiKeyId);
+		this.spendResetPoints.set(apiKeyId, timestamp);
 		for (const [id, reservation] of this.reservations)
 			if (reservation.apiKeyId === apiKeyId) this.reservations.delete(id);
 		const pending = this.pendingRecords.get(apiKeyId);
@@ -359,7 +376,12 @@ export class ApiKeySpendCounter {
 
 	private async loadSpendReset(apiKeyId: string): Promise<number> {
 		if (typeof this.dbOps.getApiKey === "function") {
+			const generation = this.generationFor(apiKeyId);
 			const key = await this.dbOps.getApiKey(apiKeyId);
+			if (this.limitGenerations.get(apiKeyId) !== generation)
+				throw new SpendCheckSupersededError(
+					"Spend reset read superseded by updated settings",
+				);
 			const resetAt = key?.spendResetAt ?? 0;
 			if (resetAt > (this.spendResetPoints.get(apiKeyId) ?? 0))
 				this.applySpendReset(apiKeyId, resetAt);
@@ -373,16 +395,11 @@ export class ApiKeySpendCounter {
 		mode: ApiKeyLimitWindowMode,
 		nowMs: number,
 	): Promise<void> {
-		const deadline = performance.now() + this.syncTimeoutMs;
 		const resetAt =
 			typeof this.dbOps.getApiKey === "function"
-				? await this.bounded(
-						this.loadSpendReset(apiKeyId),
-						undefined,
-						deadline - performance.now(),
-					)
+				? await this.bounded(this.loadSpendReset(apiKeyId))
 				: (this.spendResetPoints.get(apiKeyId) ?? 0);
-		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
+		const generation = this.generationFor(apiKeyId);
 		const keyLimits =
 			this.keyLimits.get(apiKeyId)?.limits ??
 			[...this.limitEntries.values()]
@@ -400,10 +417,6 @@ export class ApiKeySpendCounter {
 					{
 						window: row.window,
 						...apiKeyLimitWindowBounds(row.window, mode, nowMs),
-						startMs: Math.max(
-							apiKeyLimitWindowBounds(row.window, mode, nowMs).startMs,
-							resetAt,
-						),
 					},
 				]),
 			).values(),
@@ -430,12 +443,13 @@ export class ApiKeySpendCounter {
 					typeof this.dbOps.getApiKeySpendReconciliation === "function"
 						? await this.dbOps.getApiKeySpendReconciliation(
 								apiKeyId,
-								mode === "calendar" ? windows : [],
+								windows,
 								mode === "rolling"
 									? Math.min(...windows.map((window) => window.startMs))
 									: null,
 								Math.max(nowMs - SPEND_PENDING_TTL_MS, resetAt),
 								nowMs,
+								2 * SPEND_RESYNC_TTL_MS,
 							)
 						: {
 								calendar: null,
@@ -444,11 +458,9 @@ export class ApiKeySpendCounter {
 									Math.min(...windows.map((window) => window.startMs)),
 								),
 							})(),
-				undefined,
-				deadline - performance.now(),
 			);
 			if (
-				(this.limitGenerations.get(apiKeyId) ?? 0) !== generation ||
+				this.limitGenerations.get(apiKeyId) !== generation ||
 				limits.some(
 					(row) =>
 						this.limitSyncTokens.get(this.identity(apiKeyId, row)) !== token,
@@ -470,6 +482,7 @@ export class ApiKeySpendCounter {
 					(!event.requestId || !seen.has(event.requestId)) &&
 					nowMs - event.timestamp <= SPEND_PENDING_TTL_MS,
 			);
+			const unpersistedSet = new Set(unpersisted);
 			const merged = [...persisted, ...unpersisted].sort(
 				(a, b) => a.timestamp - b.timestamp,
 			);
@@ -477,7 +490,7 @@ export class ApiKeySpendCounter {
 				const bounds = apiKeyLimitWindowBounds(row.window, mode, nowMs);
 				const matches = (event: SpendEvent) =>
 					event.timestamp >= resetAt &&
-					(event.timestamp <= nowMs || unpersisted.includes(event)) &&
+					(event.timestamp <= nowMs || unpersistedSet.has(event)) &&
 					(mode === "rolling"
 						? event.timestamp > bounds.startMs
 						: event.timestamp >= bounds.startMs &&
@@ -509,6 +522,11 @@ export class ApiKeySpendCounter {
 					spentUsd,
 					events: mode === "rolling" ? events : [],
 					cursor: 0,
+					// A second TTL lets normal refreshes stay in the background.
+					expiryThroughMs:
+						mode === "rolling" && aggregate
+							? nowMs + 2 * SPEND_RESYNC_TTL_MS
+							: Number.POSITIVE_INFINITY,
 				});
 			}
 		})().finally(() => {
@@ -530,12 +548,13 @@ export class ApiKeySpendCounter {
 		this.lastAccess.set(apiKeyId, Date.now());
 		const identity = this.identity(apiKeyId, limit);
 		const bounds = apiKeyLimitWindowBounds(limit.window, mode, nowMs);
-		let generation = this.limitGenerations.get(apiKeyId) ?? 0;
+		let generation = this.generationFor(apiKeyId);
 		let entry = this.limitEntries.get(identity);
 		if (
 			reconcile ||
 			!entry ||
 			entry.lastSyncMs === 0 ||
+			(mode === "rolling" && nowMs > entry.expiryThroughMs) ||
 			entry.mode !== mode ||
 			(mode === "calendar" && entry.startMs !== bounds.startMs)
 		) {
@@ -551,6 +570,7 @@ export class ApiKeySpendCounter {
 					error instanceof SpendCheckSupersededError ||
 					signal?.aborted ||
 					!stale ||
+					(mode === "rolling" && nowMs > stale.expiryThroughMs) ||
 					stale.mode !== mode ||
 					stale.lastSyncMs === 0 ||
 					(mode === "calendar" && stale.startMs !== bounds.startMs)
@@ -560,7 +580,7 @@ export class ApiKeySpendCounter {
 					`Using cached spend totals for key ${apiKeyId} after refresh failed: ${String(error)}`,
 				);
 			}
-			generation = this.limitGenerations.get(apiKeyId) ?? 0;
+			generation = this.generationFor(apiKeyId);
 			entry = this.limitEntries.get(identity);
 		} else if (nowMs - entry.lastSyncMs >= SPEND_RESYNC_TTL_MS) {
 			void this.syncLimitKey(apiKeyId, limit, mode, nowMs).catch((error) =>
@@ -569,7 +589,7 @@ export class ApiKeySpendCounter {
 				),
 			);
 		}
-		if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
+		if (this.limitGenerations.get(apiKeyId) !== generation)
 			throw new SpendCheckSupersededError(
 				"Spend counter settings changed during check",
 			);
@@ -596,6 +616,7 @@ export class ApiKeySpendCounter {
 			spentUsd: number;
 			cursor: number;
 			events: SpendEvent[];
+			expiryThroughMs: number;
 		},
 		excludeReservationId?: string,
 	): SpendSnapshot {
@@ -630,6 +651,13 @@ export class ApiKeySpendCounter {
 			let remaining = committedUsd;
 			for (let i = entry.cursor; i < entry.events.length; i++) {
 				const event = entry.events[i];
+				// Acknowledgement-tail events lie after the omitted settled middle;
+				// only the complete oldest edge can establish exact rolling relief.
+				if (
+					event.timestamp + API_KEY_ROLLING_DURATION_MS[limit.window] >
+					entry.expiryThroughMs
+				)
+					break;
 				remaining -= event.costUsd;
 				resetMs = Math.min(
 					nowMs + API_KEY_ROLLING_DURATION_MS[limit.window],
@@ -670,6 +698,7 @@ export class ApiKeySpendCounter {
 			const entry = this.limitEntries.get(this.identity(apiKeyId, limit));
 			if (
 				!entry ||
+				(mode === "rolling" && nowMs > entry.expiryThroughMs) ||
 				entry.lastSyncMs === 0 ||
 				entry.mode !== mode ||
 				(mode === "calendar" &&
@@ -713,6 +742,7 @@ export class ApiKeySpendCounter {
 			const entry = this.limitEntries.get(this.identity(apiKeyId, limit));
 			return (
 				!entry ||
+				(mode === "rolling" && nowMs > entry.expiryThroughMs) ||
 				entry.lastSyncMs === 0 ||
 				entry.mode !== mode ||
 				(mode === "calendar" &&
@@ -757,7 +787,7 @@ export class ApiKeySpendCounter {
 				createdMs: nowMs,
 			};
 			for (let attempt = 0; attempt < 2; attempt++) {
-				const generation = this.limitGenerations.get(apiKeyId) ?? 0;
+				const generation = this.generationFor(apiKeyId);
 				try {
 					const snapshots: Array<{
 						limit: ApiKeyLimit;
@@ -790,7 +820,7 @@ export class ApiKeySpendCounter {
 							);
 						}
 					}
-					if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
+					if (this.limitGenerations.get(apiKeyId) !== generation)
 						throw new SpendCheckSupersededError(
 							"Spend counter settings changed before reservation",
 						);
@@ -1069,10 +1099,13 @@ export class ApiKeySpendCounter {
 
 	/** Drop a key's cached total, e.g. after its limit is changed or cleared. */
 	forget(apiKeyId: string) {
-		this.limitGenerations.set(
-			apiKeyId,
-			(this.limitGenerations.get(apiKeyId) ?? 0) + 1,
-		);
+		// Generations are globally unique so removing a key cannot create an ABA
+		// match with an older in-flight read after that key is loaded again.
+		this.limitGenerations.delete(apiKeyId);
+		this.spendResetPoints.delete(apiKeyId);
+		const prefix = `${JSON.stringify([apiKeyId]).slice(0, -1)},`;
+		for (const identity of this.limitSyncTokens.keys())
+			if (identity.startsWith(prefix)) this.limitSyncTokens.delete(identity);
 		this.keyLimits.delete(apiKeyId);
 		for (const [identity, entry] of this.limitEntries)
 			if (entry.apiKeyId === apiKeyId) this.limitEntries.delete(identity);
@@ -1124,7 +1157,7 @@ export class ApiKeySpendCounter {
 			typeof this.dbOps.getApiKey === "function"
 				? await this.loadSpendReset(apiKeyId)
 				: (this.spendResetPoints.get(apiKeyId) ?? 0);
-		const generation = this.limitGenerations.get(apiKeyId) ?? 0;
+		const generation = this.generationFor(apiKeyId);
 		const windowStartMs = Math.max(
 			computeSpendWindowStartMs(limit.limitWindow, nowMs),
 			resetAt > 0 ? resetAt - 1 : 0,
@@ -1133,7 +1166,7 @@ export class ApiKeySpendCounter {
 			apiKeyId,
 			windowStartMs,
 		);
-		if ((this.limitGenerations.get(apiKeyId) ?? 0) !== generation)
+		if (this.limitGenerations.get(apiKeyId) !== generation)
 			throw new Error("Spend counter reset during reconciliation");
 		const entry: CounterEntry = {
 			windowKey: spendWindowInstanceKey(limit.limitWindow, nowMs),

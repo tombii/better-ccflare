@@ -2907,7 +2907,8 @@ OAuth tokens will need to be re-authenticated.
 	}
 	/**
 	 * Reconcile a key in one SQL snapshot. Calendar windows return grouped SUMs;
-	 * individual events are returned only for rolling expiry and the short local
+	 * rolling windows also return SUMs with a bounded expiry edge. Individual
+	 * events are returned only for rolling expiry and the short local
 	 * completion acknowledgement tail. Cost-recorded time preserves budget attribution
 	 * across delayed pricing, asynchronous writes, and a process restart.
 	 */
@@ -2917,6 +2918,7 @@ OAuth tokens will need to be re-authenticated.
 		rollingSinceMs: number | null,
 		tailSinceMs: number,
 		nowMs: number,
+		expiryTailMs?: number,
 	): Promise<{
 		calendar: Array<{
 			window: string;
@@ -2937,13 +2939,19 @@ OAuth tokens will need to be re-authenticated.
 		const count = Math.max(1, windows.length);
 		const sums = Array.from({ length: count }, (_, index) =>
 			windows[index]
-				? `SUM(CASE WHEN completed_ms >= ? AND completed_ms < ? THEN cost_usd ELSE 0 END) AS total_${index}`
+				? `SUM(CASE WHEN completed_ms ${rollingSinceMs === null ? ">=" : ">"} ? AND completed_ms < ? THEN cost_usd ELSE 0 END) AS total_${index}`
 				: `SUM(cost_usd) AS total_${index}`,
 		);
 		const eventCosts = Array.from({ length: count }, (_, index) =>
 			index === 0 ? "cost_usd" : "0",
 		);
-		const eventSinceMs = Math.min(tailSinceMs, rollingSinceMs ?? tailSinceMs);
+		// Legacy callers without aggregate windows can still request full events.
+		// Normal reconciliation returns only acknowledgements and the oldest
+		// edge of each rolling window, which can expire before the next sync.
+		const boundedExpiry = expiryTailMs !== undefined && rollingSinceMs !== null;
+		const eventSinceMs = boundedExpiry
+			? tailSinceMs
+			: Math.min(tailSinceMs, rollingSinceMs ?? tailSinceMs);
 		const sinceMs = Math.min(
 			eventSinceMs,
 			...windows.map((window) => window.startMs),
@@ -2958,6 +2966,12 @@ OAuth tokens will need to be re-authenticated.
 		];
 		for (const window of windows) params.push(window.startMs, window.endMs);
 		params.push(eventSinceMs);
+		const expiryClauses = boundedExpiry
+			? windows.map((window) => {
+					params.push(window.startMs, window.startMs + expiryTailMs);
+					return "(completed_ms > ? AND completed_ms <= ?)";
+				})
+			: [];
 		const rows = await withDatabaseRetry(
 			() =>
 				this.adapter.query<{
@@ -2978,7 +2992,7 @@ OAuth tokens will need to be re-authenticated.
 			FROM eligible GROUP BY model, requested_model
 			UNION ALL
 			SELECT 'event' AS kind, id AS request_id, completed_ms, model, requested_model, ${eventCosts.join(", ")}
-			FROM eligible WHERE completed_ms >= ?
+			FROM eligible WHERE completed_ms >= ?${expiryClauses.map((clause) => ` OR ${clause}`).join("")}
 		`,
 					params,
 				),
