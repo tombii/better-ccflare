@@ -306,7 +306,7 @@ export function createApiKeysListHandler(dbOps: DatabaseOperations) {
 export function createApiKeysGenerateHandler(dbOps: DatabaseOperations) {
 	return async (req: Request): Promise<Response> => {
 		try {
-			const body = await req.json();
+			const body = await readObjectBody(req);
 			const { name, role = "api-only" } = body;
 
 			if (!name || typeof name !== "string" || name.trim().length === 0) {

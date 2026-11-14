@@ -20,6 +20,7 @@ import {
 	createApiKeyLimitsGetHandler,
 	createApiKeyLimitsPutHandler,
 	createApiKeyRoutingUpdateHandler,
+	createApiKeysGenerateHandler,
 	createApiKeysListHandler,
 	createApiKeyUpdateRestrictionsHandler,
 	createApiKeyUpdateSpendLimitHandler,
@@ -124,6 +125,15 @@ describe("API key multi-window management", () => {
 				});
 				expect((await handler(req, "target")).status).toBe(400);
 			}
+		}
+		const generate = createApiKeysGenerateHandler(dbOps);
+		for (const body of ["{", "null", "[]", '"text"']) {
+			const req = new Request("http://localhost/api/api-keys", {
+				method: "POST",
+				body,
+				headers: { "Content-Type": "application/json" },
+			});
+			expect((await generate(req)).status).toBe(400);
 		}
 	});
 
