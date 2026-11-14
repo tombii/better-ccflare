@@ -271,7 +271,7 @@ describe("seam 2 — x-better-ccflare-account-id must not bypass the allowlist",
 		expect(result).toEqual([]);
 		const denial = getApiKeyRestrictionDenial(meta);
 		expect(denial?.scope).toBe("forced account");
-		expect(denial?.forcedAccountName).toBe("test-account");
+		expect(denial).not.toHaveProperty("forcedAccountName");
 	});
 
 	it("refuses a forced account whose provider the key is not allowed", async () => {

@@ -794,7 +794,6 @@ export async function selectAccountsForRequest(
 						setApiKeyRestrictionDenial(meta, {
 							scope: "forced account",
 							removed: 1,
-							forcedAccountName: forcedAccount.name,
 						});
 						return [];
 					}
@@ -1089,6 +1088,7 @@ export async function selectAccountsForRequest(
 							.map((a) => a.id),
 					);
 					let excludedSlots = 0;
+					let restrictedSlots = 0;
 					const availableAccounts: Account[] = [];
 					const comboCandidates: Array<{
 						account: Account;
@@ -1135,6 +1135,7 @@ export async function selectAccountsForRequest(
 						// fallthrough below, which re-applies seam 1 — are still
 						// legitimate ways to serve this key.
 						if (poolRestricted && !isPermittedForKey(account)) {
+							restrictedSlots++;
 							continue;
 						}
 
@@ -1367,6 +1368,12 @@ export async function selectAccountsForRequest(
 					// is deliberately left unset so this fallthrough is treated as
 					// ordinary, non-combo selection downstream.
 					if (isComboSessionFallbackDisabled(ctx)) {
+						if (restrictedSlots > 0) {
+							setApiKeyRestrictionDenial(meta, {
+								scope: summarizeAccountRestrictionScope(keyRestrictions),
+								removed: restrictedSlots,
+							});
+						}
 						setComboSlotInfo(meta, {
 							comboName: combo.name,
 							slots: [],

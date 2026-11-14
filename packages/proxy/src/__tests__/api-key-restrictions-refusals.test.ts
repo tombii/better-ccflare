@@ -21,10 +21,18 @@ import {
 	mock,
 	spyOn,
 } from "bun:test";
+import * as core from "@better-ccflare/core";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account, ApiKeyRestrictions } from "@better-ccflare/types";
+import { transformRequestBodyModel } from "../../../providers/src/utils/model-mapping";
 import type { ProxyContext } from "../handlers";
+import * as handlersModule from "../handlers";
+import {
+	getApiKeySpendCounter,
+	resetApiKeySpendCounter,
+} from "../handlers/api-key-spend";
 import { INTERNAL_PROBE_SECRET_HEADER } from "../handlers/proxy-types";
+import * as modelCatalogModule from "../model-catalog";
 import { handleProxy } from "../proxy";
 import * as usageCollectorModule from "../usage-collector";
 
@@ -188,6 +196,158 @@ describe("api_key_model_restricted", () => {
 		expect(body.error.type).toBe("permission_error");
 		expect(body.error.code).toBe("api_key_model_restricted");
 		expect(String(body.error.message)).toContain("claude-opus-4-5");
+	});
+
+	it("rechecks a client-selected agent preference before account selection", async () => {
+		const ctx = makeContext([makeAccount()]);
+		Object.assign(ctx.dbOps, {
+			getAgentPreference: mock(async () => ({ model: "claude-opus-4-5" })),
+		});
+		spyOn(modelCatalogModule, "getModelCatalog").mockResolvedValue({
+			models: [],
+			fetchedAt: Date.now(),
+			source: "fallback",
+		});
+		const response = await handleProxy(
+			makeRequest("claude-haiku-4-5", {
+				"x-better-ccflare-agent-id": "agent-1",
+			}),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"scoped-key",
+			{ restrictions: restrictions({ allowedModels: ["haiku"] }) },
+		);
+		expect(response.status).toBe(403);
+		expect((await response.json()).error.code).toBe("api_key_model_restricted");
+		expect(ctx.dbOps.getAllAccounts).not.toHaveBeenCalled();
+	});
+
+	it("rechecks a combo slot model pin even when cost tracking is disabled", async () => {
+		const ctx = makeContext([makeAccount()]);
+		Object.assign(ctx.config, { getCostTrackingEnabled: () => false });
+		Object.assign(ctx.dbOps, {
+			getActiveComboForFamily: mock(async () => ({
+				id: "combo-1",
+				name: "pinned",
+				enabled: true,
+				slots: [
+					{
+						id: "slot-1",
+						account_id: "acc-1",
+						model: "claude-opus-4-5",
+						enabled: true,
+						priority: 0,
+					},
+				],
+			})),
+		});
+		const response = await handleProxy(
+			makeRequest("claude-haiku-4-5"),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"scoped-key",
+			{ restrictions: restrictions({ allowedModels: ["haiku"] }) },
+		);
+		expect(response.status).toBe(403);
+		expect((await response.json()).error.code).toBe("api_key_model_restricted");
+	});
+
+	it("compares and records the plain model before its provider-routing suffix", async () => {
+		const ctx = makeContext([makeAccount()]);
+		const proxy = spyOn(handlersModule, "proxyWithAccount").mockResolvedValue(
+			new Response("ok"),
+		);
+		const response = await handleProxy(
+			makeRequest('claude-opus-4-5 {"only":["example"]}'),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"scoped-key",
+			{ restrictions: restrictions({ allowedModels: ["claude-opus-4-5"] }) },
+		);
+		expect(response.status).toBe(200);
+		expect(proxy.mock.calls[0][3].limitModel).toBe("claude-opus-4-5");
+	});
+
+	it("allows provider-native account mappings and still checks their spend", async () => {
+		const account = makeAccount({
+			provider: "stub-account-model-mapping",
+			api_key: "test-key",
+			refresh_token: "",
+			model_mappings: JSON.stringify({ opus: "gpt-native" }),
+		});
+		const ctx = makeContext([account]);
+		Object.assign(ctx.dbOps, {
+			getApiKeyLimits: async () => [
+				{
+					id: "limit",
+					apiKeyId: "key-1",
+					scopeModel: null,
+					window: "day",
+					limitUsd: 100,
+					enforce: "block",
+					createdAt: 0,
+					updatedAt: 0,
+				},
+			],
+			getApiKeySpendEventsSince: async () => [],
+			updateAccountUsage: async () => {},
+		});
+		Object.assign(ctx.provider, {
+			name: account.provider,
+			buildUrl: () => "https://upstream.invalid/v1/messages",
+			prepareHeaders: () => new Headers(),
+			transformRequestBody: transformRequestBodyModel,
+			processResponse: async (response: Response) => response,
+			parseRateLimit: () => ({ isRateLimited: false, statusHeader: "allowed" }),
+			isStreamingResponse: () => false,
+		});
+		Object.assign(ctx.config, { getStorePayloads: () => false });
+		const originalFetch = globalThis.fetch;
+		const upstream = mock(async (input: RequestInfo | URL) => {
+			const sent = input as Request;
+			const body = JSON.parse(await sent.text());
+			expect(body.model).toBe("gpt-native");
+			return new Response(
+				JSON.stringify({
+					id: "msg-mapped",
+					type: "message",
+					role: "assistant",
+					model: body.model,
+					content: [{ type: "text", text: "ok" }],
+					stop_reason: "end_turn",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				}),
+				{ headers: { "Content-Type": "application/json" } },
+			);
+		});
+		globalThis.fetch = upstream as typeof fetch;
+		spyOn(core, "getModelRates").mockResolvedValue(null);
+		resetApiKeySpendCounter();
+		const spendCheck = spyOn(
+			getApiKeySpendCounter(ctx.dbOps),
+			"checkAndReserve",
+		);
+		try {
+			const response = await handleProxy(
+				makeRequest(),
+				PROXY_URL,
+				ctx,
+				"key-1",
+				"scoped-key",
+				{ restrictions: restrictions({ allowedModels: ["opus"] }) },
+			);
+			expect(response.status).toBe(200);
+			expect(upstream).toHaveBeenCalledTimes(1);
+			expect(
+				spendCheck.mock.calls.some((call) => call[5] === "gpt-native"),
+			).toBe(true);
+		} finally {
+			globalThis.fetch = originalFetch;
+			resetApiKeySpendCounter();
+		}
 	});
 
 	it("never reaches account selection", async () => {
@@ -367,7 +527,77 @@ describe("api_key_account_restricted", () => {
 		};
 		expect(body.error.code).toBe("api_key_account_restricted");
 		expect(body.error.restricted_by).toBe("forced account");
-		expect(String(body.error.message)).toContain("forbidden");
+		expect(JSON.stringify(body)).not.toContain("forbidden");
+	});
+
+	it("answers a restriction-empty combo with 403 when session fallback is disabled", async () => {
+		const ctx = makeContext([makeAccount()]);
+		Object.assign(ctx.config, { getComboSessionFallback: () => false });
+		Object.assign(ctx.dbOps, {
+			getActiveComboForFamily: mock(async () => ({
+				id: "combo-1",
+				name: "restricted combo",
+				enabled: true,
+				slots: [
+					{
+						id: "slot-1",
+						account_id: "acc-1",
+						model: "",
+						enabled: true,
+						priority: 0,
+					},
+				],
+			})),
+		});
+		const response = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			null,
+			null,
+			{
+				restrictions: restrictions({ allowedAccounts: [] }),
+			},
+		);
+		expect(response.status).toBe(403);
+		expect((await response.json()).error.code).toBe(
+			"api_key_account_restricted",
+		);
+		expect(response.headers.get("Retry-After")).toBeNull();
+	});
+
+	it("excludes restricted-away account names and recovery times from pool exhaustion", async () => {
+		const now = Date.now();
+		const ctx = makeContext([
+			makeAccount({
+				id: "allowed",
+				name: "allowed",
+				rate_limited_until: now + 300_000,
+			}),
+			makeAccount({
+				id: "private",
+				name: "private-account-name",
+				rate_limited_until: now + 30_000,
+			}),
+		]);
+		const response = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			null,
+			null,
+			{
+				restrictions: restrictions({ allowedAccounts: ["allowed"] }),
+			},
+		);
+		expect(response.status).toBe(503);
+		expect(Number(response.headers.get("Retry-After"))).toBeGreaterThanOrEqual(
+			299,
+		);
+		const body = await response.text();
+		expect(body).toContain("allowed");
+		expect(body).not.toContain("private-account-name");
+		expect(body).not.toContain(new Date(now + 30_000).toISOString());
 	});
 
 	it("records the refusal", async () => {

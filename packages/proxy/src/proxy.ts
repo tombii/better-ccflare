@@ -1,13 +1,8 @@
 import {
 	type AccountUsageSnapshot,
 	getCostTrackingEpoch,
-	getModelFamily,
 	getModelRates,
 	isCostTrackingEnabled,
-	LATEST_FABLE_MODEL,
-	LATEST_HAIKU_MODEL,
-	LATEST_OPUS_MODEL,
-	LATEST_SONNET_MODEL,
 	requestEvents,
 	runForceAccountModelExempt,
 	ServiceUnavailableError,
@@ -47,6 +42,7 @@ import {
 	getDeferredCandidates,
 	getModelFamilyExhaustionInfo,
 	interceptAndModifyRequest,
+	isAccountAllowedForApiKey,
 	isComboSessionFallbackDisabled,
 	isForceAccountModelEnabled,
 	isInternalProbe,
@@ -273,20 +269,8 @@ function createLimitCheckUnavailableResponse(): Response {
 async function estimateApiKeyRequestCost(
 	body: RequestJsonBody | null,
 	model: string | null,
-	requestedModel: string | null,
 ): Promise<number> {
-	let rates = model ? await getModelRates(model) : null;
-	if (!rates) {
-		const family =
-			getModelFamily(model ?? "") ?? getModelFamily(requestedModel ?? "");
-		const familyModels = {
-			fable: LATEST_FABLE_MODEL,
-			opus: LATEST_OPUS_MODEL,
-			sonnet: LATEST_SONNET_MODEL,
-			haiku: LATEST_HAIKU_MODEL,
-		};
-		if (family) rates = await getModelRates(familyModels[family]);
-	}
+	const rates = model ? await getModelRates(model) : null;
 	// There is no image-pricing rule in the catalogue. Binary image data must
 	// never masquerade as text; actual provider usage replaces this estimate.
 	let inputBytes = 0;
@@ -325,7 +309,7 @@ async function estimateApiKeyRequestCost(
 	const outputTokens = Math.min(maxTokens, 4096);
 	return (
 		(inputTokens * (rates?.input ?? 0) +
-			cachedTokens * (rates?.cacheRead ?? rates?.input ?? 0) +
+			cachedTokens * (rates?.cacheRead ?? 0) +
 			outputTokens * (rates?.output ?? 0)) /
 		1_000_000
 	);
@@ -595,41 +579,24 @@ async function handleProxyRequest(
 	const parsedBody = requestBodyContext.getParsedJson();
 	const routingModel = requestBodyContext.getModel();
 	const requestModel =
-		options?.trustedNativeResponses === true
-			? (options.trustedRequestedModel ?? routingModel)
-			: routingModel;
+		splitModelRouting(
+			(options?.trustedNativeResponses === true
+				? (options.trustedRequestedModel ?? routingModel)
+				: routingModel) ?? "",
+		).model || null;
 	const { project, projectAttributionSource } =
 		extractProjectAttributionFromRequest(req.headers, parsedBody);
 
-	// Seam 5 — per-API-key model allowlist, EVALUATED HERE.
-	//
-	// This is the last point at which the model is the one the client actually
-	// asked for: the agent interceptor below rewrites it (agent preference),
-	// and combo slots override it again during selection. Enforcing on the
-	// client-requested model is the whole promise — it is the only thing a key
-	// holder can reason about, and a key restricted to "haiku" must not be
-	// denied because an agent preference silently upgraded the request to opus.
-	// Server-side rewrites are explicitly OUT OF SCOPE of this restriction.
-	//
-	// Internal probes are exempt: the schedulers send a compiled-in list of
-	// Claude model ids with no API key at all, and a probe answered with a
-	// refusal counts as a refresh failure — five of those pause a healthy
-	// account. `isInternalProbe` verifies the process-local probe secret.
-	// (Sibling of the exemptions in usage throttling and the forced-account
-	// model check.)
-	//
-	// The refusal itself is EMITTED further down, at the first point where
-	// `returnRefusal` is in scope: a refusal that vanishes without being
-	// recorded would leave the dashboard showing a quiet, healthy proxy while
-	// clients get 403s. Nothing between here and there contacts an upstream
-	// (the local web_search interception is skipped for a denied request).
+	// Check the client's plain model now, then every model rewrite below before
+	// upstream contact. Internal probes retain their secret-gated exemption.
 	const keyRestrictions =
 		options?.restrictions && !isInternalProbe(req.headers, ctx)
 			? options.restrictions
 			: null;
-	const modelRestrictionDenied =
+	let modelRestrictionDenied =
 		restrictsModels(keyRestrictions) &&
 		!isModelAllowedForApiKey(requestModel, keyRestrictions);
+	let deniedModel = requestModel;
 
 	// Per-API-key spend limit — EVALUATED HERE, for the same reasons the model
 	// allowlist above is: this is before any upstream contact and before any
@@ -719,7 +686,6 @@ async function handleProxyRequest(
 		const estimatedUsd = await estimateApiKeyRequestCost(
 			parsedBody,
 			servedModel ?? requestModel ?? null,
-			requestModel ?? null,
 		);
 		if (!trackingEnabledForRequest()) return null;
 		const checks = await getApiKeySpendCounter(ctx.dbOps).checkAndReserve(
@@ -866,6 +832,12 @@ async function handleProxyRequest(
 			forceAccountModel: isForceAccountModelEnabled(ctx),
 		},
 	);
+
+	const rewrittenModel = splitModelRouting(appliedModel ?? "").model || null;
+	if (!isModelAllowedForApiKey(rewrittenModel, keyRestrictions)) {
+		modelRestrictionDenied = true;
+		deniedModel = rewrittenModel;
+	}
 
 	// Use modified body if available
 	const finalBodyBuffer = modifiedBody || requestBodyContext.getBuffer();
@@ -1087,25 +1059,16 @@ async function handleProxyRequest(
 			comboName,
 		);
 
-	// Seam 5, emitted. Decided above on the un-rewritten client model; recorded
-	// through returnRefusal so it lands in request history and the dashboard
-	// fail-rate rather than silently vanishing.
-	//
-	// This sits immediately BEFORE account selection, not after: a request the
-	// key may not make should cost no routing work at all — no account read, no
-	// strategy run, and certainly no upstream contact. It could not be emitted
-	// at its decision point further up because `returnRefusal` needs the
-	// request metadata and the interceptor's applied/original model to record
-	// the request, and those do not exist yet there.
+	// Record the pre-selection model refusal in request history.
 	if (modelRestrictionDenied) {
 		log.warn(
-			`API key restrictions: refusing model "${requestModel}" — key ${apiKeyName ?? apiKeyId ?? "(unknown)"} is limited to a model allowlist`,
+			`API key restrictions: refusing model "${deniedModel}" — key ${apiKeyName ?? apiKeyId ?? "(unknown)"} is limited to a model allowlist`,
 		);
 		return await returnRefusal(
 			createApiKeyRestrictionResponse(
 				"api_key_model_restricted",
-				`This API key is not permitted to use the model "${requestModel}".`,
-				{ model: requestModel ?? null },
+				`This API key is not permitted to use the model "${deniedModel}".`,
+				{ model: deniedModel ?? null },
 			),
 			"api_key_model_restricted",
 			0,
@@ -1210,10 +1173,6 @@ async function handleProxyRequest(
 
 	// 7. Handle no accounts case
 	if (accounts.length === 0) {
-		if (requestMeta.comboName && isComboSessionFallbackDisabled(ctx)) {
-			return await returnComboSessionFallbackDisabled(requestMeta.comboName, 0);
-		}
-
 		// The API key's own account / provider allowlist emptied the pool
 		// (recorded by account-selector.ts — seams 1 and 2). This is a policy
 		// decision, not capacity, so it gets its own branch and must not fall
@@ -1227,7 +1186,7 @@ async function handleProxyRequest(
 		if (restrictionDenial) {
 			const detail =
 				restrictionDenial.scope === "forced account"
-					? `The account requested via x-better-ccflare-account-id (${restrictionDenial.forcedAccountName ?? "unknown"}) is not permitted for this API key.`
+					? "The account requested via x-better-ccflare-account-id is not permitted for this API key."
 					: `This API key is restricted to specific ${restrictionDenial.scope}, and none of them can serve this request.`;
 			log.warn(`API key restrictions: ${detail}`);
 			return await returnRefusal(
@@ -1238,6 +1197,10 @@ async function handleProxyRequest(
 				0,
 				null,
 			);
+		}
+
+		if (requestMeta.comboName && isComboSessionFallbackDisabled(ctx)) {
+			return await returnComboSessionFallbackDisabled(requestMeta.comboName, 0);
 		}
 
 		// Model-scoped capacity filter (account-selector.ts) emptied the
@@ -1305,7 +1268,9 @@ async function handleProxyRequest(
 		// filtered out unavailable accounts), so we need fresh data to populate
 		// per-account cooldown info in the 503 body.
 		const allAccounts = (await ctx.dbOps.getAllAccounts()).filter(
-			(a) => a.provider === ctx.provider.name,
+			(a) =>
+				(a.provider ?? "anthropic") === ctx.provider.name &&
+				isAccountAllowedForApiKey(a, keyRestrictions),
 		);
 
 		// Build a usage snapshot map (id → snapshot) so createPoolExhaustedResponse
@@ -1899,6 +1864,23 @@ async function handleProxyRequest(
 			continue;
 		}
 
+		// Combo pins change the logical model before provider-native account
+		// mappings. Those mappings retain the authorized logical identity.
+		const routedModel = splitModelRouting(
+			modelOverride || effectiveModel || requestModel || "",
+		).model;
+		if (!isModelAllowedForApiKey(routedModel, keyRestrictions)) {
+			return returnRefusal(
+				createApiKeyRestrictionResponse(
+					"api_key_model_restricted",
+					`This API key is not permitted to use the model "${routedModel}".`,
+					{ model: routedModel },
+				),
+				"api_key_model_restricted",
+				0,
+				requestMeta.comboName ?? null,
+			);
+		}
 		const spendRefusal = await routedSpendRefusal(modelOverride);
 		if (spendRefusal) return spendRefusal;
 

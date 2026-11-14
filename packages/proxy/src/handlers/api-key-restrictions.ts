@@ -98,6 +98,9 @@ export function isAccountAllowedForApiKey(
  * into the second, so `getModelFamily` is applied to the REQUESTED model only,
  * and only when the entry is itself a family name.
  *
+ * Callers also check agent preferences and combo pins before account-specific
+ * provider mappings translate the authorized logical model to a native id.
+ *
  * A request that names no model is not evaluated: a model allowlist governs the
  * model a client asks for, and a request that asks for none cannot violate it.
  * Such a request is still subject to the account and provider allowlists.
@@ -152,8 +155,6 @@ export interface ApiKeyRestrictionDenial {
 	scope: ApiKeyRestrictionScope;
 	/** How many otherwise-eligible accounts the restriction removed. */
 	removed: number;
-	/** The account named by `x-better-ccflare-account-id`, when that was refused. */
-	forcedAccountName?: string;
 }
 
 // Module-level WeakMap keyed by RequestMeta, mirroring comboSlotInfoMap and
