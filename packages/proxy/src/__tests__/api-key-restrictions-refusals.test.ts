@@ -225,7 +225,10 @@ describe("api_key_model_restricted", () => {
 
 	it("rechecks a combo slot model pin even when cost tracking is disabled", async () => {
 		const ctx = makeContext([makeAccount()]);
-		Object.assign(ctx.config, { getCostTrackingEnabled: () => false });
+		Object.assign(ctx.config, {
+			getCostTrackingEnabled: () => false,
+			getComboSessionFallback: () => false,
+		});
 		Object.assign(ctx.dbOps, {
 			getActiveComboForFamily: mock(async () => ({
 				id: "combo-1",
@@ -242,6 +245,7 @@ describe("api_key_model_restricted", () => {
 				],
 			})),
 		});
+		const proxy = spyOn(handlersModule, "proxyWithAccount");
 		const response = await handleProxy(
 			makeRequest("claude-haiku-4-5"),
 			PROXY_URL,
@@ -251,7 +255,111 @@ describe("api_key_model_restricted", () => {
 			{ restrictions: restrictions({ allowedModels: ["haiku"] }) },
 		);
 		expect(response.status).toBe(403);
-		expect((await response.json()).error.code).toBe("api_key_model_restricted");
+		const body = await response.json();
+		expect(body.error.code).toBe("api_key_model_restricted");
+		expect(body.error.restricted_by).toBe("models");
+		expect(response.headers.get("Retry-After")).toBeNull();
+		expect(proxy).not.toHaveBeenCalled();
+	});
+
+	it("skips a disallowed combo pin and serves a permitted later slot", async () => {
+		const ctx = makeContext([
+			makeAccount({ id: "acc-1" }),
+			makeAccount({ id: "acc-2", name: "second" }),
+		]);
+		Object.assign(ctx.dbOps, {
+			getActiveComboForFamily: mock(async () => ({
+				id: "combo-1",
+				name: "mixed",
+				enabled: true,
+				slots: [
+					{
+						id: "slot-1",
+						account_id: "acc-1",
+						model: "claude-opus-4-5",
+						enabled: true,
+						priority: 0,
+					},
+					{
+						id: "slot-2",
+						account_id: "acc-2",
+						model: "claude-haiku-4-5",
+						enabled: true,
+						priority: 1,
+					},
+				],
+			})),
+		});
+		const proxy = spyOn(handlersModule, "proxyWithAccount").mockResolvedValue(
+			new Response("ok"),
+		);
+		const response = await handleProxy(
+			makeRequest("claude-haiku-4-5"),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"scoped-key",
+			{ restrictions: restrictions({ allowedModels: ["haiku"] }) },
+		);
+		expect(response.status).toBe(200);
+		expect(proxy).toHaveBeenCalledTimes(1);
+		expect(proxy.mock.calls[0][2].id).toBe("acc-2");
+		expect(proxy.mock.calls[0][8]).toBe("claude-haiku-4-5");
+	});
+
+	it("falls back to the authorized model when every combo pin is disallowed", async () => {
+		const ctx = makeContext([makeAccount()]);
+		Object.assign(ctx.dbOps, {
+			getActiveComboForFamily: mock(async () => ({
+				id: "combo-1",
+				name: "pinned",
+				enabled: true,
+				slots: [
+					{
+						id: "slot-1",
+						account_id: "acc-1",
+						model: "claude-opus-4-5",
+						enabled: true,
+						priority: 0,
+					},
+				],
+			})),
+		});
+		const proxy = spyOn(handlersModule, "proxyWithAccount").mockResolvedValue(
+			new Response("ok"),
+		);
+		const response = await handleProxy(
+			makeRequest("claude-haiku-4-5"),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"scoped-key",
+			{ restrictions: restrictions({ allowedModels: ["haiku"] }) },
+		);
+		expect(response.status).toBe(200);
+		expect(proxy).toHaveBeenCalledTimes(1);
+		expect(proxy.mock.calls[0][8] ?? null).toBeNull();
+	});
+
+	it("authorizes the Responses client's model, not the translated alias", async () => {
+		const ctx = makeContext([makeAccount()]);
+		const proxy = spyOn(handlersModule, "proxyWithAccount").mockResolvedValue(
+			new Response("ok"),
+		);
+		const response = await handleProxy(
+			makeRequest("claude-sonnet-4-5"),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"scoped-key",
+			{
+				trustedNativeResponses: true,
+				trustedRequestedModel: "gpt-5.1-codex",
+				restrictions: restrictions({ allowedModels: ["gpt-5.1-codex"] }),
+			},
+		);
+		expect(response.status).toBe(200);
+		expect(proxy).toHaveBeenCalledTimes(1);
 	});
 
 	it("compares and records the plain model before its provider-routing suffix", async () => {
@@ -528,6 +636,74 @@ describe("api_key_account_restricted", () => {
 		expect(body.error.code).toBe("api_key_account_restricted");
 		expect(body.error.restricted_by).toBe("forced account");
 		expect(JSON.stringify(body)).not.toContain("forbidden");
+	});
+
+	it("answers an unknown forced account exactly like a forbidden one", async () => {
+		const ctx = makeContext([makeAccount({ id: "acc-1", name: "allowed" })]);
+		const proxy = spyOn(handlersModule, "proxyWithAccount");
+		const response = await handleProxy(
+			makeRequest("claude-opus-4-5", {
+				"x-better-ccflare-account-id": "no-such-account",
+			}),
+			PROXY_URL,
+			ctx,
+			null,
+			null,
+			{ restrictions: restrictions({ allowedAccounts: ["acc-1"] }) },
+		);
+		expect(response.status).toBe(403);
+		const body = (await response.json()) as {
+			error: Record<string, unknown>;
+		};
+		expect(body.error.code).toBe("api_key_account_restricted");
+		expect(body.error.restricted_by).toBe("forced account");
+		expect(proxy).not.toHaveBeenCalled();
+	});
+
+	it("keeps the retryable combo answer when a permitted slot is only cooling", async () => {
+		const ctx = makeContext([
+			makeAccount({
+				id: "acc-1",
+				name: "allowed",
+				rate_limited_until: Date.now() + 60_000,
+			}),
+			makeAccount({ id: "acc-2", name: "other" }),
+		]);
+		Object.assign(ctx.config, { getComboSessionFallback: () => false });
+		Object.assign(ctx.dbOps, {
+			getActiveComboForFamily: mock(async () => ({
+				id: "combo-1",
+				name: "partly restricted",
+				enabled: true,
+				slots: [
+					{
+						id: "slot-1",
+						account_id: "acc-1",
+						model: "",
+						enabled: true,
+						priority: 0,
+					},
+					{
+						id: "slot-2",
+						account_id: "acc-2",
+						model: "",
+						enabled: true,
+						priority: 1,
+					},
+				],
+			})),
+		});
+		const response = await handleProxy(
+			makeRequest(),
+			PROXY_URL,
+			ctx,
+			null,
+			null,
+			{ restrictions: restrictions({ allowedAccounts: ["acc-1"] }) },
+		);
+		expect(response.status).toBe(503);
+		const body = await response.text();
+		expect(body).not.toContain("api_key_account_restricted");
 	});
 
 	it("answers a restriction-empty combo with 403 when session fallback is disabled", async () => {

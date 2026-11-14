@@ -129,7 +129,9 @@ export type ApiKeyRestrictionScope =
 	| "accounts"
 	| "providers"
 	| "accounts and providers"
-	| "forced account";
+	| "forced account"
+	/** Every combo slot pins a model outside the key's model allowlist. */
+	| "models";
 
 /** Human-readable name of whichever list(s) narrow the account pool. */
 export function summarizeAccountRestrictionScope(

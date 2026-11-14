@@ -23,6 +23,7 @@ import type {
 import { getKnownCodexModels } from "../codex-model-catalog";
 import {
 	isAccountAllowedForApiKey,
+	isModelAllowedForApiKey,
 	restrictsAccountPool,
 	setApiKeyRestrictionDenial,
 	summarizeAccountRestrictionScope,
@@ -750,6 +751,12 @@ export async function selectAccountsForRequest(
 	const poolRestricted = restrictsAccountPool(keyRestrictions);
 	const isPermittedForKey = (account: Account): boolean =>
 		isAccountAllowedForApiKey(account, keyRestrictions);
+	// A combo pin replaces the model the key was authorized for, so it must pass
+	// the model allowlist too. A passthrough slot (empty pin) sends the request's
+	// own model, which proxy.ts has already checked.
+	const isSlotModelPermitted = (pin: string | null | undefined): boolean =>
+		!pin?.trim() ||
+		isModelAllowedForApiKey(stripModelRouting(pin).trim(), keyRestrictions);
 
 	// Check if a specific account is requested via special header
 	if (meta.headers) {
@@ -935,6 +942,15 @@ export async function selectAccountsForRequest(
 						`Auto-refresh probe names account ${forcedAccountId}, which no longer exists — refusing rather than probing a different account`,
 					);
 					return [];
+				} else if (poolRestricted) {
+					// An unknown id is no more permitted than a forbidden one. Answering
+					// both alike keeps the header from being an account-existence
+					// oracle for a restricted key.
+					setApiKeyRestrictionDenial(meta, {
+						scope: "forced account",
+						removed: 1,
+					});
+					return [];
 				}
 				// If forced account not found or unavailable (paused/rate-limited), ordinary
 				// client traffic falls back to normal selection (probes returned above)
@@ -1088,7 +1104,23 @@ export async function selectAccountsForRequest(
 							.map((a) => a.id),
 					);
 					let excludedSlots = 0;
-					let restrictedSlots = 0;
+					// The key's allowlists, not capacity, emptied the combo only when
+					// no enabled slot would ever be permitted. Judged over the whole
+					// definition because the loop drops unavailable slots before it
+					// reaches the restriction checks.
+					let slotsDeniedByAccount = 0;
+					let slotsDeniedByModel = 0;
+					let comboHasPermittedSlot = false;
+					for (const slot of combo.slots) {
+						const account = slot.enabled
+							? accountMap.get(slot.account_id)
+							: undefined;
+						if (!account) continue;
+						if (poolRestricted && !isPermittedForKey(account))
+							slotsDeniedByAccount++;
+						else if (!isSlotModelPermitted(slot.model)) slotsDeniedByModel++;
+						else comboHasPermittedSlot = true;
+					}
 					const availableAccounts: Account[] = [];
 					const comboCandidates: Array<{
 						account: Account;
@@ -1135,7 +1167,12 @@ export async function selectAccountsForRequest(
 						// fallthrough below, which re-applies seam 1 — are still
 						// legitimate ways to serve this key.
 						if (poolRestricted && !isPermittedForKey(account)) {
-							restrictedSlots++;
+							continue;
+						}
+						// Same treatment for a pin outside the model allowlist: drop
+						// the slot, so a permitted later slot or the SessionStrategy
+						// fallthrough (on the already-authorized model) can serve.
+						if (!isSlotModelPermitted(slot.model)) {
 							continue;
 						}
 
@@ -1312,7 +1349,8 @@ export async function selectAccountsForRequest(
 							account &&
 							(!permittedAccountIds.has(account.id) ||
 								isIndefinitelyHeldOut(account) ||
-								(poolRestricted && !isPermittedForKey(account)))
+								(poolRestricted && !isPermittedForKey(account)) ||
+								!isSlotModelPermitted(definitionSlot.modelOverride))
 						) {
 							continue;
 						}
@@ -1368,10 +1406,18 @@ export async function selectAccountsForRequest(
 					// is deliberately left unset so this fallthrough is treated as
 					// ordinary, non-combo selection downstream.
 					if (isComboSessionFallbackDisabled(ctx)) {
-						if (restrictedSlots > 0) {
+						// A permitted slot that is merely unavailable keeps the
+						// retryable combo answer; a 403 would deny a recoverable route.
+						if (
+							!comboHasPermittedSlot &&
+							slotsDeniedByAccount + slotsDeniedByModel > 0
+						) {
 							setApiKeyRestrictionDenial(meta, {
-								scope: summarizeAccountRestrictionScope(keyRestrictions),
-								removed: restrictedSlots,
+								scope:
+									slotsDeniedByAccount > 0
+										? summarizeAccountRestrictionScope(keyRestrictions)
+										: "models",
+								removed: slotsDeniedByAccount + slotsDeniedByModel,
 							});
 						}
 						setComboSlotInfo(meta, {

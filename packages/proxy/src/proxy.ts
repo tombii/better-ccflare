@@ -833,10 +833,16 @@ async function handleProxyRequest(
 		},
 	);
 
-	const rewrittenModel = splitModelRouting(appliedModel ?? "").model || null;
-	if (!isModelAllowedForApiKey(rewrittenModel, keyRestrictions)) {
-		modelRestrictionDenied = true;
-		deniedModel = rewrittenModel;
+	// Only an actual rewrite is re-checked. With no agent preference the
+	// interceptor echoes the body's model, which on the Responses adapter is the
+	// translated Claude alias rather than the client's `trustedRequestedModel`
+	// that was authorized above.
+	if (appliedModel !== originalModel) {
+		const rewrittenModel = splitModelRouting(appliedModel ?? "").model || null;
+		if (!isModelAllowedForApiKey(rewrittenModel, keyRestrictions)) {
+			modelRestrictionDenied = true;
+			deniedModel = rewrittenModel;
+		}
 	}
 
 	// Use modified body if available
@@ -1187,13 +1193,19 @@ async function handleProxyRequest(
 			const detail =
 				restrictionDenial.scope === "forced account"
 					? "The account requested via x-better-ccflare-account-id is not permitted for this API key."
-					: `This API key is restricted to specific ${restrictionDenial.scope}, and none of them can serve this request.`;
+					: restrictionDenial.scope === "models"
+						? "This API key is not permitted to use any model this request's combo routes to."
+						: `This API key is restricted to specific ${restrictionDenial.scope}, and none of them can serve this request.`;
+			const code =
+				restrictionDenial.scope === "models"
+					? "api_key_model_restricted"
+					: "api_key_account_restricted";
 			log.warn(`API key restrictions: ${detail}`);
 			return await returnRefusal(
-				createApiKeyRestrictionResponse("api_key_account_restricted", detail, {
+				createApiKeyRestrictionResponse(code, detail, {
 					restricted_by: restrictionDenial.scope,
 				}),
-				"api_key_account_restricted",
+				code,
 				0,
 				null,
 			);
@@ -1866,10 +1878,12 @@ async function handleProxyRequest(
 
 		// Combo pins change the logical model before provider-native account
 		// mappings. Those mappings retain the authorized logical identity.
-		const routedModel = splitModelRouting(
-			modelOverride || effectiveModel || requestModel || "",
-		).model;
-		if (!isModelAllowedForApiKey(routedModel, keyRestrictions)) {
+		// Selection already drops pins the key may not use; this is the backstop.
+		// Without a pin the model is the one authorized before selection.
+		const routedModel = modelOverride
+			? splitModelRouting(modelOverride).model
+			: null;
+		if (routedModel && !isModelAllowedForApiKey(routedModel, keyRestrictions)) {
 			return returnRefusal(
 				createApiKeyRestrictionResponse(
 					"api_key_model_restricted",
