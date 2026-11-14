@@ -95,6 +95,8 @@ export interface SpendSnapshot {
 	resetMs: number | null;
 	/** Completed spend plus reservations has reached the limit (warnings use completed spend). */
 	exceeded: boolean;
+	/** Rolling totals outlived their exact expiry tail after a failed refresh. */
+	stale?: boolean;
 }
 
 interface CounterEntry {
@@ -611,12 +613,13 @@ export class ApiKeySpendCounter {
 					error instanceof SpendCheckSupersededError ||
 					signal?.aborted ||
 					!stale ||
-					(mode === "rolling" && nowMs > stale.expiryThroughMs) ||
 					stale.mode !== mode ||
 					stale.lastSyncMs === 0 ||
 					(mode === "calendar" && stale.startMs !== bounds.startMs)
 				)
 					throw error;
+				// A rolling total can only over-count as omitted events age out.
+				// Keep the last good total plus local completions until SQL recovers.
 				log.warn(
 					`Using cached spend totals for key ${apiKeyId} after refresh failed: ${String(error)}`,
 				);
@@ -735,6 +738,9 @@ export class ApiKeySpendCounter {
 			limitUsd: limit.limitUsd,
 			resetMs,
 			exceeded: committedUsd >= limit.limitUsd,
+			...(mode === "rolling" && nowMs > entry.expiryThroughMs
+				? { stale: true }
+				: {}),
 		};
 	}
 	/** Read usable cached totals even when lock admission or a refresh failed. */
@@ -758,7 +764,6 @@ export class ApiKeySpendCounter {
 			const entry = this.limitEntries.get(this.identity(apiKeyId, limit));
 			if (
 				!entry ||
-				(mode === "rolling" && nowMs > entry.expiryThroughMs) ||
 				entry.lastSyncMs === 0 ||
 				entry.mode !== mode ||
 				(mode === "calendar" &&
@@ -802,7 +807,6 @@ export class ApiKeySpendCounter {
 			const entry = this.limitEntries.get(this.identity(apiKeyId, limit));
 			return (
 				!entry ||
-				(mode === "rolling" && nowMs > entry.expiryThroughMs) ||
 				entry.lastSyncMs === 0 ||
 				entry.mode !== mode ||
 				(mode === "calendar" &&

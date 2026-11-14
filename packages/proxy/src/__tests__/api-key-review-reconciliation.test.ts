@@ -237,15 +237,15 @@ describe("bounded rolling reconciliation", () => {
 			(await c.getLimitSnapshot("k", limit, "rolling", NOW + 1000)).spentUsd,
 		).toBe(2.5);
 		query.mockRejectedValueOnce(new Error("unavailable"));
-		await expect(
-			c.getLimitSnapshot(
-				"k",
-				limit,
-				"rolling",
-				NOW + 2 * SPEND_RESYNC_TTL_MS + 1,
-				true,
-			),
-		).rejects.toThrow("unavailable");
+		const stale = await c.getLimitSnapshot(
+			"k",
+			limit,
+			"rolling",
+			NOW + 2 * SPEND_RESYNC_TTL_MS + 1,
+			true,
+		);
+		expect(stale.spentUsd).toBe(2.5);
+		expect(stale.stale).toBe(true);
 	});
 	it("still reports exact relief when the bounded expiry tail suffices", async () => {
 		const duration = 30 * 86400000;
@@ -267,7 +267,7 @@ describe("bounded rolling reconciliation", () => {
 	it.each([
 		"block",
 		"warn",
-	] as const)("keeps expired rolling totals fail-closed only for %s limits", async (enforce) => {
+	] as const)("keeps stale rolling totals available for %s limits", async (enforce) => {
 		const query = mock(async () => aggregate(3));
 		const c = counter({ getApiKeySpendReconciliation: query });
 		const row = { ...limit, enforce };
@@ -277,15 +277,22 @@ describe("bounded rolling reconciliation", () => {
 		);
 		const expiredAt = NOW + 2 * SPEND_RESYNC_TTL_MS + 1;
 		query.mockRejectedValueOnce(new Error("unavailable"));
-		await expect(
-			c.getLimitSnapshot("k", row, "rolling", expiredAt),
-		).rejects.toThrow("unavailable");
-		expect(
-			c.getCachedChecks("k", [row], "rolling", "opus", null, expiredAt),
-		).toEqual([]);
+		const snapshot = await c.getLimitSnapshot("k", row, "rolling", expiredAt);
+		expect(snapshot.spentUsd).toBe(3);
+		expect(snapshot.stale).toBe(true);
+		const [cached] = c.getCachedChecks(
+			"k",
+			[row],
+			"rolling",
+			"opus",
+			null,
+			expiredAt,
+		);
+		expect(cached.snapshot.spentUsd).toBe(3);
+		expect(cached.snapshot.stale).toBe(true);
 		expect(
 			c.shouldFailClosed("k", [row], "rolling", "opus", null, expiredAt),
-		).toBe(enforce === "block");
+		).toBe(false);
 	});
 	it("does not let an old in-flight snapshot publish after forget and reload", async () => {
 		let resolveOld!: (events: never[]) => void;
