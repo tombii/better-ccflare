@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { TIME_CONSTANTS } from "./constants";
 import { getCostTrackingEpoch, isCostTrackingEnabled } from "./cost-tracking";
 import { getModelFamily } from "./model-mappings";
-import { CLAUDE_MODEL_IDS, MODEL_DISPLAY_NAMES } from "./models";
+import {
+	CLAUDE_MODEL_IDS,
+	LATEST_FABLE_MODEL,
+	LATEST_HAIKU_MODEL,
+	LATEST_OPUS_MODEL,
+	LATEST_SONNET_MODEL,
+	MODEL_DISPLAY_NAMES,
+} from "./models";
 
 export interface TokenBreakdown {
 	inputTokens?: number;
@@ -671,10 +678,10 @@ class PriceCatalogue {
 		const cost = model?.cost;
 		if (
 			!cost ||
-			typeof cost.input !== "number" ||
-			!Number.isFinite(cost.input) ||
-			typeof cost.output !== "number" ||
-			!Number.isFinite(cost.output)
+			(cost.input !== undefined &&
+				(typeof cost.input !== "number" || !Number.isFinite(cost.input))) ||
+			(cost.output !== undefined &&
+				(typeof cost.output !== "number" || !Number.isFinite(cost.output)))
 		) {
 			// Missing or malformed catalogue data (remote catalogues are not
 			// validated) - treat as unknown pricing rather than emitting NaN.
@@ -683,8 +690,8 @@ class PriceCatalogue {
 		}
 
 		return {
-			input: cost.input,
-			output: cost.output,
+			input: cost.input ?? 0,
+			output: cost.output ?? 0,
 			cacheRead:
 				typeof cost.cache_read === "number" && Number.isFinite(cost.cache_read)
 					? cost.cache_read
@@ -968,13 +975,29 @@ async function findModel(modelId: string): Promise<ModelDef | null> {
 		}
 	}
 
+	// Reservations and recorded usage must resolve unknown family aliases through
+	// the same catalogue entry. Models outside a known family remain unpriced.
+	const family = getModelFamily(modelId);
+	const fallbackId = family
+		? {
+				fable: LATEST_FABLE_MODEL,
+				opus: LATEST_OPUS_MODEL,
+				sonnet: LATEST_SONNET_MODEL,
+				haiku: LATEST_HAIKU_MODEL,
+			}[family]
+		: null;
+	if (fallbackId) {
+		for (const provider of Object.values(pricing)) {
+			if (provider.models?.[fallbackId]) return provider.models[fallbackId];
+		}
+	}
 	return null;
 }
 
 /**
  * Get the cost rate for a specific model and token type
  * @returns Cost in dollars per token (NOT per million)
- * @throws If model or cost type is unknown
+ * Missing token-kind rates contribute zero; unknown models remain unpriced.
  */
 async function getCostRate(
 	modelId: string,
@@ -990,9 +1013,7 @@ async function getCostRate(
 
 	const costPerMillion = model.cost[kind];
 
-	if (costPerMillion === undefined) {
-		throw new Error(`Model ${modelId} has no ${kind} cost`);
-	}
+	if (costPerMillion === undefined) return 0;
 
 	// Convert from per-million to per-token
 	return costPerMillion / 1_000_000;

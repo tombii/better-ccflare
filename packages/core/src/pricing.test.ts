@@ -464,6 +464,61 @@ describe("getModelRates", () => {
 		});
 	});
 
+	it("records uncached tokens when cache prices are absent", async () => {
+		const cost = await estimateCostUSD("MiniMax-M2", {
+			inputTokens: 1_000_000,
+			outputTokens: 1_000_000,
+			cacheReadInputTokens: 1_000_000,
+			cacheCreationInputTokens: 1_000_000,
+		});
+		expect(cost).toBeCloseTo(1.5);
+	});
+
+	it.each([
+		"prompt",
+		"completion",
+	])("treats a missing %s rate as zero in reservations and recorded cost", async (missing) => {
+		global.fetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				object: "list",
+				data: [
+					{
+						id: "partial-price-model",
+						name: "Partial price model",
+						pricing:
+							missing === "prompt" ? { completion: 1.2 } : { prompt: 0.3 },
+					},
+				],
+			}),
+		} as Response);
+		const rates = await getModelRates("partial-price-model");
+		expect(rates?.input).toBe(missing === "prompt" ? 0 : 0.3);
+		expect(rates?.output).toBe(missing === "completion" ? 0 : 1.2);
+		const cost = await estimateCostUSD("partial-price-model", {
+			inputTokens: 1_000_000,
+			outputTokens: 1_000_000,
+		});
+		expect(cost).toBeCloseTo((rates?.input ?? 0) + (rates?.output ?? 0));
+	});
+
+	it("uses identical family fallback rates for reservations and recorded cost", async () => {
+		const rates = await getModelRates("claude-sonnet-unknown");
+		expect(rates).not.toBeNull();
+		const cost = await estimateCostUSD("claude-sonnet-unknown", {
+			inputTokens: 1_000_000,
+			outputTokens: 1_000_000,
+			cacheReadInputTokens: 1_000_000,
+			cacheCreationInputTokens: 1_000_000,
+		});
+		expect(cost).toBeCloseTo(
+			(rates?.input ?? 0) +
+				(rates?.output ?? 0) +
+				(rates?.cacheRead ?? 0) +
+				(rates?.cacheWrite ?? 0),
+		);
+	});
+
 	it("should return null and warn when the catalogue has malformed cost data", async () => {
 		// Inject a malformed model via the NanoGPT merge path: pricing values
 		// flow straight into cost.input/cost.output without validation.
