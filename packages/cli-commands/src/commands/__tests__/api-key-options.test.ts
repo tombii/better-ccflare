@@ -100,6 +100,11 @@ describe("API key CLI options", () => {
 						'{"opus":"custom-model {\\"only\\":[\\"provider\\"]}"}',
 				},
 			],
+			listCombos: async () => [{ id: "combo" }],
+			getComboSlots: async () => [
+				{ model: "pinned-local-model" },
+				{ model: "" },
+			],
 			getApiKey: async () => ({ id: "key" }),
 			replaceApiKeyLimits: async () => {
 				writes++;
@@ -121,7 +126,12 @@ describe("API key CLI options", () => {
 			}),
 		).rejects.toThrow("Unknown model scope");
 		expect(writes).toBe(0);
-		for (const scope of ["opus", "claude-opus-4-6", "custom-model"]) {
+		for (const scope of [
+			"opus",
+			"claude-opus-4-6",
+			"custom-model",
+			"pinned-local-model",
+		]) {
 			await validateApiKeyOptions(db, {
 				restrictions: { allowedAccounts: ["configured-account"] },
 				limits: [parseApiKeyLimit(`window=day,usd=5,model=${scope}`)],
@@ -136,6 +146,7 @@ describe("API key CLI options", () => {
 		);
 		const db = {
 			getAllAccounts: async () => [{ id: "minimax", provider: "minimax" }],
+			listCombos: async () => [],
 		} as unknown as DatabaseOperations;
 		try {
 			setProviderModelDefaultOverrides({

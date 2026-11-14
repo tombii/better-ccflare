@@ -163,6 +163,12 @@ export async function validateApiKeyOptions(
 					if (typeof model === "string")
 						knownScopes.add(stripModelRouting(model).toLowerCase());
 		}
+		// A combo pin is a routed model a scoped limit can match, even when no
+		// catalogue or mapping names it.
+		for (const combo of await dbOps.listCombos())
+			for (const slot of await dbOps.getComboSlots(combo.id))
+				if (slot.model?.trim())
+					knownScopes.add(stripModelRouting(slot.model).trim().toLowerCase());
 	}
 	for (const scope of scopes) {
 		if (!knownScopes.has(scope))
