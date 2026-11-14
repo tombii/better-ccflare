@@ -712,7 +712,12 @@ export function createApiKeyResetSpendHandler(dbOps: DatabaseOperations) {
 		try {
 			const key = await resolveKey(dbOps, idOrName);
 			const resetAt = Date.now();
-			if (!(await dbOps.resetApiKeySpend(key.id, resetAt, actor)))
+			// false means the key vanished or a later reset had already persisted.
+			// Only the former is an error: a later boundary supersedes this one.
+			if (
+				!(await dbOps.resetApiKeySpend(key.id, resetAt, actor)) &&
+				!(await dbOps.getApiKey(key.id))
+			)
 				throw NotFound(`API key '${idOrName}' not found`);
 			// A concurrent reset may have persisted a later boundary while this
 			// request was writing; always publish the persisted winner.

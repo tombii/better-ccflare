@@ -506,6 +506,24 @@ describe("reset API key spend", () => {
 		).toBe(0);
 	});
 
+	it("reports a reset superseded by a later persisted one as success, not 404", async () => {
+		const later = Date.now() + 60_000;
+		await dbOps.resetApiKeySpend("target", later, "later admin");
+		const response = await createApiKeyResetSpendHandler(dbOps)(
+			"target",
+			"admin",
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as {
+			data: { spendResetAt: number | string; spendResetBy: string };
+		};
+		expect(new Date(body.data.spendResetAt).getTime()).toBe(later);
+		expect(body.data.spendResetBy).toBe("later admin");
+		expect(
+			(await createApiKeyResetSpendHandler(dbOps)("missing", "admin")).status,
+		).toBe(404);
+	});
+
 	it("never regresses a persisted reset boundary or its actor when an older reset finishes later", async () => {
 		const now = Date.now();
 		await dbOps.resetApiKeySpend("target", now, "later admin");

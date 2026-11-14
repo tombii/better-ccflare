@@ -51,4 +51,30 @@ describe("API key CLI spend reset", () => {
 			fetchSpy.mockRestore();
 		}
 	});
+	it("treats a reset superseded by a later one as success and a vanished key as not found", async () => {
+		let exists = true;
+		const db = {
+			getApiKey: async (id: string) =>
+				exists && id === "key-id" ? { id, name: "limited" } : null,
+			getApiKeyByName: async () => ({ id: "key-id", name: "limited" }),
+			resetApiKeySpend: async () => false,
+		} as unknown as DatabaseOperations;
+		const config = {
+			getRuntime: () => ({ port: 9876 }),
+			getLocalControlSecret: () => "test-only-control-secret",
+		} as unknown as Config;
+		const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+			(async () =>
+				new Response("{}", { status: 503 })) as unknown as typeof fetch,
+		);
+		try {
+			expect((await resetApiKeySpend(db, "limited", config)).id).toBe("key-id");
+			exists = false;
+			await expect(resetApiKeySpend(db, "limited", config)).rejects.toThrow(
+				"API key 'limited' not found",
+			);
+		} finally {
+			fetchSpy.mockRestore();
+		}
+	});
 });

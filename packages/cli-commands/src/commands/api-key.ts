@@ -361,8 +361,13 @@ export async function resetApiKeySpend(
 		(await dbOps.getApiKeyByName(idOrName));
 	if (!key) throw new Error(`API key '${idOrName}' not found`);
 	const resetAt = Date.now();
-	if (!(await dbOps.resetApiKeySpend(key.id, resetAt, "CLI"))) {
-		throw new Error("Failed to reset API key spend");
+	// false also means a later reset had already persisted, which supersedes
+	// this one; only a key that vanished meanwhile is a failure.
+	if (
+		!(await dbOps.resetApiKeySpend(key.id, resetAt, "CLI")) &&
+		!(await dbOps.getApiKey(key.id))
+	) {
+		throw new Error(`API key '${idOrName}' not found`);
 	}
 
 	// Reuse the account-command local-control channel so a running server drops
