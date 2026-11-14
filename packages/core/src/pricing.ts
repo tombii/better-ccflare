@@ -638,6 +638,25 @@ class PriceCatalogue {
 		return finalData;
 	}
 
+	/** Local model references for validation; never refreshes either catalogue. */
+	async getLocalModelIds(): Promise<string[]> {
+		const catalogues = [
+			BUNDLED_PRICING,
+			this.priceData,
+			await this.loadFromCache(),
+			nanogptPricingCache,
+		];
+		return [
+			...new Set(
+				catalogues.flatMap((catalogue) =>
+					Object.values(catalogue ?? {}).flatMap((section) =>
+						Object.keys(section.models ?? {}),
+					),
+				),
+			),
+		];
+	}
+
 	warnOnce(modelId: string, error?: Error | string): void {
 		if (!this.warnedModels.has(modelId)) {
 			this.warnedModels.add(modelId);
@@ -921,6 +940,11 @@ export function setPricingLogger(logger: Logger): void {
 export interface CatalogueModelEntry {
 	id: string;
 	name: string;
+}
+
+/** Bundled, loaded and fresh disk-cached model IDs, without upstream calls. */
+export async function listLocalCatalogueModelIds(): Promise<string[]> {
+	return PriceCatalogue.get().getLocalModelIds();
 }
 
 /**

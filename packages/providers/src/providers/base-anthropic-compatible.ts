@@ -92,6 +92,10 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		return authType;
 	}
 
+	getDefaultModel(): string | undefined {
+		return this.config.defaultModel;
+	}
+
 	canHandle(_path: string): boolean {
 		return true;
 	}

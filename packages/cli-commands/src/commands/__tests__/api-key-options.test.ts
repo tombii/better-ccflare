@@ -1,5 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import type { DatabaseOperations } from "@better-ccflare/database";
+import {
+	getProviderModelDefaultOverrides,
+	setProviderModelDefaultOverrides,
+} from "@better-ccflare/providers";
 import {
 	configureApiKey,
 	parseApiKeyAllowList,
@@ -83,6 +87,79 @@ describe("API key CLI options", () => {
 				restrictions: { allowedProviders: ["missing"] },
 			}),
 		).rejects.toThrow("Unknown provider");
+	});
+
+	it("validates account IDs and model scopes before changing a key", async () => {
+		let writes = 0;
+		const db = {
+			getAllAccounts: async () => [
+				{
+					id: "configured-account",
+					provider: "openai-compatible",
+					model_mappings:
+						'{"opus":"custom-model {\\"only\\":[\\"provider\\"]}"}',
+				},
+			],
+			getApiKey: async () => ({ id: "key" }),
+			replaceApiKeyLimits: async () => {
+				writes++;
+				return true;
+			},
+			updateApiKeyRestrictions: async () => {
+				writes++;
+				return true;
+			},
+		} as unknown as DatabaseOperations;
+		await expect(
+			configureApiKey(db, "key", {
+				restrictions: { allowedAccounts: ["missing"] },
+			}),
+		).rejects.toThrow("Unknown account");
+		await expect(
+			configureApiKey(db, "key", {
+				limits: [parseApiKeyLimit("window=day,usd=5,model=opuz")],
+			}),
+		).rejects.toThrow("Unknown model scope");
+		expect(writes).toBe(0);
+		for (const scope of ["opus", "claude-opus-4-6", "custom-model"]) {
+			await validateApiKeyOptions(db, {
+				restrictions: { allowedAccounts: ["configured-account"] },
+				limits: [parseApiKeyLimit(`window=day,usd=5,model=${scope}`)],
+			});
+		}
+	});
+
+	it("accepts native provider defaults, bundled models and global overrides without fetching", async () => {
+		const previous = getProviderModelDefaultOverrides();
+		const fetch = spyOn(globalThis, "fetch").mockRejectedValue(
+			new Error("CLI model validation must stay offline"),
+		);
+		const db = {
+			getAllAccounts: async () => [{ id: "minimax", provider: "minimax" }],
+		} as unknown as DatabaseOperations;
+		try {
+			setProviderModelDefaultOverrides({
+				codex: { opus: "global-codex-model" },
+			});
+			for (const scope of [
+				"MiniMax-M2.7",
+				"MiniMax-M2",
+				"global-codex-model",
+			]) {
+				await validateApiKeyOptions(db, {
+					limits: [parseApiKeyLimit(`window=day,usd=5,model=${scope}`)],
+				});
+			}
+			await expect(
+				validateApiKeyOptions(db, {
+					limits: [parseApiKeyLimit("window=day,usd=5,model=MiniMax-typo")],
+				}),
+			).rejects.toThrow("Unknown model scope");
+			expect(fetch).not.toHaveBeenCalled();
+		} finally {
+			setProviderModelDefaultOverrides(previous);
+			fetch.mockRestore();
+		}
 	});
 
 	it("updates one restriction without clearing the other restrictions", async () => {

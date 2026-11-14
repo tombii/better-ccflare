@@ -113,6 +113,7 @@ export {
 	getModelRates,
 	initializeNanoGPTPricingIfAccountsExist,
 	listCatalogueModels,
+	listLocalCatalogueModelIds,
 	listModelPrices,
 	type ModelPriceEntry,
 	type ModelRates,

@@ -1,4 +1,19 @@
+import {
+	CLAUDE_MODEL_IDS,
+	getModelMappings,
+	KNOWN_PATTERNS,
+	listLocalCatalogueModelIds,
+	stripModelRouting,
+} from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
+import {
+	getProvider,
+	getProviderModelDefaultFactories,
+	getProviderModelDefaultOverrides,
+	listProviders,
+	type ProviderModelDefaultOverrides,
+} from "@better-ccflare/providers";
+import { getModelCatalog } from "@better-ccflare/proxy";
 import {
 	type ApiKeyLimitInput,
 	type ApiKeyLimitWindowMode,
@@ -94,6 +109,7 @@ export function parseApiKeyRouting(value: string): [string, string] {
 export async function validateApiKeyOptions(
 	dbOps: DatabaseOperations,
 	options: ApiKeyOptions,
+	providerDefaults: ProviderModelDefaultOverrides = {},
 ): Promise<void> {
 	const providers = Object.values(PROVIDER_NAMES) as string[];
 	for (const provider of options.restrictions?.allowedProviders ?? []) {
@@ -109,6 +125,51 @@ export async function validateApiKeyOptions(
 		}
 		seen.add(identity);
 	}
+	const allowedAccounts = options.restrictions?.allowedAccounts ?? [];
+	const scopes = (options.limits ?? [])
+		.map((limit) => limit.scopeModel?.toLowerCase())
+		.filter((scope): scope is string => !!scope);
+	const knownScopes = new Set<string>([
+		...KNOWN_PATTERNS,
+		...Object.values(CLAUDE_MODEL_IDS),
+	]);
+	if (
+		allowedAccounts.length ||
+		scopes.some((scope) => !knownScopes.has(scope))
+	) {
+		const accounts = await dbOps.getAllAccounts();
+		const accountIds = new Set(accounts.map((account) => account.id));
+		for (const id of allowedAccounts) {
+			if (!accountIds.has(id)) throw new Error(`Unknown account '${id}'`);
+		}
+		// Only local catalogue/cache and configured mappings are consulted. CLI
+		// validation must never probe an upstream (especially a Claude account).
+		for (const model of await listLocalCatalogueModelIds())
+			knownScopes.add(model.toLowerCase());
+		for (const model of (await getModelCatalog()).models)
+			knownScopes.add(model.id.toLowerCase());
+		for (const provider of listProviders()) {
+			const model = getProvider(provider)?.getDefaultModel?.();
+			if (model) knownScopes.add(stripModelRouting(model).toLowerCase());
+		}
+		for (const mappings of [
+			...Object.values(getProviderModelDefaultFactories()),
+			...Object.values(getProviderModelDefaultOverrides()),
+			...Object.values(providerDefaults),
+			...accounts.map((account) => getModelMappings(account)),
+		]) {
+			for (const value of Object.values(mappings))
+				for (const model of Array.isArray(value) ? value : [value])
+					if (typeof model === "string")
+						knownScopes.add(stripModelRouting(model).toLowerCase());
+		}
+	}
+	for (const scope of scopes) {
+		if (!knownScopes.has(scope))
+			throw new Error(
+				`Unknown model scope '${scope}'; use a known family, catalogue model or configured account model`,
+			);
+	}
 	for (const comboId of Object.values(options.familyComboOverrides ?? {})) {
 		if (!(await dbOps.getCombo(comboId))) {
 			throw new Error(`Combo '${comboId}' not found`);
@@ -121,8 +182,9 @@ export async function configureApiKey(
 	dbOps: DatabaseOperations,
 	idOrName: string,
 	options: ApiKeyOptions,
+	providerDefaults: ProviderModelDefaultOverrides = {},
 ): Promise<void> {
-	await validateApiKeyOptions(dbOps, options);
+	await validateApiKeyOptions(dbOps, options, providerDefaults);
 	const key =
 		(await dbOps.getApiKey(idOrName)) ??
 		(await dbOps.getApiKeyByName(idOrName));

@@ -42,6 +42,12 @@ describe("API key CLI configuration", () => {
 	}
 
 	it("creates calendar/model budgets and preserves restrictions while changing mode/routing", async () => {
+		await run("--list-api-keys");
+		const seed = new Database(dbPath);
+		seed.run(
+			"INSERT INTO accounts (id,name,provider,created_at) VALUES ('account-id','Configured','codex',1)",
+		);
+		seed.close();
 		const create = await run(
 			"--generate-api-key",
 			"app",
@@ -150,6 +156,32 @@ describe("API key CLI configuration", () => {
 		}
 	});
 
+	it("accepts a native model from persisted provider defaults in a cold CLI process", async () => {
+		writeFileSync(
+			join(directory, "config.json"),
+			JSON.stringify({
+				provider_model_default_overrides: {
+					codex: { opus: "configured-global-model" },
+				},
+			}),
+		);
+		const result = await run(
+			"--generate-api-key",
+			"global",
+			"--limit",
+			"window=day,usd=5,model=configured-global-model",
+		);
+		expect(result.code, result.stderr).toBe(0);
+		const db = new Database(dbPath);
+		try {
+			expect(db.query("SELECT scope_model FROM api_key_limits").get()).toEqual({
+				scope_model: "configured-global-model",
+			});
+		} finally {
+			db.close();
+		}
+	});
+
 	it("rejects invalid options without creating a key or starting the server", async () => {
 		const invalid = await run(
 			"--generate-api-key",
@@ -164,6 +196,39 @@ describe("API key CLI configuration", () => {
 		expect(orphan.stderr).toContain(
 			"require --generate-api-key or --update-api-key",
 		);
+	});
+
+	it("rejects unknown account/model references before creating a key", async () => {
+		for (const flags of [
+			["--allow-accounts", "missing-account"],
+			["--limit", "window=day,usd=5,model=opuz"],
+		]) {
+			const result = await run("--generate-api-key", "invalid", ...flags);
+			expect(result.code).toBe(1);
+			expect(result.stderr).toContain("Unknown");
+		}
+		const db = new Database(dbPath);
+		try {
+			expect(db.query("SELECT id FROM api_keys").all()).toEqual([]);
+		} finally {
+			db.close();
+		}
+	});
+
+	it("rejects combining cost tracking with another flag in either order", async () => {
+		for (const flags of [
+			["--cost-tracking", "off", "--generate-api-key", "ignored"],
+			["--list-api-keys", "--cost-tracking", "on"],
+			["--cost-tracking", "off", "--port", "8081"],
+			["--help", "--cost-tracking", "off"],
+		]) {
+			const result = await run(...flags);
+			expect(result.code).toBe(1);
+			expect(result.stderr).toContain("--cost-tracking cannot be combined");
+			expect(await Bun.file(join(directory, "config.json")).exists()).toBe(
+				false,
+			);
+		}
 	});
 
 	it("resets one key's spend while retaining its limits and request history", async () => {

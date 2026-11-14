@@ -33,6 +33,10 @@ describe("MinimaxProvider", () => {
 		};
 	});
 
+	it("exposes its native default model without an upstream request", () => {
+		expect(provider.getDefaultModel()).toBe("MiniMax-M2.7");
+	});
+
 	describe("name", () => {
 		it("should have the correct provider name", () => {
 			expect(provider.name).toBe("minimax");

@@ -5,6 +5,7 @@ import {
 	getCachedNanoGPTPricing,
 	getModelRates,
 	initializeNanoGPTPricingRefresh,
+	listLocalCatalogueModelIds,
 	resetNanoGPTPricingCacheForTest,
 	setPricingLogger,
 	stopNanoGPTPricingRefresh,
@@ -445,6 +446,33 @@ describe("getModelRates", () => {
 			cacheRead: 0.3,
 			cacheWrite: 3.75,
 		});
+	});
+
+	it("lists bundled models locally without fetching either catalogue", async () => {
+		const models = await listLocalCatalogueModelIds();
+		expect(models).toContain("MiniMax-M2");
+		expect(models).toContain("claude-opus-4-6");
+		expect(global.fetch).not.toHaveBeenCalled();
+	});
+
+	it("includes already-loaded NanoGPT model IDs without refreshing", async () => {
+		global.fetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				object: "list",
+				data: [
+					{
+						id: "local-nanogpt-model",
+						name: "Local",
+						pricing: { prompt: 1, completion: 2 },
+					},
+				],
+			}),
+		} as Response);
+		await getCachedNanoGPTPricing();
+		vi.clearAllMocks();
+		expect(await listLocalCatalogueModelIds()).toContain("local-nanogpt-model");
+		expect(global.fetch).not.toHaveBeenCalled();
 	});
 
 	it("should return null for an unknown model without throwing", async () => {

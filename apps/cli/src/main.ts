@@ -64,7 +64,10 @@ import {
 	setUsagePauseThresholds,
 	validateApiKeyOptions,
 } from "@better-ccflare/cli-commands";
-import { Config } from "@better-ccflare/config";
+import {
+	Config,
+	filterEnabledProviderModelDefaultOverrides,
+} from "@better-ccflare/config";
 import {
 	CLAUDE_MODEL_IDS,
 	getVersionSync,
@@ -464,6 +467,12 @@ Legend:
  * Parse command line arguments
  */
 function parseArgs(args: string[]): ParsedArgs {
+	if (
+		args.includes("--cost-tracking") &&
+		(args.length > 2 || args[0] !== "--cost-tracking")
+	) {
+		throw new Error("--cost-tracking cannot be combined with other flags");
+	}
 	const parsed: ParsedArgs = {
 		costTracking: null,
 		version: false,
@@ -1009,7 +1018,7 @@ async function main() {
 Usage: better-ccflare [options]
 
 Options:
-	--cost-tracking <on|off> Persist cost tracking and notify the local server
+	--cost-tracking <on|off> Persist cost tracking and notify the local server (use alone)
   --version, -v       Show version number
   --serve              Start API server with dashboard
   --port <number>      Server port (default: 8080, or PORT env var)
@@ -1153,6 +1162,10 @@ Examples:
 		throw new Error("Choose --generate-api-key or --update-api-key");
 	}
 	const cliConfig = new Config();
+	const providerModelDefaults = filterEnabledProviderModelDefaultOverrides(
+		cliConfig.getEnabledProviderModelDefaultProviders(),
+		cliConfig.getProviderModelDefaultOverrides(),
+	);
 	container.registerInstance(SERVICE_KEYS.Config, cliConfig);
 	container.registerInstance(SERVICE_KEYS.Logger, new Logger("CLI"));
 
@@ -1566,7 +1579,11 @@ Examples:
 	// API Key management commands
 	if (parsed.generateApiKey) {
 		try {
-			await validateApiKeyOptions(dbOps, parsed.apiKeyOptions);
+			await validateApiKeyOptions(
+				dbOps,
+				parsed.apiKeyOptions,
+				providerModelDefaults,
+			);
 			// Default to admin if this is the first key, otherwise api-only
 			const defaultRole =
 				(await dbOps.countActiveApiKeys()) === 0 ? "admin" : "api-only";
@@ -1577,7 +1594,12 @@ Examples:
 				role,
 				parsed.apiKeyOptions.restrictions,
 			);
-			await configureApiKey(dbOps, result.id, parsed.apiKeyOptions);
+			await configureApiKey(
+				dbOps,
+				result.id,
+				parsed.apiKeyOptions,
+				providerModelDefaults,
+			);
 			console.log(formatApiKeyGenerationResult(result));
 			await exitGracefully(0);
 		} catch (error: unknown) {
@@ -1589,7 +1611,12 @@ Examples:
 	}
 
 	if (parsed.updateApiKey) {
-		await configureApiKey(dbOps, parsed.updateApiKey, parsed.apiKeyOptions);
+		await configureApiKey(
+			dbOps,
+			parsed.updateApiKey,
+			parsed.apiKeyOptions,
+			providerModelDefaults,
+		);
 		console.log(`✅ API key '${parsed.updateApiKey}' updated successfully`);
 		await exitGracefully(0);
 	}
