@@ -787,35 +787,6 @@ async function handleProxyRequest(
 		}
 	}
 
-	// 3d. Serve `web_search` helper requests locally when a provider is configured.
-	// A null result means "not a search request" or "no provider could serve it",
-	// and the request continues upstream unchanged.
-	//
-	// Skipped when the API key may not use the requested model (seam 5) or is
-	// over a blocking spend limit: the local search path would otherwise
-	// serve — and spend search-provider quota on — a request the key is about
-	// to be refused for.
-	const keyRefusalPending =
-		modelRestrictionDenied ||
-		blockingLimit !== null ||
-		limitCheckUnavailable ||
-		(spendLimitExceeded && keySpendLimit?.limitEnforce === "block");
-	if (parsedBody && !keyRefusalPending) {
-		const webSearchResponse = await maybeInterceptWebSearch({
-			body: parsedBody,
-			pathname: url.pathname,
-			headers: req.headers,
-			config: ctx.config,
-			dbOps: ctx.dbOps,
-			signal: req.signal,
-			// No account is selected yet on this path, so accountId stays null
-			// for every trace recorded here.
-			project,
-			log,
-		});
-		if (webSearchResponse) return webSearchResponse;
-	}
-
 	// 4. Intercept and modify request for agent model preferences
 	const {
 		modifiedBody,
@@ -843,6 +814,34 @@ async function handleProxyRequest(
 			modelRestrictionDenied = true;
 			deniedModel = rewrittenModel;
 		}
+	}
+
+	// 4b. Serve `web_search` helper requests locally when a provider is configured.
+	// A null result means "not a search request" or "no provider could serve it",
+	// and the request continues upstream unchanged.
+	//
+	// Check after agent rewrites so a denied client or rewritten model, a
+	// blocking spend limit, or an unavailable limit check cannot spend local
+	// search-provider quota before the request is refused.
+	const keyRefusalPending =
+		modelRestrictionDenied ||
+		blockingLimit !== null ||
+		limitCheckUnavailable ||
+		(spendLimitExceeded && keySpendLimit?.limitEnforce === "block");
+	if (parsedBody && !keyRefusalPending) {
+		const webSearchResponse = await maybeInterceptWebSearch({
+			body: parsedBody,
+			pathname: url.pathname,
+			headers: req.headers,
+			config: ctx.config,
+			dbOps: ctx.dbOps,
+			signal: req.signal,
+			// No account is selected yet on this path, so accountId stays null
+			// for every trace recorded here.
+			project,
+			log,
+		});
+		if (webSearchResponse) return webSearchResponse;
 	}
 
 	// Use modified body if available

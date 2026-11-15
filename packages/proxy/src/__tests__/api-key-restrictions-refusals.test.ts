@@ -857,6 +857,35 @@ describe("web_search interception and the model allowlist", () => {
 		expect(getWebSearchEnabled.mock.calls.length).toBe(0);
 	});
 
+	it("is skipped when an agent preference rewrites to a denied model", async () => {
+		const ctx = makeContext([makeAccount()]);
+		const getWebSearchEnabled = withWebSearchProbe(ctx);
+		Object.assign(ctx.dbOps, {
+			getAgentPreference: mock(async () => ({ model: "claude-opus-4-5" })),
+		});
+		spyOn(modelCatalogModule, "getModelCatalog").mockResolvedValue({
+			models: [],
+			fetchedAt: Date.now(),
+			source: "fallback",
+		});
+
+		const response = await handleProxy(
+			makeRequest("claude-haiku-4-5", {
+				"x-better-ccflare-agent-id": "agent-1",
+			}),
+			PROXY_URL,
+			ctx,
+			"key-1",
+			"scoped-key",
+			{ restrictions: restrictions({ allowedModels: ["haiku"] }) },
+		);
+
+		expect(response.status).toBe(403);
+		expect((await response.json()).error.code).toBe("api_key_model_restricted");
+		expect(getWebSearchEnabled.mock.calls.length).toBe(0);
+		expect(ctx.dbOps.getAllAccounts).not.toHaveBeenCalled();
+	});
+
 	it("still runs for a permitted model", async () => {
 		const ctx = makeContext([]);
 		const getWebSearchEnabled = withWebSearchProbe(ctx);
