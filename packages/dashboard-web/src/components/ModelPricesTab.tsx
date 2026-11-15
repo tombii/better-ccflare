@@ -24,8 +24,10 @@ export function ModelPricesTab() {
 	const { data, isLoading, isError } = useModelPrices();
 	const [search, setSearch] = useState("");
 	const models = filterModelPrices(data?.models ?? [], search);
-	const rate = (value: number | null | undefined) =>
-		value == null ? "Unknown" : `$${value}`;
+	const rate = (value: number | null | undefined) => {
+		if (value === undefined) return "Unknown";
+		return value === null ? "$0 (not priced)" : `$${value}`;
+	};
 	return (
 		<Card>
 			<CardHeader>

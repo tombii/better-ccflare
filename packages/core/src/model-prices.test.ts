@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import {
 	estimateCostUSD,
+	getModelRates,
 	listModelPrices,
 	resetNanoGPTPricingCacheForTest,
 } from "./pricing";
@@ -33,6 +34,12 @@ describe("model prices catalogue", () => {
 												id: "malformed",
 												cost: { input: "2", output: 8 },
 											},
+											"input-only": { cost: { input: 2 } },
+											"output-only": { cost: { output: 8 } },
+											"cache-only": {
+												cost: { cache_read: 0.25, cache_write: 0.5 },
+											},
+											"empty-cost": { cost: {} },
 										},
 									},
 									other: {
@@ -64,6 +71,24 @@ describe("model prices catalogue", () => {
 			expect(
 				prices.find((model) => model.id === "malformed")?.rates,
 			).toBeNull();
+			for (const [id, input, output, cacheRead, cacheWrite] of [
+				["input-only", 2, 0, null, null],
+				["output-only", 0, 8, null, null],
+				["cache-only", 0, 0, 0.25, 0.5],
+				["empty-cost", 0, 0, null, null],
+			] as const) {
+				const rates = { input, output, cacheRead, cacheWrite };
+				expect(prices.find((model) => model.id === id)?.rates).toEqual(rates);
+				expect(await getModelRates(id)).toEqual(rates);
+				expect(
+					await estimateCostUSD(id, {
+						inputTokens: 1_000_000,
+						outputTokens: 1_000_000,
+						cacheReadInputTokens: 1_000_000,
+						cacheCreationInputTokens: 1_000_000,
+					}),
+				).toBe(input + output + (cacheRead ?? 0) + (cacheWrite ?? 0));
+			}
 			expect(
 				await estimateCostUSD("test-opus", {
 					inputTokens: 1_000_000,

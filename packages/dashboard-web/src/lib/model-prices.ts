@@ -24,11 +24,11 @@ export function priceSummary(models: ModelPriceEntry[], scope: string): string {
 	if (!priced.length) return "No price available";
 	const range = (kind: keyof ModelRates) => {
 		const values = priced.map((model) => model.rates?.[kind] ?? null);
-		const known = values.filter((rate): rate is number => rate !== null);
-		if (!known.length) return "unknown";
-		const min = Math.min(...known);
-		const max = Math.max(...known);
-		return `$${min === max ? min : `${min}–${max}`}${known.length < values.length ? " (some unknown)" : ""}`;
+		if (values.every((rate) => rate === null)) return "$0 (not priced)";
+		const counted = values.map((rate) => rate ?? 0);
+		const min = Math.min(...counted);
+		const max = Math.max(...counted);
+		return `$${min === max ? min : `${min}–${max}`}${values.includes(null) ? " (some not priced)" : ""}`;
 	};
 	return `${range("input")} in / ${range("output")} out / ${range("cacheRead")} cache-read / ${range("cacheWrite")} cache-write per 1M tokens (USD${matches.length > 1 ? "; varies by model" : ""})${priced.length < matches.length ? "; some models have no price" : ""}`;
 }

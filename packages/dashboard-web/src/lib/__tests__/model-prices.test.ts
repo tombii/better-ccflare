@@ -44,7 +44,25 @@ describe("shared model price presentation", () => {
 				],
 				"claude-opus-4",
 			),
-		).toContain("$0 in / $0 out / unknown cache-read / unknown cache-write");
+		).toContain(
+			"$0 in / $0 out / $0 (not priced) cache-read / $0 (not priced) cache-write",
+		);
+	});
+	it("includes unpriced token kinds as zero in family ranges", () => {
+		expect(
+			priceSummary(
+				[
+					models[0],
+					{
+						...models[1],
+						rates: { input: 5, output: 0, cacheRead: null, cacheWrite: null },
+					},
+				],
+				"opus",
+			),
+		).toBe(
+			"$5–15 in / $0–75 out / $0–1.5 (some not priced) cache-read / $0–18.75 (some not priced) cache-write per 1M tokens (USD; varies by model)",
+		);
 	});
 	it("searches model names, ids, families and providers", () => {
 		expect(filterModelPrices(models, "OPUS")).toHaveLength(2);

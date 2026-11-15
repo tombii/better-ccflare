@@ -32,6 +32,13 @@ function renderPrices(children: React.ReactNode, enabled = true) {
 				rates: { input: 2, output: 6, cacheRead: 0.2, cacheWrite: null },
 			},
 			{
+				id: "partial-input-price",
+				name: "Missing output price",
+				provider: "other",
+				family: "other",
+				rates: { input: 2, output: 0, cacheRead: null, cacheWrite: null },
+			},
+			{
 				id: "unpriced",
 				name: "No known price",
 				provider: "other",
@@ -59,9 +66,25 @@ describe("model prices view and shared hints", () => {
 			/<tr[^>]*>(?:(?!<\/tr>).)*partial-cache-price(?:(?!<\/tr>).)*<\/tr>/,
 		)?.[0];
 		expect(partialRow).toContain("Cache prices incomplete");
-		expect(partialRow).toContain("Unknown");
+		expect(partialRow).toContain("$0 (not priced)");
+		expect(partialRow).not.toContain("Unknown");
 		expect(markup).toContain(
 			"Missing token prices contribute $0 for that token kind; known input and output prices still apply",
+		);
+	});
+	it("shows partial input/output rates and zero contributions in the catalogue and hints", () => {
+		const markup = renderPrices(<ModelPricesTab />);
+		const partialRow = markup.match(
+			/<tr[^>]*>(?:(?!<\/tr>).)*partial-input-price(?:(?!<\/tr>).)*<\/tr>/,
+		)?.[0];
+		expect(partialRow).toContain("$2");
+		expect(partialRow).toContain("$0");
+		expect(partialRow).toContain("$0 (not priced)");
+		expect(partialRow).not.toContain("No price available");
+		expect(
+			renderPrices(<ModelPriceHint scope="partial-input-price" />),
+		).toContain(
+			"$2 in / $0 out / $0 (not priced) cache-read / $0 (not priced) cache-write",
 		);
 	});
 	it("renders a searchable catalogue with family, all token rates, and unknown prices", () => {

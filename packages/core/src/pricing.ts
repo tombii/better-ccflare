@@ -1078,10 +1078,12 @@ export async function listModelPrices(): Promise<ModelPriceEntry[]> {
 				provider,
 				family: getModelFamily(id) ?? "other",
 				rates:
-					cost && valid(cost.input) && valid(cost.output)
+					cost &&
+					(cost.input === undefined || valid(cost.input)) &&
+					(cost.output === undefined || valid(cost.output))
 						? {
-								input: cost.input,
-								output: cost.output,
+								input: cost.input ?? 0,
+								output: cost.output ?? 0,
 								cacheRead: valid(cost.cache_read) ? cost.cache_read : null,
 								cacheWrite: valid(cost.cache_write) ? cost.cache_write : null,
 							}
