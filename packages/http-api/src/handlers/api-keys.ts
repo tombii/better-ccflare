@@ -384,8 +384,9 @@ export function createApiKeyGetHandler(dbOps: DatabaseOperations) {
 export function createApiKeyDisableHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, name: string): Promise<Response> => {
 		try {
-			const key = await resolveKey(dbOps, name);
-			await disableApiKey(dbOps, key.name);
+			if (!(await dbOps.getApiKeyByName(name)))
+				throw NotFound(`API key '${name}' not found`);
+			await disableApiKey(dbOps, name);
 			const response = {
 				success: true,
 				message: `API key '${name}' disabled successfully`,
@@ -404,8 +405,9 @@ export function createApiKeyDisableHandler(dbOps: DatabaseOperations) {
 export function createApiKeyEnableHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, name: string): Promise<Response> => {
 		try {
-			const key = await resolveKey(dbOps, name);
-			await enableApiKey(dbOps, key.name);
+			if (!(await dbOps.getApiKeyByName(name)))
+				throw NotFound(`API key '${name}' not found`);
+			await enableApiKey(dbOps, name);
 			const response = {
 				success: true,
 				message: `API key '${name}' enabled successfully`,
@@ -424,8 +426,9 @@ export function createApiKeyEnableHandler(dbOps: DatabaseOperations) {
 export function createApiKeyDeleteHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, name: string): Promise<Response> => {
 		try {
-			const key = await resolveKey(dbOps, name);
-			await deleteApiKey(dbOps, key.name);
+			if (!(await dbOps.getApiKeyByName(name)))
+				throw NotFound(`API key '${name}' not found`);
+			await deleteApiKey(dbOps, name);
 			const response = {
 				success: true,
 				message: `API key '${name}' deleted successfully`,
@@ -483,8 +486,9 @@ export function createApiKeyUpdateRoleHandler(dbOps: DatabaseOperations) {
 				);
 			}
 
-			const key = await resolveKey(dbOps, keyId);
-			await updateApiKeyRole(dbOps, key.id, role, currentApiKeyId);
+			if (!(await dbOps.getApiKey(keyId)))
+				throw NotFound(`API key '${keyId}' not found`);
+			await updateApiKeyRole(dbOps, keyId, role, currentApiKeyId);
 			const response = {
 				success: true,
 				message: `API key role updated to '${role}' successfully`,

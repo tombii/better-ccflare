@@ -52,6 +52,20 @@ describe("API key role and lifecycle mutations", () => {
 		});
 	}
 
+	async function createNameCollision() {
+		const collisionId = crypto.randomUUID();
+		await dbOps.createApiKey({
+			id: collisionId,
+			name: keyId,
+			hashedKey: `hash-${collisionId}`,
+			prefixLast8: "ijklmnop",
+			createdAt: Date.now(),
+			isActive: true,
+			role: "api-only",
+		});
+		return collisionId;
+	}
+
 	for (const body of ["{", "null", "[]", '"admin"']) {
 		it(`returns 400 without changing the role for body ${body}`, async () => {
 			const res = await createApiKeyUpdateRoleHandler(dbOps)(
@@ -71,13 +85,25 @@ describe("API key role and lifecycle mutations", () => {
 		expect(res.status).toBe(404);
 	});
 
-	it("updates a role by name", async () => {
+	it("does not resolve a role target by name", async () => {
 		const res = await createApiKeyUpdateRoleHandler(dbOps)(
 			roleRequest('{"role":"admin"}'),
 			"target-key",
 		);
+		expect(res.status).toBe(404);
+		expect((await dbOps.getApiKey(keyId))?.role).toBe("api-only");
+	});
+
+	it("updates a role by ID when another key's name matches that ID", async () => {
+		const collisionId = await createNameCollision();
+		const otherKey = await dbOps.getApiKey(collisionId);
+		const res = await createApiKeyUpdateRoleHandler(dbOps)(
+			roleRequest('{"role":"admin"}'),
+			keyId,
+		);
 		expect(res.status).toBe(200);
 		expect((await dbOps.getApiKey(keyId))?.role).toBe("admin");
+		expect(await dbOps.getApiKey(collisionId)).toEqual(otherKey);
 	});
 
 	it("keeps the currently authenticated key's role unchanged", async () => {
@@ -105,20 +131,51 @@ describe("API key role and lifecycle mutations", () => {
 			expect(res.status).toBe(404);
 		});
 
-		for (const identity of ["id", "name"]) {
-			it(`${action}s a key by ${identity} without a request body`, async () => {
-				if (action === "enable") await dbOps.disableApiKey(keyId);
-				const res = await factory(dbOps)(
-					new Request(`http://localhost/api/api-keys/${keyId}`, {
-						method: action === "delete" ? "DELETE" : "POST",
-					}),
-					identity === "id" ? keyId : "target-key",
-				);
-				expect(res.status).toBe(200);
-				const key = await dbOps.getApiKey(keyId);
-				if (action === "delete") expect(key).toBeNull();
-				else expect(key?.isActive).toBe(action === "enable");
-			});
-		}
+		it(`${action}s a key by name without a request body`, async () => {
+			if (action === "enable") await dbOps.disableApiKey(keyId);
+			const res = await factory(dbOps)(
+				new Request("http://localhost/api/api-keys/target-key", {
+					method: action === "delete" ? "DELETE" : "POST",
+				}),
+				"target-key",
+			);
+			expect(res.status).toBe(200);
+			const key = await dbOps.getApiKey(keyId);
+			if (action === "delete") expect(key).toBeNull();
+			else expect(key?.isActive).toBe(action === "enable");
+		});
+
+		it(`does not resolve a ${action} target by ID`, async () => {
+			if (action === "enable") await dbOps.disableApiKey(keyId);
+			const originalKey = await dbOps.getApiKey(keyId);
+			const res = await factory(dbOps)(
+				new Request(`http://localhost/api/api-keys/${keyId}`, {
+					method: action === "delete" ? "DELETE" : "POST",
+				}),
+				keyId,
+			);
+			expect(res.status).toBe(404);
+			expect(await dbOps.getApiKey(keyId)).toEqual(originalKey);
+		});
+
+		it(`${action}s only the named key when its name matches another key's ID`, async () => {
+			const collisionId = await createNameCollision();
+			if (action === "enable") {
+				await dbOps.disableApiKey(keyId);
+				await dbOps.disableApiKey(collisionId);
+			}
+			const otherKey = await dbOps.getApiKey(keyId);
+			const res = await factory(dbOps)(
+				new Request(`http://localhost/api/api-keys/${keyId}`, {
+					method: action === "delete" ? "DELETE" : "POST",
+				}),
+				keyId,
+			);
+			expect(res.status).toBe(200);
+			const namedKey = await dbOps.getApiKey(collisionId);
+			if (action === "delete") expect(namedKey).toBeNull();
+			else expect(namedKey?.isActive).toBe(action === "enable");
+			expect(await dbOps.getApiKey(keyId)).toEqual(otherKey);
+		});
 	}
 });
