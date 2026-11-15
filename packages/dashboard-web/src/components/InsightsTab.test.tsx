@@ -67,11 +67,12 @@ const anomalies: AnomalyInsightsResponse = {
 	],
 };
 
-function render(enabled: boolean) {
+function render(enabled: boolean | undefined) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
-	client.setQueryData(COST_TRACKING_QUERY_KEY, { enabled, source: "file" });
+	if (enabled !== undefined)
+		client.setQueryData(COST_TRACKING_QUERY_KEY, { enabled, source: "file" });
 	client.setQueryData(queryKeys.insightsCache("24h"), cache);
 	client.setQueryData(queryKeys.insightsAnomalies("24h"), anomalies);
 	try {
@@ -86,6 +87,13 @@ function render(enabled: boolean) {
 }
 
 describe("Insights cost tracking", () => {
+	it("shows neither cost figures nor disabled fallbacks before tracking resolves", () => {
+		const markup = render(undefined);
+		expect(markup).not.toContain("Cost tracking is disabled");
+		for (const cost of ["$5.10", "$2.10", "$7.20", "$123.45"])
+			expect(markup).not.toContain(cost);
+		expect(markup).toContain("Cache Hit Rate");
+	});
 	it("hides cached dollar figures and shows the shared notice while keeping token metrics", () => {
 		const markup = render(false);
 		expect(markup).toContain("Cost tracking is disabled");

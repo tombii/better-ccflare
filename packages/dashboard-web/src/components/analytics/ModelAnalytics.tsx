@@ -48,7 +48,9 @@ export function ModelAnalytics({
 	const [comparisonView, setComparisonView] = useState<
 		"speed-cost" | "performance" | "efficiency"
 	>("speed-cost");
-	const activeView = costTrackingEnabled ? comparisonView : "performance";
+	if (costTrackingEnabled === undefined) return null;
+	const activeView =
+		costTrackingEnabled === false ? "performance" : comparisonView;
 
 	// Prepare data for the comparison chart
 	const comparisonData = modelPerformance.map((perf) => {

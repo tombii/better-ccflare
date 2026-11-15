@@ -97,17 +97,19 @@ function renderPage({
 	admin = false,
 	path = "/api-key-usage",
 	enabled = true,
+	trackingLoaded = true,
 	data = usage,
 }: {
 	admin?: boolean;
 	path?: string;
 	enabled?: boolean;
+	trackingLoaded?: boolean;
 	data?: ApiKeyUsageResponse;
 } = {}) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
-	client.setQueryData(["cost-tracking"], { enabled });
+	if (trackingLoaded) client.setQueryData(["cost-tracking"], { enabled });
 	client.setQueryData(["auth-session"], { canManage: admin, apiKeyId: "own" });
 	client.setQueryData(queryKeys.apiKeys(), keys);
 	for (const key of keys)
@@ -130,6 +132,15 @@ function renderPage({
 }
 
 describe("API Key Usage page", () => {
+	it("leaves cost values blank while tracking loads and keeps attempt metrics", () => {
+		const markup = renderPage({ trackingLoaded: false });
+		expect(markup).not.toContain("Cost tracking is disabled");
+		expect(markup).not.toContain("$1.0000");
+		expect(markup).not.toContain("$2.0000");
+		expect(markup).toMatch(/API cost<\/p><p[^>]*><\/p>/);
+		expect(markup).not.toMatch(/text-5xl[^>]*>—<\/p>/);
+		expect(markup).toContain("Successful attempts");
+	});
 	it("uses the Usage History header and keeps administration in API Keys dialogs", () => {
 		const markup = renderPage({ admin: true });
 		expect(markup).toContain('aria-label="Select API key"');

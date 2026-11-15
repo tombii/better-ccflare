@@ -236,8 +236,10 @@ export function MainMetricsChart({
 			</CardHeader>
 			<CardContent>
 				{(() => {
-					if (!costTrackingEnabled && selectedMetric === "cost")
-						return <CostTrackingNotice />;
+					if (selectedMetric === "cost") {
+						if (costTrackingEnabled === undefined) return null;
+						if (costTrackingEnabled === false) return <CostTrackingNotice />;
+					}
 					// Show multi-model chart if breakdown is enabled
 					if (modelBreakdown && processedMultiModelData) {
 						return (
@@ -734,9 +736,10 @@ export function CumulativeGrowthChart({ data }: CumulativeGrowthChartProps) {
 					Cumulative Growth Analysis
 				</CardTitle>
 				<CardDescription>
-					{costTrackingEnabled
-						? "Token usage vs. cost accumulation over time"
-						: "Token usage over time"}
+					{costTrackingEnabled !== undefined &&
+						(costTrackingEnabled === true
+							? "Token usage vs. cost accumulation over time"
+							: "Token usage over time")}
 				</CardDescription>
 			</CardHeader>
 			<CardContent>

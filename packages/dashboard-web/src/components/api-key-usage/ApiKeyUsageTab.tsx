@@ -97,7 +97,11 @@ export function ApiKeyUsageTab() {
 	const { data: apiKeys } = useApiKeys({ enabled: canManage });
 	const { enabled: costTrackingEnabled } = useCostTracking();
 	const displayCost = (value: number) =>
-		costTrackingEnabled ? formatCost(value) : "—";
+		costTrackingEnabled === undefined
+			? ""
+			: costTrackingEnabled === false
+				? "—"
+				: formatCost(value);
 	const fromMs = new Date(from).getTime();
 	const toMs = new Date(to).getTime();
 	const validCustom =
@@ -250,14 +254,15 @@ export function ApiKeyUsageTab() {
 						</CardHeader>
 						<CardContent>
 							<p className="text-5xl font-bold tabular-nums">
-								{!costTrackingEnabled
-									? "—"
-									: isLoading
-										? "…"
-										: (ratioText ?? "unavailable")}
+								{costTrackingEnabled !== undefined &&
+									(costTrackingEnabled === false
+										? "—"
+										: isLoading
+											? "…"
+											: (ratioText ?? "unavailable"))}
 							</p>
 							<p className="text-sm text-muted-foreground mt-2">
-								{data
+								{costTrackingEnabled !== undefined && data
 									? efficiencyCaption(
 											data.efficiencyStatus,
 											data.planCost.unpricedAccountIds.length,

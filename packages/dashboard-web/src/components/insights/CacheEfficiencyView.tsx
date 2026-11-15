@@ -105,17 +105,17 @@ function BreakdownTable({ rows, nameLabel }: BreakdownTableProps) {
 								{formatPercentage(row.cacheHitRate)}
 							</td>
 							<td className="px-3 py-2 text-right">
-								{costTrackingEnabled &&
+								{costTrackingEnabled === true &&
 								row.pricingKnown &&
 								row.savingsUsd !== null ? (
 									<span className={savingsColorClass(row.savingsUsd)}>
 										{formatSignedCost(row.savingsUsd)}
 									</span>
-								) : (
+								) : costTrackingEnabled === undefined ? null : (
 									<span
 										className="text-muted-foreground"
 										title={
-											costTrackingEnabled
+											costTrackingEnabled === true
 												? "No pricing data for this model"
 												: "Cost tracking is disabled"
 										}
@@ -173,9 +173,10 @@ export function CacheEfficiencyView({
 						<div
 							className={`text-2xl font-bold ${costTrackingEnabled ? savingsColorClass(totals?.savingsUsd ?? 0) : ""}`}
 						>
-							{costTrackingEnabled
-								? formatSignedCost(totals?.savingsUsd ?? 0)
-								: "—"}
+							{costTrackingEnabled !== undefined &&
+								(costTrackingEnabled === true
+									? formatSignedCost(totals?.savingsUsd ?? 0)
+									: "—")}
 						</div>
 						<p className="text-xs text-muted-foreground">
 							Estimated vs. running uncached in the last {timeRange}
@@ -226,19 +227,20 @@ export function CacheEfficiencyView({
 					</CardHeader>
 					<CardContent>
 						<div className="text-2xl font-bold">
-							{costTrackingEnabled
-								? formatCost(totals?.actualCacheCostUsd ?? 0)
-								: "—"}
+							{costTrackingEnabled !== undefined &&
+								(costTrackingEnabled === true
+									? formatCost(totals?.actualCacheCostUsd ?? 0)
+									: "—")}
 						</div>
 						<p className="text-xs text-muted-foreground">
-							{costTrackingEnabled ? (
+							{costTrackingEnabled === true ? (
 								<>
 									Cache read/write tokens only, vs{" "}
 									{formatCost(totals?.counterfactualCostUsd ?? 0)} without
 									caching
 								</>
 							) : (
-								"Cost tracking is disabled"
+								costTrackingEnabled === false && "Cost tracking is disabled"
 							)}
 						</p>
 					</CardContent>

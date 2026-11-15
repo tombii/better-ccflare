@@ -2,7 +2,11 @@ import { describe, expect, it } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { COST_TRACKING_QUERY_KEY } from "../hooks/useCostTracking";
-import { MainMetricsChart } from "./analytics/AnalyticsCharts";
+import {
+	CumulativeGrowthChart,
+	MainMetricsChart,
+} from "./analytics/AnalyticsCharts";
+import { ModelAnalytics } from "./analytics/ModelAnalytics";
 import { ApiKeySpendGauge } from "./api-keys/ApiKeySpendGauge";
 import { CostTrackingNotice } from "./CostTrackingNotice";
 import { CostTrackingCard } from "./overview/CostTrackingCard";
@@ -100,5 +104,41 @@ describe("cost tracking dashboard", () => {
 		);
 		expect(html).toContain("Cost tracking is disabled");
 		expect(html).not.toContain("recharts-wrapper");
+	});
+	it("waits for tracking before choosing a model comparison view", () => {
+		const chart = (
+			<ModelAnalytics modelPerformance={[]} costByModel={[]} timeRange="24h" />
+		);
+		expect(render(undefined, chart)).toBe("");
+		expect(render(false, chart)).toContain(
+			"Response time and error rate analysis",
+		);
+		expect(render(true, chart)).toContain(
+			"Token generation speed vs. cost efficiency",
+		);
+	});
+	it("waits for tracking before selecting cost chart content", () => {
+		const chart = (
+			<MainMetricsChart
+				data={[]}
+				loading={false}
+				viewMode="normal"
+				timeRange="24h"
+				selectedMetric="cost"
+				setSelectedMetric={() => {}}
+			/>
+		);
+		const pending = render(undefined, chart);
+		expect(pending).not.toContain("Cost tracking is disabled");
+		expect(pending).not.toContain("recharts-responsive-container");
+		expect(render(true, chart)).toContain("recharts-responsive-container");
+	});
+	it("does not show a token-only description while cumulative costs load", () => {
+		const chart = <CumulativeGrowthChart data={[]} />;
+		expect(render(undefined, chart)).not.toContain("Token usage over time");
+		expect(render(false, chart)).toContain("Token usage over time");
+		expect(render(true, chart)).toContain(
+			"Token usage vs. cost accumulation over time",
+		);
 	});
 });
