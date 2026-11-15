@@ -346,7 +346,11 @@ export class ApiKeySpendCounter {
 				this.limitGenerations.get(apiKeyId) === generation &&
 				!this.lastAccess.has(apiKeyId) &&
 				!this.entries.has(apiKeyId) &&
-				!this.inflight.has(apiKeyId)
+				!this.inflight.has(apiKeyId) &&
+				![...this.limitInflight.keys()].some((identity) => {
+					const [keyId, syncGeneration] = JSON.parse(identity);
+					return keyId === apiKeyId && syncGeneration === generation;
+				})
 			)
 				this.limitGenerations.delete(apiKeyId);
 			if (!stale || signal?.aborted) throw error;

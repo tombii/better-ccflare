@@ -350,6 +350,39 @@ describe("bounded rolling reconciliation", () => {
 			(await c.getLimitSnapshot("k", limit, "rolling", NOW)).spentUsd,
 		).toBe(3);
 	});
+	it.each([
+		"k",
+		'k",99,',
+	])("preserves an in-flight v2 sync after empty-cache cleanup for %s", async (apiKeyId) => {
+		const clock = spyOn(Date, "now").mockReturnValue(NOW);
+		let rejectRead!: (reason: Error) => void;
+		const read = new Promise<never>((_resolve, reject) => {
+			rejectRead = reject;
+		});
+		let resolveSync!: (result: ReturnType<typeof aggregate>) => void;
+		const sync = new Promise<ReturnType<typeof aggregate>>((resolve) => {
+			resolveSync = resolve;
+		});
+		const limits = mock(async (): Promise<ApiKeyLimit[]> => []);
+		const c = counter({
+			getApiKeyLimits: limits,
+			getApiKeySpendReconciliation: async () => sync,
+		});
+		expect(await c.getLimitsForKey(apiKeyId)).toEqual([]);
+		clock.mockReturnValue(NOW + SPEND_RESYNC_TTL_MS + 1);
+		limits.mockImplementationOnce(async () => read);
+		const failed = c.getLimitsForKey(apiKeyId).catch((error) => error);
+		const syncing = c
+			.getLimitSnapshot(apiKeyId, { ...limit, apiKeyId }, "rolling", NOW)
+			.catch((error) => error);
+		await c.reconcileActiveKeys();
+		const generation = state(c).limitGenerations.get(apiKeyId);
+		rejectRead(new Error("unavailable"));
+		expect((await failed).message).toBe("unavailable");
+		resolveSync(aggregate(3));
+		expect(await syncing).toMatchObject({ spentUsd: 3 });
+		expect(state(c).limitGenerations.get(apiKeyId)).toBe(generation);
+	});
 	it("does not retain a generation when refreshing an empty limits cache fails", async () => {
 		const clock = spyOn(Date, "now").mockReturnValue(NOW);
 		const read = mock(async () => []);
