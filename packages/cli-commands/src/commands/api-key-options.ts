@@ -161,6 +161,8 @@ export async function validateApiKeyOptions(
 			...Object.values(providerDefaults),
 			...accounts.map((account) => getModelMappings(account)),
 		]) {
+			for (const model of Object.keys(mappings))
+				knownScopes.add(model.toLowerCase());
 			for (const value of Object.values(mappings))
 				for (const model of Array.isArray(value) ? value : [value])
 					if (typeof model === "string")

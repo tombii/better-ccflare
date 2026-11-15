@@ -140,6 +140,42 @@ describe("API key CLI options", () => {
 		}
 	});
 
+	it.each([
+		"model_mappings",
+		"model_fallbacks",
+	])("accepts exact account %s aliases as model scopes without fetching", async (field) => {
+		const fetch = spyOn(globalThis, "fetch").mockRejectedValue(
+			new Error("CLI model validation must stay offline"),
+		);
+		const db = {
+			getAllAccounts: async () => [
+				{
+					id: "configured-account",
+					provider: "openai-compatible",
+					[field]: JSON.stringify({ "team-model": "gpt-native" }),
+				},
+			],
+			listCombos: async () => [],
+		} as unknown as DatabaseOperations;
+		try {
+			for (const scope of ["team-model", "TEAM-MODEL", "gpt-native"]) {
+				await validateApiKeyOptions(db, {
+					limits: [parseApiKeyLimit(`window=day,usd=5,model=${scope}`)],
+				});
+			}
+			for (const scope of ["team", "team-model-typo"]) {
+				await expect(
+					validateApiKeyOptions(db, {
+						limits: [parseApiKeyLimit(`window=day,usd=5,model=${scope}`)],
+					}),
+				).rejects.toThrow("Unknown model scope");
+			}
+			expect(fetch).not.toHaveBeenCalled();
+		} finally {
+			fetch.mockRestore();
+		}
+	});
+
 	it("accepts native provider defaults, bundled models and global overrides without fetching", async () => {
 		const previous = getProviderModelDefaultOverrides();
 		const fetch = spyOn(globalThis, "fetch").mockRejectedValue(
