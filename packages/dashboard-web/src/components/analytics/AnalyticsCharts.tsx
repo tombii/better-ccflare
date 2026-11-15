@@ -93,7 +93,8 @@ export function MainMetricsChart({
 	modelBreakdown = false,
 	onModelBreakdownChange,
 }: MainMetricsChartProps) {
-	const { enabled: costTrackingEnabled } = useCostTracking();
+	const { enabled } = useCostTracking();
+	const costTrackingEnabled = enabled === true;
 	// Process data for multi-model chart if model breakdown is enabled (not in cumulative mode)
 	const processedMultiModelData =
 		rawTimeSeries && modelBreakdown && viewMode !== "cumulative"
@@ -224,9 +225,9 @@ export function MainMetricsChart({
 							<SelectContent>
 								<SelectItem value="requests">Requests</SelectItem>
 								<SelectItem value="tokens">Token Usage</SelectItem>
-								<SelectItem value="cost" disabled={!costTrackingEnabled}>
-									Cost ($)
-								</SelectItem>
+								{costTrackingEnabled && (
+									<SelectItem value="cost">Cost ($)</SelectItem>
+								)}
 								<SelectItem value="responseTime">Response Time</SelectItem>
 								<SelectItem value="tokensPerSecond">Output Speed</SelectItem>
 							</SelectContent>
@@ -236,10 +237,8 @@ export function MainMetricsChart({
 			</CardHeader>
 			<CardContent>
 				{(() => {
-					if (selectedMetric === "cost") {
-						if (costTrackingEnabled === undefined) return null;
-						if (costTrackingEnabled === false) return <CostTrackingNotice />;
-					}
+					if (selectedMetric === "cost" && !costTrackingEnabled)
+						return <CostTrackingNotice />;
 					// Show multi-model chart if breakdown is enabled
 					if (modelBreakdown && processedMultiModelData) {
 						return (
@@ -668,7 +667,8 @@ export function ModelComparisonCharts({
 	loading,
 	timeRange,
 }: ModelComparisonChartsProps) {
-	const { enabled: costTrackingEnabled } = useCostTracking();
+	const { enabled } = useCostTracking();
+	const costTrackingEnabled = enabled === true;
 	return (
 		<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 			{/* Model Performance */}
@@ -723,7 +723,8 @@ interface CumulativeGrowthChartProps {
 }
 
 export function CumulativeGrowthChart({ data }: CumulativeGrowthChartProps) {
-	const { enabled: costTrackingEnabled } = useCostTracking();
+	const { enabled } = useCostTracking();
+	const costTrackingEnabled = enabled === true;
 	const cumulativeTooltipFormatter = (value: number | string, name: string) => {
 		if (name === "Total Cost") return [formatCost(Number(value)), "Total Cost"];
 		return [formatTokens(value as number), "Total Tokens"];
@@ -736,10 +737,9 @@ export function CumulativeGrowthChart({ data }: CumulativeGrowthChartProps) {
 					Cumulative Growth Analysis
 				</CardTitle>
 				<CardDescription>
-					{costTrackingEnabled !== undefined &&
-						(costTrackingEnabled === true
-							? "Token usage vs. cost accumulation over time"
-							: "Token usage over time")}
+					{costTrackingEnabled
+						? "Token usage vs. cost accumulation over time"
+						: "Token usage over time"}
 				</CardDescription>
 			</CardHeader>
 			<CardContent>

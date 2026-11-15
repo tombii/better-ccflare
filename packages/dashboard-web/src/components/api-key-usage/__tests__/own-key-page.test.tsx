@@ -11,6 +11,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import * as Router from "react-router-dom";
 import { MemoryRouter } from "react-router-dom";
 import { api } from "../../../api";
+import { fetchConfigFlag } from "../../../lib/config-flag-api";
 import { queryKeys } from "../../../lib/query-keys";
 import { ApiKeysTab } from "../../ApiKeysTab";
 import { Input } from "../../ui/input";
@@ -98,18 +99,33 @@ function renderPage({
 	path = "/api-key-usage",
 	enabled = true,
 	trackingLoaded = true,
+	trackingFailed = false,
 	data = usage,
+	client: cachedClient,
 }: {
 	admin?: boolean;
 	path?: string;
 	enabled?: boolean;
 	trackingLoaded?: boolean;
+	trackingFailed?: boolean;
 	data?: ApiKeyUsageResponse;
+	client?: QueryClient;
 } = {}) {
-	const client = new QueryClient({
-		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
-	});
-	if (trackingLoaded) client.setQueryData(["cost-tracking"], { enabled });
+	const client =
+		cachedClient ??
+		new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+	if (trackingFailed) {
+		client
+			.getQueryCache()
+			.build(client, { queryKey: ["cost-tracking"] })
+			.setState({
+				status: "error",
+				error: new Error("Settings request failed"),
+			});
+	} else if (trackingLoaded)
+		client.setQueryData(["cost-tracking"], { enabled });
 	client.setQueryData(["auth-session"], { canManage: admin, apiKeyId: "own" });
 	client.setQueryData(queryKeys.apiKeys(), keys);
 	for (const key of keys)
@@ -132,15 +148,127 @@ function renderPage({
 }
 
 describe("API Key Usage page", () => {
-	it("leaves cost values blank while tracking loads and keeps attempt metrics", () => {
+	it("keeps usage after the settings request rejects", async () => {
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const failure = new Error("Settings request failed");
+		const request = spyOn(api, "get").mockRejectedValueOnce(failure);
+		try {
+			await expect(
+				client.fetchQuery({
+					queryKey: ["cost-tracking"],
+					queryFn: () => fetchConfigFlag("/api/config/cost-tracking"),
+				}),
+			).rejects.toBe(failure);
+			const html = renderPage({ admin: true, trackingLoaded: false, client });
+			expect(request).toHaveBeenCalledWith("/api/config/cost-tracking");
+			for (const text of [
+				"Successful attempts",
+				"Input tokens",
+				"By model",
+				"By account",
+			])
+				expect(html).toContain(text);
+			for (const text of [
+				"Plan efficiency",
+				"Cost over time",
+				"Reset spend",
+				"$1.0000",
+				"$2.0000",
+			])
+				expect(html).not.toContain(text);
+		} finally {
+			request.mockRestore();
+			client.clear();
+		}
+	});
+
+	it("hides cost sections while tracking loads and keeps attempt metrics", () => {
 		const markup = renderPage({ trackingLoaded: false });
 		expect(markup).not.toContain("Cost tracking is disabled");
 		expect(markup).not.toContain("$1.0000");
 		expect(markup).not.toContain("$2.0000");
-		expect(markup).toMatch(/API cost<\/p><p[^>]*><\/p>/);
+		expect(markup).not.toContain("API cost</p>");
 		expect(markup).not.toMatch(/text-5xl[^>]*>—<\/p>/);
 		expect(markup).toContain("Successful attempts");
 	});
+	for (const [state, options] of [
+		["pending", { trackingLoaded: false }],
+		["failed", { trackingFailed: true }],
+		["enabled", { enabled: true }],
+		["disabled", { enabled: false }],
+	] as const) {
+		it(`keeps non-cost usage with ${state} cost tracking`, () => {
+			const markup = renderPage({
+				admin: true,
+				...options,
+				data: {
+					...usage,
+					models: [
+						{
+							model: "fixture-model",
+							requests: 3,
+							costUsd: 123.4567,
+							totalTokens: 120,
+						},
+					],
+					accounts: [
+						{
+							accountId: "fixture-account",
+							accountName: "Fixture account",
+							requests: 3,
+							costUsd: 123.4567,
+						},
+					],
+					planCost: {
+						...usage.planCost,
+						accounts: [
+							{
+								accountId: "fixture-account",
+								accountName: "Fixture account",
+								keyPlanValueUsd: 1,
+								accountPlanValueUsd: 1,
+								share: 1,
+								planMonthlyUsd: 100,
+								proratedPriceUsd: 123.4567,
+								contributionUsd: 123.4567,
+							},
+						],
+					},
+				},
+			});
+			for (const text of [
+				"Successful attempts",
+				"Failed attempts",
+				"Input tokens",
+				"Output tokens",
+				"By model",
+				"By account",
+				"fixture-model",
+				"Fixture account",
+			])
+				expect(markup).toContain(text);
+			for (const text of [
+				"Plan efficiency",
+				"API cost</p>",
+				"Cost over time",
+				"Models used",
+				"Reset spend",
+			])
+				if (state === "enabled") expect(markup).toContain(text);
+				else expect(markup).not.toContain(text);
+			if (state !== "enabled") {
+				expect(markup).not.toContain("$1.0000");
+				expect(markup).not.toContain("$2.0000");
+				expect(markup).not.toContain("$123.4567");
+				expect(markup).not.toContain("Apportioned subscription money");
+				expect(markup).not.toMatch(/>Cost<\/th>/);
+				expect(markup).not.toMatch(/>Plan share<\/th>/);
+			}
+		});
+	}
+
 	it("uses the Usage History header and keeps administration in API Keys dialogs", () => {
 		const markup = renderPage({ admin: true });
 		expect(markup).toContain('aria-label="Select API key"');

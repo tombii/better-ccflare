@@ -95,13 +95,8 @@ export function ApiKeyUsageTab() {
 	});
 	const canManage = session?.canManage ?? false;
 	const { data: apiKeys } = useApiKeys({ enabled: canManage });
-	const { enabled: costTrackingEnabled } = useCostTracking();
-	const displayCost = (value: number) =>
-		costTrackingEnabled === undefined
-			? ""
-			: costTrackingEnabled === false
-				? "—"
-				: formatCost(value);
+	const { enabled } = useCostTracking();
+	const costTrackingEnabled = enabled === true;
 	const fromMs = new Date(from).getTime();
 	const toMs = new Date(to).getTime();
 	const validCustom =
@@ -245,56 +240,62 @@ export function ApiKeyUsageTab() {
 				</Card>
 			) : (
 				<>
-					{/* Headline: the one figure this page exists for. */}
-					<Card>
-						<CardHeader>
-							<CardTitle className="text-sm font-medium text-muted-foreground">
-								Plan efficiency
-							</CardTitle>
-						</CardHeader>
-						<CardContent>
-							<p className="text-5xl font-bold tabular-nums">
-								{costTrackingEnabled !== undefined &&
-									(costTrackingEnabled === false
-										? "—"
-										: isLoading
-											? "…"
-											: (ratioText ?? "unavailable"))}
-							</p>
-							<p className="text-sm text-muted-foreground mt-2">
-								{costTrackingEnabled !== undefined && data
-									? efficiencyCaption(
-											data.efficiencyStatus,
-											data.planCost.unpricedAccountIds.length,
-										)
-									: ""}
-							</p>
-						</CardContent>
-					</Card>
+					{costTrackingEnabled && (
+						<Card>
+							<CardHeader>
+								<CardTitle className="text-sm font-medium text-muted-foreground">
+									Plan efficiency
+								</CardTitle>
+							</CardHeader>
+							<CardContent>
+								<p className="text-5xl font-bold tabular-nums">
+									{isLoading ? "…" : (ratioText ?? "unavailable")}
+								</p>
+								<p className="text-sm text-muted-foreground mt-2">
+									{data
+										? efficiencyCaption(
+												data.efficiencyStatus,
+												data.planCost.unpricedAccountIds.length,
+											)
+										: ""}
+								</p>
+							</CardContent>
+						</Card>
+					)}
 
-					<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
-						<StatTile
-							label="API cost"
-							value={displayCost(data?.apiCostUsd ?? 0)}
-							hint="Real money, pay-per-token billing"
-						/>
-						<StatTile
-							label="Plan value"
-							value={displayCost(data?.planValueUsd ?? 0)}
-							hint="What subscription traffic would have cost at API rates"
-						/>
-						<StatTile
-							label="Plan cost"
-							value={displayCost(data?.planCost.planCostUsd ?? 0)}
-							hint={`Apportioned subscription money over ${
-								data ? data.planCost.windowDays.toFixed(2) : "0"
-							} days`}
-						/>
-						<StatTile
-							label="Total API-cost equivalent"
-							value={displayCost(data?.totalCostUsd ?? 0)}
-							hint="API cost + plan value; used by spend limits"
-						/>
+					<div
+						className={
+							costTrackingEnabled
+								? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4"
+								: "grid grid-cols-1 gap-4"
+						}
+					>
+						{costTrackingEnabled && (
+							<>
+								<StatTile
+									label="API cost"
+									value={formatCost(data?.apiCostUsd ?? 0)}
+									hint="Real money, pay-per-token billing"
+								/>
+								<StatTile
+									label="Plan value"
+									value={formatCost(data?.planValueUsd ?? 0)}
+									hint="What subscription traffic would have cost at API rates"
+								/>
+								<StatTile
+									label="Plan cost"
+									value={formatCost(data?.planCost.planCostUsd ?? 0)}
+									hint={`Apportioned subscription money over ${
+										data ? data.planCost.windowDays.toFixed(2) : "0"
+									} days`}
+								/>
+								<StatTile
+									label="Total API-cost equivalent"
+									value={formatCost(data?.totalCostUsd ?? 0)}
+									hint="API cost + plan value; used by spend limits"
+								/>
+							</>
+						)}
 						<StatTile
 							label="Attempts"
 							value={formatNumber(data?.requests ?? 0)}
@@ -362,7 +363,7 @@ export function ApiKeyUsageTab() {
 						</Card>
 					) : null}
 
-					{data ? (
+					{costTrackingEnabled && data ? (
 						<Card>
 							<CardHeader className="flex flex-row items-center justify-between gap-3">
 								<CardTitle className="text-sm">Current limits</CardTitle>
@@ -420,55 +421,54 @@ export function ApiKeyUsageTab() {
 						</Card>
 					) : null}
 
-					<div
-						hidden={!costTrackingEnabled}
-						className="grid grid-cols-1 lg:grid-cols-2 gap-4"
-					>
-						<Card>
-							<CardHeader>
-								<CardTitle className="text-sm">Cost over time</CardTitle>
-							</CardHeader>
-							<CardContent>
-								<BaseAreaChart
-									data={costSeries.data}
-									dataKey="totalCostUsd"
-									xAxisKey="label"
-									loading={isLoading}
-									color={COLORS.primary}
-									gradientId="apiKeyUsageCost"
-									yAxisDomain={[0, costSeries.maxCost || "auto"]}
-									yAxisTickFormatter={(value) => formatCost(Number(value))}
-									tooltipFormatter={(value) => [
-										formatCost(value),
-										"Total API-cost equivalent",
-									]}
-									emptyState="No attempts from this key in this window."
-								/>
-							</CardContent>
-						</Card>
+					{costTrackingEnabled && (
+						<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+							<Card>
+								<CardHeader>
+									<CardTitle className="text-sm">Cost over time</CardTitle>
+								</CardHeader>
+								<CardContent>
+									<BaseAreaChart
+										data={costSeries.data}
+										dataKey="totalCostUsd"
+										xAxisKey="label"
+										loading={isLoading}
+										color={COLORS.primary}
+										gradientId="apiKeyUsageCost"
+										yAxisDomain={[0, costSeries.maxCost || "auto"]}
+										yAxisTickFormatter={(value) => formatCost(Number(value))}
+										tooltipFormatter={(value) => [
+											formatCost(value),
+											"Total API-cost equivalent",
+										]}
+										emptyState="No attempts from this key in this window."
+									/>
+								</CardContent>
+							</Card>
 
-						<Card>
-							<CardHeader>
-								<CardTitle className="text-sm">Models used</CardTitle>
-							</CardHeader>
-							<CardContent>
-								<BaseBarChart
-									data={modelChartData}
-									bars={{ dataKey: "costUsd", fill: COLORS.blue }}
-									xAxisKey="name"
-									loading={isLoading}
-									xAxisAngle={-25}
-									xAxisTextAnchor="end"
-									xAxisHeight={70}
-									tooltipFormatter={(value) => [
-										formatCost(value),
-										"API-cost equivalent",
-									]}
-									emptyState="No models recorded for this key in this window."
-								/>
-							</CardContent>
-						</Card>
-					</div>
+							<Card>
+								<CardHeader>
+									<CardTitle className="text-sm">Models used</CardTitle>
+								</CardHeader>
+								<CardContent>
+									<BaseBarChart
+										data={modelChartData}
+										bars={{ dataKey: "costUsd", fill: COLORS.blue }}
+										xAxisKey="name"
+										loading={isLoading}
+										xAxisAngle={-25}
+										xAxisTextAnchor="end"
+										xAxisHeight={70}
+										tooltipFormatter={(value) => [
+											formatCost(value),
+											"API-cost equivalent",
+										]}
+										emptyState="No models recorded for this key in this window."
+									/>
+								</CardContent>
+							</Card>
+						</div>
+					)}
 
 					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 						<Card>
@@ -488,9 +488,11 @@ export function ApiKeyUsageTab() {
 											<th scope="col" className="text-right px-3 py-2">
 												Tokens
 											</th>
-											<th scope="col" className="text-right px-3 py-2">
-												Cost
-											</th>
+											{costTrackingEnabled && (
+												<th scope="col" className="text-right px-3 py-2">
+													Cost
+												</th>
+											)}
 										</tr>
 									</thead>
 									<tbody>
@@ -509,15 +511,17 @@ export function ApiKeyUsageTab() {
 												<td className="px-3 py-2 text-right">
 													{formatTokens(row.totalTokens)}
 												</td>
-												<td className="px-3 py-2 text-right">
-													{displayCost(row.costUsd)}
-												</td>
+												{costTrackingEnabled && (
+													<td className="px-3 py-2 text-right">
+														{formatCost(row.costUsd)}
+													</td>
+												)}
 											</tr>
 										))}
 										{(data?.models.length ?? 0) === 0 ? (
 											<tr>
 												<td
-													colSpan={4}
+													colSpan={costTrackingEnabled ? 4 : 3}
 													className="px-3 py-4 text-muted-foreground"
 												>
 													No attempts in this window.
@@ -543,12 +547,16 @@ export function ApiKeyUsageTab() {
 											<th scope="col" className="text-right px-3 py-2">
 												Attempts
 											</th>
-											<th scope="col" className="text-right px-3 py-2">
-												Cost
-											</th>
-											<th scope="col" className="text-right px-3 py-2">
-												Plan share
-											</th>
+											{costTrackingEnabled && (
+												<th scope="col" className="text-right px-3 py-2">
+													Cost
+												</th>
+											)}
+											{costTrackingEnabled && (
+												<th scope="col" className="text-right px-3 py-2">
+													Plan share
+												</th>
+											)}
 										</tr>
 									</thead>
 									<tbody>
@@ -575,29 +583,33 @@ export function ApiKeyUsageTab() {
 															attempts
 														</span>
 													</td>
-													<td className="px-3 py-2 text-right">
-														{displayCost(row.costUsd)}
-													</td>
-													<td className="px-3 py-2 text-right">
-														{share == null ? (
-															<span className="text-muted-foreground">—</span>
-														) : share.contributionUsd === null ? (
-															<Badge variant="warning">no plan price</Badge>
-														) : (
-															<span
-																title={`${(share.share * 100).toFixed(1)}% of this account's plan traffic`}
-															>
-																{displayCost(share.contributionUsd)}
-															</span>
-														)}
-													</td>
+													{costTrackingEnabled && (
+														<td className="px-3 py-2 text-right">
+															{formatCost(row.costUsd)}
+														</td>
+													)}
+													{costTrackingEnabled && (
+														<td className="px-3 py-2 text-right">
+															{share == null ? (
+																<span className="text-muted-foreground">—</span>
+															) : share.contributionUsd === null ? (
+																<Badge variant="warning">no plan price</Badge>
+															) : (
+																<span
+																	title={`${(share.share * 100).toFixed(1)}% of this account's plan traffic`}
+																>
+																	{formatCost(share.contributionUsd)}
+																</span>
+															)}
+														</td>
+													)}
 												</tr>
 											);
 										})}
 										{(data?.accounts.length ?? 0) === 0 ? (
 											<tr>
 												<td
-													colSpan={4}
+													colSpan={costTrackingEnabled ? 4 : 2}
 													className="px-3 py-4 text-muted-foreground"
 												>
 													No attempts in this window.
@@ -611,11 +623,13 @@ export function ApiKeyUsageTab() {
 					</div>
 				</>
 			)}
-			<ApiKeyResetSpendDialog
-				key={resetSpendKey?.id ?? "closed"}
-				apiKey={resetSpendKey}
-				onClose={() => setResetSpendKey(null)}
-			/>
+			{costTrackingEnabled && (
+				<ApiKeyResetSpendDialog
+					key={resetSpendKey?.id ?? "closed"}
+					apiKey={resetSpendKey}
+					onClose={() => setResetSpendKey(null)}
+				/>
+			)}
 		</div>
 	);
 }

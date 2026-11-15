@@ -44,13 +44,12 @@ export function ModelAnalytics({
 	costByModel,
 	loading = false,
 }: ModelAnalyticsProps) {
-	const { enabled: costTrackingEnabled } = useCostTracking();
+	const { enabled } = useCostTracking();
+	const costTrackingEnabled = enabled === true;
 	const [comparisonView, setComparisonView] = useState<
 		"speed-cost" | "performance" | "efficiency"
 	>("speed-cost");
-	if (costTrackingEnabled === undefined) return null;
-	const activeView =
-		costTrackingEnabled === false ? "performance" : comparisonView;
+	const activeView = costTrackingEnabled ? comparisonView : "performance";
 
 	// Prepare data for the comparison chart
 	const comparisonData = modelPerformance.map((perf) => {
@@ -136,30 +135,28 @@ export function ModelAnalytics({
 										<SelectValue />
 									</SelectTrigger>
 									<SelectContent>
-										<SelectItem
-											value="speed-cost"
-											disabled={!costTrackingEnabled}
-										>
-											<div className="flex items-center gap-2">
-												<Zap className="h-4 w-4" />
-												Speed vs Cost
-											</div>
-										</SelectItem>
+										{costTrackingEnabled && (
+											<SelectItem value="speed-cost">
+												<div className="flex items-center gap-2">
+													<Zap className="h-4 w-4" />
+													Speed vs Cost
+												</div>
+											</SelectItem>
+										)}
 										<SelectItem value="performance">
 											<div className="flex items-center gap-2">
 												<Activity className="h-4 w-4" />
 												Performance Metrics
 											</div>
 										</SelectItem>
-										<SelectItem
-											value="efficiency"
-											disabled={!costTrackingEnabled}
-										>
-											<div className="flex items-center gap-2">
-												<TrendingUp className="h-4 w-4" />
-												Efficiency Score
-											</div>
-										</SelectItem>
+										{costTrackingEnabled && (
+											<SelectItem value="efficiency">
+												<div className="flex items-center gap-2">
+													<TrendingUp className="h-4 w-4" />
+													Efficiency Score
+												</div>
+											</SelectItem>
+										)}
 									</SelectContent>
 								</Select>
 							</div>
