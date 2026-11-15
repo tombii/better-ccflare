@@ -384,7 +384,8 @@ export function createApiKeyGetHandler(dbOps: DatabaseOperations) {
 export function createApiKeyDisableHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, name: string): Promise<Response> => {
 		try {
-			await disableApiKey(dbOps, name);
+			const key = await resolveKey(dbOps, name);
+			await disableApiKey(dbOps, key.name);
 			const response = {
 				success: true,
 				message: `API key '${name}' disabled successfully`,
@@ -403,7 +404,8 @@ export function createApiKeyDisableHandler(dbOps: DatabaseOperations) {
 export function createApiKeyEnableHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, name: string): Promise<Response> => {
 		try {
-			await enableApiKey(dbOps, name);
+			const key = await resolveKey(dbOps, name);
+			await enableApiKey(dbOps, key.name);
 			const response = {
 				success: true,
 				message: `API key '${name}' enabled successfully`,
@@ -422,7 +424,8 @@ export function createApiKeyEnableHandler(dbOps: DatabaseOperations) {
 export function createApiKeyDeleteHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, name: string): Promise<Response> => {
 		try {
-			await deleteApiKey(dbOps, name);
+			const key = await resolveKey(dbOps, name);
+			await deleteApiKey(dbOps, key.name);
 			const response = {
 				success: true,
 				message: `API key '${name}' deleted successfully`,
@@ -471,7 +474,7 @@ export function createApiKeyUpdateRoleHandler(dbOps: DatabaseOperations) {
 		currentApiKeyId?: string,
 	): Promise<Response> => {
 		try {
-			const body = await req.json();
+			const body = await readObjectBody(req);
 			const { role } = body;
 
 			if (!role || (role !== "admin" && role !== "api-only")) {
@@ -480,7 +483,8 @@ export function createApiKeyUpdateRoleHandler(dbOps: DatabaseOperations) {
 				);
 			}
 
-			await updateApiKeyRole(dbOps, keyId, role, currentApiKeyId);
+			const key = await resolveKey(dbOps, keyId);
+			await updateApiKeyRole(dbOps, key.id, role, currentApiKeyId);
 			const response = {
 				success: true,
 				message: `API key role updated to '${role}' successfully`,
