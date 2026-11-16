@@ -3630,7 +3630,10 @@ async function proxyWithAccountAttempt(
 								const effortTarget = provider.reasoningEffortTarget?.(account);
 								if (effortTarget) {
 									try {
-										effortChanged = restoreReasoningEffort(
+										// OR, not assign: the re-clamp above may already have
+										// changed the body, and its change must still trigger
+										// the rebuild when the restore is a no-op.
+										effortChanged ||= restoreReasoningEffort(
 											transformedBody,
 											effortTarget,
 											originalEffort,
