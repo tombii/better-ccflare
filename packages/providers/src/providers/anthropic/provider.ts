@@ -9,7 +9,10 @@ import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 import { transformRequestBodyModel } from "../../utils/model-mapping";
-import { applyAnthropicReasoningEffort } from "../../utils/reasoning-effort";
+import {
+	applyAnthropicReasoningEffort,
+	type ReasoningEffortTarget,
+} from "../../utils/reasoning-effort";
 import { drainReader } from "../../utils/stream-drain";
 
 // Hard rate limit statuses that should block account usage
@@ -191,6 +194,11 @@ export class AnthropicProvider extends BaseProvider {
 	canHandle(_path: string): boolean {
 		// Handle all paths for now since this is Anthropic-specific
 		return true;
+	}
+
+	/** The transform writes the native `output_config.effort`. */
+	reasoningEffortTarget(): ReasoningEffortTarget {
+		return "output_config";
 	}
 
 	async refreshToken(

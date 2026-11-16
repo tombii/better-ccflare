@@ -240,6 +240,38 @@ describe("proxyWithAccount — model fallback re-clamps reasoning effort", () =>
 		expect(sent[1].reasoning).toBeUndefined();
 	});
 
+	it("anthropic-compatible: restores an effort the mapped model rejects for a fallback that accepts it", async () => {
+		// Both the primary and the opus family are mapped to Haiku 4.5, which
+		// rejects the effort parameter outright, so the transform drops it. The
+		// actual fallback sent is Opus 4.7, which accepts it: the client's effort
+		// has to be put back in the provider's native shape instead of silently
+		// lost by the re-patch, which can only rewrite an existing field.
+		const sent = await runEffortFallback(
+			makeAccount({
+				model_mappings: JSON.stringify({
+					sonnet: ["claude-haiku-4-5", "claude-opus-4-7"],
+					opus: "claude-haiku-4-5",
+				}),
+			}),
+			{
+				model: "claude-sonnet-4-5",
+				reasoning: { effort: "max" },
+				output_config: { format: { type: "text" } },
+			},
+		);
+
+		expect(sent).toHaveLength(2);
+		expect(sent[0].model).toBe("claude-haiku-4-5");
+		// Non-vacuity guard: the primary really lost the effort.
+		expect(sent[0].output_config).toEqual({ format: { type: "text" } });
+		expect(sent[1].model).toBe("claude-opus-4-7");
+		expect(sent[1].output_config).toEqual({
+			format: { type: "text" },
+			effort: "max",
+		});
+		expect(sent[1].reasoning).toBeUndefined();
+	});
+
 	it("does not add an effort the client never sent", async () => {
 		const sent = await runEffortFallback(
 			makeAccount({ model_mappings: MAPPINGS }),

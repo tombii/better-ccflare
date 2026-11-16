@@ -133,13 +133,17 @@ describe("issue #273 — Group A: helper contract", () => {
 // outer `response` binding that argument happens to alias, so the site keeps
 // draining the right body if the helper is ever called with another response.
 // 25 is the reasoning-effort rejection retry: the strict-schema 400/422 is
-// discarded before re-issuing the request without the rejected field.
+// discarded before re-issuing the request without the rejected field. The
+// thinking-signature, cache_control and reasoning retries drain a `discarded`
+// local rather than the `rawResponse`/`retried` bindings, so that a throwing
+// re-issue still leaves the original response readable for the client; those
+// sites are not matched by the binding-name pattern below, hence 25 - 3.
 // ---------------------------------------------------------------------------
 
-const EXPECTED_SITE_COUNT = 25;
+const EXPECTED_SITE_COUNT = 22;
 
 describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", () => {
-	it("proxy-operations.ts has exactly 25 cancelDiscardedResponseBody call sites", () => {
+	it("proxy-operations.ts has exactly 22 cancelDiscardedResponseBody call sites", () => {
 		const source = readFileSync(
 			"packages/proxy/src/handlers/proxy-operations.ts",
 			"utf-8",
@@ -178,9 +182,11 @@ describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", ()
 		// Type B — retry-loop overwrite sites: `rawResponse = ` or
 		// `response = ` preceded by a cancel call. (At least 4 such
 		// overwrite blocks for the retry loops — thinking-block,
-		// cache_control, model-list, in-place 529.)
+		// cache_control, model-list, in-place 529.) The retries that keep the
+		// original response readable until their replacement exists drain a
+		// `discarded` local, so both binding names count.
 		const overwriteSites = source.match(
-			/cancelDiscardedResponseBody\(rawResponse\);\n\s*rawResponse\s*=/g,
+			/cancelDiscardedResponseBody\((?:rawResponse|discarded)\);\n\s*rawResponse\s*=/g,
 		);
 		expect(overwriteSites?.length ?? 0).toBeGreaterThanOrEqual(3);
 	});

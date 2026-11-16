@@ -34,6 +34,7 @@ import {
 	readRequestJson,
 	reclampReasoningEffort,
 	recoverCodexMessagesContinuation,
+	restoreReasoningEffort,
 	UPSTREAM_402_OUT_OF_CREDITS_REASON,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -2129,6 +2130,68 @@ async function proxyWithAccountAttempt(
 			effectiveBodyContext.getModel() ||
 			null;
 
+		/**
+		 * Retry without the reasoning effort field if the upstream's strict
+		 * schema rejected it (Mistral-style 422, GLM-style 400), and return the
+		 * response the client should see. Mark (accountId, `model`) so later
+		 * requests for that pair pre-strip it instead of spending another failed
+		 * round trip. `model` is the model the response belongs to — the
+		 * transformed primary model on the first response, the fallback model
+		 * inside the model-fallback loop — so the learned pair is the one that
+		 * actually rejected the field.
+		 *
+		 * Performs at most ONE bounded retry per response and never loops.
+		 */
+		const recoverRejectedReasoningField = async (
+			response: Response,
+			model: string,
+		): Promise<Response> => {
+			const rejectedReasoningField = await getRejectedReasoningField(response);
+			if (!rejectedReasoningField) return response;
+
+			const rejectorKey = reasoningFieldRejectorKey(account.id, model);
+			if (!reasoningFieldRejectors.has(rejectorKey)) {
+				// Mark before retry so subsequent requests pre-strip without a
+				// round-trip. The current caller still receives the retried
+				// response (or the original error if the retry also fails).
+				reasoningFieldRejectors.add(rejectorKey);
+				log.info(
+					`Provider rejected ${rejectedReasoningField} for account=${account.name} model=${model}, retrying without it`,
+				);
+			}
+
+			try {
+				// Strip from the body CURRENTLY in flight, not from the original
+				// transform: the cache_control recovery may already have replaced
+				// it. The fallback keeps the pre-descriptor behaviour for the
+				// (unreachable) case of a recovery that could not buffer its own
+				// body.
+				const retryBodyJson = JSON.parse(
+					outgoing.bodyText ?? transformedBodyText,
+				);
+				delete retryBodyJson[rejectedReasoningField];
+				const { request: retryRequest, bodyText: strippedBodyText } =
+					rebuildOutgoingRequest(retryBodyJson);
+				// The original response stays untouched until the retry has
+				// produced its replacement: a throwing send is swallowed below and
+				// leaves the original in hand, so its error body must still be
+				// readable for the client.
+				const discarded = response;
+				const replaced = isSyntheticProviderResponse(retryRequest)
+					? materializeSyntheticResponse(retryRequest)
+					: await forwardUpstream(retryRequest);
+				cancelDiscardedResponseBody(discarded);
+				// The replacement belongs to retryRequest, whose body is missing
+				// the rejected field. Anything downstream that replays must
+				// re-issue THIS body.
+				adoptOutgoingRequest(retryRequest, strippedBodyText);
+				return replaced;
+			} catch (err) {
+				log.warn(`Failed to retry without ${rejectedReasoningField}:`, err);
+				return response;
+			}
+		};
+
 		const knownCacheControlRejector =
 			Boolean(transformedModel) &&
 			cacheControlRejectors.has(
@@ -2167,20 +2230,27 @@ async function proxyWithAccountAttempt(
 		// upstream must keep receiving it; the learned set is what separates the
 		// two. Runs after the cache_control block so it sees the body that block
 		// adopted (getJson() returns the same mutated object on that path).
+		// A pair learned from a fallback model is stripped in the fallback loop
+		// instead (it has to leave the primary's body alone).
 		const knownReasoningFieldRejector =
 			Boolean(transformedModel) &&
 			reasoningFieldRejectors.has(
 				reasoningFieldRejectorKey(account.id, transformedModel as string),
 			);
+		/** Remove whatever effort field `bodyJson` carries, in place. */
+		const stripReasoningEffortFields = (
+			bodyJson: Record<string, unknown>,
+		): boolean => {
+			if (!("reasoning_effort" in bodyJson || "reasoning" in bodyJson)) {
+				return false;
+			}
+			delete bodyJson.reasoning_effort;
+			delete bodyJson.reasoning;
+			return true;
+		};
 		if (knownReasoningFieldRejector) {
 			const reasoningBodyJson = outgoingBody.getJson();
-			if (
-				reasoningBodyJson &&
-				("reasoning_effort" in reasoningBodyJson ||
-					"reasoning" in reasoningBodyJson)
-			) {
-				delete reasoningBodyJson.reasoning_effort;
-				delete reasoningBodyJson.reasoning;
+			if (reasoningBodyJson && stripReasoningEffortFields(reasoningBodyJson)) {
 				const { request: preStrippedRequest, bodyText: preStrippedBodyText } =
 					rebuildOutgoingRequest(reasoningBodyJson);
 				adoptOutgoingRequest(preStrippedRequest, preStrippedBodyText);
@@ -2275,11 +2345,15 @@ async function proxyWithAccountAttempt(
 					);
 				}
 
-				// Make the retry request (or unwrap a synthetic provider response)
-				cancelDiscardedResponseBody(rawResponse);
-				rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
+				// Make the retry request (or unwrap a synthetic provider response).
+				// The original response is discarded only once the replacement
+				// exists, so a throwing send leaves it readable.
+				const discarded = rawResponse;
+				const replaced = isSyntheticProviderResponse(retryTransformedRequest)
 					? materializeSyntheticResponse(retryTransformedRequest)
 					: await forwardUpstream(retryTransformedRequest);
+				cancelDiscardedResponseBody(discarded);
+				rawResponse = replaced;
 			} else {
 				log.warn(
 					"Failed to filter thinking blocks or no changes made, proceeding with original error response",
@@ -2321,18 +2395,22 @@ async function proxyWithAccountAttempt(
 					// A URL-based rebuild drops the signal — carry it over.
 					signal: req.signal,
 				});
-				cancelDiscardedResponseBody(rawResponse);
-				rawResponse = isSyntheticProviderResponse(retryRequest)
+				// The original response stays untouched until the retry has
+				// produced its replacement: a throwing send is swallowed below and
+				// leaves the original in hand, so its body must still be readable
+				// for the client instead of having been discarded up front.
+				const discarded = rawResponse;
+				const replaced = isSyntheticProviderResponse(retryRequest)
 					? materializeSyntheticResponse(retryRequest)
 					: await forwardUpstream(retryRequest);
+				cancelDiscardedResponseBody(discarded);
+				rawResponse = replaced;
 				// rawResponse now belongs to retryRequest (cache_control stripped),
 				// not to the request that was rejected — anything downstream that
 				// replays (checkZai1305, the in-place 529/5xx retries) must re-issue
 				// this request, BODY INCLUDED. Adopting only the Request, as this
 				// line used to, left the buffered body still carrying the rejected
-				// field for every replay. Kept after the await on purpose: a
-				// throwing re-issue is swallowed below and leaves the original
-				// response in hand, so the descriptor must stay with it.
+				// field for every replay.
 				adoptOutgoingRequest(retryRequest, strippedBodyText);
 			} catch (err) {
 				log.warn("Failed to retry without cache_control:", err);
@@ -2343,51 +2421,11 @@ async function proxyWithAccountAttempt(
 		// rejected it (Mistral-style 422, GLM-style 400). Kept after the
 		// cache_control recovery so a body carrying both fields is fixed one
 		// rejected field at a time, each step seeing what the previous one left.
-		// Mark (accountId, model) so later requests pre-strip it instead of
-		// spending another failed round trip.
-		const rejectedReasoningField = await getRejectedReasoningField(rawResponse);
-		if (rejectedReasoningField) {
-			const rejectorKey = reasoningFieldRejectorKey(
-				account.id,
-				transformedModel,
-			);
-			if (!reasoningFieldRejectors.has(rejectorKey)) {
-				// Mark before retry so subsequent requests pre-strip without a
-				// round-trip. The current caller still receives the retried
-				// response (or the original error if the retry also fails).
-				reasoningFieldRejectors.add(rejectorKey);
-				log.info(
-					`Provider rejected ${rejectedReasoningField} for account=${account.name} model=${transformedModel}, retrying without it`,
-				);
-			}
-
-			try {
-				// Strip from the body CURRENTLY in flight, not from the original
-				// transform: the cache_control recovery above may already have
-				// replaced it. The fallback keeps the pre-descriptor behaviour for
-				// the (unreachable) case of a recovery that could not buffer its
-				// own body.
-				const retryBodyJson = JSON.parse(
-					outgoing.bodyText ?? transformedBodyText,
-				);
-				delete retryBodyJson[rejectedReasoningField];
-				const { request: retryRequest, bodyText: strippedBodyText } =
-					rebuildOutgoingRequest(retryBodyJson);
-				cancelDiscardedResponseBody(rawResponse);
-				rawResponse = isSyntheticProviderResponse(retryRequest)
-					? materializeSyntheticResponse(retryRequest)
-					: await forwardUpstream(retryRequest);
-				// rawResponse now belongs to retryRequest, whose body is missing
-				// the rejected field. Anything downstream that replays must
-				// re-issue THIS body. Kept after the await for the same reason as
-				// the cache_control recovery above: a throwing re-issue is
-				// swallowed below and leaves the original response in hand, so the
-				// descriptor must stay with it.
-				adoptOutgoingRequest(retryRequest, strippedBodyText);
-			} catch (err) {
-				log.warn(`Failed to retry without ${rejectedReasoningField}:`, err);
-			}
-		}
+		// The model-fallback loop runs the same recovery on its own response.
+		rawResponse = await recoverRejectedReasoningField(
+			rawResponse,
+			transformedModel,
+		);
 
 		// ── Upstream-error classification ───────────────────────────────────
 		// Each handler below was inline on the first-response path and is now a
@@ -3579,6 +3617,47 @@ async function proxyWithAccountAttempt(
 									err,
 								);
 							}
+							// The transform clamps against the model the ACCOUNT MAPPING
+							// produced, which may reject the parameter outright (e.g. a
+							// Haiku 4.5 mapping): the field then never reached the body,
+							// and the re-clamp above can only rewrite an existing one.
+							// Put the client's effort back in the provider's native shape
+							// for the model actually sent. A client-native
+							// `output_config.effort` is still on the body (the transform
+							// passes it through verbatim), so its "already present" check
+							// no-ops there — same guarantee as preserveOutputConfigEffort.
+							if (originalEffort !== undefined) {
+								const effortTarget = provider.reasoningEffortTarget?.(account);
+								if (effortTarget) {
+									try {
+										effortChanged = restoreReasoningEffort(
+											transformedBody,
+											effortTarget,
+											originalEffort,
+											nextBareModel,
+										);
+									} catch (err) {
+										log.warn(
+											"Failed to restore reasoning effort for model fallback:",
+											err,
+										);
+									}
+								}
+							}
+							// The fallback pair may already be a known rejector (learned
+							// from an earlier request): strip up front instead of
+							// spending the failed round trip the recovery exists to
+							// avoid. Skipped when the client sent a native effort, which
+							// the transform passes through verbatim.
+							if (
+								!clientSentNativeOutputEffort &&
+								reasoningFieldRejectors.has(
+									reasoningFieldRejectorKey(account.id, nextBareModel),
+								) &&
+								stripReasoningEffortFields(transformedBody)
+							) {
+								effortChanged = true;
+							}
 							if (routingChanged || effortChanged) {
 								const repatchedBodyText = JSON.stringify(transformedBody);
 								const repatchedHeaders = new Headers(
@@ -3636,6 +3715,18 @@ async function proxyWithAccountAttempt(
 					// From here on, every response belongs to `nextModel`, not to the
 					// model the request asked for. See `modelCycledTo`.
 					modelCycledTo = true;
+
+					// The fallback model can reject the effort field just as the
+					// primary could (strict schema, 422/400). The first-response
+					// recovery never saw this response, so run it here, keyed on the
+					// fallback model the response belongs to, and let it re-issue the
+					// adopted request with the field stripped. Runs before
+					// checkZai1305 so that peek reads the response the client will
+					// actually get, and adopts its own request/body when it retries.
+					rawResponse = await recoverRejectedReasoningField(
+						rawResponse,
+						nextBareModel,
+					);
 
 					rawResponse = await checkZai1305(
 						rawResponse,

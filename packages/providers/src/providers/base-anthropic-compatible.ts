@@ -14,6 +14,7 @@ import { transformRequestBodyModel } from "../utils/model-mapping";
 import {
 	type AnthropicReasoningEffortStyle,
 	applyAnthropicReasoningEffort,
+	type ReasoningEffortTarget,
 } from "../utils/reasoning-effort";
 import { drainReader } from "../utils/stream-drain";
 
@@ -218,6 +219,16 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	 */
 	protected getReasoningEffortStyle(): AnthropicReasoningEffortStyle {
 		return "output_config";
+	}
+
+	/**
+	 * The same field the transform writes, for the proxy's post-fallback
+	 * restore of an effort the mapped model made it drop.
+	 */
+	reasoningEffortTarget(): ReasoningEffortTarget {
+		return this.getReasoningEffortStyle() === "openrouter"
+			? "reasoning"
+			: "output_config";
 	}
 
 	/**

@@ -1,4 +1,5 @@
 import type { Account } from "@better-ccflare/types";
+import type { ReasoningEffortTarget } from "./utils/reasoning-effort";
 
 export interface TokenRefreshResult {
 	accessToken: string;
@@ -153,6 +154,14 @@ export interface Provider {
 	 * (e.g. NanoGPT on a third-party custom endpoint is not NanoGPT).
 	 */
 	supportsProviderRoutingFor?(account?: Account): boolean;
+
+	/**
+	 * The native outbound field this provider uses for the client's reasoning
+	 * effort; lets the proxy restore a dropped effort after a model fallback.
+	 * Optional: a provider whose transform keeps the client's native shape
+	 * untouched (Codex passthrough) leaves it unset.
+	 */
+	reasoningEffortTarget?(account?: Account): ReasoningEffortTarget | undefined;
 
 	/**
 	 * Extract tier information from response if available
