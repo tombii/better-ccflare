@@ -149,6 +149,7 @@ function isExpectedResponse(path: string, response: Response): boolean {
 }
 
 export interface ResponseHandlerOptions {
+	costTrackingEpoch?: number | null;
 	requestId: string;
 	method: string;
 	path: string;
@@ -171,6 +172,7 @@ export interface ResponseHandlerOptions {
 	apiKeyName?: string | null;
 	comboName?: string | null;
 	originalModel?: string | null;
+	limitModel?: string | null;
 	appliedModel?: string | null;
 	/**
 	 * Controller whose signal was merged into the upstream fetch's
@@ -211,6 +213,7 @@ export async function forwardToClient(
 		apiKeyName,
 		comboName,
 		originalModel,
+		limitModel,
 		appliedModel,
 		drainAbort,
 	} = options;
@@ -259,6 +262,7 @@ export async function forwardToClient(
 	// Send START message immediately if not filtered
 	if (shouldProcessRequest) {
 		const startMessage: StartMessage = {
+			costTrackingEpoch: options.costTrackingEpoch,
 			type: "start",
 			messageId: crypto.randomUUID(),
 			requestId,
@@ -291,6 +295,7 @@ export async function forwardToClient(
 			accountName: account?.name ?? null,
 			agentUsed: agentUsed || null,
 			clientSessionId: clientSessionId ?? null,
+			limitModel: limitModel ?? null,
 			// Persist the pair only for an actual swap — an agent-detected but
 			// unmodified request would otherwise record two equal values that
 			// downstream cannot distinguish from a real rewrite.

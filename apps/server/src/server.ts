@@ -19,6 +19,7 @@ import {
 	readUsageUtilization,
 	registerCleanup,
 	registerDisposable,
+	setCostTrackingEnabled,
 	setForceAccountModel,
 	setPricingLogger,
 	setUseExtraUsage,
@@ -101,6 +102,7 @@ import {
 	type RetentionStatus,
 	StrategyName,
 	type StrategyStore,
+	toApiKeyRestrictions,
 } from "@better-ccflare/types";
 import { serve } from "bun";
 import { createCodexUsageRefresher } from "./codex-usage-refresher";
@@ -1333,6 +1335,7 @@ export default async function startServer(options?: {
 	// on config: inject the operator capability map (CCFLARE_REASONING_EFFORTS
 	// env > reasoning_efforts config field) here and on every change below.
 	setReasoningEffortOverrides(config.getReasoningEffortOverrides());
+	setCostTrackingEnabled(config.getCostTrackingEnabled());
 	// Same constraint for "use extra usage": the usage snapshot that gates
 	// admission is built in providers. Seed it from the environment first (a
 	// one-time adoption into the config file), then mirror the result.
@@ -1925,8 +1928,13 @@ export default async function startServer(options?: {
 					// (auth-service.ts) exactly — no trailing slash required on
 					// either — so this SPA-serving check and the auth-layer
 					// classification never drift apart.
+					// "/api" itself or "/api/…" only: the dashboard's own pages
+					// /api-keys and /api-key-usage also start with "/api", and a
+					// reload or bookmark of them fell through to the proxy (503
+					// pool_exhausted, or a forwarded upstream request).
 					const isApiOrProxyPath =
-						url.pathname.startsWith("/api") ||
+						url.pathname === "/api" ||
+						url.pathname.startsWith("/api/") ||
 						url.pathname.startsWith("/v1") ||
 						url.pathname.startsWith("/messages") ||
 						url.pathname === "/health";
@@ -1993,6 +2001,20 @@ export default async function startServer(options?: {
 						}
 					}
 
+					// Per-API-key restrictions travel down as an explicit argument
+					// rather than being re-read inside the proxy: the full key
+					// record is already in hand here, so enforcement costs no
+					// extra DB read on the hot path. `toApiKeyRestrictions`
+					// returns null for a key with all three columns NULL, and
+					// there is no key at all in zero-keys mode (auth disabled) —
+					// both of which make every downstream check a no-op.
+					const apiKeyRestrictions = authResult.apiKey
+						? toApiKeyRestrictions(authResult.apiKey)
+						: null;
+
+					// The proxy caches child budget rows and receives the key's current
+					// window mode and routing overrides from this authenticated record.
+
 					try {
 						// Codex CLI first tries WebSocket transport for /v1/responses.
 						// We only support HTTP — reject the upgrade cleanly so Codex
@@ -2030,6 +2052,14 @@ export default async function startServer(options?: {
 								proxyContext,
 								authResult.apiKeyId,
 								authResult.apiKeyName,
+								apiKeyRestrictions,
+								null,
+								{
+									limitWindowMode:
+										authResult.apiKey?.limitWindowMode ?? "calendar",
+									familyComboOverrides:
+										authResult.apiKey?.familyComboOverrides ?? null,
+								},
 							);
 						}
 						return trackStreamForShutdown(
@@ -2039,6 +2069,13 @@ export default async function startServer(options?: {
 								proxyContext,
 								authResult.apiKeyId,
 								authResult.apiKeyName,
+								{
+									restrictions: apiKeyRestrictions,
+									limitWindowMode:
+										authResult.apiKey?.limitWindowMode ?? "calendar",
+									familyComboOverrides:
+										authResult.apiKey?.familyComboOverrides ?? null,
+								},
 							),
 						);
 					} catch (proxyError) {

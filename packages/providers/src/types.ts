@@ -28,6 +28,8 @@ export interface ProviderResponseContext {
 
 export interface Provider {
 	name: string;
+	/** A configured native fallback model, available without an upstream lookup. */
+	getDefaultModel?(): string | undefined;
 	/** Passive request coverage, including refusal before an upstream dispatch. */
 	observeRequest?(
 		headers: Headers,

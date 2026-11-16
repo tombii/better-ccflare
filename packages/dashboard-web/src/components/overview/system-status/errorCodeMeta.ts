@@ -78,23 +78,11 @@ const KNOWN_ERROR_META: Record<
 		severity: "error",
 	},
 	windowless_429: {
-		title: "Request rejected (no rate-limit window)",
+		title: "Attempt rejected (no rate-limit window)",
 		description:
-			"Anthropic returned 429 with `x-should-retry: true` and no rate-limit " +
-			"window at all — no `retry-after` and no `anthropic-ratelimit-*` " +
-			"header. Measured behaviour is that this is scoped to the request, not " +
-			"the account: the same account keeps serving other requests in the same " +
-			"second, while every other account rejects this particular request the " +
-			"same way. The account was NOT benched and stays in rotation. The " +
-			"request itself was tried on the remaining accounts and, because they " +
-			"all reject it identically, still failed for the client.",
+			"The upstream returned 429 without a quota window. The attempt failed over to another account and may have succeeded there. Only this account and upstream model pair receives a short cooldown, doubling on repeat rejections up to 15 minutes by default. The account stays available for other models.",
 		suggestion:
-			"No action needed on the accounts — they are still routable and normal " +
-			"traffic is unaffected. Upstream rejected this specific request for " +
-			"reasons narrower than the account, so neither retrying it nor adding " +
-			"accounts helps; the client typically has to start a new request. A " +
-			"steady stream of these points at the requests themselves (session " +
-			"start-up, unusually large payload) rather than at your accounts.",
+			"Inspect successful attempts and failover counts before treating this as a client-visible failure. A successful user response for the same account and upstream model resets its cooldown streak.",
 		severity: "warning",
 	},
 	extra_usage_exhausted: {

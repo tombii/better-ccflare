@@ -1,23 +1,19 @@
 import {
-	afterAll,
-	beforeAll,
+	afterEach,
 	beforeEach,
 	describe,
 	expect,
 	it,
+	mock,
+	spyOn,
 } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
-import type { DatabaseOperations } from "@better-ccflare/database";
-import { DatabaseFactory } from "@better-ccflare/database";
+import { DatabaseOperations } from "@better-ccflare/database";
 import {
 	createCodeBuddyDeviceFlowInitHandler,
 	createCodeBuddyDeviceFlowStatusHandler,
 	createCodeBuddyReauthHandler,
+	resetCodeBuddySessionsForTests,
 } from "../oauth";
-
-const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-oauth-codebuddy-handler.db`;
-
-const originalFetch = globalThis.fetch;
 
 /**
  * Serve the two CodeBuddy auth endpoints. Mocking `fetch` (rather than
@@ -78,20 +74,37 @@ async function waitForStatus(
 
 describe("CodeBuddy auth handlers", () => {
 	let dbOps: DatabaseOperations;
-
-	beforeAll(async () => {
-		if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-		DatabaseFactory.initialize(TEST_DB_PATH);
-		dbOps = DatabaseFactory.getInstance();
-	});
+	let originalFetch: typeof globalThis.fetch;
 
 	beforeEach(() => {
+		dbOps = new DatabaseOperations(":memory:", { walMode: false });
+		originalFetch = globalThis.fetch;
 		installAuthFetch();
 	});
 
-	afterAll(() => {
+	afterEach(async () => {
+		resetCodeBuddySessionsForTests();
+		mock.restore();
 		globalThis.fetch = originalFetch;
+		await dbOps.close();
 	});
+
+	async function seedCodeBuddyAccount(): Promise<void> {
+		await dbOps.getAdapter().run(
+			`INSERT INTO accounts (
+				id, name, provider, access_token, refresh_token, expires_at, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			[
+				"codebuddy-existing-id",
+				"codebuddy-one",
+				"codebuddy",
+				"old-access-token",
+				"old-refresh-token",
+				Date.now() - 1,
+				Date.now(),
+			],
+		);
+	}
 
 	it("creates an account after the login poll completes", async () => {
 		const init = createCodeBuddyDeviceFlowInitHandler(dbOps);
@@ -137,6 +150,7 @@ describe("CodeBuddy auth handlers", () => {
 	});
 
 	it("reports a duplicate account name as an error", async () => {
+		await seedCodeBuddyAccount();
 		const init = createCodeBuddyDeviceFlowInitHandler(dbOps);
 		const status = createCodeBuddyDeviceFlowStatusHandler();
 
@@ -186,6 +200,7 @@ describe("CodeBuddy auth handlers", () => {
 	});
 
 	it("refreshes tokens for an existing CodeBuddy account", async () => {
+		await seedCodeBuddyAccount();
 		const reauth = createCodeBuddyReauthHandler(dbOps);
 		const status = createCodeBuddyDeviceFlowStatusHandler();
 
@@ -233,5 +248,32 @@ describe("CodeBuddy auth handlers", () => {
 		const status = createCodeBuddyDeviceFlowStatusHandler();
 		const response = status("does-not-exist");
 		expect(response.status).toBe(404);
+	});
+
+	it("clears completed sessions and cancels their expiry timers on reset", async () => {
+		const schedule = spyOn(globalThis, "setTimeout");
+		const cancel = spyOn(globalThis, "clearTimeout");
+		const init = createCodeBuddyDeviceFlowInitHandler(dbOps);
+		const status = createCodeBuddyDeviceFlowStatusHandler();
+		const response = await init(
+			new Request("http://localhost/api/oauth/codebuddy/init", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name: "codebuddy-reset" }),
+			}),
+		);
+		const { sessionId } = (await response.json()) as { sessionId: string };
+		expect((await waitForStatus(status, sessionId)).status).toBe("complete");
+		const expirationCall = schedule.mock.calls.findIndex(
+			([, delay]) => delay === 10 * 60 * 1000,
+		);
+		expect(expirationCall).toBeGreaterThanOrEqual(0);
+		const expirationTimer = schedule.mock.results[expirationCall]?.value;
+		expect(expirationTimer).toBeDefined();
+
+		resetCodeBuddySessionsForTests();
+
+		expect(status(sessionId).status).toBe(404);
+		expect(cancel).toHaveBeenCalledWith(expirationTimer);
 	});
 });

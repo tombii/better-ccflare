@@ -1,4 +1,9 @@
-import { getRateLimitResetStabilityMs, logError } from "@better-ccflare/core";
+import {
+	getCostTrackingEpoch,
+	getRateLimitResetStabilityMs,
+	isCostTrackingEnabled,
+	logError,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
 	carryForwardCodexCredits,
@@ -88,7 +93,16 @@ export function updateAccountMetadata(
 	requestId?: string,
 	bypassSession = false,
 	startedAt?: number,
+	costTrackingEpoch: number | null = isCostTrackingEnabled()
+		? getCostTrackingEpoch()
+		: null,
 ): void {
+	// Provider parsing and the writer queue may both outlive an off/on gap.
+	// Tokens remain useful, but their cost must never fill the collector's NULL.
+	const trackedUsage = <T extends { costUsd?: number }>(usage: T): T =>
+		isCostTrackingEnabled() && costTrackingEpoch === getCostTrackingEpoch()
+			? usage
+			: { ...usage, costUsd: undefined };
 	// Update basic usage (with optional bypass)
 	if (bypassSession) {
 		// Increment request count without updating session tracking
@@ -232,7 +246,8 @@ export function updateAccountMetadata(
 				let usageClone: Response | null = null;
 				try {
 					usageClone = response.clone();
-					const usageInfo = await parseUsage(usageClone);
+					const parsedUsage = await parseUsage(usageClone);
+					const usageInfo = parsedUsage ? trackedUsage(parsedUsage) : null;
 					if (usageInfo) {
 						log.debug(
 							`Extracted streaming usage for account ${account.name}: ${JSON.stringify(usageInfo)}`,
@@ -240,7 +255,10 @@ export function updateAccountMetadata(
 						// Store usage info in database
 						try {
 							await ctx.asyncWriter.enqueue(() =>
-								ctx.dbOps.updateRequestUsage(requestId, usageInfo),
+								ctx.dbOps.updateRequestUsage(
+									requestId,
+									trackedUsage(usageInfo),
+								),
 							);
 						} catch (error) {
 							log.warn(`Failed to save usage for request ${requestId}:`, error);
@@ -271,7 +289,8 @@ export function updateAccountMetadata(
 				let usageClone: Response | null = null;
 				try {
 					usageClone = response.clone();
-					const usageInfo = await extractUsageInfo(usageClone);
+					const parsedUsage = await extractUsageInfo(usageClone);
+					const usageInfo = parsedUsage ? trackedUsage(parsedUsage) : null;
 					// The serving backend is named only by whole JSON bodies (OpenRouter
 					// `provider`). Read it from a fresh clone here — nothing new is
 					// buffered, and only providers that state it pay for the clone.
@@ -286,7 +305,10 @@ export function updateAccountMetadata(
 						// Store usage info in database
 						try {
 							await ctx.asyncWriter.enqueue(() =>
-								ctx.dbOps.updateRequestUsage(requestId, usageInfo),
+								ctx.dbOps.updateRequestUsage(
+									requestId,
+									trackedUsage(usageInfo),
+								),
 							);
 						} catch (error) {
 							log.warn(`Failed to save usage for request ${requestId}:`, error);
@@ -392,7 +414,12 @@ export async function processProxyResponse(
 	account: Account,
 	ctx: ProxyContext,
 	requestId?: string,
-	requestMeta?: { headers?: Headers; path?: string; timestamp?: number },
+	requestMeta?: {
+		headers?: Headers;
+		path?: string;
+		timestamp?: number;
+		costTrackingEpoch?: number | null;
+	},
 	options?: { serverErrorBenchApplied?: boolean },
 ): Promise<boolean> {
 	let rateLimitInfo = ctx.provider.parseRateLimit(response);
@@ -488,6 +515,7 @@ export async function processProxyResponse(
 				requestId,
 				bypassSession,
 				requestMeta?.timestamp,
+				requestMeta?.costTrackingEpoch,
 			);
 			return false;
 		}
@@ -527,6 +555,7 @@ export async function processProxyResponse(
 			requestId,
 			bypassSession,
 			requestMeta?.timestamp,
+			requestMeta?.costTrackingEpoch,
 		);
 		return true; // Signal rate limit
 	}
@@ -543,6 +572,7 @@ export async function processProxyResponse(
 			requestId,
 			bypassSession,
 			requestMeta?.timestamp,
+			requestMeta?.costTrackingEpoch,
 		);
 	}
 

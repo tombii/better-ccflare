@@ -6,6 +6,7 @@ export {
 	computeOverloadWithResetCapMs,
 	computeRateLimitBackoffMs,
 	computeServerErrorCooldownMs,
+	computeWindowless429CooldownMs,
 	getOverloadRetryConfig,
 	getRateLimitResetStabilityMs,
 	getServerErrorRetryEnabled,
@@ -41,7 +42,12 @@ export type ModelMappingData = {
 };
 export type ModelFallback = { [modelFamily: string]: string };
 export * from "./alert-events";
+export {
+	API_KEY_ROLLING_DURATION_MS,
+	apiKeyLimitWindowBounds,
+} from "./api-key-limit-window";
 export * from "./auth-failure-events";
+export * from "./cost-tracking";
 export * from "./extra-usage";
 export * from "./force-account-model";
 export {
@@ -109,6 +115,9 @@ export {
 	getModelRates,
 	initializeNanoGPTPricingIfAccountsExist,
 	listCatalogueModels,
+	listLocalCatalogueModelIds,
+	listModelPrices,
+	type ModelPriceEntry,
 	type ModelRates,
 	resetNanoGPTPricingCacheForTest,
 	setPricingLogger,
@@ -116,6 +125,18 @@ export {
 } from "./pricing";
 export * from "./probe-backoff";
 export * from "./request-events";
+export {
+	type SpendLimitExceededEvt,
+	spendLimitEvents,
+} from "./spend-limit-events";
+export {
+	calendarMonthEndMs,
+	calendarMonthStartMs,
+	computeSpendWindowResetMs,
+	computeSpendWindowStartMs,
+	ROLLING_SPEND_WINDOW_DURATION_MS,
+	spendWindowInstanceKey,
+} from "./spend-window";
 export * from "./strategy";
 export {
 	computeWindowStartMs,

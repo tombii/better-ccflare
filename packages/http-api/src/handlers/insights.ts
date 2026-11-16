@@ -1,4 +1,8 @@
-import { getModelRates, type ModelRates } from "@better-ccflare/core";
+import {
+	getModelRates,
+	isCostTrackingEnabled,
+	type ModelRates,
+} from "@better-ccflare/core";
 import {
 	errorResponse,
 	InternalServerError,
@@ -133,13 +137,18 @@ export function createCacheInsightsHandler(context: APIContext) {
 
 			// Price each distinct model id once; null/empty models are handled by
 			// the service as "Unknown" and never priced.
-			const modelIds = [
-				...new Set(
-					[...accountModelRows, ...projectModelRows]
-						.map((row) => row.model)
-						.filter((model): model is string => model != null && model !== ""),
-				),
-			];
+			const costTrackingEnabled = isCostTrackingEnabled();
+			const modelIds = costTrackingEnabled
+				? [
+						...new Set(
+							[...accountModelRows, ...projectModelRows]
+								.map((row) => row.model)
+								.filter(
+									(model): model is string => model != null && model !== "",
+								),
+						),
+					]
+				: [];
 			const rateList = await Promise.all(
 				modelIds.map((modelId) => getModelRates(modelId)),
 			);
@@ -147,14 +156,28 @@ export function createCacheInsightsHandler(context: APIContext) {
 				modelIds.map((modelId, index) => [modelId, rateList[index]]),
 			);
 
-			return jsonResponse(
-				buildCacheInsightsResponse({
-					accountModelRows,
-					projectModelRows,
-					rates,
-					options: { range, thresholdPercent },
-				}),
-			);
+			const result = buildCacheInsightsResponse({
+				accountModelRows,
+				projectModelRows,
+				rates,
+				options: { range, thresholdPercent },
+			});
+			if (!costTrackingEnabled || !isCostTrackingEnabled()) {
+				result.totals.actualCacheCostUsd = null;
+				result.totals.counterfactualCostUsd = null;
+				result.totals.savingsUsd = null;
+				for (const row of [
+					...result.byModel,
+					...result.byAccount,
+					...result.byProject,
+				]) {
+					row.actualCacheCostUsd = null;
+					row.counterfactualCostUsd = null;
+					row.savingsUsd = null;
+					row.pricingKnown = false;
+				}
+			}
+			return jsonResponse(result);
 		} catch (error) {
 			log.error("Cache insights error:", error);
 			return errorResponse(

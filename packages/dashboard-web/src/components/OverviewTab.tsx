@@ -24,11 +24,13 @@ import {
 	useRoutingObservations,
 	useStats,
 } from "../hooks/queries";
+import { useCostTracking } from "../hooks/useCostTracking";
 import {
 	computePoolUsage,
 	computeScopedPoolUsage,
 	formatFamilyLabel,
 } from "../lib/pool-usage";
+import { CostTrackingNotice } from "./CostTrackingNotice";
 import { ChartsSection } from "./overview/ChartsSection";
 import { LoadingSkeleton } from "./overview/LoadingSkeleton";
 import { MetricCard } from "./overview/MetricCard";
@@ -45,6 +47,7 @@ import { SystemStatus } from "./overview/SystemStatus";
 import { TimeRangeSelector } from "./overview/TimeRangeSelector";
 
 export const OverviewTab = React.memo(() => {
+	const { enabled: costTrackingEnabled } = useCostTracking();
 	// Fetch all data using React Query hooks
 	const { data: stats, isLoading: statsLoading } = useStats(
 		REFRESH_INTERVALS.default,
@@ -298,41 +301,47 @@ export const OverviewTab = React.memo(() => {
 					trendPeriod={trendPeriod}
 					icon={Clock}
 				/>
-				<MetricCard
-					title="Plan Value"
-					value={
-						analytics?.totals.planCostUsd
-							? formatCost(analytics.totals.planCostUsd)
-							: "$0.0000"
-					}
-					trendPeriod={trendPeriod}
-					icon={DollarSign}
-					subRows={[
-						{
-							label: "Avg / day",
-							value: formatCost(analytics?.totals.avgDailyPlanCostUsd ?? 0),
-							tooltip: "Average daily plan value over the last 7 days",
-						},
-						{
-							label: "Avg / week",
-							value: formatCost(analytics?.totals.avgWeeklyPlanCostUsd ?? 0),
-							tooltip:
-								"Average weekly plan value, derived from the last 30 days",
-						},
-					]}
-				/>
-				<MetricCard
-					title="API Cost"
-					value={
-						analytics?.totals.apiCostUsd
-							? formatCost(analytics.totals.apiCostUsd)
-							: "$0.0000"
-					}
-					change={trends.deltaCost !== null ? trends.deltaCost : undefined}
-					trend={trends.trendCost}
-					trendPeriod={trendPeriod}
-					icon={DollarSign}
-				/>
+				{costTrackingEnabled && (
+					<>
+						<MetricCard
+							title="Plan Value"
+							value={
+								analytics?.totals.planCostUsd
+									? formatCost(analytics.totals.planCostUsd)
+									: "$0.0000"
+							}
+							trendPeriod={trendPeriod}
+							icon={DollarSign}
+							subRows={[
+								{
+									label: "Avg / day",
+									value: formatCost(analytics?.totals.avgDailyPlanCostUsd ?? 0),
+									tooltip: "Average daily plan value over the last 7 days",
+								},
+								{
+									label: "Avg / week",
+									value: formatCost(
+										analytics?.totals.avgWeeklyPlanCostUsd ?? 0,
+									),
+									tooltip:
+										"Average weekly plan value, derived from the last 30 days",
+								},
+							]}
+						/>
+						<MetricCard
+							title="API Cost"
+							value={
+								analytics?.totals.apiCostUsd
+									? formatCost(analytics.totals.apiCostUsd)
+									: "$0.0000"
+							}
+							change={trends.deltaCost !== null ? trends.deltaCost : undefined}
+							trend={trends.trendCost}
+							trendPeriod={trendPeriod}
+							icon={DollarSign}
+						/>
+					</>
+				)}
 				<MetricCard
 					title="Output Speed"
 					value={formatTokensPerSecond(analytics?.totals.avgTokensPerSecond)}
@@ -347,6 +356,7 @@ export const OverviewTab = React.memo(() => {
 				/>
 			</div>
 
+			<CostTrackingNotice />
 			<PoolCapacitySection
 				pools={capacityPools}
 				primaryAccountName={primaryAccountName}

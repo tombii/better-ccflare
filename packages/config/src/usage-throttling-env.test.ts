@@ -26,10 +26,10 @@ function makeConfig(): { config: Config; cleanup: () => void } {
 
 describe("usage throttling env flags", () => {
 	afterEach(() => {
-		process.env.USAGE_THROTTLING_FIVE_HOUR_ENABLED =
-			ORIGINAL_ENV.USAGE_THROTTLING_FIVE_HOUR_ENABLED;
-		process.env.USAGE_THROTTLING_WEEKLY_ENABLED =
-			ORIGINAL_ENV.USAGE_THROTTLING_WEEKLY_ENABLED;
+		for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
 	});
 
 	it("treats non-true granular env values as disabled", () => {

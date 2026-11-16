@@ -123,6 +123,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	mock.restore();
 	clearVisionCapability();
 	if (savedPassthrough === undefined) {
 		delete process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL;

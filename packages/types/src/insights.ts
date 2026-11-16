@@ -21,10 +21,10 @@ export interface CacheInsightsTotals {
 	cacheReadInputTokens: number;
 	cacheCreationInputTokens: number;
 	cacheHitRate: number;
-	/** Sums over pricing-known volume only. */
-	actualCacheCostUsd: number;
-	counterfactualCostUsd: number;
-	savingsUsd: number;
+	/** Sums over pricing-known volume only; null while cost tracking is disabled. */
+	actualCacheCostUsd: number | null;
+	counterfactualCostUsd: number | null;
+	savingsUsd: number | null;
 	/** Distinct model ids (sorted) whose rates were unusable. */
 	unknownPricingModels: string[];
 }
@@ -33,8 +33,8 @@ export interface CacheInsightsTotals {
  * One row of the cache insights response.
  *
  * Cost fields (actualCacheCostUsd, counterfactualCostUsd, savingsUsd) are
- * null whenever pricingKnown is false — i.e. when ANY portion of the row's
- * token volume belongs to a model whose rates were unusable (unknown model,
+ * null whenever cost tracking is disabled or pricingKnown is false — i.e.
+ * when ANY portion of the row's token volume belongs to a model whose rates were unusable (unknown model,
  * or a null cacheRead/cacheWrite rate with non-zero corresponding tokens).
  */
 export interface CacheInsightsRow {

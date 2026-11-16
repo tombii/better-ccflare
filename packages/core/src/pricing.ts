@@ -2,7 +2,16 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TIME_CONSTANTS } from "./constants";
-import { CLAUDE_MODEL_IDS, MODEL_DISPLAY_NAMES } from "./models";
+import { getCostTrackingEpoch, isCostTrackingEnabled } from "./cost-tracking";
+import { getModelFamily } from "./model-mappings";
+import {
+	CLAUDE_MODEL_IDS,
+	LATEST_FABLE_MODEL,
+	LATEST_HAIKU_MODEL,
+	LATEST_OPUS_MODEL,
+	LATEST_SONNET_MODEL,
+	MODEL_DISPLAY_NAMES,
+} from "./models";
 
 export interface TokenBreakdown {
 	inputTokens?: number;
@@ -629,6 +638,25 @@ class PriceCatalogue {
 		return finalData;
 	}
 
+	/** Local model references for validation; never refreshes either catalogue. */
+	async getLocalModelIds(): Promise<string[]> {
+		const catalogues = [
+			BUNDLED_PRICING,
+			this.priceData,
+			await this.loadFromCache(),
+			nanogptPricingCache,
+		];
+		return [
+			...new Set(
+				catalogues.flatMap((catalogue) =>
+					Object.values(catalogue ?? {}).flatMap((section) =>
+						Object.keys(section.models ?? {}),
+					),
+				),
+			),
+		];
+	}
+
 	warnOnce(modelId: string, error?: Error | string): void {
 		if (!this.warnedModels.has(modelId)) {
 			this.warnedModels.add(modelId);
@@ -669,10 +697,10 @@ class PriceCatalogue {
 		const cost = model?.cost;
 		if (
 			!cost ||
-			typeof cost.input !== "number" ||
-			!Number.isFinite(cost.input) ||
-			typeof cost.output !== "number" ||
-			!Number.isFinite(cost.output)
+			(cost.input !== undefined &&
+				(typeof cost.input !== "number" || !Number.isFinite(cost.input))) ||
+			(cost.output !== undefined &&
+				(typeof cost.output !== "number" || !Number.isFinite(cost.output)))
 		) {
 			// Missing or malformed catalogue data (remote catalogues are not
 			// validated) - treat as unknown pricing rather than emitting NaN.
@@ -681,8 +709,8 @@ class PriceCatalogue {
 		}
 
 		return {
-			input: cost.input,
-			output: cost.output,
+			input: cost.input ?? 0,
+			output: cost.output ?? 0,
 			cacheRead:
 				typeof cost.cache_read === "number" && Number.isFinite(cost.cache_read)
 					? cost.cache_read
@@ -914,6 +942,11 @@ export interface CatalogueModelEntry {
 	name: string;
 }
 
+/** Bundled, loaded and fresh disk-cached model IDs, without upstream calls. */
+export async function listLocalCatalogueModelIds(): Promise<string[]> {
+	return PriceCatalogue.get().getLocalModelIds();
+}
+
 /**
  * List the models the shared models.dev catalogue knows for one provider
  * section (e.g. "openai", "anthropic").
@@ -966,13 +999,29 @@ async function findModel(modelId: string): Promise<ModelDef | null> {
 		}
 	}
 
+	// Reservations and recorded usage must resolve unknown family aliases through
+	// the same catalogue entry. Models outside a known family remain unpriced.
+	const family = getModelFamily(modelId);
+	const fallbackId = family
+		? {
+				fable: LATEST_FABLE_MODEL,
+				opus: LATEST_OPUS_MODEL,
+				sonnet: LATEST_SONNET_MODEL,
+				haiku: LATEST_HAIKU_MODEL,
+			}[family]
+		: null;
+	if (fallbackId) {
+		for (const provider of Object.values(pricing)) {
+			if (provider.models?.[fallbackId]) return provider.models[fallbackId];
+		}
+	}
 	return null;
 }
 
 /**
  * Get the cost rate for a specific model and token type
  * @returns Cost in dollars per token (NOT per million)
- * @throws If model or cost type is unknown
+ * Missing token-kind rates contribute zero; unknown models remain unpriced.
  */
 async function getCostRate(
 	modelId: string,
@@ -988,9 +1037,7 @@ async function getCostRate(
 
 	const costPerMillion = model.cost[kind];
 
-	if (costPerMillion === undefined) {
-		throw new Error(`Model ${modelId} has no ${kind} cost`);
-	}
+	if (costPerMillion === undefined) return 0;
 
 	// Convert from per-million to per-token
 	return costPerMillion / 1_000_000;
@@ -1001,6 +1048,50 @@ export interface ModelRates {
 	output: number; // $ per 1M tokens
 	cacheRead: number | null;
 	cacheWrite: number | null;
+}
+
+/** Public, read-only view of the exact catalogue used by estimateCostUSD. */
+export interface ModelPriceEntry {
+	id: string;
+	name: string;
+	provider: string;
+	family: string;
+	rates: ModelRates | null;
+}
+
+export async function listModelPrices(): Promise<ModelPriceEntry[]> {
+	const pricing = await PriceCatalogue.get().getPricing();
+	const seen = new Set<string>();
+	const entries: ModelPriceEntry[] = [];
+	for (const [provider, section] of Object.entries(pricing)) {
+		for (const [id, model] of Object.entries(section.models ?? {})) {
+			// findModel uses the first provider containing this exact catalogue key.
+			// Preserve that precedence, including when its price is unknown.
+			if (seen.has(id)) continue;
+			seen.add(id);
+			const cost = model?.cost;
+			const valid = (value: unknown): value is number =>
+				typeof value === "number" && Number.isFinite(value);
+			entries.push({
+				id,
+				name: model?.name || id,
+				provider,
+				family: getModelFamily(id) ?? "other",
+				rates:
+					cost &&
+					(cost.input === undefined || valid(cost.input)) &&
+					(cost.output === undefined || valid(cost.output))
+						? {
+								input: cost.input ?? 0,
+								output: cost.output ?? 0,
+								cacheRead: valid(cost.cache_read) ? cost.cache_read : null,
+								cacheWrite: valid(cost.cache_write) ? cost.cache_write : null,
+							}
+						: null,
+			});
+		}
+	}
+	return entries.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /**
@@ -1021,6 +1112,8 @@ export async function estimateCostUSD(
 	modelId: string,
 	tokens: TokenBreakdown,
 ): Promise<number> {
+	if (!isCostTrackingEnabled()) return 0;
+	const trackingEpoch = getCostTrackingEpoch();
 	const catalogue = PriceCatalogue.get();
 
 	try {
@@ -1046,7 +1139,9 @@ export async function estimateCostUSD(
 			totalCost += tokens.cacheCreationInputTokens * rate;
 		}
 
-		return totalCost;
+		return isCostTrackingEnabled() && trackingEpoch === getCostTrackingEpoch()
+			? totalCost
+			: 0;
 	} catch (error) {
 		catalogue.warnOnce(modelId, error instanceof Error ? error : String(error));
 		return 0;

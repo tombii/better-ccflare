@@ -1,7 +1,17 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { OAuthError } from "@better-ccflare/core";
 import type { OAuthProviderConfig } from "../../../types";
 import { AnthropicOAuthProvider } from "../oauth";
+
+let originalFetch: typeof globalThis.fetch;
+
+beforeEach(() => {
+	originalFetch = globalThis.fetch;
+});
+
+afterEach(() => {
+	globalThis.fetch = originalFetch;
+});
 
 /** Minimal shape of the mocked fetch Response used across these tests. */
 interface MockFetchResponse {

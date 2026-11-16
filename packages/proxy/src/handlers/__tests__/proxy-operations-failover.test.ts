@@ -14,12 +14,20 @@ import {
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account, RequestMeta } from "@better-ccflare/types";
+import { preserveTestEnv } from "../../__tests__/preserve-test-env";
 import {
 	isModelUnavailableError,
 	proxyWithAccount,
 	systemSuspectScan,
 } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
+
+preserveTestEnv([
+	"CCFLARE_OVERLOAD_RETRY_BASE_MS",
+	"CCFLARE_OVERLOAD_RETRY_MAX_MS",
+	"CCFLARE_OVERLOAD_RETRY_ENABLED",
+	"CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS",
+]);
 
 // Minimal Account fixture for openai-compatible provider
 function makeAccount(overrides: Partial<Account> = {}): Account {
@@ -1199,10 +1207,6 @@ describe("proxyWithAccount — 529 in-place retry", () => {
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_ENABLED;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS;
 	});
 
 	function make529NoResetCtx() {

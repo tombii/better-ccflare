@@ -255,6 +255,8 @@ export function applyRateLimitCooldown(
 	ctx: ProxyContext,
 	breaker: CircuitBreaker = getDefaultCircuitBreaker(),
 ): void {
+	// Windowless rejections are scoped to an upstream model, never this account.
+	if (rateLimitInfo.reason === "windowless_429") return;
 	const now = Date.now();
 	// A reported-but-clamped window (honouring switched off) still says
 	// `upstream_429_with_reset`: the upstream did report one, the switch only

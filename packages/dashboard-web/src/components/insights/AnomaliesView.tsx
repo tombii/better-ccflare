@@ -6,6 +6,7 @@ import type {
 import { formatNumber } from "@better-ccflare/ui-common";
 import { AlertTriangle, BarChart3, Info } from "lucide-react";
 import type { TimeRange } from "../../constants";
+import { useCostTracking } from "../../hooks/useCostTracking";
 import { Badge } from "../ui/badge";
 import {
 	Card,
@@ -392,6 +393,7 @@ function MisroutingPanel({
 	tokenThreshold,
 	minRequests,
 }: MisroutingPanelProps) {
+	const { enabled: costTrackingEnabled } = useCostTracking();
 	const formatter = new Intl.NumberFormat(undefined, {
 		style: "currency",
 		currency: "USD",
@@ -440,9 +442,14 @@ function MisroutingPanel({
 									<th scope="col" className="text-right px-3 py-2 tabular-nums">
 										Mean tokens
 									</th>
-									<th scope="col" className="text-right px-3 py-2 tabular-nums">
-										Total cost
-									</th>
+									{costTrackingEnabled && (
+										<th
+											scope="col"
+											className="text-right px-3 py-2 tabular-nums"
+										>
+											Total cost
+										</th>
+									)}
 								</tr>
 							</thead>
 							<tbody>
@@ -460,9 +467,11 @@ function MisroutingPanel({
 										<td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
 											{Math.round(row.meanTotalTokens).toLocaleString()}
 										</td>
-										<td className="px-3 py-2 text-right tabular-nums font-medium">
-											{formatter.format(row.totalCostUsd)}
-										</td>
+										{costTrackingEnabled && (
+											<td className="px-3 py-2 text-right tabular-nums font-medium">
+												{formatter.format(row.totalCostUsd)}
+											</td>
+										)}
 									</tr>
 								))}
 							</tbody>

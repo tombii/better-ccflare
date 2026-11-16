@@ -14,7 +14,7 @@ import { createComboGetHandler } from "../combos";
 
 const NOW = Date.now();
 
-function makeDbOps() {
+function makeDbOps(modelMappings: string | null = null) {
 	const slots = [
 		{
 			id: "slot-1",
@@ -45,6 +45,10 @@ function makeDbOps() {
 				updated_at: NOW,
 			}),
 			getComboSlots: async () => slots,
+			getAllAccounts: async () => [
+				{ id: "acc-1", provider: "anthropic", model_mappings: modelMappings },
+				{ id: "acc-2", provider: "anthropic", model_mappings: null },
+			],
 		},
 	};
 }
@@ -61,6 +65,21 @@ afterEach(() => {
 });
 
 describe("GET /api/combos/:id — slot cooldown_until", () => {
+	it("reads the mapped upstream cooldown while leaving passthrough unmatched", async () => {
+		const until = Date.now() + 60_000;
+		markModelCooling("acc-1", "upstream-sonnet", until);
+		const fixture = makeDbOps(JSON.stringify({ sonnet: "upstream-sonnet" }));
+		fixture.slots[1].account_id = "acc-1";
+		fixture.slots[1].model = "";
+
+		const res = await createComboGetHandler(asOps(fixture.ops))("combo-1");
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			data: { slots: ComboSlotWithCooldown[] };
+		};
+		expect(body.data.slots.map((s) => s.cooldown_until)).toEqual([until, null]);
+	});
+
 	it("reports the deadline for a cooled slot and null otherwise", async () => {
 		const until = Date.now() + 10 * 60 * 1000;
 		markModelCooling("acc-1", "claude-sonnet-4-5", until);

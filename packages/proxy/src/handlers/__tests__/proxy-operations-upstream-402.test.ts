@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { isRateLimitReason } from "@better-ccflare/types";
+import { preserveTestEnv } from "../../__tests__/preserve-test-env";
 import { shouldCountAsCircuitFailure } from "../../circuit-breaker";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
+
+preserveTestEnv([
+	"CCFLARE_OVERLOAD_RETRY_BASE_MS",
+	"CCFLARE_OVERLOAD_RETRY_MAX_MS",
+]);
 
 // Reseller-style openai-compatible account (Mistral / OpenRouter / NanoGPT
 // shape): credits are bought with money, so an upstream 402 means "top up",
@@ -201,8 +207,6 @@ describe("proxyWithAccount — upstream 402 (out of credits upstream)", () => {
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
 		capturedForward = null;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS;
 	});
 
 	it("fails over (returns null for the account) on a 402 without benching it", async () => {

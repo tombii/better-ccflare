@@ -110,7 +110,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			last_manual_reauth_at BIGINT,
 			rate_limited_reason TEXT,
 			rate_limited_at BIGINT,
-			consecutive_rate_limits INTEGER NOT NULL DEFAULT 0
+			consecutive_rate_limits INTEGER NOT NULL DEFAULT 0,
+			plan_monthly_usd REAL
 		)
 	`);
 
@@ -155,7 +156,9 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			gateway_hint_compaction TEXT,
 			gateway_hint_context_compacted TEXT,
 			provider_served TEXT,
-			completion_tier TEXT
+			completion_tier TEXT,
+			limit_model TEXT,
+			spend_recorded_at BIGINT
 		)
 	`);
 
@@ -243,9 +246,35 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			last_used BIGINT,
 			usage_count INTEGER DEFAULT 0,
 			is_active INTEGER DEFAULT 1,
-			role TEXT NOT NULL DEFAULT 'api-only'
+			role TEXT NOT NULL DEFAULT 'api-only',
+			allowed_accounts TEXT,
+			allowed_models TEXT,
+			allowed_providers TEXT,
+			limit_usd REAL,
+			limit_window TEXT,
+			limit_enforce TEXT,
+   limit_window_mode TEXT NOT NULL DEFAULT 'calendar' CHECK (limit_window_mode IN ('calendar', 'rolling')),
+   family_combo_overrides TEXT,
+   spend_reset_at BIGINT,
+   spend_reset_by TEXT
 		)
 	`);
+
+	// Multi-window limits are available on fresh installations before upgrades.
+	await adapter.unsafe(`CREATE TABLE IF NOT EXISTS api_key_limits (
+  id TEXT PRIMARY KEY,
+  api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+  scope_model TEXT,
+  "window" TEXT NOT NULL CHECK ("window" IN ('hour','day','week','month')),
+  limit_usd REAL NOT NULL CHECK (limit_usd > 0),
+  enforce TEXT NOT NULL CHECK (enforce IN ('block','warn')),
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  UNIQUE (api_key_id, scope_model, "window")
+ )`);
+	await adapter.unsafe(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_limits_scope ON api_key_limits(api_key_id, (COALESCE(scope_model, '')), "window")`,
+	);
 
 	await adapter.unsafe(
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_hashed_key ON api_keys(hashed_key)`,
@@ -1291,6 +1320,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		},
 		{
 			table: "accounts",
+			column: "plan_monthly_usd",
+			definition: "ALTER TABLE accounts ADD COLUMN plan_monthly_usd REAL",
+		},
+		{
+			table: "accounts",
 			column: "auto_pause_on_overage_enabled",
 			definition:
 				"ALTER TABLE accounts ADD COLUMN auto_pause_on_overage_enabled INTEGER DEFAULT 0",
@@ -1349,6 +1383,58 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			column: "role",
 			definition:
 				"ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'api-only'",
+		},
+		// Per-key restrictions. Mirrors the SQLite ALTERs in migrations.ts —
+		// nullable, no default, because NULL is what "unrestricted" means and
+		// every pre-existing key must survive the upgrade unrestricted.
+		{
+			table: "api_keys",
+			column: "allowed_accounts",
+			definition: "ALTER TABLE api_keys ADD COLUMN allowed_accounts TEXT",
+		},
+		{
+			table: "api_keys",
+			column: "allowed_models",
+			definition: "ALTER TABLE api_keys ADD COLUMN allowed_models TEXT",
+		},
+		{
+			table: "api_keys",
+			column: "allowed_providers",
+			definition: "ALTER TABLE api_keys ADD COLUMN allowed_providers TEXT",
+		},
+		// Per-key spend limits. Mirrors the SQLite ALTERs in migrations.ts —
+		// all three nullable with no default, because NULL on limit_usd is what
+		// "no limit" means and the window/enforcement defaults are applied on
+		// read rather than in either schema.
+		{
+			table: "api_keys",
+			column: "limit_usd",
+			definition: "ALTER TABLE api_keys ADD COLUMN limit_usd REAL",
+		},
+		{
+			table: "api_keys",
+			column: "limit_window",
+			definition: "ALTER TABLE api_keys ADD COLUMN limit_window TEXT",
+		},
+		{
+			table: "api_keys",
+			column: "limit_enforce",
+			definition: "ALTER TABLE api_keys ADD COLUMN limit_enforce TEXT",
+		},
+		{
+			table: "requests",
+			column: "spend_recorded_at",
+			definition: "ALTER TABLE requests ADD COLUMN spend_recorded_at BIGINT",
+		},
+		{
+			table: "api_keys",
+			column: "spend_reset_at",
+			definition: "ALTER TABLE api_keys ADD COLUMN spend_reset_at BIGINT",
+		},
+		{
+			table: "api_keys",
+			column: "spend_reset_by",
+			definition: "ALTER TABLE api_keys ADD COLUMN spend_reset_by TEXT",
 		},
 		{
 			table: "requests",
@@ -2216,10 +2302,64 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		// Ignore if fails
 	}
 
+	await migrateApiKeyLimitsPg(adapter);
+	await migrateApiKeySpendResetPg(adapter);
+
 	// Refresh the planner statistics of the tables this run actually rewrote.
 	// Skipped entirely when nothing was rewritten (a fresh install, or a
 	// restart where every backfill matched zero rows).
 	await analyzeRewrittenTablesPg(adapter, backfillWork);
 
 	log.info("PostgreSQL migrations completed");
+}
+
+/** Add multi-window budgets and migrate the legacy budget exactly once. */
+export async function migrateApiKeyLimitsPg(
+	adapter: BunSqlAdapter,
+): Promise<void> {
+	const legacyModeColumn = await adapter.get<{ column_name: string }>(
+		"SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'api_keys' AND column_name = 'limit_window_mode'",
+	);
+	// Mode and its legacy backfill must commit together: a restart after adding
+	// mode must never skip an uncommitted conversion and silently lose a budget.
+	const statements = [
+		"ALTER TABLE requests ADD COLUMN IF NOT EXISTS limit_model TEXT",
+		"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS limit_window_mode TEXT NOT NULL DEFAULT 'calendar' CHECK (limit_window_mode IN ('calendar','rolling'))",
+		"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS family_combo_overrides TEXT",
+		`CREATE TABLE IF NOT EXISTS api_key_limits (
+   id TEXT PRIMARY KEY, api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+   scope_model TEXT, "window" TEXT NOT NULL CHECK ("window" IN ('hour','day','week','month')),
+   limit_usd REAL NOT NULL CHECK (limit_usd > 0), enforce TEXT NOT NULL CHECK (enforce IN ('block','warn')),
+   created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
+   UNIQUE (api_key_id, scope_model, "window")
+  )`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_limits_scope ON api_key_limits(api_key_id, (COALESCE(scope_model, '')), "window")`,
+	];
+	if (!legacyModeColumn) {
+		statements.push(
+			"UPDATE api_keys SET limit_window_mode = CASE WHEN limit_window = 'calendar_month' THEN 'calendar' ELSE 'rolling' END WHERE limit_usd > 0",
+			`INSERT INTO api_key_limits (id, api_key_id, scope_model, "window", limit_usd, enforce, created_at, updated_at)
+    SELECT 'legacy-' || id, id, NULL, CASE WHEN limit_window = 'rolling_7d' THEN 'week' ELSE 'month' END, limit_usd,
+    CASE WHEN limit_enforce = 'warn' THEN 'warn' ELSE 'block' END, created_at, created_at
+    FROM api_keys WHERE limit_usd > 0 ON CONFLICT DO NOTHING`,
+		);
+	}
+	await adapter.atomicStatements(
+		statements.map((sql) => ({ sql, params: [] })),
+	);
+}
+
+/** Persist the budget reset boundary and the last actor on existing installations. */
+export async function migrateApiKeySpendResetPg(
+	adapter: BunSqlAdapter,
+): Promise<void> {
+	await adapter.unsafe(
+		"ALTER TABLE requests ADD COLUMN IF NOT EXISTS spend_recorded_at BIGINT",
+	);
+	await adapter.unsafe(
+		"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS spend_reset_at BIGINT",
+	);
+	await adapter.unsafe(
+		"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS spend_reset_by TEXT",
+	);
 }

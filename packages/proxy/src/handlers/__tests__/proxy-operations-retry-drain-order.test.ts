@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
+import { preserveTestEnv } from "../../__tests__/preserve-test-env";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 import { resetRateLimitProbeGatesForTests } from "../rate-limit-cooldown";
+
+preserveTestEnv([
+	"CCFLARE_OVERLOAD_RETRY_BASE_MS",
+	"CCFLARE_OVERLOAD_RETRY_MAX_MS",
+]);
 
 /**
  * Issue #273 (Bun off-heap fetch leak) — drain ordering in the two in-place
@@ -232,8 +238,6 @@ describe("in-place retry loops drain the superseded response before re-issuing",
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS;
 		resetRateLimitProbeGatesForTests();
 	});
 

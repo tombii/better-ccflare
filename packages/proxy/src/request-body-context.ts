@@ -121,6 +121,20 @@ function encodeJson(body: RequestJsonBody): ArrayBuffer {
 	);
 }
 
+function sessionIdOf(userId: string): string {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(userId);
+	} catch {
+		return userId;
+	}
+	if (parsed && typeof parsed === "object") {
+		const sessionId = (parsed as Record<string, unknown>).session_id;
+		if (typeof sessionId === "string" && sessionId.length > 0) return sessionId;
+	}
+	return userId;
+}
+
 export class RequestBodyContext {
 	readonly originalBuffer: ArrayBuffer | null;
 
@@ -180,13 +194,13 @@ export class RequestBodyContext {
 		}
 	}
 
-	/** Best-effort client/session id from metadata.user_id. Telemetry/routing only. */
+	/** Best-effort client/session id from metadata.user_id (its `session_id` when Claude Code sends it JSON-encoded). Telemetry/routing only. */
 	getClientId(): string | null {
 		const body = this.getParsedJson();
 		const meta = body?.metadata;
 		if (meta && typeof meta === "object") {
 			const uid = (meta as Record<string, unknown>).user_id;
-			if (typeof uid === "string" && uid.length > 0) return uid;
+			if (typeof uid === "string" && uid.length > 0) return sessionIdOf(uid);
 		}
 		return null;
 	}

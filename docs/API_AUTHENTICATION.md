@@ -448,3 +448,16 @@ CMD ["node", "server.js"]
 ---
 
 *API authentication is optional. Your better-ccflare instance will work exactly as before until you generate your first API key.*
+
+## API key management payload limits
+
+The HTTP API accepts at most 256 entries in each of `allowedAccounts`,
+`allowedModels`, and `allowedProviders`. Each entry is limited to 256 characters
+before trimming. `null` still means unrestricted; an empty array still denies all.
+
+A `PUT /api/api-keys/:idOrName/limits` replacement accepts at most 128 limit rows,
+with model scopes limited to 256 characters. Both this endpoint and the legacy
+`limitUsd` create/PATCH fields accept finite amounts greater than zero and at most
+$1,000,000 per limit. These bounds keep persisted configuration and counter
+fan-out manageable while allowing large gateway budgets. Invalid or oversized
+payloads return HTTP 400 before any configuration is changed.
