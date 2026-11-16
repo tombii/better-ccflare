@@ -738,6 +738,145 @@ function hasCacheControlDetail(detail: unknown[]): boolean {
 	});
 }
 
+/**
+ * The two outbound fields that carry the client's reasoning effort to an
+ * OpenAI-compatible upstream: the standard Chat Completions `reasoning_effort`
+ * and OpenRouter's `reasoning: { effort }`.
+ */
+export type RejectedReasoningField = "reasoning_effort" | "reasoning";
+
+/**
+ * In-memory set of (accountId, model) pairs known to reject the reasoning
+ * effort field. Populated on first 400/422 rejection; cleared on server
+ * restart (fast re-learn). Learned rather than hardcoded because the field is
+ * a legitimate, widely supported extension: Mistral accepts it on several
+ * models, so stripping it up front would delete a working feature.
+ */
+const reasoningFieldRejectors = new Set<string>();
+
+function reasoningFieldRejectorKey(accountId: string, model: string): string {
+	return `${accountId}:${model}`;
+}
+
+/**
+ * Matches a field name as a whole token, never as a substring.
+ * `reasoning` is a substring of both `reasoning_effort` and
+ * `reasoning_content`; the latter is a different field that the Mistral
+ * transform rewrites on its own, so a rejection naming it must not be treated
+ * as a rejection of the effort.
+ */
+function reasoningFieldToken(text: string): RejectedReasoningField | null {
+	const tokens = text.split(/[^A-Za-z0-9_]+/);
+	if (tokens.includes("reasoning_effort")) return "reasoning_effort";
+	if (tokens.includes("reasoning")) return "reasoning";
+	return null;
+}
+
+/**
+ * The field a pydantic entry names. The short loc shape ends with the field
+ * itself (`["body", "reasoning_effort"]`); the long union-branch shape puts
+ * the name only in `msg`. Only the LAST loc element counts: e.g.
+ * `["body", "messages", 0, "reasoning_content"]` does not name the effort.
+ */
+function reasoningFieldFromDetail(
+	loc: unknown,
+	msg: string,
+): RejectedReasoningField | null {
+	if (Array.isArray(loc) && loc.length > 0) {
+		const last = String(loc[loc.length - 1]);
+		if (last === "reasoning_effort" || last === "reasoning") return last;
+	}
+	return reasoningFieldToken(msg);
+}
+
+/**
+ * True when any pydantic entry is the strict-schema rejection of one of the
+ * reasoning fields. As with cache_control, the retry strip is keyed on the
+ * field, not on where pydantic reports it.
+ */
+function findRejectedReasoningFieldInDetail(
+	detail: unknown[],
+): RejectedReasoningField | null {
+	for (const entry of detail) {
+		if (typeof entry !== "object" || entry === null) continue;
+		const { loc, msg } = entry as { loc?: unknown; msg?: unknown };
+		const msgText = typeof msg === "string" ? msg : "";
+		if (!msgText.includes("Extra inputs are not permitted")) continue;
+		const field = reasoningFieldFromDetail(loc, msgText);
+		if (field) return field;
+	}
+	return null;
+}
+
+/**
+ * The flat GLM-style message. `reasoning` is only accepted as a whole token,
+ * so `reasoning_content` can never match. Markers are compared
+ * case-insensitively (`Unknown field` is as common as `unknown field`); the
+ * field token itself is a JSON key and is compared exactly.
+ */
+function findRejectedReasoningFieldInMessage(
+	message: string,
+): RejectedReasoningField | null {
+	const lower = message.toLowerCase();
+	if (
+		!lower.includes("extra inputs are not permitted") &&
+		!lower.includes("unknown field")
+	) {
+		return null;
+	}
+	return reasoningFieldToken(message);
+}
+
+/**
+ * Checks if a response is caused by an upstream provider's strict schema
+ * rejecting the client's reasoning effort. Two shapes are seen in practice,
+ * the same two as cache_control:
+ *   - GLM-style: HTTP 400, a flat string message (e.g. "Extra inputs are not
+ *     permitted: reasoning_effort is not a valid field").
+ *   - Mistral-style: HTTP 422, pydantic `extra_forbidden` errors whose `loc`
+ *     (or, on the union branch, `msg`) names the field.
+ *
+ * A retry without the named field is the correct recovery for either shape:
+ * unlike cache_control the field is a real optional extension, so it is only
+ * removed after the upstream has actually rejected it. `reasoning_content` is
+ * explicitly excluded - it is not the effort and stripping the effort would
+ * leave that error in place.
+ */
+export async function getRejectedReasoningField(
+	response: Response,
+): Promise<RejectedReasoningField | null> {
+	if (response.status !== 400 && response.status !== 422) return null;
+
+	try {
+		const contentType = response.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return null;
+
+		// Cloned only here, after the content-type gate. Cloning before it teed
+		// the body and then returned early for every non-JSON body, stranding
+		// that copy unread — the tee keeps buffering for whoever consumes the
+		// original. Reachable in normal operation: providers such as Qwen do
+		// return non-JSON error bodies. See issue #356.
+		const json = await response.clone().json();
+		// Mistral nests the pydantic errors under a top-level `detail` array and
+		// wraps the same array in `message` only on some paths; check both.
+		const detail = Array.isArray(json.detail)
+			? json.detail
+			: (json.error?.message ?? json.message)?.detail;
+		if (Array.isArray(detail) && detail.length > 0) {
+			const field = findRejectedReasoningFieldInDetail(detail);
+			if (field) return field;
+		}
+		// Flat string message (GLM-style).
+		const message = json.error?.message ?? json.message ?? "";
+		if (typeof message === "string") {
+			return findRejectedReasoningFieldInMessage(message);
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
 /** Words for the image input the request carried. */
 const IMAGE_INPUT_NOUNS = [
 	"image",
@@ -1946,6 +2085,29 @@ async function proxyWithAccountAttempt(
 			outgoing.bodyText = bodyText;
 			if (model !== undefined) outgoing.model = model;
 		};
+
+		/**
+		 * Rebuilds the in-flight request around a mutated JSON body, reusing its
+		 * url/method/headers. Returns the new request and the exact text it
+		 * carries; the caller decides when to adopt it (the retry paths adopt
+		 * only after their await, so a throw leaves the descriptor with the
+		 * response actually in hand). A URL-based rebuild drops the signal, so
+		 * it is carried over from the client request.
+		 */
+		const rebuildOutgoingRequest = (
+			bodyJson: Record<string, unknown>,
+		): { request: Request; bodyText: string } => {
+			const bodyText = JSON.stringify(bodyJson);
+			return {
+				request: new Request(outgoing.request.url, {
+					method: outgoing.request.method,
+					headers: outgoing.request.headers,
+					body: bodyText,
+					signal: req.signal,
+				}),
+				bodyText,
+			};
+		};
 		// The model this account is being asked for, for the served-model
 		// response header. Read lazily so the final value of `outgoing` wins.
 		// The body's model can be absent for providers that address the model in
@@ -1988,6 +2150,34 @@ async function proxyWithAccountAttempt(
 			log.debug(
 				`Pre-stripped cache_control: account=${account.name} model=${transformedModel} mistral=${isMistralEndpoint(account)}`,
 			);
+		}
+
+		// Reasoning effort is only stripped once this pair has actually rejected
+		// it. Unlike cache_control it is a real optional extension, so a working
+		// upstream must keep receiving it; the learned set is what separates the
+		// two. Runs after the cache_control block so it sees the body that block
+		// adopted (getJson() returns the same mutated object on that path).
+		const knownReasoningFieldRejector =
+			Boolean(transformedModel) &&
+			reasoningFieldRejectors.has(
+				reasoningFieldRejectorKey(account.id, transformedModel as string),
+			);
+		if (knownReasoningFieldRejector) {
+			const reasoningBodyJson = outgoingBody.getJson();
+			if (
+				reasoningBodyJson &&
+				("reasoning_effort" in reasoningBodyJson ||
+					"reasoning" in reasoningBodyJson)
+			) {
+				delete reasoningBodyJson.reasoning_effort;
+				delete reasoningBodyJson.reasoning;
+				const { request: preStrippedRequest, bodyText: preStrippedBodyText } =
+					rebuildOutgoingRequest(reasoningBodyJson);
+				adoptOutgoingRequest(preStrippedRequest, preStrippedBodyText);
+				log.debug(
+					`Pre-stripped reasoning effort: account=${account.name} model=${transformedModel}`,
+				);
+			}
 		}
 
 		// Make the request (or unwrap a synthetic provider response)
@@ -2136,6 +2326,56 @@ async function proxyWithAccountAttempt(
 				adoptOutgoingRequest(retryRequest, strippedBodyText);
 			} catch (err) {
 				log.warn("Failed to retry without cache_control:", err);
+			}
+		}
+
+		// Retry without the reasoning effort field if the upstream's strict schema
+		// rejected it (Mistral-style 422, GLM-style 400). Kept after the
+		// cache_control recovery so a body carrying both fields is fixed one
+		// rejected field at a time, each step seeing what the previous one left.
+		// Mark (accountId, model) so later requests pre-strip it instead of
+		// spending another failed round trip.
+		const rejectedReasoningField = await getRejectedReasoningField(rawResponse);
+		if (rejectedReasoningField) {
+			const rejectorKey = reasoningFieldRejectorKey(
+				account.id,
+				transformedModel,
+			);
+			if (!reasoningFieldRejectors.has(rejectorKey)) {
+				// Mark before retry so subsequent requests pre-strip without a
+				// round-trip. The current caller still receives the retried
+				// response (or the original error if the retry also fails).
+				reasoningFieldRejectors.add(rejectorKey);
+				log.info(
+					`Provider rejected ${rejectedReasoningField} for account=${account.name} model=${transformedModel}, retrying without it`,
+				);
+			}
+
+			try {
+				// Strip from the body CURRENTLY in flight, not from the original
+				// transform: the cache_control recovery above may already have
+				// replaced it. The fallback keeps the pre-descriptor behaviour for
+				// the (unreachable) case of a recovery that could not buffer its
+				// own body.
+				const retryBodyJson = JSON.parse(
+					outgoing.bodyText ?? transformedBodyText,
+				);
+				delete retryBodyJson[rejectedReasoningField];
+				const { request: retryRequest, bodyText: strippedBodyText } =
+					rebuildOutgoingRequest(retryBodyJson);
+				cancelDiscardedResponseBody(rawResponse);
+				rawResponse = isSyntheticProviderResponse(retryRequest)
+					? materializeSyntheticResponse(retryRequest)
+					: await forwardUpstream(retryRequest);
+				// rawResponse now belongs to retryRequest, whose body is missing
+				// the rejected field. Anything downstream that replays must
+				// re-issue THIS body. Kept after the await for the same reason as
+				// the cache_control recovery above: a throwing re-issue is
+				// swallowed below and leaves the original response in hand, so the
+				// descriptor must stay with it.
+				adoptOutgoingRequest(retryRequest, strippedBodyText);
+			} catch (err) {
+				log.warn(`Failed to retry without ${rejectedReasoningField}:`, err);
 			}
 		}
 

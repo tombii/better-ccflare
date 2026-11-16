@@ -132,12 +132,14 @@ describe("issue #273 — Group A: helper contract", () => {
 // return — it drains the classifier's `retried` argument rather than the
 // outer `response` binding that argument happens to alias, so the site keeps
 // draining the right body if the helper is ever called with another response.
+// 25 is the reasoning-effort rejection retry: the strict-schema 400/422 is
+// discarded before re-issuing the request without the rejected field.
 // ---------------------------------------------------------------------------
 
-const EXPECTED_SITE_COUNT = 24;
+const EXPECTED_SITE_COUNT = 25;
 
 describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", () => {
-	it("proxy-operations.ts has exactly 24 cancelDiscardedResponseBody call sites", () => {
+	it("proxy-operations.ts has exactly 25 cancelDiscardedResponseBody call sites", () => {
 		const source = readFileSync(
 			"packages/proxy/src/handlers/proxy-operations.ts",
 			"utf-8",
