@@ -42,6 +42,34 @@ export function createConfigHandlers(
 	modelCatalog?: APIContext["modelCatalog"],
 ) {
 	return {
+		getCostTracking: (): Response =>
+			jsonResponse({
+				enabled: config.getCostTrackingEnabled(),
+				source: config.getCostTrackingEnabledSource(),
+			}),
+		reloadCostTracking: (): Response => {
+			config.reloadCostTrackingEnabled();
+			return new Response(null, { status: 204 });
+		},
+
+		setCostTracking: async (req: Request): Promise<Response> => {
+			let body: unknown;
+			try {
+				body = await req.json();
+			} catch {
+				return errorResponse(BadRequest("Body must be JSON"));
+			}
+			const enabled = (body as { enabled?: unknown } | null)?.enabled;
+			if (typeof enabled !== "boolean")
+				return errorResponse(BadRequest("enabled must be a boolean"));
+			config.setCostTrackingEnabled(enabled);
+			return jsonResponse({
+				success: true,
+				enabled,
+				source: config.getCostTrackingEnabledSource(),
+				effective: config.getCostTrackingEnabled(),
+			});
+		},
 		/**
 		 * Get all configuration settings
 		 */

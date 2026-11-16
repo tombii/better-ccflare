@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
+import { preserveTestEnv } from "../../__tests__/preserve-test-env";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 import { resetRateLimitProbeGatesForTests } from "../rate-limit-cooldown";
@@ -7,6 +8,15 @@ import {
 	clearVisionCapability,
 	isVisionUnsupported,
 } from "../vision-capability";
+
+preserveTestEnv([
+	"CCFLARE_OVERLOAD_RETRY_BASE_MS",
+	"CCFLARE_OVERLOAD_RETRY_MAX_MS",
+	"CCFLARE_OVERLOAD_RETRY_ENABLED",
+	"CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS",
+	"CCFLARE_SERVER_ERROR_RETRY_ENABLED",
+	"CCFLARE_SERVER_ERROR_COOLDOWN_MS",
+]);
 
 /**
  * Transient upstream 5xx (500/502/503/504) handling: one in-place retry on the
@@ -589,12 +599,6 @@ describe("proxyWithAccount — transient upstream 5xx retry and failover", () =>
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
 		restoreForwardToClient();
-		delete process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_ENABLED;
-		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS;
-		delete process.env.CCFLARE_SERVER_ERROR_RETRY_ENABLED;
-		delete process.env.CCFLARE_SERVER_ERROR_COOLDOWN_MS;
 		resetRateLimitProbeGatesForTests();
 	});
 

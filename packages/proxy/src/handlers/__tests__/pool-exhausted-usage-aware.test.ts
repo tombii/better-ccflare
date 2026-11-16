@@ -1,10 +1,14 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { AccountUsageSnapshot } from "@better-ccflare/core";
 import {
 	getRepresentativeUsageSnapshotForProvider,
 	type ZaiUsageData,
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
+import {
+	markModelCooling,
+	resetModelCooldownsForTests,
+} from "../model-cooldown";
 import {
 	createPoolExhaustedResponse,
 	POOL_EXHAUSTED_MAX_RETRY_AFTER_SECONDS,
@@ -65,7 +69,94 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 	};
 }
 
+afterEach(() => resetModelCooldownsForTests());
+
 describe("createPoolExhaustedResponse — usage-aware", () => {
+	it("reports the mapped model cooldown and its real retry delay instead of the unknown-reset default", async () => {
+		const account = makeAccount({
+			model_mappings: JSON.stringify({ haiku: "upstream-haiku" }),
+		});
+		const until = Date.now() + 60_000;
+		markModelCooling(account.id, "upstream-haiku", until);
+		markModelCooling(account.id, "unrelated", Date.now() + 30_000);
+		const response = createPoolExhaustedResponse(
+			[account],
+			undefined,
+			"pool_exhausted",
+			"claude-haiku-alias",
+		);
+		expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(59);
+		expect(Number(response.headers.get("Retry-After"))).toBeLessThanOrEqual(60);
+		const body = (await response.json()) as {
+			error: {
+				accounts: Array<{ reason: string; available_at: string }>;
+				next_available_at: string;
+			};
+		};
+		expect(body.error.accounts[0]?.reason).toBe("model_cooling");
+		expect(body.error.accounts[0]?.available_at).toBe(
+			new Date(until).toISOString(),
+		);
+		expect(body.error.next_available_at).toBe(new Date(until).toISOString());
+	});
+
+	it.each([
+		20_000, 600_000,
+	])("waits for both account and model cooldowns on the same route (%s)", async (accountWait) => {
+		const now = Date.now();
+		const account = makeAccount({ rate_limited_until: now + accountWait });
+		markModelCooling(account.id, "model-a", now + 60_000);
+		const response = createPoolExhaustedResponse(
+			[account],
+			undefined,
+			"pool_exhausted",
+			"model-a",
+		);
+		const expectedWait = Math.max(accountWait, 60_000);
+		expect(Number(response.headers.get("Retry-After"))).toBe(
+			Math.ceil(expectedWait / 1000),
+		);
+		const body = (await response.json()) as {
+			error: {
+				accounts: Array<{ available_at: string }>;
+				next_available_at: string;
+			};
+		};
+		expect(body.error.accounts[0]?.available_at).toBe(
+			new Date(now + expectedWait).toISOString(),
+		);
+		expect(body.error.next_available_at).toBe(
+			new Date(now + expectedWait).toISOString(),
+		);
+	});
+
+	it("does not let a short model cooldown undercut an exhausted usage window", async () => {
+		const account = makeAccount();
+		const resetMs = Date.now() + 86_400_000;
+		markModelCooling(account.id, "model-a", Date.now() + 60_000);
+		const snapshots = new Map([[account.id, { utilization: 100, resetMs }]]);
+		const response = createPoolExhaustedResponse(
+			[account],
+			snapshots,
+			"pool_exhausted",
+			"model-a",
+		);
+		expect(Number(response.headers.get("Retry-After"))).toBe(
+			POOL_EXHAUSTED_MAX_RETRY_AFTER_SECONDS,
+		);
+		const body = (await response.json()) as {
+			error: {
+				accounts: Array<{ reason: string; available_at: string }>;
+				next_available_at: string;
+			};
+		};
+		expect(body.error.accounts[0]?.reason).toBe("usage_exhausted");
+		expect(body.error.accounts[0]?.available_at).toBe(
+			new Date(resetMs).toISOString(),
+		);
+		expect(body.error.next_available_at).toBe(new Date(resetMs).toISOString());
+	});
+
 	it("reports usage_exhausted for a 100%-utilization account with rate_limited_until=null", async () => {
 		const usageCapped = makeAccount({
 			id: "usage-only",

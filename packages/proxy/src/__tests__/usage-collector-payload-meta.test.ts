@@ -87,6 +87,43 @@ describe("UsageCollector - RequestPayload.meta includes projectAttributionSource
 		};
 	}
 
+	test("retains the requested model for budgets when a combo serves a different model", async () => {
+		const requestId = "budget-requested-model";
+		collector.handleStart(
+			makeStart({
+				requestId,
+				limitModel: "claude-opus-4-6",
+				originalModel: null,
+				appliedModel: null,
+				comboName: "Codex combo",
+			}),
+		);
+		await collector.handleEnd({
+			type: "end",
+			requestId,
+			success: true,
+			responseBody: Buffer.from(
+				JSON.stringify({
+					model: "gpt-sol",
+					usage: { input_tokens: 10, output_tokens: 2 },
+				}),
+			).toString("base64"),
+		});
+		await collector.drain();
+		const row = await dbOps
+			.getAdapter()
+			.get(
+				"SELECT model,limit_model,original_model FROM requests WHERE id = ?",
+				[requestId],
+			);
+		expect(row).toEqual({
+			model: "gpt-sol",
+			limit_model: "claude-opus-4-6",
+			original_model: null,
+		});
+		expect(summaries.get(requestId)?.limitModel).toBe("claude-opus-4-6");
+	});
+
 	test("persists meta.project and meta.projectAttributionSource together in the stored payload", async () => {
 		const requestId = "payload-meta-1-authoritative-value";
 		const start = makeStart({

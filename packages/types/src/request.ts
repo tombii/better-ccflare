@@ -113,6 +113,8 @@ export function toStreamTerminalState(
 export interface RequestRow {
 	id: string;
 	timestamp: number;
+	/** Limit accounting time; legacy rows fall back to response completion. */
+	spend_recorded_at?: number | null;
 	method: string;
 	path: string;
 	account_used: string | null;
@@ -138,6 +140,7 @@ export interface RequestRow {
 	billing_type: string | null;
 	combo_name: string | null;
 	original_model: string | null;
+	limit_model?: string | null;
 	applied_model: string | null;
 	project_attribution_source: string | null;
 	agent_attribution_source: string | null;
@@ -181,6 +184,7 @@ export interface Request {
 	billingType?: string;
 	comboName?: string;
 	originalModel?: string;
+	limitModel?: string;
 	appliedModel?: string;
 	projectAttributionSource?: ProjectAttributionSource;
 	agentAttributionSource?: AgentAttributionSource;
@@ -242,6 +246,7 @@ export interface RequestResponse {
 	billingType?: string;
 	comboName?: string;
 	originalModel?: string;
+	limitModel?: string;
 	appliedModel?: string;
 	// Derived from statusCode === 429 server-side so the list view can render
 	// the "Rate Limited" badge without lazy-loading the full payload.
@@ -373,6 +378,7 @@ export function toRequest(row: RequestRow): Request {
 		billingType: row.billing_type || undefined,
 		comboName: row.combo_name || undefined,
 		originalModel: row.original_model || undefined,
+		limitModel: row.limit_model || undefined,
 		appliedModel: row.applied_model || undefined,
 		projectAttributionSource: toProjectAttributionSource(
 			row.project_attribution_source,
@@ -423,6 +429,7 @@ export function toRequestResponse(request: Request): RequestResponse {
 		billingType: request.billingType,
 		comboName: request.comboName,
 		originalModel: request.originalModel,
+		limitModel: request.limitModel,
 		appliedModel: request.appliedModel,
 		rateLimited: request.statusCode === 429,
 		projectAttributionSource: request.projectAttributionSource,

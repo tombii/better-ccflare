@@ -8,6 +8,7 @@ import {
 	isUsageExhausted,
 	logError,
 	type ModelRouting,
+	mapModelName,
 	ProviderError,
 	parseNightWindow,
 	splitModelRouting,
@@ -27,6 +28,7 @@ import {
 	isAnthropicOutOfCredits,
 	type Provider,
 	readCodeBuddyGatewayRejection,
+	readRequestJson,
 	recoverCodexMessagesContinuation,
 	UPSTREAM_402_OUT_OF_CREDITS_REASON,
 	usageCache,
@@ -50,11 +52,22 @@ import {
 import { forwardToClient as defaultForwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
 import { applyAccountRequestTransformer } from "./account-request-transformer";
-import { getComboSlotInfo, getXaiConvId } from "./account-selector";
+import {
+	getComboSlotInfo,
+	getXaiConvId,
+	isModelCooldownFallback,
+} from "./account-selector";
+import {
+	ApiKeyRoutedSpendRefusal,
+	getApiKeyRoutedSpendCheck,
+} from "./api-key-spend-routing";
 import { markFamilyExhausted } from "./model-capacity";
 import {
 	DEFAULT_MODEL_COOLDOWN_TTL_MS,
+	getModelCooldownUntil,
 	markModelCooling,
+	markWindowlessModelCooling,
+	recoverWindowlessModel,
 } from "./model-cooldown";
 import { forwardObservedUpstream } from "./observed-upstream";
 import {
@@ -73,6 +86,53 @@ import { markVisionUnsupported } from "./vision-capability";
 import { peekSseForZai1305 } from "./zai-1305";
 
 const log = new Logger("ProxyOperations");
+
+/** Internal control flow: skip a cooled pair without an upstream attempt. */
+class ModelCooldownSkip extends Error {}
+
+/** Failover attempts share metadata, so a second account can identify a
+ * request-scoped refusal without penalizing any other request on this model. */
+const windowlessRejections = new WeakMap<
+	RequestMeta,
+	{
+		accounts: Set<string>;
+		pairs: Set<string>;
+		rollbacks: Array<() => void>;
+		requestScoped: boolean;
+	}
+>();
+
+function recordWindowlessModelRejection(
+	meta: RequestMeta,
+	accountId: string,
+	model: string,
+): void {
+	model = stripModelRouting(model).trim();
+	if (!model) return;
+	let state = windowlessRejections.get(meta);
+	if (!state) {
+		state = {
+			accounts: new Set(),
+			pairs: new Set(),
+			rollbacks: [],
+			requestScoped: false,
+		};
+		windowlessRejections.set(meta, state);
+	}
+	if (state.requestScoped) return;
+	state.accounts.add(accountId);
+	if (state.accounts.size > 1) {
+		state.requestScoped = true;
+		for (const rollback of state.rollbacks) rollback();
+		state.rollbacks = [];
+		return;
+	}
+	const pair = `${accountId}:${model}`;
+	if (state.pairs.has(pair)) return;
+	state.pairs.add(pair);
+	const rollback = markWindowlessModelCooling(accountId, model);
+	if (rollback) state.rollbacks.push(rollback);
+}
 
 /**
  * Resolve the forwarding step for this context.
@@ -1158,10 +1218,12 @@ export async function proxyUnauthenticated(
 				projectAttributionSource: requestMeta.projectAttributionSource ?? null,
 				response,
 				timestamp: requestMeta.timestamp,
+				costTrackingEpoch: requestMeta.costTrackingEpoch,
 				retryAttempt: 0,
 				failoverAttempts: 0,
 				agentUsed: requestMeta.agentUsed,
 				originalModel: requestMeta.originalModel,
+				limitModel: requestMeta.limitModel,
 				appliedModel: requestMeta.appliedModel,
 				agentAttributionSource: requestMeta.agentAttributionSource ?? null,
 				comboName: requestMeta.comboName,
@@ -1416,7 +1478,33 @@ export async function proxyWithAccount(
 		// invariant that every provider has to remember. Merged with
 		// drainAbortController so the terminal-recovery drain deadline can also
 		// abort this same fetch later.
-		const forwardUpstream = (target: Request) => {
+		const forwardUpstream = async (target: Request) => {
+			const checkSpend = getApiKeyRoutedSpendCheck(requestMeta);
+			// The buffered descriptor avoids another clone/parse on the healthy path.
+			// Rebuilt fallback requests may not have been adopted yet, so inspect
+			// their own body safely; a non-JSON endpoint still passes through.
+			const model =
+				target === outgoing.request
+					? outgoing.model
+					: target.body
+						? (
+								await readRequestJson<{ model?: unknown }>(target).catch(
+									() => null,
+								)
+							)?.model
+						: null;
+			if (target.body && typeof model === "string") {
+				if (
+					model.trim().length > 0 &&
+					!isInternalProbe(req.headers, ctx) &&
+					getModelCooldownUntil(account.id, model) !== null &&
+					!isModelCooldownFallback(requestMeta, account.id, model)
+				) {
+					throw new ModelCooldownSkip();
+				}
+				const refusal = await checkSpend?.(model);
+				if (refusal) throw new ApiKeyRoutedSpendRefusal(refusal);
+			}
 			const signal = AbortSignal.any([req.signal, drainAbortController.signal]);
 			return forwardObservedUpstream(
 				provider,
@@ -2338,7 +2426,7 @@ export async function proxyWithAccount(
 
 		/**
 		 * The 429 branch taken when this account has no fallback model to cycle
-		 * to: keepalive burst, windowless (request-scoped) 429, or a genuine
+		 * to: keepalive burst, windowless (model-scoped) 429, or a genuine
 		 * window that benches the account. Answers NOT_CLASSIFIED for any other
 		 * status so the caller can fall through to its model-not-found handling.
 		 */
@@ -2363,40 +2451,15 @@ export async function proxyWithAccount(
 					return null;
 				}
 
-				// ── windowless 429: request-scoped, NOT account-wide (issue #301) ──
-				// Anthropic 429s some requests with `x-should-retry: true` and no
-				// rate-limit metadata whatsoever — no `retry-after`, not one
-				// `anthropic-ratelimit-*` / `x-ratelimit-*` header. Live measurement
-				// on a production install showed this to be scoped to the REQUEST,
-				// not the account: the same account served 200s two seconds before
-				// and 38 seconds after on the same model, three in-place retries
-				// spanning 11.2s returned three identical bare 429s (never once a
-				// success), and the NEXT account rejected the same client request
-				// the same way. The rejected requests are session-initialising ones
-				// with no project attribution; ordinary conversation turns on the
-				// same account succeed throughout.
-				//
-				// So benching is simply the wrong response: it drains the pool one
-				// account per attempt until the operator has to force-reset every
-				// account before ordinary traffic works again. Treat it exactly like
-				// out_of_credits above (issue #261) — fail over per request with NO
-				// cooldown and NO consecutive-429 increment, leaving the account in
-				// rotation. Placed after the keepalive check so a synthetic probe
-				// still records nothing at all.
-				//
-				// The predicate is `isRetryable429` (header-only, synchronous,
-				// fail-closed: `x-should-retry: true`, no `retry-after`, and no
-				// header under either rate-limit prefix). Its name is now a slight
-				// misnomer — nothing is retried any more — but it is exactly the
-				// right discriminator and its module is reviewed and tested, so it
-				// keeps its name.
+				// No quota window was reported. Cool only the upstream model
+				// this account was asked for; other models remain healthy.
 				if (isRetryable429(rawResponse, isClaudeProvider)) {
 					const reason: RateLimitReason = "windowless_429";
-					log.warn(
-						`Account ${account.name} returned a windowless 429 (${
-							requestedModel ? `model=${requestedModel}, ` : ""
-						}x-should-retry with no rate-limit window) — request-scoped, ` +
-							`NOT benching account; failing over to next account`,
+					recordWindowlessModelRejection(
+						requestMeta,
+						account.id,
+						outgoing.model ||
+							(requestedModel ? mapModelName(requestedModel, account) : ""),
 					);
 					const responseTime = Date.now() - requestMeta.timestamp;
 					const modelRewrite = isModelRewrite(
@@ -2529,7 +2592,7 @@ export async function proxyWithAccount(
 				) {
 					markModelCooling(
 						account.id,
-						requestedModel,
+						outgoing.model || mapModelName(requestedModel, account),
 						resetIsInferred ? null : cooldown.until,
 					);
 					log.warn(
@@ -2863,6 +2926,9 @@ export async function proxyWithAccount(
 			// is not re-entered here. Practically unreachable anyway — /v1/messages
 			// rejects a body without `model`.
 			if (!requestedModel) return NOT_CLASSIFIED;
+			if (isRetryable429(retried, isClaudeProvider)) {
+				return classifyNoFallback429(retried, requestedModel);
+			}
 			const modelList = getModelList(requestedModel, account);
 			if (modelList && modelList.length > 1) return NOT_CLASSIFIED;
 			return classifyNoFallback429(retried, requestedModel);
@@ -2942,6 +3008,16 @@ export async function proxyWithAccount(
 			if (!visionRoutingUnrepresentedInKey) {
 				markVisionUnsupported(account.id, visionKeyModel);
 			}
+		}
+
+		// Windowless errors fail over immediately even when this account has a
+		// model fallback list. A fallback success says nothing about the failed pair.
+		if (isRetryable429(rawResponse, isClaudeProvider)) {
+			const windowlessOutcome = await classifyNoFallback429(
+				rawResponse,
+				effectiveBodyContext.getModel(),
+			);
+			if (windowlessOutcome !== NOT_CLASSIFIED) return windowlessOutcome;
 		}
 
 		if (visionUnsupported || (await isModelUnavailableError(rawResponse))) {
@@ -3157,6 +3233,13 @@ export async function proxyWithAccount(
 						log,
 					);
 					zai1305AlreadyChecked = true;
+					if (isRetryable429(rawResponse, isClaudeProvider)) {
+						const windowlessOutcome = await classifyNoFallback429(
+							rawResponse,
+							outgoing.model,
+						);
+						if (windowlessOutcome !== NOT_CLASSIFIED) return windowlessOutcome;
+					}
 					if (!(await isModelUnavailableError(rawResponse.clone()))) {
 						break; // Success — stop cycling
 					}
@@ -3705,6 +3788,10 @@ export async function proxyWithAccount(
 			}
 		}
 
+		if (response.ok && !isSyntheticInternal) {
+			recoverWindowlessModel(account.id, outgoing.model);
+		}
+
 		// Check for rate limit using account-specific provider.
 		//
 		// The clone exists only for the terminal-529 path, where `response`
@@ -3763,10 +3850,12 @@ export async function proxyWithAccount(
 							requestMeta.projectAttributionSource ?? null,
 						response,
 						timestamp: requestMeta.timestamp,
+						costTrackingEpoch: requestMeta.costTrackingEpoch,
 						retryAttempt: 0,
 						failoverAttempts,
 						agentUsed: requestMeta.agentUsed,
 						originalModel: requestMeta.originalModel,
+						limitModel: requestMeta.limitModel,
 						appliedModel: requestMeta.appliedModel,
 						agentAttributionSource: requestMeta.agentAttributionSource ?? null,
 						comboName: requestMeta.comboName,
@@ -3796,10 +3885,12 @@ export async function proxyWithAccount(
 				projectAttributionSource: requestMeta.projectAttributionSource ?? null,
 				response,
 				timestamp: requestMeta.timestamp,
+				costTrackingEpoch: requestMeta.costTrackingEpoch,
 				retryAttempt: 0,
 				failoverAttempts,
 				agentUsed: requestMeta.agentUsed,
 				originalModel: requestMeta.originalModel,
+				limitModel: requestMeta.limitModel,
 				appliedModel: requestMeta.appliedModel,
 				agentAttributionSource: requestMeta.agentAttributionSource ?? null,
 				comboName: requestMeta.comboName,
@@ -3810,6 +3901,8 @@ export async function proxyWithAccount(
 			{ ...ctx, provider },
 		);
 	} catch (err) {
+		if (err instanceof ModelCooldownSkip) return null;
+		if (err instanceof ApiKeyRoutedSpendRefusal) return err.response;
 		// A client disconnect now aborts the upstream fetch by design. That is
 		// not an account failure: returning null would send the proxy through
 		// every remaining account and every fallback route for a request nobody
@@ -3891,6 +3984,7 @@ export type PoolExhaustionAccountReason =
 	| "paused"
 	| "usage_exhausted"
 	| "rate_limited"
+	| "model_cooling"
 	| "circuit_open"
 	| "vision_unsupported"
 	| "unavailable";
@@ -3944,6 +4038,7 @@ export function createPoolExhaustedResponse(
 	accounts: Account[],
 	usageSnapshots?: ReadonlyMap<string, AccountUsageSnapshot>,
 	kind: PoolExhaustionKind = "pool_exhausted",
+	requestedModel?: string | null,
 ): Response {
 	const now = Date.now();
 	const isCircuitOpen = kind === "circuit_open";
@@ -3956,6 +4051,13 @@ export function createPoolExhaustedResponse(
 	// the account's own state is irrelevant to why this request was refused.
 	const accountInfos = accounts.map((account) => {
 		const usage = usageSnapshots?.get(account.id);
+		const modelCooldown = requestedModel
+			? getModelCooldownUntil(
+					account.id,
+					mapModelName(requestedModel, account),
+					now,
+				)
+			: null;
 		const usageExhausted =
 			usage !== undefined &&
 			isUsageExhausted(
@@ -3979,7 +4081,9 @@ export function createPoolExhaustedResponse(
 							? "usage_exhausted"
 							: account.rate_limited_until && account.rate_limited_until > now
 								? "rate_limited"
-								: "unavailable";
+								: modelCooldown !== null
+									? "model_cooling"
+									: "unavailable";
 
 		let availableAt: string | null = null;
 		// Neither override kind advertises a recovery time: the breaker's own
@@ -3994,6 +4098,13 @@ export function createPoolExhaustedResponse(
 				account.rate_limited_until > now
 			) {
 				availableAt = new Date(account.rate_limited_until).toISOString();
+			} else if (modelCooldown !== null) {
+				availableAt = new Date(modelCooldown).toISOString();
+			}
+			if (modelCooldown !== null && availableAt !== null) {
+				availableAt = new Date(
+					Math.max(Date.parse(availableAt), modelCooldown),
+				).toISOString();
 			}
 		}
 
@@ -4014,6 +4125,32 @@ export function createPoolExhaustedResponse(
 	// usage cap).
 	const recoveryCandidates: number[] = [];
 	for (const account of accounts) {
+		const modelCooldown = requestedModel
+			? getModelCooldownUntil(
+					account.id,
+					mapModelName(requestedModel, account),
+					now,
+				)
+			: null;
+		// Every gate on this pair must recover before it is available. Choose
+		// the later gate within a route, then the earliest route across accounts.
+		if (modelCooldown !== null) {
+			const usage = usageSnapshots?.get(account.id);
+			const usageReset =
+				usage &&
+				isUsageExhausted(
+					usage.utilization,
+					usage.resetMs,
+					now,
+					usage.extraUsageAvailable,
+				)
+					? (usage.resetMs ?? 0)
+					: 0;
+			recoveryCandidates.push(
+				Math.max(modelCooldown, account.rate_limited_until ?? 0, usageReset),
+			);
+			continue;
+		}
 		if (account.rate_limited_until && account.rate_limited_until > now) {
 			recoveryCandidates.push(account.rate_limited_until);
 		}

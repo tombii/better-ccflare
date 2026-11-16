@@ -11,7 +11,12 @@ import { usageCache } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { setComboSlotInfo } from "../account-selector";
 import { clearFamilyExhaustionCache } from "../model-capacity";
-import { isModelCooling, resetModelCooldownsForTests } from "../model-cooldown";
+import {
+	getModelCooldownUntil,
+	isModelCooling,
+	markModelCooling,
+	resetModelCooldownsForTests,
+} from "../model-cooldown";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 import { resetRateLimitProbeGatesForTests } from "../rate-limit-cooldown";
@@ -209,6 +214,62 @@ describe("proxyWithAccount — combo 429 cools (account, model), not the account
 		clearFamilyExhaustionCache();
 		resetModelCooldownsForTests();
 		resetRateLimitProbeGatesForTests();
+	});
+
+	it.each([
+		false,
+		true,
+	])("keys a stripped-body model on the mapped requested model, never the empty model (windowless: %s)", async (windowless) => {
+		globalThis.fetch = mock(async () => {
+			const response = plain429();
+			if (windowless) response.headers.set("x-should-retry", "true");
+			return response;
+		});
+		const account = makeAccount({
+			provider: windowless ? "claude-oauth" : STUB_PROVIDER,
+			model_mappings: JSON.stringify({ haiku: "vertex-haiku" }),
+		});
+		const meta = makeRequestMeta({ comboName: "vertex-combo" });
+		setComboSlotInfo(meta, {
+			comboName: "vertex-combo",
+			slots: [
+				{ accountId: account.id, modelOverride: "claude-haiku-alias" },
+				{ accountId: account.id, modelOverride: "different-model" },
+			],
+		});
+		const ctx = makeCtx();
+		ctx.provider.transformRequestBody = async (request) => {
+			const body = (await request.json()) as Record<string, unknown>;
+			delete body.model;
+			return new Request(request, { body: JSON.stringify(body) });
+		};
+		expect(await runProxy(account, ctx, meta, "claude-haiku-alias")).toBeNull();
+		expect(getModelCooldownUntil(account.id, "vertex-haiku")).not.toBeNull();
+		expect(getModelCooldownUntil(account.id, "claude-haiku-alias")).toBeNull();
+		expect(getModelCooldownUntil(account.id, "")).toBeNull();
+	});
+
+	it("does not apply an empty-body-model cooldown check and still checks routed spend", async () => {
+		const { setApiKeyRoutedSpendCheck } = await import(
+			"../api-key-spend-routing"
+		);
+		const account = makeAccount();
+		const ctx = makeCtx();
+		ctx.provider.transformRequestBody = async (request) => {
+			const body = (await request.json()) as Record<string, unknown>;
+			delete body.model;
+			return new Request(request, { body: JSON.stringify(body) });
+		};
+		markModelCooling(account.id, "", Date.now() + 60_000);
+		const meta = makeRequestMeta();
+		const checkSpend = mock(
+			async () => new Response("spend limit", { status: 429 }),
+		);
+		setApiKeyRoutedSpendCheck(meta, checkSpend);
+		globalThis.fetch = mock(async () => plain429());
+		expect((await runProxy(account, ctx, meta, "model-a"))?.status).toBe(429);
+		expect(checkSpend).toHaveBeenCalledTimes(1);
+		expect(globalThis.fetch).not.toHaveBeenCalled();
 	});
 
 	it("cools only the slot's model when the account has a different-model sibling slot", async () => {

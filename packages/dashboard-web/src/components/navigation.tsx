@@ -4,6 +4,7 @@ import {
 	BarChart3,
 	Bot,
 	FileText,
+	Gauge,
 	GitBranch,
 	History,
 	Key,
@@ -58,22 +59,34 @@ const _navItems: NavItem[] = [
 
 interface NavigationProps {
 	onLogout?: () => void;
+	canManage?: boolean;
 }
 
-export function Navigation({ onLogout }: NavigationProps = {}) {
+export function Navigation({
+	onLogout,
+	canManage = true,
+}: NavigationProps = {}) {
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 	const [updateStatus, setUpdateStatus] = useState<
 		"idle" | "checking" | "available" | "current" | "error"
 	>("idle");
 	const [latestVersion, setLatestVersion] = useState<string>("");
 	const [updateError, setUpdateError] = useState<string | null>(null);
-	const { data: alertData } = useAlerts();
+	const { data: alertData } = useAlerts({ enabled: canManage });
 	const unacknowledgedCount = alertData?.unacknowledgedCount ?? 0;
 	const location = useLocation();
 	const isMountedRef = useRef(true);
 
 	// Build nav items with the current alert badge
 	const navItems: NavItem[] = useMemo(() => {
+		if (!canManage)
+			return [
+				{
+					label: "API Key Usage",
+					icon: Gauge,
+					path: "/api-key-usage",
+				},
+			];
 		const baseItems: NavItem[] = [
 			{ label: "Overview", icon: LayoutDashboard, path: "/" },
 			{ label: "Analytics", icon: BarChart3, path: "/analytics" },
@@ -88,6 +101,12 @@ export function Navigation({ onLogout }: NavigationProps = {}) {
 			{ label: "Accounts", icon: Users, path: "/accounts" },
 			{ label: "Usage History", icon: History, path: "/usage-history" },
 		];
+
+		baseItems.push({
+			label: "API Key Usage",
+			icon: Gauge,
+			path: "/api-key-usage",
+		});
 
 		baseItems.push({ label: "Combos", icon: Zap, path: "/combos" });
 		baseItems.push({
@@ -106,7 +125,7 @@ export function Navigation({ onLogout }: NavigationProps = {}) {
 		);
 
 		return baseItems;
-	}, [unacknowledgedCount]);
+	}, [unacknowledgedCount, canManage]);
 
 	// Cleanup on unmount to prevent memory leaks
 	useEffect(() => {
@@ -221,7 +240,7 @@ export function Navigation({ onLogout }: NavigationProps = {}) {
 	 */
 	// biome-ignore lint/correctness/useExhaustiveDependencies: helper functions are stable and don't need to be dependencies
 	const checkForUpdates = useCallback(async () => {
-		if (!isMountedRef.current) return;
+		if (!isMountedRef.current || !canManage) return;
 
 		// Check localStorage for last check time to avoid excessive checks
 		const lastCheckTime = localStorage.getItem("updateCheckLastTime");
@@ -314,11 +333,11 @@ export function Navigation({ onLogout }: NavigationProps = {}) {
 			setUpdateError(error instanceof Error ? error.message : String(error));
 			console.error("❌ Failed to check for updates:", error);
 		}
-	}, []);
+	}, [canManage]);
 
 	// Automatic update check: run on mount and every hour
-	// biome-ignore lint/correctness/useExhaustiveDependencies: checkForUpdates is stable via useCallback
 	useEffect(() => {
+		if (!canManage) return;
 		// Check immediately on mount (when dashboard loads)
 		checkForUpdates();
 
@@ -334,7 +353,7 @@ export function Navigation({ onLogout }: NavigationProps = {}) {
 		return () => {
 			clearInterval(intervalId);
 		};
-	}, []);
+	}, [canManage, checkForUpdates]);
 
 	return (
 		<>
@@ -457,74 +476,76 @@ export function Navigation({ onLogout }: NavigationProps = {}) {
 						</div>
 
 						{/* Update Check */}
-						<div
-							className={cn(
-								"rounded-lg bg-muted/50 p-3",
-								updateStatus === "checking" && "opacity-50",
-							)}
-						>
-							<button
-								type="button"
-								onClick={checkForUpdates}
-								disabled={updateStatus === "checking"}
-								className="w-full transition-colors hover:bg-muted/50 -m-3 p-3 rounded-lg"
+						{canManage ? (
+							<div
+								className={cn(
+									"rounded-lg bg-muted/50 p-3",
+									updateStatus === "checking" && "opacity-50",
+								)}
 							>
-								<div className="flex items-center gap-2 text-sm">
-									<RefreshCw
-										className={cn(
-											"h-4 w-4",
-											updateStatus === "checking" && "animate-spin",
-											updateStatus === "available" && "text-green-500",
-											updateStatus === "current" && "text-primary",
-											updateStatus === "error" && "text-red-500",
-										)}
-									/>
-									<span className="font-medium">
-										{updateStatus === "idle" && "Check for Updates"}
-										{updateStatus === "checking" && "Checking..."}
-										{updateStatus === "available" && "Update Available"}
-										{updateStatus === "current" && "Up to Date"}
-										{updateStatus === "error" && "Check Failed"}
-									</span>
-								</div>
-							</button>
-							{updateStatus === "available" && (
-								<div className="mt-2 space-y-1">
-									<p className="text-xs text-muted-foreground text-left">
-										{version.replace(/^v/, "")} → {latestVersion}
-									</p>
-									<div className="flex items-center gap-1">
-										<code className="text-xs bg-background px-1 py-0.5 rounded font-mono flex-1 truncate">
-											{updateCommand}
-										</code>
-										<CopyButton
-											value={updateCommand}
-											size="sm"
-											variant="ghost"
-											className="h-6 w-6 p-0"
-											title="Copy update command"
+								<button
+									type="button"
+									onClick={checkForUpdates}
+									disabled={!canManage || updateStatus === "checking"}
+									className="w-full transition-colors hover:bg-muted/50 -m-3 p-3 rounded-lg"
+								>
+									<div className="flex items-center gap-2 text-sm">
+										<RefreshCw
+											className={cn(
+												"h-4 w-4",
+												updateStatus === "checking" && "animate-spin",
+												updateStatus === "available" && "text-green-500",
+												updateStatus === "current" && "text-primary",
+												updateStatus === "error" && "text-red-500",
+											)}
 										/>
+										<span className="font-medium">
+											{updateStatus === "idle" && "Check for Updates"}
+											{updateStatus === "checking" && "Checking..."}
+											{updateStatus === "available" && "Update Available"}
+											{updateStatus === "current" && "Up to Date"}
+											{updateStatus === "error" && "Check Failed"}
+										</span>
 									</div>
-									<p className="text-xs text-muted-foreground text-left">
-										{isDockerInstallation
-											? "Detected: Docker 🐳"
-											: isBinaryInstallation
-												? "Detected: Binary Installation 📦"
-												: `Detected: ${detectedPackageManager} 📦`}
+								</button>
+								{updateStatus === "available" && (
+									<div className="mt-2 space-y-1">
+										<p className="text-xs text-muted-foreground text-left">
+											{version.replace(/^v/, "")} → {latestVersion}
+										</p>
+										<div className="flex items-center gap-1">
+											<code className="text-xs bg-background px-1 py-0.5 rounded font-mono flex-1 truncate">
+												{updateCommand}
+											</code>
+											<CopyButton
+												value={updateCommand}
+												size="sm"
+												variant="ghost"
+												className="h-6 w-6 p-0"
+												title="Copy update command"
+											/>
+										</div>
+										<p className="text-xs text-muted-foreground text-left">
+											{isDockerInstallation
+												? "Detected: Docker 🐳"
+												: isBinaryInstallation
+													? "Detected: Binary Installation 📦"
+													: `Detected: ${detectedPackageManager} 📦`}
+										</p>
+									</div>
+								)}
+								{updateStatus === "current" && (
+									<p className="mt-1 text-xs text-muted-foreground text-left">
+										Version {version.replace(/^v/, "")}
 									</p>
-								</div>
-							)}
-							{updateStatus === "current" && (
-								<p className="mt-1 text-xs text-muted-foreground text-left">
-									Version {version.replace(/^v/, "")}
-								</p>
-							)}
-							{updateStatus === "error" && updateError && (
-								<p className="mt-1 text-xs text-destructive text-left break-words">
-									{updateError}
-								</p>
-							)}
-						</div>
+								)}
+								{updateStatus === "error" && updateError && (
+									<p className="mt-1 text-xs text-destructive text-left break-words">
+										{updateError}
+									</p>
+								)}
+							</div>
+						) : null}
 
 						<div className="hidden lg:flex items-center justify-between">
 							<div className="flex items-center gap-2 text-xs text-muted-foreground">

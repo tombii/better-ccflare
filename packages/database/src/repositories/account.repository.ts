@@ -58,6 +58,7 @@ export class AccountRepository extends BaseRepository<Account> {
 				cross_region_mode,
 				model_fallbacks,
 				billing_type,
+				plan_monthly_usd,
 				pause_reason,
 				refresh_token_issued_at,
 				last_manual_reauth_at,
@@ -94,6 +95,7 @@ export class AccountRepository extends BaseRepository<Account> {
 				cross_region_mode,
 				model_fallbacks,
 				billing_type,
+				plan_monthly_usd,
 				pause_reason,
 				refresh_token_issued_at,
 				last_manual_reauth_at,
@@ -589,6 +591,20 @@ export class AccountRepository extends BaseRepository<Account> {
 	): Promise<void> {
 		await this.run(`UPDATE accounts SET billing_type = ? WHERE id = ?`, [
 			billingType,
+			accountId,
+		]);
+	}
+
+	/**
+	 * Set the monthly subscription price (USD) for an account.
+	 * `null` clears it back to unknown / not a paid plan.
+	 */
+	async setPlanMonthlyUsd(
+		accountId: string,
+		planMonthlyUsd: number | null,
+	): Promise<void> {
+		await this.run(`UPDATE accounts SET plan_monthly_usd = ? WHERE id = ?`, [
+			planMonthlyUsd,
 			accountId,
 		]);
 	}

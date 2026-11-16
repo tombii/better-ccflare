@@ -9,6 +9,7 @@ import {
 	NETWORK,
 	parseNightWindow,
 	type StrategyName,
+	setCostTrackingEnabled as setCostTrackingFlag,
 	TIME_CONSTANTS,
 	ValidationError,
 	validateEndpointUrl,
@@ -160,6 +161,7 @@ export interface ConfigData {
 	combo_session_fallback?: boolean;
 	force_account_model?: boolean;
 	use_extra_usage?: boolean;
+	cost_tracking_enabled?: boolean;
 	web_search_enabled?: boolean;
 	web_search_max_result_chars?: number;
 	web_search_bypass_header?: boolean;
@@ -1089,6 +1091,29 @@ export class Config extends EventEmitter {
 
 	setForceAccountModel(value: boolean): void {
 		this.set("force_account_model", value);
+	}
+
+	/** Whether new requests receive cost estimates and budget enforcement. */
+	getCostTrackingEnabled(): boolean {
+		return this.resolveFlag(this.data.cost_tracking_enabled, true).value;
+	}
+
+	getCostTrackingEnabledSource(): "file" | "default" {
+		return this.resolveFlag(this.data.cost_tracking_enabled, true).source;
+	}
+
+	setCostTrackingEnabled(value: boolean): void {
+		this.set("cost_tracking_enabled", value);
+		setCostTrackingFlag(this.getCostTrackingEnabled());
+	}
+
+	/** CLI notification: reload this flag only, keeping other live settings intact. */
+	reloadCostTrackingEnabled(): void {
+		const latest = JSON.parse(
+			readFileSync(this.configPath, "utf8"),
+		) as ConfigData;
+		this.data.cost_tracking_enabled = latest.cost_tracking_enabled;
+		setCostTrackingFlag(this.getCostTrackingEnabled());
 	}
 
 	/**

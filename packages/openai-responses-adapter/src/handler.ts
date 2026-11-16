@@ -1,5 +1,10 @@
 import crypto from "node:crypto";
 import { Logger } from "@better-ccflare/logger";
+import type {
+	ApiKeyLimitWindowMode,
+	ApiKeyRestrictions,
+	ApiKeySpendLimit,
+} from "@better-ccflare/types";
 import { getRequestTools } from "./custom-tools";
 import { translateRequestToAnthropic } from "./request-translator";
 import { translateAnthropicResponseToResponses } from "./response-translator";
@@ -388,6 +393,16 @@ export async function handleResponsesRequest(
 	ctx: unknown,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
+	/** The calling API key's restrictions, forwarded straight to handleProxy so
+	 * /v1/responses enforces them identically to /v1/messages. */
+	restrictions?: ApiKeyRestrictions | null,
+	/** The calling API key's spend limit, forwarded for the same reason:
+	 * leaving it out would make the Codex endpoint an unmetered bypass. */
+	spendLimit?: ApiKeySpendLimit | null,
+	keyPolicy?: {
+		limitWindowMode?: ApiKeyLimitWindowMode;
+		familyComboOverrides?: Record<string, string> | null;
+	},
 ): Promise<Response> {
 	// 1. Parse body — Codex CLI compresses request bodies (zstd, gzip, deflate).
 	// Bun decompresses response bodies automatically but not request bodies,
@@ -663,7 +678,13 @@ export async function handleResponsesRequest(
 			ctx,
 			apiKeyId,
 			apiKeyName,
-			{ trustedNativeResponses: true },
+			{
+				trustedNativeResponses: true,
+				trustedRequestedModel: body.model,
+				restrictions,
+				spendLimit,
+				...keyPolicy,
+			},
 		);
 	} catch (err) {
 		const statusCode =

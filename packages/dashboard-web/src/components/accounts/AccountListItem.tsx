@@ -1,5 +1,5 @@
 import { supportsUsagePauseThreshold } from "@better-ccflare/core";
-import { AccountPresenter } from "@better-ccflare/ui-common";
+import { AccountPresenter, formatCost } from "@better-ccflare/ui-common";
 import {
 	AlertCircle,
 	Edit2,
@@ -27,6 +27,7 @@ import {
 import { OAuthTokenStatusWithBoundary } from "../OAuthTokenStatus";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
 
@@ -53,6 +54,10 @@ interface AccountListItemProps {
 	onAutoFallbackToggle: (account: Account) => void;
 	onAutoRefreshToggle: (account: Account) => void;
 	onBillingTypeToggle: (account: Account) => void;
+	onPlanPriceChange: (
+		account: Account,
+		planMonthlyUsd: number | null,
+	) => void | Promise<void>;
 	onAutoPauseOnOverageToggle?: (account: Account) => void;
 	onPeakHoursPauseToggle?: (account: Account) => void;
 	onNightWindowToggle?: (account: Account) => void;
@@ -78,6 +83,7 @@ export function AccountListItem({
 	onAutoFallbackToggle,
 	onAutoRefreshToggle,
 	onBillingTypeToggle,
+	onPlanPriceChange,
 	onAutoPauseOnOverageToggle,
 	onPeakHoursPauseToggle,
 	onNightWindowToggle,
@@ -91,6 +97,25 @@ export function AccountListItem({
 	onCodeBuddyReauth,
 }: AccountListItemProps) {
 	const [isRefreshingUsage, setIsRefreshingUsage] = useState(false);
+	// `null` draft means "not being edited" so the field re-derives from the
+	// refetched account after a save instead of pinning a stale local string.
+	const [planPriceDraft, setPlanPriceDraft] = useState<string | null>(null);
+	const storedPlanPrice = account.planMonthlyUsd ?? null;
+	const planPriceValue =
+		planPriceDraft ?? (storedPlanPrice != null ? String(storedPlanPrice) : "");
+
+	const commitPlanPrice = () => {
+		if (planPriceDraft === null) return; // untouched
+		const trimmed = planPriceDraft.trim();
+		const next = trimmed === "" ? null : Number(trimmed);
+		setPlanPriceDraft(null);
+		if (next !== null && (!Number.isFinite(next) || next < 0)) {
+			// Don't POST something the API will 400 on — revert to the stored value.
+			return;
+		}
+		if (next === storedPlanPrice) return;
+		void onPlanPriceChange(account, next);
+	};
 	const presenter = new AccountPresenter(account);
 	// Only hard-limit statuses mean the account is actually blocked; soft warnings
 	// like "allowed_warning" / "queueing_soft" mean the account is still usable.
@@ -217,6 +242,32 @@ export function AccountListItem({
 										/>
 									</div>
 								)}
+							{/* Any account can carry a subscription price, so this is not
+							    gated on provider the way plan billing is. */}
+							<div className="flex items-center gap-1">
+								<span className="text-xs text-muted-foreground">Plan/mo:</span>
+								<span className="text-xs text-muted-foreground">$</span>
+								<Input
+									type="number"
+									min="0"
+									step="0.01"
+									inputMode="decimal"
+									placeholder="unset"
+									aria-label={`Monthly plan price for ${account.name}`}
+									title={
+										storedPlanPrice != null
+											? `Monthly subscription price: ${formatCost(storedPlanPrice)}`
+											: "Monthly subscription price (blank = unset)"
+									}
+									className="h-7 w-24 text-xs"
+									value={planPriceValue}
+									onChange={(e) => setPlanPriceDraft(e.target.value)}
+									onBlur={commitPlanPrice}
+									onKeyDown={(e) => {
+										if (e.key === "Enter") e.currentTarget.blur();
+									}}
+								/>
+							</div>
 							{account.provider === "anthropic" &&
 								onAutoPauseOnOverageToggle && (
 									<div className="flex items-center gap-2">

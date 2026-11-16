@@ -1,3 +1,9 @@
+import type {
+	ApiKeyLimitWindowMode,
+	ApiKeyRestrictions,
+	ApiKeySpendLimit,
+} from "@better-ccflare/types";
+
 // ============================================================
 // REQUEST TYPES (what codex sends to /v1/responses)
 // ============================================================
@@ -352,5 +358,17 @@ export type HandleProxyFn = (
 	ctx: unknown,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
-	options?: { trustedNativeResponses?: boolean },
+	options?: {
+		trustedNativeResponses?: boolean;
+		/** Original client model supplied by the translator, never a header. */
+		trustedRequestedModel?: string;
+		/** The calling API key's restrictions, forwarded verbatim so the
+		 * /v1/responses path enforces them exactly like /v1/messages does.
+		 * Omitting it here would make the Codex endpoint a bypass. */
+		restrictions?: ApiKeyRestrictions | null;
+		/** The calling API key's spend limit, forwarded for the same reason. */
+		spendLimit?: ApiKeySpendLimit | null;
+		limitWindowMode?: ApiKeyLimitWindowMode;
+		familyComboOverrides?: Record<string, string> | null;
+	},
 ) => Promise<Response>;

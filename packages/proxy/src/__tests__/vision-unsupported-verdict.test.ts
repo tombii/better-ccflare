@@ -31,6 +31,7 @@
  * `buildUrl` so the fetch mock can answer per account and the assertions can name
  * the accounts that were actually asked. Everything runs offline.
  */
+
 import {
 	afterEach,
 	beforeEach,
@@ -61,6 +62,12 @@ import {
 } from "../handlers/vision-capability";
 import { handleProxy } from "../proxy";
 import * as usageCollectorModule from "../usage-collector";
+import { preserveTestEnv } from "./preserve-test-env";
+
+preserveTestEnv([
+	"CCFLARE_OVERLOAD_RETRY_BASE_MS",
+	"CCFLARE_OVERLOAD_RETRY_MAX_MS",
+]);
 
 /** The model a plain (non-combo) request asks for. Invented, not a real pin. */
 const REQUEST_MODEL = "verdict-model-requested";
@@ -456,8 +463,6 @@ afterEach(() => {
 	clearFamilyExhaustionForAccount("acc-2");
 	clearFamilyExhaustionForAccount("acc-3");
 	usageCache.clear();
-	delete process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS;
-	delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS;
 });
 
 describe("vision_unsupported — every eligible route was asked and refused", () => {
