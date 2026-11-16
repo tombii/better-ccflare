@@ -1,3 +1,8 @@
+import {
+	REASONING_EFFORT_VALUES,
+	type ReasoningEffort,
+} from "@better-ccflare/openai-formats";
+
 /**
  * Meta Model API request sanitization.
  *
@@ -179,7 +184,28 @@ function sanitizeThinking(
 	return {};
 }
 
-/** Drop invalid `output_config.effort` values and apply a derived effort. */
+/**
+ * Move a known but Meta-unsupported level to the nearest one Meta accepts,
+ * preferring the next one down (`minimal` -> `low`, `max` -> `xhigh`).
+ * Returns null for values outside the overall level list.
+ */
+function clampEffortForMeta(effort: unknown): string | null {
+	if (typeof effort !== "string") return null;
+	const index = REASONING_EFFORT_VALUES.indexOf(effort as ReasoningEffort);
+	if (index === -1) return null;
+
+	for (let i = index - 1; i >= 0; i--) {
+		const lower = REASONING_EFFORT_VALUES[i];
+		if (ALLOWED_REASONING_EFFORTS.has(lower)) return lower;
+	}
+	for (let i = index + 1; i < REASONING_EFFORT_VALUES.length; i++) {
+		const higher = REASONING_EFFORT_VALUES[i];
+		if (ALLOWED_REASONING_EFFORTS.has(higher)) return higher;
+	}
+	return null;
+}
+
+/** Clamp invalid `output_config.effort` values and apply a derived effort. */
 function sanitizeOutputConfig(
 	outputConfig: unknown,
 	derivedEffort: string | undefined,
@@ -191,15 +217,19 @@ function sanitizeOutputConfig(
 		config = undefined;
 	} else if (isPlainObject(outputConfig)) {
 		config = { ...outputConfig };
+		const effort = config.effort;
 		if (
-			config.effort !== undefined &&
-			!(
-				typeof config.effort === "string" &&
-				ALLOWED_REASONING_EFFORTS.has(config.effort)
-			)
+			effort !== undefined &&
+			!(typeof effort === "string" && ALLOWED_REASONING_EFFORTS.has(effort))
 		) {
-			changes.push(`dropped_effort:${String(config.effort)}`);
-			delete config.effort;
+			const clamped = clampEffortForMeta(effort);
+			if (clamped !== null) {
+				changes.push(`clamped_effort:${String(effort)}->${clamped}`);
+				config.effort = clamped;
+			} else {
+				changes.push(`dropped_effort:${String(effort)}`);
+				delete config.effort;
+			}
 		}
 	} else {
 		changes.push("dropped_output_config:unsupported_shape");

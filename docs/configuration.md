@@ -342,8 +342,9 @@ A client picks the reasoning effort per request, or omits it to get the provider
 | OpenRouter (the `openrouter` provider, an `openai-compatible` account on `openrouter.ai`, and Kilo) | `reasoning: { effort }` |
 | Other `openai-compatible` endpoints (OpenAI, xAI, CLIProxyAPI, ...) | `reasoning_effort` |
 | Codex | `reasoning.effort`. Unchanged: Codex still applies its own `medium` default. |
+| Bedrock | `(none)` — dropped; Bedrock builds its own Converse payload |
 
-Accepted values are `minimal`, `low`, `medium`, `high`, `xhigh` and `max`. Any other value returns `400 invalid_request_error`. If the target model does not support the requested level, the effort is moved to the nearest supported level, preferring the next one down. The built-in tables cover Claude families and some GPT-5/Codex models. Effort is forwarded unchanged to models those tables don't know.
+Accepted values are `minimal`, `low`, `medium`, `high`, `xhigh` and `max`. Any other value returns `400 invalid_request_error`. If the target model does not support the requested level, the effort is moved to the nearest supported level, preferring the next one down. The built-in tables cover Claude families and some GPT-5/Codex models. Effort is forwarded unchanged to models those tables don't know. Meta accepts `low`, `medium`, `high` and `xhigh`; `minimal` is clamped to `low` and `max` to `xhigh`.
 
 `reasoning_efforts` (config file) or `CCFLARE_REASONING_EFFORTS` (env var, a JSON string) lets an operator declare which levels a model supports. Use it so an unsupported level does not return 400 and break combo failover:
 

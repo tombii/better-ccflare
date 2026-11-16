@@ -40,8 +40,10 @@ export * from "./usage-fetcher";
 export * from "./utils/provider-request-id";
 // Export provider-named serving backend extraction (dashboard "Served by")
 export * from "./utils/provider-serving";
-// Export outbound reasoning-effort re-clamping (proxy model fallback)
+// Export outbound reasoning-effort re-clamping (proxy model fallback) and
+// pre-flight validation of a client-supplied effort
 export {
+	getReasoningEffortError,
 	type ReclampReasoningEffortOptions,
 	reclampReasoningEffort,
 } from "./utils/reasoning-effort";

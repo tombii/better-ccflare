@@ -1,3 +1,4 @@
+import { ValidationError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { resolveReasoningEffort } from "@better-ccflare/openai-formats";
 
@@ -73,6 +74,28 @@ export function applyAnthropicReasoningEffort(
 		};
 	}
 	return true;
+}
+
+/**
+ * Validate a client-supplied `reasoning.effort` before any account is tried.
+ *
+ * `resolveReasoningEffort` throws `ValidationError` for a value outside the
+ * known levels; letting that happen inside the per-account attempt turns a
+ * client error into an "all accounts failed" 503 after every account has been
+ * retried. Callers use this to answer 400 up front instead.
+ *
+ * @returns null when the value is absent or valid, otherwise the validation
+ * message
+ */
+export function getReasoningEffortError(effort: unknown): string | null {
+	if (effort === undefined || effort === null) return null;
+	try {
+		resolveReasoningEffort(effort, {});
+		return null;
+	} catch (error) {
+		if (error instanceof ValidationError) return error.message;
+		throw error;
+	}
 }
 
 export interface ReclampReasoningEffortOptions {

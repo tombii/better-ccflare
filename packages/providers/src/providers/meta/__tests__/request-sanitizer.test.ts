@@ -282,6 +282,55 @@ describe("sanitizeMetaRequestBody", () => {
 			);
 			expect(result.body).not.toHaveProperty("output_config");
 		});
+
+		it("clamps minimal up to low instead of dropping it", () => {
+			const result = sanitizeMetaRequestBody(
+				baseBody({ output_config: { effort: "minimal" } }),
+			);
+			expect(result.body.output_config).toEqual({ effort: "low" });
+			expect(result.changes).toContain("clamped_effort:minimal->low");
+			expect(result.changes).not.toContain("dropped_effort:minimal");
+		});
+
+		it("clamps max down to xhigh instead of dropping it", () => {
+			const result = sanitizeMetaRequestBody(
+				baseBody({ output_config: { effort: "max" } }),
+			);
+			expect(result.body.output_config).toEqual({ effort: "xhigh" });
+			expect(result.changes).toContain("clamped_effort:max->xhigh");
+			expect(result.changes).not.toContain("dropped_effort:max");
+		});
+
+		it("passes an allowed effort through unchanged", () => {
+			const result = sanitizeMetaRequestBody(
+				baseBody({ output_config: { effort: "medium" } }),
+			);
+			expect(result.body.output_config).toEqual({ effort: "medium" });
+			expect(result.changes).toEqual([]);
+		});
+
+		it("still drops an unknown effort", () => {
+			const result = sanitizeMetaRequestBody(
+				baseBody({ output_config: { effort: "extreme" } }),
+			);
+			expect(result.body).not.toHaveProperty("output_config");
+			expect(result.changes).toContain("dropped_effort:extreme");
+		});
+
+		it("keeps a clamped effort over the one derived from thinking", () => {
+			const result = sanitizeMetaRequestBody(
+				baseBody({
+					max_tokens: 8192,
+					thinking: { type: "enabled", budget_tokens: 4096 },
+					output_config: { effort: "max" },
+				}),
+			);
+			expect(result.body.output_config).toEqual({ effort: "xhigh" });
+			expect(result.changes).toContain("clamped_effort:max->xhigh");
+			expect(result.changes).not.toContain(
+				"derived_effort_from_thinking_budget:medium",
+			);
+		});
 	});
 
 	describe("tool_choice", () => {

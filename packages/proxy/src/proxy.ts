@@ -16,6 +16,7 @@ import { Logger } from "@better-ccflare/logger";
 import {
 	deriveXaiConvId,
 	getProvider,
+	getReasoningEffortError,
 	getRepresentativeUsageSnapshotForProvider,
 	isOfficialXaiEndpoint,
 	type RequestObservation,
@@ -780,6 +781,38 @@ async function handleProxyRequest(
 						headers: { "Content-Type": "application/json" },
 					},
 				);
+			}
+
+			// Validate the client's reasoning effort before any account is tried.
+			// The provider transform throws ValidationError for an invalid value,
+			// which inside a per-account attempt becomes an "all accounts failed"
+			// 503 after every account is retried. It is a client error: answer 400.
+			const reasoning = parsedBody.reasoning;
+			if (
+				reasoning &&
+				typeof reasoning === "object" &&
+				!Array.isArray(reasoning)
+			) {
+				const effort = (reasoning as Record<string, unknown>).effort;
+				if (effort !== undefined && effort !== null) {
+					const effortError = getReasoningEffortError(effort);
+					if (effortError) {
+						log.warn("Rejected invalid reasoning.effort", { effort });
+						return new Response(
+							JSON.stringify({
+								type: "error",
+								error: {
+									type: "invalid_request_error",
+									message: effortError,
+								},
+							}),
+							{
+								status: 400,
+								headers: { "Content-Type": "application/json" },
+							},
+						);
+					}
+				}
 			}
 		} else {
 			// If we can't parse the body, let it through and let the provider handle it

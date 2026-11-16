@@ -86,14 +86,44 @@ function withModelRewriteHeader(
 	return result;
 }
 
+const HEADER_UNRESERVED_BYTES = new Set([
+	// A-Z
+	...Array.from({ length: 26 }, (_, i) => 0x41 + i),
+	// a-z
+	...Array.from({ length: 26 }, (_, i) => 0x61 + i),
+	// 0-9
+	...Array.from({ length: 10 }, (_, i) => 0x30 + i),
+	// - _ . ~
+	0x2d,
+	0x5f,
+	0x2e,
+	0x7e,
+]);
+
 /**
  * Header values must be visible ASCII. An account name (operator-chosen) or a
  * model id outside that range would make `Headers.set` throw and take the
  * whole response down with it, so such a value is percent-encoded instead.
+ *
+ * Encoding goes through `TextEncoder` rather than `encodeURIComponent` because
+ * the served model is client-controlled: `encodeURIComponent` throws URIError
+ * on a lone surrogate (`"m\ud800del"`), and that throw escaped this helper and
+ * turned the response into a 500. TextEncoder substitutes U+FFFD instead, so
+ * this can never throw. Bytes are escaped one at a time against RFC 3986
+ * unreserved characters; `é` becomes `%C3%A9`.
  */
 function toServedHeaderValue(value: string): string {
 	const trimmed = value.trim();
-	return /^[\x20-\x7e]*$/.test(trimmed) ? trimmed : encodeURIComponent(trimmed);
+	if (/^[\x20-\x7e]*$/.test(trimmed)) return trimmed;
+
+	const bytes = new TextEncoder().encode(trimmed);
+	let encoded = "";
+	for (const byte of bytes) {
+		encoded += HEADER_UNRESERVED_BYTES.has(byte)
+			? String.fromCharCode(byte)
+			: `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+	}
+	return encoded;
 }
 
 /**
