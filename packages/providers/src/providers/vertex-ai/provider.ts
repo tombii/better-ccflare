@@ -4,6 +4,7 @@ import type { Account } from "@better-ccflare/types";
 import { GoogleAuth } from "google-auth-library";
 import type { TokenRefreshResult } from "../../types";
 import { getModelName } from "../../utils/model-mapping";
+import { applyAnthropicReasoningEffort } from "../../utils/reasoning-effort";
 import {
 	type AnthropicCompatibleConfig,
 	BaseAnthropicCompatibleProvider,
@@ -242,6 +243,10 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 			console.log(
 				`[Vertex AI] transformRequestBody - removing model from body`,
 			);
+
+			// Internal reasoning.effort -> Claude's native output_config.effort,
+			// clamped against the model before it leaves the body.
+			applyAnthropicReasoningEffort(body, "output_config");
 
 			// Remove model from body (Vertex AI requires it in URL, not body)
 			delete body.model;

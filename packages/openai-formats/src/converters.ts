@@ -88,9 +88,20 @@ export function toOpenAIImagePart(
 /**
  * Convert Anthropic request format to OpenAI format
  */
+export interface ConvertAnthropicRequestOptions {
+	/**
+	 * Where the client's reasoning effort goes on the outbound body.
+	 * "reasoning_effort" (default) is the standard Chat Completions field;
+	 * "reasoning" emits OpenRouter's `reasoning: { effort }` object, for
+	 * OpenRouter-shaped upstreams only.
+	 */
+	reasoningEffortField?: "reasoning_effort" | "reasoning";
+}
+
 export function convertAnthropicRequestToOpenAI(
 	anthropicData: AnthropicRequest,
 	account?: Account,
+	options: ConvertAnthropicRequestOptions = {},
 ): OpenAIRequest {
 	// Map model name if account has custom mappings, otherwise forward as-is
 	const mappedModel = account
@@ -136,7 +147,11 @@ export function convertAnthropicRequestToOpenAI(
 		}
 	}
 	if (reasoningResolution.effort !== undefined) {
-		openaiRequest.reasoning = { effort: reasoningResolution.effort };
+		if (options.reasoningEffortField === "reasoning") {
+			openaiRequest.reasoning = { effort: reasoningResolution.effort };
+		} else {
+			openaiRequest.reasoning_effort = reasoningResolution.effort;
+		}
 	}
 
 	// Convert tools (only if non-empty — Qwen/DashScope rejects empty tools array)

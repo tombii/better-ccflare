@@ -41,6 +41,7 @@ import {
 	SessionStrategy,
 } from "@better-ccflare/load-balancer";
 import { Logger, setConsoleLogging } from "@better-ccflare/logger";
+import { setReasoningEffortOverrides } from "@better-ccflare/openai-formats";
 import { handleResponsesRequest } from "@better-ccflare/openai-responses-adapter";
 import {
 	CODEX_DEFAULT_ENDPOINT,
@@ -1328,6 +1329,10 @@ export default async function startServer(options?: {
 	// which may depend on config; mirror the setting there before anything can
 	// route. The config POST handler mirrors it again after a write.
 	setForceAccountModel(config.getForceAccountModel());
+	// Reasoning-effort clamping lives in openai-formats, which must not depend
+	// on config: inject the operator capability map (CCFLARE_REASONING_EFFORTS
+	// env > reasoning_efforts config field) here and on every change below.
+	setReasoningEffortOverrides(config.getReasoningEffortOverrides());
 	// Same constraint for "use extra usage": the usage snapshot that gates
 	// admission is built in providers. Seed it from the environment first (a
 	// one-time adoption into the config file), then mirror the result.
@@ -1862,6 +1867,10 @@ export default async function startServer(options?: {
 			strategy.initialize?.(strategyStore);
 			proxyContext.strategy = strategy;
 			currentStrategy = strategy;
+		}
+		if (key === "reasoning_efforts") {
+			setReasoningEffortOverrides(config.getReasoningEffortOverrides());
+			log.info("Reasoning effort overrides reloaded");
 		}
 		// store_payloads changes are picked up automatically via the getStorePayloads getter
 	});

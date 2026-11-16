@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { ValidationError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { getRequestTools } from "./custom-tools";
 import { translateRequestToAnthropic } from "./request-translator";
@@ -529,9 +530,21 @@ export async function handleResponsesRequest(
 	const responseId = `resp_${crypto.randomBytes(12).toString("hex")}`;
 
 	// 4. Translate to Anthropic format
-	const anthropicBody = translateRequestToAnthropic(
-		body as typeof body & { input: ResponseItem[] },
-	);
+	let anthropicBody: ReturnType<typeof translateRequestToAnthropic>;
+	try {
+		anthropicBody = translateRequestToAnthropic(
+			body as typeof body & { input: ResponseItem[] },
+		);
+	} catch (error) {
+		if (!(error instanceof ValidationError)) throw error;
+		return new Response(
+			JSON.stringify({
+				type: "error",
+				error: { type: "invalid_request_error", message: error.message },
+			}),
+			{ status: 400, headers: { "Content-Type": "application/json" } },
+		);
+	}
 
 	// 4b. Preserve the client's session identity. Codex CLI identifies its
 	// conversation via prompt_cache_key (some versions also send a session_id

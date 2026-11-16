@@ -12,6 +12,7 @@
 	"dependencies": {
 		"@better-ccflare/core": "workspace:*",
 		"@better-ccflare/logger": "workspace:*",
+		"@better-ccflare/openai-formats": "workspace:*",
 		"@better-ccflare/types": "workspace:*"
 	}
 }

@@ -11,6 +11,10 @@ import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../types";
 import { transformRequestBodyModel } from "../utils/model-mapping";
+import {
+	type AnthropicReasoningEffortStyle,
+	applyAnthropicReasoningEffort,
+} from "../utils/reasoning-effort";
 import { drainReader } from "../utils/stream-drain";
 
 // Configuration interface for Anthropic-compatible providers
@@ -196,8 +200,20 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 			},
 			{
 				supportsProviderRouting: () => this.supportsProviderRoutingFor(account),
+				rewriteBody: (body) =>
+					applyAnthropicReasoningEffort(body, this.getReasoningEffortStyle()),
 			},
 		);
+	}
+
+	/**
+	 * Native field for the client's reasoning effort on this upstream. Claude's
+	 * Messages API (and Anthropic-compatible gateways) take
+	 * `output_config.effort`; OpenRouter overrides this to keep its own
+	 * `reasoning: { effort }` object.
+	 */
+	protected getReasoningEffortStyle(): AnthropicReasoningEffortStyle {
+		return "output_config";
 	}
 
 	/**

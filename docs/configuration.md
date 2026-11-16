@@ -11,6 +11,7 @@ This guide covers all configuration options for better-ccflare, including file-b
 - [Environment Variables](#environment-variables)
 - [Model Catalog](#model-catalog)
 - [Editable Provider Model Defaults](#editable-provider-model-defaults)
+- [Reasoning Effort](#reasoning-effort)
 - [Web Search](#web-search)
 - [Force Account Model](#force-account-model)
 - [Use Extra Usage](#use-extra-usage)
@@ -115,6 +116,7 @@ The configuration file is stored at:
 | `PORT` | `port` | number | `PORT=3000` |
 | `DATA_RETENTION_DAYS` | `data_retention_days` | number | `DATA_RETENTION_DAYS=3` (payloads) |
 | `REQUEST_RETENTION_DAYS` | `request_retention_days` | number | `REQUEST_RETENTION_DAYS=90` (metadata) |
+| `CCFLARE_REASONING_EFFORTS` | `reasoning_efforts` | JSON object | `CCFLARE_REASONING_EFFORTS='{"grok-4.7-build-fast":["low","medium","high","xhigh"]}'` (see [Reasoning Effort](#reasoning-effort)) |
 | `better-ccflare_CONFIG_PATH` | - | string | `better-ccflare_CONFIG_PATH=/etc/better-ccflare.json` |
 
 ### Additional Environment Variables
@@ -321,6 +323,36 @@ The **global override** is an editable layer in between: an operator-set default
 Only `codex` is editable by default. `xai` and `qwen` use the same mechanism but are gated behind `CCFLARE_MODEL_DEFAULTS_PROVIDERS` (see [Additional Environment Variables](#additional-environment-variables)) since they haven't been exercised against real accounts as extensively. Disabling a provider doesn't discard its stored override — it just stops applying until the provider is re-enabled.
 
 Manage this via the dashboard (Settings → Advanced → Provider Model Defaults) or directly through the API — see [api-http.md](api-http.md#get-apiconfigprovider-model-defaults).
+
+## Reasoning Effort
+
+A client picks the reasoning effort per request, or omits it to get the provider's default. better-ccflare never adds an effort the client did not send. It carries the effort to the account that serves the request, in that upstream's own field:
+
+| Upstream | Outbound field |
+|----------|----------------|
+| Anthropic and Anthropic-compatible accounts (including Vertex AI and Meta) | `output_config.effort`. A client-sent `output_config.effort` is never overridden. |
+| OpenRouter (the `openrouter` provider, an `openai-compatible` account on `openrouter.ai`, and Kilo) | `reasoning: { effort }` |
+| Other `openai-compatible` endpoints (OpenAI, xAI, CLIProxyAPI, ...) | `reasoning_effort` |
+| Codex | `reasoning.effort`. Unchanged: Codex still applies its own `medium` default. |
+
+Accepted values are `minimal`, `low`, `medium`, `high`, `xhigh` and `max`. Any other value returns `400 invalid_request_error`. If the target model does not support the requested level, the effort is moved to the nearest supported level, preferring the next one down. The built-in tables cover Claude families and some GPT-5/Codex models. Effort is forwarded unchanged to models those tables don't know.
+
+`reasoning_efforts` (config file) or `CCFLARE_REASONING_EFFORTS` (env var, a JSON string) lets an operator declare which levels a model supports. Use it so an unsupported level does not return 400 and break combo failover:
+
+```json
+{
+  "reasoning_efforts": {
+    "grok-4.7-build-fast": ["low", "medium", "high", "xhigh"],
+    "deepseek-v4.1-flash": ["low", "high", "max"]
+  }
+}
+```
+
+- The env var takes precedence over the config file. An env value that is not a JSON object is ignored with a warning, and the file value applies.
+- An entry overrides the built-in table for that model. Models without an entry keep the built-in behaviour.
+- Keys are matched against the model actually sent upstream, after model mapping. Matching ignores case, surrounding whitespace and any provider prefix up to the last `/`.
+- Unknown level names are dropped with a warning. An entry with no valid levels is ignored.
+- The map is loaded at startup and reloaded whenever the `reasoning_efforts` config key changes through `Config.setReasoningEffortOverrides`. Edits made by hand to the file or the env var need a restart.
 
 ## Web Search
 

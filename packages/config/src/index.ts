@@ -104,6 +104,36 @@ export type ProviderModelDefaultOverrides = Record<
  * ...) keep translating models exactly as before; nothing here
  * touches model resolution itself.
  */
+/**
+ * Reasoning-effort capability overrides: a JSON object mapping a model name
+ * to the effort levels it accepts, e.g.
+ * `{"grok-4.7-build-fast":["low","medium","high","xhigh"]}`. The env var
+ * wins over the `reasoning_efforts` config-file field. Level names are
+ * validated where they are applied (@better-ccflare/openai-formats).
+ */
+export const REASONING_EFFORTS_ENV_VAR = "CCFLARE_REASONING_EFFORTS";
+
+export type ReasoningEffortOverrides = Record<string, string[]>;
+
+/**
+ * Keep only entries whose value is a non-empty array of strings (non-string
+ * items are dropped). Returns null when `raw` is not a plain object.
+ */
+function sanitizeReasoningEffortOverrides(
+	raw: unknown,
+): ReasoningEffortOverrides | null {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+	const overrides: ReasoningEffortOverrides = {};
+	for (const [model, levels] of Object.entries(raw)) {
+		if (!Array.isArray(levels)) continue;
+		const values = levels.filter(
+			(level): level is string => typeof level === "string",
+		);
+		if (values.length > 0) overrides[model] = values;
+	}
+	return overrides;
+}
+
 export const PROVIDER_MODEL_DEFAULTS_ENV_VAR =
 	"CCFLARE_MODEL_DEFAULTS_PROVIDERS";
 
@@ -164,6 +194,9 @@ export interface ConfigData {
 	web_search_max_result_chars?: number;
 	web_search_bypass_header?: boolean;
 	provider_model_default_overrides?: ProviderModelDefaultOverrides;
+	// Operator capability map for reasoning effort clamping: model -> levels.
+	// See getReasoningEffortOverrides().
+	reasoning_efforts?: ReasoningEffortOverrides;
 	agent_frontmatter_model_fallback?: boolean;
 	model_catalog_oauth_refresh_enabled?: boolean;
 	health_detail_enabled?: boolean;
@@ -201,6 +234,7 @@ export interface ConfigData {
 		| number
 		| boolean
 		| ProviderModelDefaultOverrides
+		| ReasoningEffortOverrides
 		| undefined;
 }
 
@@ -1215,6 +1249,38 @@ export class Config extends EventEmitter {
 	}
 
 	/**
+	 * Operator reasoning-effort capability map (model -> supported levels),
+	 * used only to clamp a client-supplied effort. Precedence: the
+	 * CCFLARE_REASONING_EFFORTS env var (JSON object), then the
+	 * `reasoning_efforts` config-file field, then an empty map. An env value
+	 * that is blank, not valid JSON or not an object is ignored (with a
+	 * warning for the latter two) and the file value applies.
+	 */
+	getReasoningEffortOverrides(): ReasoningEffortOverrides {
+		const fromEnv = process.env[REASONING_EFFORTS_ENV_VAR];
+		if (fromEnv?.trim()) {
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(fromEnv);
+			} catch {
+				parsed = undefined;
+			}
+			const overrides = sanitizeReasoningEffortOverrides(parsed);
+			if (overrides) return overrides;
+			log.warn(
+				`${REASONING_EFFORTS_ENV_VAR} must be a JSON object of model -> levels; ignoring it`,
+			);
+		}
+		return sanitizeReasoningEffortOverrides(this.data.reasoning_efforts) ?? {};
+	}
+
+	setReasoningEffortOverrides(overrides: ReasoningEffortOverrides): void {
+		this.data.reasoning_efforts = overrides;
+		this.saveConfig();
+		this.emit("change", { key: "reasoning_efforts", newValue: overrides });
+	}
+
+	/**
 	 * Providers currently allowed to edit their model-default overrides:
 	 * "codex" by default, or the exact CCFLARE_MODEL_DEFAULTS_PROVIDERS
 	 * list when that env var is set (comma-separated, trimmed). Never
@@ -1403,7 +1469,12 @@ export class Config extends EventEmitter {
 
 	getAllSettings(): Record<
 		string,
-		string | number | boolean | ProviderModelDefaultOverrides | undefined
+		| string
+		| number
+		| boolean
+		| ProviderModelDefaultOverrides
+		| ReasoningEffortOverrides
+		| undefined
 	> {
 		// Include current strategy (which might come from env)
 		return {

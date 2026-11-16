@@ -40,6 +40,7 @@
         "@better-ccflare/http-api": "workspace:*",
         "@better-ccflare/load-balancer": "workspace:*",
         "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/openai-formats": "workspace:*",
         "@better-ccflare/openai-responses-adapter": "workspace:*",
         "@better-ccflare/proxy": "workspace:*",
         "@better-ccflare/security": "workspace:*",
@@ -224,6 +225,7 @@
       "dependencies": {
         "@better-ccflare/core": "workspace:*",
         "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/openai-formats": "workspace:*",
         "@better-ccflare/types": "workspace:*",
       },
     },
