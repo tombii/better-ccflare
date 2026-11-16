@@ -2347,11 +2347,22 @@ async function proxyWithAccountAttempt(
 
 				// Make the retry request (or unwrap a synthetic provider response).
 				// The original response is discarded only once the replacement
-				// exists, so a throwing send leaves it readable.
+				// exists, so a throwing send leaves it readable. Unlike the
+				// cache_control and reasoning recoveries below, this block has no
+				// local catch: a throwing send unwinds to the attempt's outer catch,
+				// which returns null without draining. Release the original here
+				// then, or its native buffer is retained for a request nobody will
+				// read (#273).
 				const discarded = rawResponse;
-				const replaced = isSyntheticProviderResponse(retryTransformedRequest)
-					? materializeSyntheticResponse(retryTransformedRequest)
-					: await forwardUpstream(retryTransformedRequest);
+				let replaced: Response;
+				try {
+					replaced = isSyntheticProviderResponse(retryTransformedRequest)
+						? materializeSyntheticResponse(retryTransformedRequest)
+						: await forwardUpstream(retryTransformedRequest);
+				} catch (err) {
+					cancelDiscardedResponseBody(discarded);
+					throw err;
+				}
 				cancelDiscardedResponseBody(discarded);
 				rawResponse = replaced;
 			} else {
