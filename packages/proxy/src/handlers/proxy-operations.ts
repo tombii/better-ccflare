@@ -1916,10 +1916,14 @@ async function proxyWithAccountAttempt(
 			? ""
 			: await getValidAccessToken(account, ctx);
 
-		// Pre-process request if provider supports it (e.g., to extract model for URL)
-		if (provider.prepareRequest) {
-			provider.prepareRequest(req, effectiveBodyBuffer, account);
-		}
+		// Pre-process request if provider supports it (e.g., to extract model for URL).
+		// The returned state is this attempt's only: the account object is shared
+		// by concurrent requests, so per-request data must never live there.
+		const providerState = provider.prepareRequest?.(
+			req,
+			effectiveBodyBuffer,
+			account,
+		);
 
 		// Prepare request using account-specific provider
 		const headers = provider.prepareHeaders(
@@ -1998,11 +2002,17 @@ async function proxyWithAccountAttempt(
 				ctx.config.getNightTz?.() ?? "",
 			),
 		);
-		const targetUrl = provider.buildUrl(url.pathname, url.search, account);
-		// Captured right after buildUrl, which reads the same per-account state:
+		const targetUrl = provider.buildUrl(
+			url.pathname,
+			url.search,
+			account,
+			providerState,
+		);
+		// Captured right after buildUrl, which reads the same per-attempt state:
 		// a provider that removes body.model (Vertex) addresses the model in the
-		// URL, and the account's copy can be overwritten by a concurrent request.
-		const providerTargetModel = provider.getTargetModel?.(account) ?? null;
+		// URL, so the state — not the outgoing body — is the only record of it.
+		const providerTargetModel =
+			provider.getTargetModel?.(account, providerState) ?? null;
 
 		const requestInit: RequestInit & { duplex?: "half" } = {
 			method: req.method,
@@ -3087,7 +3097,7 @@ async function proxyWithAccountAttempt(
 						account,
 						req.headers,
 						drainAbortController,
-						{ requestModel: capturedModel },
+						{ requestModel: capturedModel, providerState },
 					);
 					// The caller returns this to the client when every candidate
 					// failed, and it never passes through proxyWithAccount's
@@ -3813,7 +3823,7 @@ async function proxyWithAccountAttempt(
 			account,
 			req.headers,
 			drainAbortController,
-			{ requestModel: outgoing.model || null },
+			{ requestModel: outgoing.model || null, providerState },
 		);
 
 		// Failover to next account on upstream 401 — credentials are invalid/expired
@@ -3869,7 +3879,7 @@ async function proxyWithAccountAttempt(
 				account,
 				req.headers,
 				drainAbortController,
-				{ requestModel: outgoing.model || null },
+				{ requestModel: outgoing.model || null, providerState },
 			);
 		};
 

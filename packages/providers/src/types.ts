@@ -24,7 +24,27 @@ export interface RateLimitInfo {
 export interface ProviderResponseContext {
 	/** Model in the final request body sent upstream, after account mapping/fallback. */
 	requestModel?: string | null;
+	/**
+	 * The `prepareRequest` state of the attempt that produced this response.
+	 * Threaded back so providers can finish what they started without keeping
+	 * per-request data on the shared account object.
+	 */
+	providerState?: ProviderRequestState;
 }
+
+/**
+ * Opaque per-attempt provider state.
+ *
+ * A provider that has to carry information from `prepareRequest` (which runs
+ * before the URL and headers exist) to `buildUrl`, `getTargetModel` and
+ * `processResponse` returns it from `prepareRequest` instead of storing it on
+ * the `Account`. Accounts are shared by concurrent requests, so account-level
+ * storage lets one request's model leak into another's.
+ *
+ * The proxy treats the value as opaque: it only hands the same object back to
+ * the provider on that attempt's later calls.
+ */
+export type ProviderRequestState = Record<string, unknown>;
 
 export interface Provider {
 	name: string;
@@ -55,28 +75,43 @@ export interface Provider {
 
 	/**
 	 * Build the target URL for the provider
+	 * @param state - this attempt's state, as returned by `prepareRequest`
 	 */
-	buildUrl(path: string, query: string, account?: Account): string;
+	buildUrl(
+		path: string,
+		query: string,
+		account?: Account,
+		state?: ProviderRequestState,
+	): string;
 
 	/**
 	 * Optional: Pre-process the request before building URL
 	 * This allows providers to extract information from the request body
-	 * before buildUrl is called (e.g., for including model in URL path)
+	 * before buildUrl is called (e.g., for including model in URL path).
+	 *
+	 * @returns Optional per-attempt state. It is opaque to the proxy, which
+	 *   hands the same value back to `buildUrl` and `getTargetModel` for this
+	 *   attempt and, via `ProviderResponseContext.providerState`, to
+	 *   `processResponse`. Providers must not store per-request data on the
+	 *   shared account object.
 	 */
 	prepareRequest?(
 		request: Request,
 		requestBodyBuffer: ArrayBuffer | null,
 		account: Account,
-	): void;
+	): ProviderRequestState | undefined;
 
 	/**
 	 * Optional: the model the provider addressed in the URL it just built, for
 	 * providers that remove `model` from the request body (Vertex AI). Lets the
 	 * proxy report the model actually called upstream (the served-model
 	 * response header) instead of the client's requested alias. Call it right
-	 * after `buildUrl`; it reflects the most recent `prepareRequest`.
+	 * after `buildUrl` with the same attempt's `state`.
 	 */
-	getTargetModel?(account: Account): string | undefined;
+	getTargetModel?(
+		account: Account,
+		state?: ProviderRequestState,
+	): string | undefined;
 
 	/**
 	 * Prepare headers for the provider request
