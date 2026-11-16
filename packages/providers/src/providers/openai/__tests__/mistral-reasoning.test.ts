@@ -243,6 +243,24 @@ describe("OpenAICompatibleProvider Mistral reasoning_content", () => {
 		expect(body.messages[1].content).toBe("Answer.");
 	});
 
+	it("strips reasoning_content on the EU Mistral endpoint too", async () => {
+		const body = await convert(mistralAccount("https://api.eu.mistral.ai/v1"), [
+			thinking("EU thinking."),
+			text("EU answer."),
+		]);
+		const assistant = body.messages[1];
+
+		expect(assistant.reasoning_content).toBeUndefined();
+		expect(assistant.content).toEqual([
+			{
+				type: "thinking",
+				thinking: [{ type: "text", text: "EU thinking." }],
+				closed: true,
+			},
+			{ type: "text", text: "EU answer." },
+		]);
+	});
+
 	it("does not treat look-alike hosts as Mistral", () => {
 		const body: OpenAIRequest = {
 			model: "m",
