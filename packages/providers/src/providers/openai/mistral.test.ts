@@ -76,6 +76,12 @@ describe("isMistralEndpoint", () => {
 		).toBe(true);
 	});
 
+	it("is true for the US Mistral API host", () => {
+		expect(
+			isMistralEndpoint(endpointAccount("https://api.us.mistral.ai/v1")),
+		).toBe(true);
+	});
+
 	it("is true for an uppercase host", () => {
 		expect(
 			isMistralEndpoint(endpointAccount("https://API.MISTRAL.AI/v1")),
