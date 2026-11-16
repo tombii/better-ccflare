@@ -655,7 +655,7 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **Auto-fallback** - Automatically switch back to higher priority Claude OAuth accounts when their usage windows reset
 - **Auto-refresh** - Automatically start new usage windows when they reset
 - **Usage Window Alignment** - Sessions automatically align with Claude OAuth usage window resets for optimal resource utilization
-- **Usage Throttling** - Configurable monthly token/cost limits per account with peak-hours auto-pause for Zai accounts
+- **Usage Throttling** - Configurable monthly token/cost limits per account with peak-hours auto-pause for Zai and DeepSeek accounts, and per-model peak-hours skipping for TokenHarbor accounts (only the models its own listing marks as peak-priced are avoided; flat-priced models keep using the account)
 - **503 on Pool Exhaustion** - Returns HTTP 503 when all accounts are rate-limited or paused, enabling client-side retry logic
 - **Rate Limit Audit Trail** - Tracks when and why each account became rate-limited (`rate_limited_reason`, `rate_limited_at`)
 
@@ -833,11 +833,12 @@ Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks f
 - [@vansh2408](https://github.com/vansh2408) — [#359](https://github.com/tombii/better-ccflare/pull/359)
 - [@aaapl](https://github.com/aaapl) — [#433](https://github.com/tombii/better-ccflare/pull/433), [#435](https://github.com/tombii/better-ccflare/pull/435), [#461](https://github.com/tombii/better-ccflare/pull/461)
 - [@mjonuschat](https://github.com/mjonuschat) — [#436](https://github.com/tombii/better-ccflare/pull/436)
-- [@anony253](https://github.com/anony253) — [#452](https://github.com/tombii/better-ccflare/pull/452), [#460](https://github.com/tombii/better-ccflare/pull/460)
+- [@anony253](https://github.com/anony253) — [#452](https://github.com/tombii/better-ccflare/pull/452), [#460](https://github.com/tombii/better-ccflare/pull/460), [#556](https://github.com/tombii/better-ccflare/pull/556)
 - [@valentinyanakiev](https://github.com/valentinyanakiev) — [#450](https://github.com/tombii/better-ccflare/pull/450), [#454](https://github.com/tombii/better-ccflare/pull/454), [#459](https://github.com/tombii/better-ccflare/pull/459), [#482](https://github.com/tombii/better-ccflare/pull/482)
 - [@flex-minhyeok](https://github.com/flex-minhyeok) — [#466](https://github.com/tombii/better-ccflare/pull/466)
 - [@omcdowell](https://github.com/omcdowell) — [#493](https://github.com/tombii/better-ccflare/pull/493)
-- [@chatoo2412](https://github.com/chatoo2412) — [#504](https://github.com/tombii/better-ccflare/pull/504)
+- [@chatoo2412](https://github.com/chatoo2412) — [#504](https://github.com/tombii/better-ccflare/pull/504), [#558](https://github.com/tombii/better-ccflare/pull/558)
+- [@csmithington](https://github.com/csmithington) — [#559](https://github.com/tombii/better-ccflare/pull/559)
 
 ## Contributing
 
