@@ -361,7 +361,8 @@ Accepted values are `minimal`, `low`, `medium`, `high`, `xhigh` and `max`. Any o
 - An entry overrides the built-in table for that model. Models without an entry keep the built-in behaviour.
 - Keys are matched against the model actually sent upstream, after model mapping. Matching ignores case, surrounding whitespace and any provider prefix up to the last `/`.
 - Unknown level names are dropped with a warning. An entry with no valid levels is ignored.
-- The map is loaded at startup and reloaded whenever the `reasoning_efforts` config key changes through `Config.setReasoningEffortOverrides`. Edits made by hand to the file or the env var need a restart.
+- The map is loaded at startup. It can be replaced at runtime without a restart through `POST /api/config/reasoning-efforts` (see [api-http.md](api-http.md#post-apiconfigreasoning-efforts)); rejected payloads leave the map unchanged. Edits made by hand to the config file, and changes to `CCFLARE_REASONING_EFFORTS`, still need a restart.
+- `CCFLARE_REASONING_EFFORTS` outranks both the config file and `POST /api/config/reasoning-efforts`: while it is set to a non-blank value the endpoint answers `409` rather than writing a file value that would never be read.
 
 ## Web Search
 

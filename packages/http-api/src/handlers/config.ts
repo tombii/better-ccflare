@@ -2,6 +2,7 @@ import {
 	type Config,
 	filterEnabledProviderModelDefaultOverrides,
 	PROVIDER_MODEL_DEFAULTS_ENV_VAR,
+	REASONING_EFFORTS_ENV_VAR,
 } from "@better-ccflare/config";
 import {
 	DEFAULT_AGENT_MODEL,
@@ -17,9 +18,14 @@ import {
 } from "@better-ccflare/core";
 import {
 	BadRequest,
+	Conflict,
 	errorResponse,
 	jsonResponse,
 } from "@better-ccflare/http-common";
+import {
+	REASONING_EFFORT_VALUES,
+	setReasoningEffortOverrides,
+} from "@better-ccflare/openai-formats";
 import {
 	getProviderModelDefaultFactories,
 	getProviderModelDefaultOverrides,
@@ -434,6 +440,88 @@ export function createConfigHandlers(
 								factory,
 						})),
 					})),
+			});
+		},
+
+		getReasoningEfforts: (): Response => {
+			// Reuse the same blank-aware precedence test Config applies: a
+			// whitespace-only env var is treated as unset, not as an override.
+			const envVarSet = Boolean(process.env[REASONING_EFFORTS_ENV_VAR]?.trim());
+			const overrides = config.getReasoningEffortOverrides();
+			const source = envVarSet
+				? "env"
+				: Object.keys(overrides).length > 0
+					? "file"
+					: "default";
+			return jsonResponse({
+				success: true,
+				data: { overrides, source, envVarSet },
+			});
+		},
+
+		setReasoningEfforts: async (req: Request): Promise<Response> => {
+			let body: unknown;
+			try {
+				body = await req.json();
+			} catch {
+				return errorResponse(BadRequest("Request body must be a JSON object"));
+			}
+			if (!body || typeof body !== "object" || Array.isArray(body)) {
+				return errorResponse(BadRequest("Request body must be a JSON object"));
+			}
+			const raw = (body as { overrides?: unknown }).overrides;
+			if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+				return errorResponse(
+					BadRequest(
+						"Invalid reasoning efforts payload: expected an 'overrides' object mapping model -> array of levels",
+					),
+				);
+			}
+			const allowed = REASONING_EFFORT_VALUES.join(", ");
+			const sanitized: Record<string, string[]> = {};
+			for (const [model, levels] of Object.entries(raw)) {
+				if (!Array.isArray(levels)) {
+					return errorResponse(
+						BadRequest(
+							`Invalid entry for model "${model}": expected an array of levels (${allowed})`,
+						),
+					);
+				}
+				for (const level of levels) {
+					if (
+						typeof level !== "string" ||
+						!(REASONING_EFFORT_VALUES as readonly string[]).includes(level)
+					) {
+						return errorResponse(
+							BadRequest(
+								`Invalid reasoning effort ${JSON.stringify(level)} for model "${model}": allowed values are ${allowed}`,
+							),
+						);
+					}
+				}
+				sanitized[model] = [...levels];
+			}
+			// The env var outranks the config file everywhere the map is read, so
+			// writing the file here would report success while changing nothing.
+			if (process.env[REASONING_EFFORTS_ENV_VAR]?.trim()) {
+				return errorResponse(
+					Conflict(
+						`${REASONING_EFFORTS_ENV_VAR} is set and outranks the config file, so this edit would have no effect. Update or unset the env var instead.`,
+					),
+				);
+			}
+			config.setReasoningEffortOverrides(sanitized);
+			// Mirror setProviderModelDefaults: the server's `change` listener also
+			// pushes this, but tests and other embedders never register it, so write
+			// the live registry directly too.
+			setReasoningEffortOverrides(sanitized);
+			return jsonResponse({
+				success: true,
+				data: {
+					overrides: config.getReasoningEffortOverrides(),
+					source: "file",
+					envVarSet: false,
+				},
 			});
 		},
 

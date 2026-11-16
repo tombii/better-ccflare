@@ -817,6 +817,56 @@ curl -X POST http://localhost:8080/api/config/provider-model-defaults \
   -d '{"overrides": [{"provider": "codex", "family": "opus", "model": "gpt-5.3-codex"}]}'
 ```
 
+#### GET /api/config/reasoning-efforts
+
+Get the operator reasoning-effort capability map: the levels each model is declared to support, used to clamp a client-supplied `output_config.effort` / `reasoning_effort` instead of returning `400`. See [configuration.md](configuration.md#reasoning-effort).
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "overrides": {
+      "grok-4.7-build-fast": ["low", "medium", "high", "xhigh"]
+    },
+    "source": "file",
+    "envVarSet": false
+  }
+}
+```
+
+`overrides` is the effective map. `source` is `"env"` when `CCFLARE_REASONING_EFFORTS` supplies it, `"file"` when the `reasoning_efforts` config field does, and `"default"` when neither does. `envVarSet` reports whether `CCFLARE_REASONING_EFFORTS` is set to a non-blank value.
+
+**Example:**
+```bash
+curl http://localhost:8080/api/config/reasoning-efforts
+```
+
+#### POST /api/config/reasoning-efforts
+
+Replace the whole map. Unlike the provider model defaults endpoint this is not a merge: models omitted from the payload lose their entry, and `{}` clears the map. Every level must be one of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; an unknown level, a non-array entry, or a missing `overrides` object returns `400`.
+
+**Request:**
+```json
+{
+  "overrides": {
+    "grok-4.7-build-fast": ["low", "medium", "high", "xhigh"],
+    "deepseek-v4.1-flash": ["low", "high", "max"]
+  }
+}
+```
+
+**Response:** Same shape as `GET /api/config/reasoning-efforts`, with `source: "file"`. The change takes effect immediately — no restart required.
+
+If `CCFLARE_REASONING_EFFORTS` is set to a non-blank value the endpoint returns `409 Conflict` and writes nothing: the env var outranks the config file, so the edit would silently have no effect. Update or unset the env var (which needs a restart) instead.
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/config/reasoning-efforts \
+  -H "Content-Type: application/json" \
+  -d '{"overrides": {"grok-4.7-build-fast": ["low", "medium", "high", "xhigh"]}}'
+```
+
 #### GET /api/config/combos-enabled
 
 Whether saved combos take part in routing. Config-file-only setting, no environment variable — see [FEATURE_COMBOS.md](../FEATURE_COMBOS.md).
