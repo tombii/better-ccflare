@@ -17,6 +17,10 @@ import {
 } from "@better-ccflare/database";
 import type { RequestResponse } from "@better-ccflare/types";
 import { resetChineseHolidayCache } from "../chinese-holidays";
+import {
+	clearTokenHarborPeakCacheForTests,
+	getTokenHarborPeakListing,
+} from "../tokenharbor-peak";
 import { UsageCollector } from "../usage-collector";
 import type { EndMessage, StartMessage } from "../worker-messages";
 
@@ -147,6 +151,51 @@ describe("UsageCollector - live summary carries peakHours", () => {
 				["peak-5-start-timestamp"],
 			);
 		expect(Number(rows[0]?.timestamp)).toBe(WED_PEAK_MS);
+	});
+
+	test("TokenHarbor narrows on the model that actually served, not the client's", async () => {
+		// An agent-preference rewrite swaps the client's model for a
+		// peak-priced one. The persisted row is classified from the served
+		// model, so the live summary must use the same one or the badge would
+		// appear on reload and vanish on the live tick.
+		const realFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			new Response(
+				JSON.stringify({
+					data: [
+						{
+							id: "deepseek-v4-pro",
+							pricing: { off_peak: { window: "14:00–00:00 UTC" } },
+						},
+					],
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			)) as unknown as typeof globalThis.fetch;
+		try {
+			await getTokenHarborPeakListing({
+				id: "acct-th",
+				name: "th",
+				provider: "anthropic-compatible",
+				custom_endpoint: "https://tokenharbor.ai",
+				api_key: "test-key",
+			} as never);
+
+			const summary = await run(
+				makeStart({
+					requestId: "peak-th-served-model",
+					accountId: "acct-th",
+					providerName: "anthropic-compatible",
+					accountName: "th",
+					timestamp: WED_PEAK_MS,
+					originalModel: "claude-opus-5-5",
+					appliedModel: "deepseek-v4-pro",
+				} as Partial<StartMessage> & { requestId: string }),
+			);
+			expect(summary?.peakHours).toEqual({ active: true });
+		} finally {
+			globalThis.fetch = realFetch;
+			clearTokenHarborPeakCacheForTests();
+		}
 	});
 
 	test("is null for providers without a peak concept", async () => {

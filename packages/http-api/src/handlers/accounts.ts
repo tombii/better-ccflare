@@ -3791,6 +3791,13 @@ export function createAccountCustomEndpointUpdateHandler(
 			// learned refusals so the new endpoint is asked rather than skipped.
 			clearVisionCapability(accountId);
 
+			// Same reasoning for the TokenHarbor peak listing: it is keyed by
+			// account id and describes the OLD endpoint's prices. Dropping it
+			// means the next refresh fetches from the new endpoint rather than
+			// routing on stale prices (isPeakAffected also fails open on the
+			// mismatch, but the cache should not keep serving the old row).
+			clearTokenHarborPeakCacheForAccount(accountId);
+
 			return jsonResponse({
 				success: true,
 				message: "Custom endpoint updated successfully",

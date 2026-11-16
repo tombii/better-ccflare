@@ -99,6 +99,8 @@ export class AutoRefreshScheduler {
 	// Last Chinese holiday feed refresh attempt (DeepSeek peak-hours exemption)
 	private lastHolidayRefreshAt = 0;
 	private holidayRefresh: Promise<unknown> | null = null;
+	// In-flight TokenHarbor listing refresh, so ticks don't stack them
+	private tokenHarborPeakRefresh: Promise<void> | null = null;
 	// Track the rate_limit_reset timestamp for each account when we last refreshed it
 	// This allows us to detect when a new window has started (different rate_limit_reset)
 	private lastRefreshResetTime: Map<string, number> = new Map();
@@ -1602,7 +1604,19 @@ export class AutoRefreshScheduler {
 					this.holidayRefresh = null;
 				});
 		}
-		await this.refreshTokenHarborPeakListings();
+		// TokenHarbor's listing refresh can take up to 15s per account, and it
+		// feeds the selector rather than any pause decision here. Fire-and-forget
+		// like the holiday feed, so a slow TokenHarbor never delays the zai and
+		// deepseek checks. The listing module applies its own TTL and dedupes
+		// concurrent fetches, so calling it every tick is cheap; the field only
+		// stops a second pass starting while one is still running.
+		if (!this.tokenHarborPeakRefresh) {
+			this.tokenHarborPeakRefresh = this.refreshTokenHarborPeakListings()
+				.catch(() => {})
+				.finally(() => {
+					this.tokenHarborPeakRefresh = null;
+				});
+		}
 		for (const [provider, isPeak] of Object.entries(PEAK_HOUR_CHECKS)) {
 			// DeepSeek's decision depends on the holiday calendar. If no calendar
 			// covers this year yet (e.g. first tick after startup in 2027+), wait for

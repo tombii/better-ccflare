@@ -1163,10 +1163,13 @@ export class UsageCollector {
 			// that disagreed with createRequestsSummaryHandler would make the
 			// badge appear on the live tick and vanish on reload.
 			// TokenHarbor has no provider-wide window: its peak state is a
-			// property of the model the account actually called, so the
-			// requested model narrows the question. `limitModel` is what the
-			// client asked for; a remap onto a peak-priced model is resolved
-			// against the account's listing inside the helper.
+			// property of the model the account actually called, so that model
+			// narrows the question. Prefer the served model — `usage.model`,
+			// then the agent-rewritten `appliedModel` — because the persisted
+			// row is classified from the same one; using the client's model
+			// (`limitModel`/`originalModel`) here would let a rewrite show the
+			// badge live and drop it on reload, or the reverse. The helper still
+			// resolves the account's own remaps onto the listing's ids.
 			peakHours:
 				startMessage.accountId && startMessage.accountId !== NO_ACCOUNT_ID
 					? (getPeakHoursState(
@@ -1175,7 +1178,11 @@ export class UsageCollector {
 						) ??
 						getTokenHarborPeakState(
 							startMessage.accountId,
-							startMessage.limitModel ?? startMessage.originalModel ?? null,
+							state.usage.model ??
+								startMessage.appliedModel ??
+								startMessage.limitModel ??
+								startMessage.originalModel ??
+								null,
 							startMessage.timestamp,
 						))
 					: null,

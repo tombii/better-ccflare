@@ -197,6 +197,11 @@ function DeepseekPeakBadge({ isPeak }: { isPeak: boolean }) {
 /**
  * TokenHarbor's peak pricing is per model, so the badge says which models it
  * refers to rather than naming a provider-wide window.
+ *
+ * The wording is deliberately neutral ("pricing", not "skipped"): the listing
+ * stays cached with the toggle off, and the selector's non-empty-pool fallback
+ * still routes to a peak-priced slot when nothing else is usable, so the badge
+ * cannot promise that a request was avoided.
  */
 function TokenHarborPeakBadge({
 	isPeak,
@@ -206,9 +211,7 @@ function TokenHarborPeakBadge({
 	models?: string[] | null;
 }) {
 	const which =
-		models && models.length > 0
-			? `${models.join(", ")} `
-			: "peak-priced models ";
+		models && models.length > 0 ? models.join(", ") : "peak-priced models";
 	return (
 		<div className="flex items-center gap-2">
 			<span
@@ -221,7 +224,7 @@ function TokenHarborPeakBadge({
 				<span
 					className={`h-1.5 w-1.5 rounded-full ${isPeak ? "bg-orange-500" : "bg-green-500"}`}
 				/>
-				{isPeak ? `Peak hours: ${which}skipped` : "Off-peak hours"}
+				{isPeak ? `Peak pricing: ${which}` : "Off-peak pricing"}
 			</span>
 		</div>
 	);

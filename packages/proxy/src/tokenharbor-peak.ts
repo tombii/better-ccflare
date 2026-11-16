@@ -308,6 +308,17 @@ export function isPeakAffected(
 
 	const listing = listings.get(account.id);
 	if (!listing) return false;
+	// The listing is keyed by account id, so an endpoint or provider edit keeps
+	// it alive for a row that is no longer the upstream it was fetched from.
+	// Prices from that upstream must not govern the new one: fail open instead
+	// of skipping another gateway on TokenHarbor's prices. A plain string
+	// comparison on the stored row, not a URL parse — this is the request path.
+	if (
+		account.provider !== TOKENHARBOR_PROVIDER ||
+		account.custom_endpoint !== listing.account.custom_endpoint
+	) {
+		return false;
+	}
 
 	// `mapModelName` keeps a provider-routing suffix (`model {"only":[...]}`)
 	// on the value it returns, because the request rewriter reads it back out.

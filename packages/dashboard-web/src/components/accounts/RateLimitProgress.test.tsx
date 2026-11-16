@@ -840,8 +840,23 @@ describe("RateLimitProgress — threshold tooltip wording", () => {
 						peakPricedModels={["deepseek-v4-pro"]}
 					/>,
 				);
-				expect(html).toContain("Peak hours");
-				expect(html).toContain("deepseek-v4-pro");
+				expect(html).toContain("Peak pricing: deepseek-v4-pro");
+			});
+
+			it("never claims the models are skipped", () => {
+				// The listing stays cached with the toggle off, and the
+				// non-empty-pool fallback can still route to a peak-priced slot,
+				// so "skipped" would be a promise the badge cannot keep.
+				const html = renderToStaticMarkup(
+					<RateLimitProgress
+						resetIso={null}
+						provider="anthropic-compatible"
+						peakHours={{ active: true }}
+						peakPricedModels={["deepseek-v4-pro"]}
+					/>,
+				);
+				expect(html).not.toContain("skipped");
+				expect(html).not.toContain("Peak hours");
 			});
 
 			it("also renders the badge on the main path when usage data exists", () => {
@@ -855,11 +870,12 @@ describe("RateLimitProgress — threshold tooltip wording", () => {
 						peakPricedModels={["deepseek-v4-pro", "deepseek-v4.1-flash"]}
 					/>,
 				);
-				expect(html).toContain("Peak hours");
-				expect(html).toContain("deepseek-v4-pro, deepseek-v4.1-flash");
+				expect(html).toContain(
+					"Peak pricing: deepseek-v4-pro, deepseek-v4.1-flash",
+				);
 			});
 
-			it("says Off-peak when no peak-priced model is inside its window", () => {
+			it("says Off-peak pricing when no peak-priced model is inside its window", () => {
 				const html = renderToStaticMarkup(
 					<RateLimitProgress
 						resetIso={null}
@@ -868,8 +884,8 @@ describe("RateLimitProgress — threshold tooltip wording", () => {
 						peakPricedModels={["deepseek-v4-pro"]}
 					/>,
 				);
-				expect(html).toContain("Off-peak hours");
-				expect(html).not.toContain("Peak hours:");
+				expect(html).toContain("Off-peak pricing");
+				expect(html).not.toContain("Peak pricing:");
 			});
 
 			it("renders nothing when the account has no listing (peakHours null)", () => {

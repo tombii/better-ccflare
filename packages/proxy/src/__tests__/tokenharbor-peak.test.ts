@@ -255,6 +255,28 @@ describe("isPeakAffected", () => {
 		expect(isPeakAffected(account, "claude-opus-5-5", WED(2))).toBe(true);
 	});
 
+	it("ignores a listing once the account's endpoint has moved off TokenHarbor", async () => {
+		stubListing();
+		const account = makeAccount();
+		await getTokenHarborPeakListing(account);
+		expect(isPeakAffected(account, "deepseek-v4-pro", WED(2))).toBe(true);
+		// The same row (same id, toggle and cached listing) was edited onto
+		// another gateway: its prices are not TokenHarbor's.
+		const moved = {
+			...account,
+			custom_endpoint: "https://other-gateway.example",
+		};
+		expect(isPeakAffected(moved, "deepseek-v4-pro", WED(2))).toBe(false);
+	});
+
+	it("ignores a listing once the account's provider has changed", async () => {
+		stubListing();
+		const account = makeAccount();
+		await getTokenHarborPeakListing(account);
+		const reprovided = { ...account, provider: "zai" };
+		expect(isPeakAffected(reprovided, "deepseek-v4-pro", WED(2))).toBe(false);
+	});
+
 	it("has no opinion without a model", async () => {
 		stubListing();
 		const account = makeAccount();
