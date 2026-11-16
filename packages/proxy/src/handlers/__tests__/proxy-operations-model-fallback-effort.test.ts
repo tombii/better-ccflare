@@ -155,13 +155,13 @@ async function runEffortFallback(
 	return sent;
 }
 
-// sonnet falls back to claude-haiku-4-5, but the haiku FAMILY is mapped to an
-// Opus model. The provider transform therefore clamps the fallback as Opus,
-// while claude-haiku-4-5 is what is actually sent: the effort has to be
-// re-clamped against the model on the wire.
+// sonnet falls back to claude-opus-4-5, but the opus FAMILY is mapped to an
+// Opus 4.7 model. The provider transform therefore clamps the fallback as
+// Opus 4.7, while claude-opus-4-5 is what is actually sent: the effort has to
+// be re-clamped against the model on the wire (Opus 4.5 stops at high).
 const MAPPINGS = JSON.stringify({
-	sonnet: ["claude-sonnet-4-6", "claude-haiku-4-5"],
-	haiku: "claude-opus-4-7",
+	sonnet: ["claude-sonnet-4-6", "claude-opus-4-5"],
+	opus: "claude-opus-4-7",
 });
 
 describe("proxyWithAccount — model fallback re-clamps reasoning effort", () => {
@@ -179,30 +179,31 @@ describe("proxyWithAccount — model fallback re-clamps reasoning effort", () =>
 	it("anthropic-compatible: output_config.effort is resolved against the sent fallback model", async () => {
 		const sent = await runEffortFallback(
 			makeAccount({ model_mappings: MAPPINGS }),
-			{ model: "claude-sonnet-4-5", reasoning: { effort: "high" } },
+			{ model: "claude-sonnet-4-5", reasoning: { effort: "max" } },
 		);
 
 		expect(sent).toHaveLength(2);
 		expect(sent[0].model).toBe("claude-sonnet-4-6");
-		expect(sent[0].output_config).toEqual({ effort: "high" });
-		expect(sent[1].model).toBe("claude-haiku-4-5");
-		expect(sent[1].output_config).toEqual({ effort: "medium" });
+		expect(sent[0].output_config).toEqual({ effort: "max" });
+		expect(sent[1].model).toBe("claude-opus-4-5");
+		expect(sent[1].output_config).toEqual({ effort: "high" });
 		expect(sent[1].reasoning).toBeUndefined();
 	});
 
 	it("anthropic-compatible: starts from the client's original effort, not the previous clamp", async () => {
-		// The Opus model the transform clamps against only allows "low", so the
-		// transformed body carries "low". Re-clamping that value for haiku would
-		// keep "low"; starting from the client's "high" gives haiku's "medium".
+		// The Opus 4.7 model the transform clamps against only allows "low", so
+		// the transformed body carries "low". Re-clamping that value for Opus 4.5
+		// would keep "low"; starting from the client's "max" gives Opus 4.5's
+		// "high".
 		setReasoningEffortOverrides({ "claude-opus-4-7": ["low"] });
 		const sent = await runEffortFallback(
 			makeAccount({ model_mappings: MAPPINGS }),
-			{ model: "claude-sonnet-4-5", reasoning: { effort: "high" } },
+			{ model: "claude-sonnet-4-5", reasoning: { effort: "max" } },
 		);
 
 		expect(sent).toHaveLength(2);
-		expect(sent[1].model).toBe("claude-haiku-4-5");
-		expect(sent[1].output_config).toEqual({ effort: "medium" });
+		expect(sent[1].model).toBe("claude-opus-4-5");
+		expect(sent[1].output_config).toEqual({ effort: "high" });
 	});
 
 	it("anthropic-compatible: a client-native output_config.effort is never touched", async () => {
@@ -216,7 +217,7 @@ describe("proxyWithAccount — model fallback re-clamps reasoning effort", () =>
 		);
 
 		expect(sent).toHaveLength(2);
-		expect(sent[1].model).toBe("claude-haiku-4-5");
+		expect(sent[1].model).toBe("claude-opus-4-5");
 		expect(sent[1].output_config).toEqual({ effort: "max" });
 	});
 
@@ -228,14 +229,14 @@ describe("proxyWithAccount — model fallback re-clamps reasoning effort", () =>
 				custom_endpoint: "https://cliproxy.example.test/v1",
 				model_mappings: MAPPINGS,
 			}),
-			{ model: "claude-sonnet-4-5", reasoning: { effort: "high" } },
+			{ model: "claude-sonnet-4-5", reasoning: { effort: "max" } },
 		);
 
 		expect(sent).toHaveLength(2);
 		expect(sent[0].model).toBe("claude-sonnet-4-6");
-		expect(sent[0].reasoning_effort).toBe("high");
-		expect(sent[1].model).toBe("claude-haiku-4-5");
-		expect(sent[1].reasoning_effort).toBe("medium");
+		expect(sent[0].reasoning_effort).toBe("max");
+		expect(sent[1].model).toBe("claude-opus-4-5");
+		expect(sent[1].reasoning_effort).toBe("high");
 		expect(sent[1].reasoning).toBeUndefined();
 	});
 
@@ -246,7 +247,7 @@ describe("proxyWithAccount — model fallback re-clamps reasoning effort", () =>
 		);
 
 		expect(sent).toHaveLength(2);
-		expect(sent[1].model).toBe("claude-haiku-4-5");
+		expect(sent[1].model).toBe("claude-opus-4-5");
 		expect(sent[1].output_config).toBeUndefined();
 		expect(sent[1].reasoning_effort).toBeUndefined();
 	});

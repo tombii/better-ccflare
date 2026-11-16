@@ -119,7 +119,8 @@ export interface ReclampReasoningEffortOptions {
  * Exactly one native field is rewritten, the first present of
  * `output_config.effort` (Anthropic-shaped), `reasoning_effort` (Chat
  * Completions) or `reasoning.effort` (OpenRouter). An effort is never added
- * where none is present.
+ * where none is present; it is removed when the model rejects the parameter
+ * outright (resolution returns undefined, e.g. Claude Haiku 4.5).
  *
  * `requestedEffort` is the client's original value (the internal
  * `reasoning.effort` before the transform). When given, resolution starts from
@@ -148,7 +149,14 @@ export function reclampReasoningEffort(
 			return false;
 		}
 		const clamped = clampEffort(requestedEffort, model);
-		if (clamped === undefined || clamped === outputConfig.effort) return false;
+		if (clamped === outputConfig.effort) return false;
+		if (clamped === undefined) {
+			// The model rejects the parameter outright (e.g. Claude Haiku 4.5):
+			// a stale effort would 400, so remove it and keep the other keys.
+			const { effort: _dropped, ...rest } = outputConfig;
+			body.output_config = rest;
+			return true;
+		}
 		body.output_config = { ...outputConfig, effort: clamped };
 		return true;
 	}
@@ -158,8 +166,11 @@ export function reclampReasoningEffort(
 			requestedEffort ?? body.reasoning_effort,
 			model,
 		);
-		if (clamped === undefined || clamped === body.reasoning_effort)
-			return false;
+		if (clamped === body.reasoning_effort) return false;
+		if (clamped === undefined) {
+			delete body.reasoning_effort;
+			return true;
+		}
 		body.reasoning_effort = clamped;
 		return true;
 	}
@@ -167,7 +178,12 @@ export function reclampReasoningEffort(
 	const reasoning = body.reasoning;
 	if (isPlainObject(reasoning) && reasoning.effort !== undefined) {
 		const clamped = clampEffort(requestedEffort ?? reasoning.effort, model);
-		if (clamped === undefined || clamped === reasoning.effort) return false;
+		if (clamped === reasoning.effort) return false;
+		if (clamped === undefined) {
+			const { effort: _dropped, ...rest } = reasoning;
+			body.reasoning = rest;
+			return true;
+		}
 		body.reasoning = { ...reasoning, effort: clamped };
 		return true;
 	}
