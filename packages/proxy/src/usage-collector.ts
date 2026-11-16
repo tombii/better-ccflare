@@ -33,6 +33,7 @@ import {
 	sanitizeProjectName,
 } from "./project-attribution";
 import { combineChunks } from "./stream-tee";
+import { getTokenHarborPeakState } from "./tokenharbor-peak";
 import {
 	type EndMessage,
 	isModelRewrite,
@@ -1161,9 +1162,29 @@ export class UsageCollector {
 			// Chinese holiday calendar, which only the server holds. A summary
 			// that disagreed with createRequestsSummaryHandler would make the
 			// badge appear on the live tick and vanish on reload.
+			// TokenHarbor has no provider-wide window: its peak state is a
+			// property of the model the account actually called, so that model
+			// narrows the question. Prefer the served model — `usage.model`,
+			// then the agent-rewritten `appliedModel` — because the persisted
+			// row is classified from the same one; using the client's model
+			// (`limitModel`/`originalModel`) here would let a rewrite show the
+			// badge live and drop it on reload, or the reverse. The helper still
+			// resolves the account's own remaps onto the listing's ids.
 			peakHours:
 				startMessage.accountId && startMessage.accountId !== NO_ACCOUNT_ID
-					? getPeakHoursState(startMessage.providerName, startMessage.timestamp)
+					? (getPeakHoursState(
+							startMessage.providerName,
+							startMessage.timestamp,
+						) ??
+						getTokenHarborPeakState(
+							startMessage.accountId,
+							state.usage.model ??
+								startMessage.appliedModel ??
+								startMessage.limitModel ??
+								startMessage.originalModel ??
+								null,
+							startMessage.timestamp,
+						))
 					: null,
 			// Same value handed to saveRequest above, so a dashboard does not have
 			// to reload before a request shows its terminal state. Note this is

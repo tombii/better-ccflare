@@ -1,6 +1,9 @@
 import { validateNumber } from "@better-ccflare/core";
 import { BadRequest, Unauthorized } from "@better-ccflare/errors";
-import { getPeakHoursState } from "@better-ccflare/proxy";
+import {
+	getPeakHoursState,
+	getTokenHarborPeakState,
+} from "@better-ccflare/proxy";
 import {
 	createAccountAddHandler,
 	createAccountAutoFallbackHandler,
@@ -249,7 +252,13 @@ export class APIRouter {
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
 		const requestsSummaryHandler = createRequestsSummaryHandler(
 			dbOps.getAdapter(),
-			getPeakHoursState,
+			// Provider-wide windows (zai/deepseek/anthropic) first; TokenHarbor
+			// has no provider-level window, so its state is resolved per account
+			// and per model from that account's cached listing. A request whose
+			// account has no listing stays null, exactly as before.
+			(provider, ts, accountId, model) =>
+				getPeakHoursState(provider, ts) ??
+				(accountId ? getTokenHarborPeakState(accountId, model, ts) : null),
 		);
 		const requestsDetailHandler = createRequestsDetailHandler(dbOps);
 		const configHandlers = createConfigHandlers(
@@ -851,7 +860,7 @@ export class APIRouter {
 				)(req, url);
 			}
 
-			// Account peak-hours-pause toggle (Zai accounts only)
+			// Account peak-hours-pause toggle (Zai, DeepSeek and TokenHarbor)
 			if (path.endsWith("/peak-hours-pause") && method === "POST") {
 				const peakHoursPauseHandler = createAccountPeakHoursPauseHandler(
 					this.context.dbOps,

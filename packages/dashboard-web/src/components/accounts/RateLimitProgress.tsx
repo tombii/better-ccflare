@@ -30,6 +30,7 @@ interface RateLimitProgressProps {
 	usageThrottledWindows?: string[]; // Exact usage windows currently being throttled
 	provider: string;
 	peakHours?: { active: boolean } | null; // Server-computed peak state (/api/accounts)
+	peakPricedModels?: string[] | null; // TokenHarbor: models the account's listing marks peak-priced
 	className?: string;
 	showWeekly?: boolean; // Whether to show weekly usage as well
 	pauseThresholdFiveHour?: number | null; // Pause at this percent of the 5-hour window; null = off
@@ -193,6 +194,42 @@ function DeepseekPeakBadge({ isPeak }: { isPeak: boolean }) {
 	);
 }
 
+/**
+ * TokenHarbor's peak pricing is per model, so the badge says which models it
+ * refers to rather than naming a provider-wide window.
+ *
+ * The wording is deliberately neutral ("pricing", not "skipped"): the listing
+ * stays cached with the toggle off, and the selector's non-empty-pool fallback
+ * still routes to a peak-priced slot when nothing else is usable, so the badge
+ * cannot promise that a request was avoided.
+ */
+function TokenHarborPeakBadge({
+	isPeak,
+	models,
+}: {
+	isPeak: boolean;
+	models?: string[] | null;
+}) {
+	const which =
+		models && models.length > 0 ? models.join(", ") : "peak-priced models";
+	return (
+		<div className="flex items-center gap-2">
+			<span
+				className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${
+					isPeak
+						? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+						: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+				}`}
+			>
+				<span
+					className={`h-1.5 w-1.5 rounded-full ${isPeak ? "bg-orange-500" : "bg-green-500"}`}
+				/>
+				{isPeak ? `Peak pricing: ${which}` : "Off-peak pricing"}
+			</span>
+		</div>
+	);
+}
+
 export function RateLimitProgress({
 	resetIso,
 	usageUtilization,
@@ -203,6 +240,7 @@ export function RateLimitProgress({
 	usageThrottledWindows = [],
 	provider,
 	peakHours = null,
+	peakPricedModels = null,
 	className,
 	showWeekly = false,
 	pauseThresholdFiveHour = null,
@@ -234,6 +272,19 @@ export function RateLimitProgress({
 			return (
 				<div className={cn("space-y-3", className)}>
 					<DeepseekPeakBadge isPeak={peakHours.active} />
+				</div>
+			);
+		}
+		// TokenHarbor has no usage windows either, so this early return is its
+		// normal path. Its peak pricing is per model, so the badge names the
+		// affected models rather than a provider-wide window.
+		if (provider === "anthropic-compatible" && peakHours) {
+			return (
+				<div className={cn("space-y-3", className)}>
+					<TokenHarborPeakBadge
+						isPeak={peakHours.active}
+						models={peakPricedModels}
+					/>
 				</div>
 			);
 		}
@@ -684,6 +735,9 @@ export function RateLimitProgress({
 			)}
 			{provider === "deepseek" && peakHours && (
 				<DeepseekPeakBadge isPeak={isPeak} />
+			)}
+			{provider === "anthropic-compatible" && peakHours && (
+				<TokenHarborPeakBadge isPeak={isPeak} models={peakPricedModels} />
 			)}
 			{hasOrphanThrottledWindow && usageThrottledUntil != null && (
 				<div className="flex items-center justify-between">

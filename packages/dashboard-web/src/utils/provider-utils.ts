@@ -168,6 +168,32 @@ export function nightWindowTitle(provider: string): string {
 }
 
 /**
+ * Tooltip for the peak-hours pause toggle.
+ *
+ * Zai and DeepSeek pause the whole account during a fixed window. TokenHarbor
+ * has no provider-wide window: only the models its listing marks as
+ * peak-priced are avoided, and only during their own peak window, so the
+ * account keeps serving the flat-priced models at the same moment.
+ */
+export function peakHoursPauseTitle(account: {
+	provider: string;
+	peakPricedModels?: string[] | null;
+}): string {
+	if (account.provider === "deepseek") {
+		return "Automatically pause this account during DeepSeek peak hours (01:00–04:00 and 06:00–10:00 UTC, weekdays, excluding Chinese public holidays)";
+	}
+	if (account.provider === "zai") {
+		return "Automatically pause this account during Zai peak hours (14:00–18:00 SGT)";
+	}
+	const models = account.peakPricedModels;
+	const which =
+		models && models.length > 0
+			? `the models this account lists as peak-priced (${models.join(", ")})`
+			: "the models this account lists as peak-priced";
+	return `Skip this account for ${which} during their peak hours, when those models cost full price. Flat-priced models keep using this account. The window and model list come from the account's own /v1/models listing.`;
+}
+
+/**
  * Check if a given timestamp (default: now) falls within Zai peak hours.
  * Zai peak hours are weekdays 14:00–18:00 Singapore time (UTC+8), Monday–Friday.
  */

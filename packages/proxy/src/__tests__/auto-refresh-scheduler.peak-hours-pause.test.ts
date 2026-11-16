@@ -91,6 +91,69 @@ describe("checkPeakHoursPause", () => {
 		expect(run).not.toHaveBeenCalled();
 	});
 
+	it("does not wait for a slow TokenHarbor listing refresh", async () => {
+		// The listing fetch can take up to 15s per account. Awaiting it would
+		// delay the unrelated zai/deepseek pause checks behind it, so the tick
+		// starts it and moves on.
+		setSystemTime(new Date(Date.UTC(2026, 8, 23, 2, 0)));
+		const realFetch = globalThis.fetch;
+		let abortFetch: (() => void) | null = null;
+		globalThis.fetch = ((_url: string, init?: RequestInit) =>
+			new Promise((_resolve, reject) => {
+				abortFetch = () => reject(new Error("aborted for test cleanup"));
+				init?.signal?.addEventListener("abort", () => {
+					abortFetch?.();
+				});
+			})) as unknown as typeof fetch;
+		try {
+			const { scheduler, run } = makeScheduler({
+				"anthropic-compatible": [
+					{
+						id: "th1",
+						name: "tokenharbor",
+						paused: 0,
+						pause_reason: null,
+					},
+				] as never,
+				deepseek: [{ id: "d1", name: "ds", paused: 0, pause_reason: null }],
+			});
+			// The TokenHarbor refresh query selects more columns than the tick's
+			// other queries; give it the shape the refresh loop casts to Account.
+			const query = (scheduler as unknown as { db: { query: unknown } }).db
+				.query as ReturnType<typeof mock>;
+			const originalImpl = query.getMockImplementation();
+			query.mockImplementation(async (sql: string, params: unknown[]) => {
+				if (params?.[0] === "anthropic-compatible") {
+					return [
+						{
+							id: "th1",
+							name: "tokenharbor",
+							provider: "anthropic-compatible",
+							custom_endpoint: "https://tokenharbor.ai",
+							api_key: "test-key",
+							peak_hours_pause_enabled: 1,
+							model_mappings: null,
+							model_fallbacks: null,
+						},
+					];
+				}
+				return originalImpl ? originalImpl(sql, params) : [];
+			});
+
+			// Resolves promptly even though the listing fetch never settles.
+			const result = await Promise.race([
+				tick(scheduler).then(() => "done" as const),
+				new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 500)),
+			]);
+			expect(result).toBe("done");
+			// The DeepSeek pause still ran.
+			expect(run).toHaveBeenCalledTimes(1);
+		} finally {
+			abortFetch?.();
+			globalThis.fetch = realFetch;
+		}
+	});
+
 	it("waits for the holiday calendar before judging a year with no embedded data", async () => {
 		// Wed 2027-03-10 02:00 UTC: weekday peak window, but a feed holiday.
 		setSystemTime(new Date(Date.UTC(2027, 2, 10, 2, 0)));

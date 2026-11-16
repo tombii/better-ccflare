@@ -655,7 +655,7 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **Auto-fallback** - Automatically switch back to higher priority Claude OAuth accounts when their usage windows reset
 - **Auto-refresh** - Automatically start new usage windows when they reset
 - **Usage Window Alignment** - Sessions automatically align with Claude OAuth usage window resets for optimal resource utilization
-- **Usage Throttling** - Configurable monthly token/cost limits per account with peak-hours auto-pause for Zai accounts
+- **Usage Throttling** - Configurable monthly token/cost limits per account with peak-hours auto-pause for Zai and DeepSeek accounts, and per-model peak-hours skipping for TokenHarbor accounts (only the models its own listing marks as peak-priced are avoided; flat-priced models keep using the account)
 - **503 on Pool Exhaustion** - Returns HTTP 503 when all accounts are rate-limited or paused, enabling client-side retry logic
 - **Rate Limit Audit Trail** - Tracks when and why each account became rate-limited (`rate_limited_reason`, `rate_limited_at`)
 

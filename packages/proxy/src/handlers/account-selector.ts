@@ -21,6 +21,7 @@ import type {
 	RequestMeta,
 } from "@better-ccflare/types";
 import { getKnownCodexModels } from "../codex-model-catalog";
+import { isPeakAffected } from "../tokenharbor-peak";
 import {
 	isAccountAllowedForApiKey,
 	isModelAllowedForApiKey,
@@ -1254,6 +1255,48 @@ export async function selectAccountsForRequest(
 						});
 					}
 
+					// TokenHarbor's model-aware peak pricing, the combo counterpart
+					// of the filter in `finishSelection`: this branch returns before
+					// reaching it, so a peak-priced slot would otherwise be chosen
+					// during peak even when a flat-priced slot is available.
+					//
+					// Reorder, never drop. `slots` must stay index-aligned with the
+					// returned accounts (proxy.ts pairs them by position), so the
+					// two arrays move in lockstep: peak-affected slots sort after
+					// the rest, relative order preserved within each group. The
+					// index sort is stable, which keeps the priority order intact.
+					// With no flat-priced slot the order is left untouched — the
+					// same fail-open fallback the pool path uses.
+					if (selected.length > 1) {
+						const peakAffected = selected.map((candidate) =>
+							isPeakAffected(
+								candidate.account,
+								candidate.modelOverride?.trim()
+									? candidate.modelOverride
+									: model,
+							),
+						);
+						if (peakAffected.some((affected) => !affected)) {
+							const order = selected
+								.map((_candidate, index) => index)
+								.sort(
+									(a, b) => Number(peakAffected[a]) - Number(peakAffected[b]),
+								);
+							if (order.some((index, position) => index !== position)) {
+								const accountsByIndex = availableAccounts.slice();
+								const slotsByIndex = slotEntries.slice();
+								order.forEach((from, to) => {
+									const account = accountsByIndex[from];
+									const slot = slotsByIndex[from];
+									if (account && slot) {
+										availableAccounts[to] = account;
+										slotEntries[to] = slot;
+									}
+								});
+							}
+						}
+					}
+
 					if (excludedSlots > 0) {
 						log.warn(
 							`Skipping ${excludedSlots} combo slot(s) whose account is excluded for this request type (Codex CLI traffic must not use Anthropic OAuth accounts)`,
@@ -1548,6 +1591,15 @@ export async function selectAccountsForRequest(
 				return applyXaiCacheAffinity(candidates, meta);
 			}
 			candidates = usageEligible;
+			// TokenHarbor's peak pricing is per model, not per provider: only the
+			// models its listing marks as having an off-peak rate are avoided
+			// during their peak window, so an account stays usable for the
+			// flat-priced Claude/GLM/Grok models at the same moment. A no-op for
+			// every other provider and for accounts with the toggle off.
+			const peakEligible = candidates.filter(
+				(account) => !isPeakAffected(account, model),
+			);
+			if (peakEligible.length > 0) candidates = peakEligible;
 			const pairs = candidates.map((account) => ({
 				accountId: account.id,
 				model: mapModelName(model, account),

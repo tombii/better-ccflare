@@ -126,6 +126,13 @@ export {
 	forwardToClient,
 	type ResponseHandlerOptions,
 } from "./response-handler";
+export {
+	clearTokenHarborPeakCacheForAccount,
+	getPeakPricedModelIds,
+	getTokenHarborPeakState,
+	isTokenHarborEndpoint,
+	TOKENHARBOR_PROVIDER,
+} from "./tokenharbor-peak";
 export type { ProxyRequest, ProxyResponse } from "./types";
 export type { UsageCollectorHealth } from "./usage-collector";
 export {

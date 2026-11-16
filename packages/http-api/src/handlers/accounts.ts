@@ -47,11 +47,16 @@ import {
 	clearModelCooldownsForAccount,
 	clearOpenAICompatibleModelCacheForAccount,
 	clearPendingRotation,
+	clearTokenHarborPeakCacheForAccount,
 	clearVisionCapability,
 	getPeakHoursState,
+	getPeakPricedModelIds,
+	getTokenHarborPeakState,
 	getUsageThrottleStatus,
+	isTokenHarborEndpoint,
 	refreshCodexUsageForAccount,
 	restartUsagePollingForAccount,
+	TOKENHARBOR_PROVIDER,
 } from "@better-ccflare/proxy";
 import type {
 	Account,
@@ -847,9 +852,28 @@ export function createAccountsListHandler(
 					autoPauseOnOverageEnabled:
 						account.auto_pause_on_overage_enabled === 1,
 					peakHoursPauseEnabled: account.peak_hours_pause_enabled === 1,
+					// TokenHarbor's peak pricing is per model, which the toggle
+					// supports only on its own host; every other
+					// anthropic-compatible endpoint has no peak concept at all.
+					peakHoursPauseSupported:
+						account.provider === "zai" ||
+						account.provider === "deepseek" ||
+						(account.provider === TOKENHARBOR_PROVIDER &&
+							isTokenHarborEndpoint(account as never)),
+					peakPricedModels:
+						account.provider === TOKENHARBOR_PROVIDER
+							? getPeakPricedModelIds(account.id)
+							: null,
 					// NOT NULL on both backends; `!!` normalises 1/0 and true/false.
 					nightWindowEnabled: !!account.night_window_enabled,
-					peakHours: getPeakHoursState(account.provider, now),
+					// Provider-wide windows first (zai/deepseek/anthropic), then
+					// TokenHarbor's per-model state. `null` means "no peak concept
+					// here", not "off peak".
+					peakHours:
+						getPeakHoursState(account.provider, now) ??
+						(account.provider === TOKENHARBOR_PROVIDER
+							? getTokenHarborPeakState(account.id, null, now)
+							: null),
 					usagePauseFiveHourThreshold:
 						account.usage_pause_five_hour_threshold ?? null,
 					usagePauseWeeklyThreshold:
@@ -1295,6 +1319,7 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 			clearPendingRotation(accountId);
 			clearCodexModelCacheForAccount(accountId);
 			clearOpenAICompatibleModelCacheForAccount(accountId);
+			clearTokenHarborPeakCacheForAccount(accountId);
 			clearFamilyExhaustionForAccount(accountId);
 			clearModelCooldownsForAccount(accountId);
 			clearDerivedProviderModelDefaultsForAccount(accountId);
@@ -3362,7 +3387,11 @@ export function createAccountUsagePauseThresholdsHandler(
 }
 
 /**
- * Create an account peak-hours-pause toggle handler (Zai accounts only)
+ * Create an account peak-hours-pause toggle handler.
+ *
+ * Zai and DeepSeek pause the whole account during their peak window.
+ * TokenHarbor is model-aware instead — see tokenharbor-peak.ts — so it is
+ * accepted only on its own host, where a peak-priced model set exists.
  */
 export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 	return async (req: Request, accountId: string): Promise<Response> => {
@@ -3390,11 +3419,34 @@ export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			// Only zai and deepseek accounts support peak hours pause
-			if (account.provider !== "zai" && account.provider !== "deepseek") {
+			// Zai and DeepSeek pause the whole account at peak. TokenHarbor is
+			// model-aware instead: only the models its own listing marks as
+			// peak-priced are avoided, so the account must be on TokenHarbor's
+			// host for the toggle to mean anything. Every other
+			// anthropic-compatible endpoint has no peak concept.
+			if (account.provider === TOKENHARBOR_PROVIDER) {
+				const full = await db.get<{
+					custom_endpoint: string | null;
+					api_key: string | null;
+					model_mappings: string | null;
+				}>(
+					"SELECT custom_endpoint, api_key, model_mappings FROM accounts WHERE id = ?",
+					[accountId],
+				);
+				if (!isTokenHarborEndpoint(full as never)) {
+					return errorResponse(
+						BadRequest(
+							"Peak hours pause is only available for Zai, DeepSeek and TokenHarbor accounts",
+						),
+					);
+				}
+			} else if (
+				account.provider !== "zai" &&
+				account.provider !== "deepseek"
+			) {
 				return errorResponse(
 					BadRequest(
-						"Peak hours pause is only available for Zai and DeepSeek accounts",
+						"Peak hours pause is only available for Zai, DeepSeek and TokenHarbor accounts",
 					),
 				);
 			}
@@ -3402,7 +3454,9 @@ export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 			// Update peak-hours-pause setting
 			await dbOps.setPeakHoursPauseEnabled(accountId, enabled === 1);
 
-			// Immediate resume when disabling — don't make users wait for scheduler
+			// Immediate resume when disabling — don't make users wait for scheduler.
+			// (TokenHarbor never pauses the account in the first place; the guard
+			// simply matches nothing for it.)
 			if (enabled === 0) {
 				await db.run(
 					"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ? AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
@@ -3736,6 +3790,13 @@ export function createAccountCustomEndpointUpdateHandler(
 			// accept image input" was learned from the old one. Drop this account's
 			// learned refusals so the new endpoint is asked rather than skipped.
 			clearVisionCapability(accountId);
+
+			// Same reasoning for the TokenHarbor peak listing: it is keyed by
+			// account id and describes the OLD endpoint's prices. Dropping it
+			// means the next refresh fetches from the new endpoint rather than
+			// routing on stale prices (isPeakAffected also fails open on the
+			// mismatch, but the cache should not keep serving the old row).
+			clearTokenHarborPeakCacheForAccount(accountId);
 
 			return jsonResponse({
 				success: true,

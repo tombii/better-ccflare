@@ -824,6 +824,82 @@ describe("RateLimitProgress — threshold tooltip wording", () => {
 			expect(render(null)).toBe("");
 			expect(render(undefined)).toBe("");
 		});
+
+		// TokenHarbor never pauses the account: only the models its own listing
+		// marks as peak-priced are skipped, and only during their window. The
+		// badge therefore names those models instead of a provider-wide window.
+		describe("TokenHarbor (per-model peak pricing)", () => {
+			it("names the peak-priced models on the no-usage-data path", () => {
+				// TokenHarbor has no usage windows, so the early return is its
+				// normal render path — the badge must not be dropped there.
+				const html = renderToStaticMarkup(
+					<RateLimitProgress
+						resetIso={null}
+						provider="anthropic-compatible"
+						peakHours={{ active: true }}
+						peakPricedModels={["deepseek-v4-pro"]}
+					/>,
+				);
+				expect(html).toContain("Peak pricing: deepseek-v4-pro");
+			});
+
+			it("never claims the models are skipped", () => {
+				// The listing stays cached with the toggle off, and the
+				// non-empty-pool fallback can still route to a peak-priced slot,
+				// so "skipped" would be a promise the badge cannot keep.
+				const html = renderToStaticMarkup(
+					<RateLimitProgress
+						resetIso={null}
+						provider="anthropic-compatible"
+						peakHours={{ active: true }}
+						peakPricedModels={["deepseek-v4-pro"]}
+					/>,
+				);
+				expect(html).not.toContain("skipped");
+				expect(html).not.toContain("Peak hours");
+			});
+
+			it("also renders the badge on the main path when usage data exists", () => {
+				const html = renderToStaticMarkup(
+					<RateLimitProgress
+						resetIso={new Date(Date.now() + 60 * 60 * 1000).toISOString()}
+						usageUtilization={10}
+						usageWindow="five_hour"
+						provider="anthropic-compatible"
+						peakHours={{ active: true }}
+						peakPricedModels={["deepseek-v4-pro", "deepseek-v4.1-flash"]}
+					/>,
+				);
+				expect(html).toContain(
+					"Peak pricing: deepseek-v4-pro, deepseek-v4.1-flash",
+				);
+			});
+
+			it("says Off-peak pricing when no peak-priced model is inside its window", () => {
+				const html = renderToStaticMarkup(
+					<RateLimitProgress
+						resetIso={null}
+						provider="anthropic-compatible"
+						peakHours={{ active: false }}
+						peakPricedModels={["deepseek-v4-pro"]}
+					/>,
+				);
+				expect(html).toContain("Off-peak pricing");
+				expect(html).not.toContain("Peak pricing:");
+			});
+
+			it("renders nothing when the account has no listing (peakHours null)", () => {
+				const html = renderToStaticMarkup(
+					<RateLimitProgress
+						resetIso={null}
+						provider="anthropic-compatible"
+						peakHours={null}
+						peakPricedModels={null}
+					/>,
+				);
+				expect(html).toBe("");
+			});
+		});
 	});
 
 	describe("OpenRouter credit balance", () => {

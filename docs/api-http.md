@@ -210,7 +210,9 @@ List all configured accounts with their current status.
 ]
 ```
 
-`peakHours` is computed by the server on each request and is `null` for providers with no peak-hours concept. Currently `deepseek`, `zai` and `anthropic` report `{ "active": boolean }`. For DeepSeek and Zai it uses the same check as peak-hours auto-pause; Anthropic is informational only.
+`peakHours` is computed by the server on each request and is `null` for providers with no peak-hours concept. Currently `deepseek`, `zai`, `anthropic`, and TokenHarbor accounts report `{ "active": boolean }`. For DeepSeek and Zai it uses the same check as peak-hours auto-pause; Anthropic is informational only.
+
+TokenHarbor's peak pricing is per model rather than per provider, so those accounts also report `peakPricedModels` — the model ids whose `pricing.off_peak` block in the account's own `/v1/models` listing is currently set (`null` until the listing has been fetched). The window and the model set both come from that listing; no window is hardcoded. Accounts on any other `anthropic-compatible` endpoint report `null` for both fields.
 
 **Example:**
 ```bash
@@ -632,7 +634,7 @@ curl "http://localhost:8080/api/requests?limit=100"
 - `streamTerminalState` — the real SSE outcome for a streaming `/v1/messages` request. One of `complete`, `recovered`, `error`, `truncated`, or `client_cancelled`; `undefined` for non-streaming requests. A response can carry `statusCode: 200` and still be `truncated` or `client_cancelled`, so this is the authoritative "did the stream actually finish?" signal. An unrecognized value (e.g. written by a newer build, surviving a rollback) surfaces as `"unknown"` rather than vanishing.
 - `clientSessionId` — the `x-claude-code-session-id` header value when the client sent one; used to attribute requests to a Claude Code session.
 - `rateLimited` — convenience flag, `true` when `statusCode === 429`.
-- `peakHours` — whether this request was served during its account provider's peak pricing window, evaluated at the request's own start timestamp with the same rules the peak-hours auto-pause uses (Zai weekdays 14:00–18:00 SGT; DeepSeek weekdays 01:00–04:00 and 06:00–10:00 UTC, excluding Chinese public holidays; Anthropic weekdays 13:00–19:00 UTC, informational). Computed server-side because DeepSeek's window needs the Chinese holiday calendar. `null` for providers without a peak concept and for requests not attributed to an account.
+- `peakHours` — whether this request was served during its account provider's peak pricing window, evaluated at the request's own start timestamp with the same rules the peak-hours auto-pause uses (Zai weekdays 14:00–18:00 SGT; DeepSeek weekdays 01:00–04:00 and 06:00–10:00 UTC, excluding Chinese public holidays; Anthropic weekdays 13:00–19:00 UTC, informational; TokenHarbor per model, for models its listing marks as peak-priced). Computed server-side because DeepSeek's window needs the Chinese holiday calendar and TokenHarbor's needs the account's model listing. `null` for providers without a peak concept and for requests not attributed to an account.
 
 #### GET /api/requests/detail
 

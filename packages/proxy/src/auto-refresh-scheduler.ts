@@ -41,6 +41,11 @@ import {
 } from "./handlers/pending-rotation-registry";
 import { PEAK_HOUR_CHECKS } from "./peak-hours";
 import type { ProxyContext } from "./proxy";
+import {
+	getTokenHarborPeakListing,
+	isTokenHarborEndpoint,
+	TOKENHARBOR_PROVIDER,
+} from "./tokenharbor-peak";
 
 const log = new Logger("AutoRefreshScheduler");
 
@@ -94,6 +99,8 @@ export class AutoRefreshScheduler {
 	// Last Chinese holiday feed refresh attempt (DeepSeek peak-hours exemption)
 	private lastHolidayRefreshAt = 0;
 	private holidayRefresh: Promise<unknown> | null = null;
+	// In-flight TokenHarbor listing refresh, so ticks don't stack them
+	private tokenHarborPeakRefresh: Promise<void> | null = null;
 	// Track the rate_limit_reset timestamp for each account when we last refreshed it
 	// This allows us to detect when a new window has started (different rate_limit_reset)
 	private lastRefreshResetTime: Map<string, number> = new Map();
@@ -1597,6 +1604,19 @@ export class AutoRefreshScheduler {
 					this.holidayRefresh = null;
 				});
 		}
+		// TokenHarbor's listing refresh can take up to 15s per account, and it
+		// feeds the selector rather than any pause decision here. Fire-and-forget
+		// like the holiday feed, so a slow TokenHarbor never delays the zai and
+		// deepseek checks. The listing module applies its own TTL and dedupes
+		// concurrent fetches, so calling it every tick is cheap; the field only
+		// stops a second pass starting while one is still running.
+		if (!this.tokenHarborPeakRefresh) {
+			this.tokenHarborPeakRefresh = this.refreshTokenHarborPeakListings()
+				.catch(() => {})
+				.finally(() => {
+					this.tokenHarborPeakRefresh = null;
+				});
+		}
 		for (const [provider, isPeak] of Object.entries(PEAK_HOUR_CHECKS)) {
 			// DeepSeek's decision depends on the holiday calendar. If no calendar
 			// covers this year yet (e.g. first tick after startup in 2027+), wait for
@@ -1610,6 +1630,52 @@ export class AutoRefreshScheduler {
 				await this.holidayRefresh;
 			}
 			await this.checkPeakHoursPauseForProvider(provider, isPeak());
+		}
+	}
+
+	/**
+	 * Keep each opted-in TokenHarbor account's model listing warm.
+	 *
+	 * TokenHarbor peak pricing is per model, so unlike Zai and DeepSeek there is
+	 * nothing to pause: the toggle only opts the account in, and the selector
+	 * skips it for the specific peak-priced models during their window (see
+	 * tokenharbor-peak.ts). This tick exists so the listing is already cached
+	 * when a request arrives — the request path never waits on the network. The
+	 * module applies its own TTL and failure backoff, so calling it every minute
+	 * costs one fetch per hour per account.
+	 *
+	 * Failures are logged and ignored: an account with no listing routes
+	 * unconstrained, which is the safe direction.
+	 */
+	private async refreshTokenHarborPeakListings(): Promise<void> {
+		const accounts = await this.db.query<{
+			id: string;
+			name: string;
+			provider: string;
+			custom_endpoint: string | null;
+			api_key: string | null;
+			peak_hours_pause_enabled: number;
+			model_mappings: string | null;
+			model_fallbacks: string | null;
+		}>(
+			// model_mappings/model_fallbacks/custom_endpoint are what
+			// `mapModelName` reads: the listing keeps the account row so the
+			// request summary can resolve a client model onto the upstream one.
+			`SELECT id, name, provider, custom_endpoint, api_key, COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled, model_mappings, model_fallbacks
+			 FROM accounts WHERE provider = ? AND peak_hours_pause_enabled = 1`,
+			[TOKENHARBOR_PROVIDER],
+		);
+
+		for (const row of accounts) {
+			const account = row as unknown as Account;
+			if (!isTokenHarborEndpoint(account)) continue;
+			try {
+				await getTokenHarborPeakListing(account);
+			} catch (error) {
+				log.warn(
+					`TokenHarbor peak listing refresh failed for '${row.name}': ${error}`,
+				);
+			}
 		}
 	}
 
