@@ -20,12 +20,15 @@ import { Logger } from "@better-ccflare/logger";
 import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
 import {
 	type AnyUsageData,
+	applyMistralAffinityHeader,
 	applyNightWindowHeader,
 	applyXaiConvIdHeader,
+	deriveMistralAffinityId,
 	getProvider,
 	isAnthropicExtraUsageExhausted,
 	isAnthropicOrgPermissionDenied,
 	isAnthropicOutOfCredits,
+	isMistralEndpoint,
 	type Provider,
 	readCodeBuddyGatewayRejection,
 	readRequestJson,
@@ -1825,6 +1828,17 @@ async function proxyWithAccountAttempt(
 			getXaiConvId(requestMeta),
 		);
 
+		// Mistral pod-affinity routing hint. Mistral's prompt cache lives on
+		// individual inference pods, so a conversation that lands on a different pod
+		// misses a byte-identical prefix. Mirrors Mistral's own CLI, which stamps
+		// x-affinity with the session's root id on every request. Same reasoning as
+		// the xAI conv id above for living here rather than in prepareHeaders.
+		applyMistralAffinityHeader(
+			headers,
+			account,
+			deriveMistralAffinityId(requestMeta.clientSessionId),
+		);
+
 		// Night-window completion tier (providers with a registered TierAdapter).
 		// Applied here for the same reason as the conv id above: the window
 		// depends on the selected account's opt-in flag, which prepareHeaders
@@ -1943,11 +1957,15 @@ async function proxyWithAccountAttempt(
 			effectiveBodyContext.getModel() ||
 			null;
 
-		const transformedBodyJson =
-			transformedModel &&
+		const knownCacheControlRejector =
+			Boolean(transformedModel) &&
 			cacheControlRejectors.has(
-				cacheControlRejectorKey(account.id, transformedModel),
-			)
+				cacheControlRejectorKey(account.id, transformedModel as string),
+			);
+		// Mistral's strict schema never accepts Anthropic's cache_control (HTTP 422),
+		// so strip it up front instead of spending a failed request to learn it.
+		const transformedBodyJson =
+			knownCacheControlRejector || isMistralEndpoint(account)
 				? outgoingBody.getJson()
 				: null;
 		if (transformedBodyJson) {
@@ -1968,7 +1986,7 @@ async function proxyWithAccountAttempt(
 				preStrippedBodyText,
 			);
 			log.debug(
-				`Pre-stripped cache_control for known rejector: account=${account.name} model=${transformedModel}`,
+				`Pre-stripped cache_control: account=${account.name} model=${transformedModel} mistral=${isMistralEndpoint(account)}`,
 			);
 		}
 

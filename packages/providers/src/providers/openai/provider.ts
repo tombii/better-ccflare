@@ -20,7 +20,7 @@ import type {
 	TokenRefreshResult,
 } from "../../types";
 import { drainReader } from "../../utils/stream-drain";
-import { isMistralEndpoint, stripMistralReasoning } from "./mistral-reasoning";
+import { isMistralEndpoint, stripMistralReasoning } from "./mistral";
 
 const log = new Logger("OpenAICompatibleProvider");
 

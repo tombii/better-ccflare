@@ -25,6 +25,14 @@ export {
 } from "./providers/anthropic-compatible/factory";
 // Export providers
 export * from "./providers/index";
+// Export Mistral endpoint helpers (reasoning rewrite + pod affinity)
+export {
+	applyMistralAffinityHeader,
+	deriveMistralAffinityId,
+	isMistralEndpoint,
+	MISTRAL_AFFINITY_HEADER,
+	stripMistralReasoning,
+} from "./providers/openai/mistral";
 // Export registry functions
 export {
 	getOAuthProvider,

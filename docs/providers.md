@@ -499,6 +499,15 @@ Anthropic Client → better-ccflare Proxy → OpenAI Provider (OpenRouter, etc.)
 
 Each `openai-compatible` account's own endpoint is queried via the standard OpenAI `GET /v1/models` shape, lazily on that account's first proxied request and on-demand via `GET /api/models?provider=openai-compatible&accountId=<id>` (see [api-http.md](api-http.md#get-apimodels)). Since every account points at an operator-chosen, arbitrary endpoint (unlike Codex, which shares one upstream across accounts), a listing is never borrowed between accounts — each account's cache answers only for itself, and is dropped when the account is removed.
 
+### Mistral Endpoint Handling
+`packages/providers/src/providers/openai/mistral.ts` holds every Mistral-specific rule, following the same endpoint-module pattern as `packages/providers/src/providers/xai/cache-native.ts`. All of it is gated on `isMistralEndpoint(account)`, which matches the **exact** hosts `api.mistral.ai` and `api.eu.mistral.ai` — look-alikes and custom/self-hosted endpoints are excluded.
+
+- **Reasoning rewrite**: Mistral's schema has no top-level `reasoning_content` (sending one is a 422). Prior assistant thinking is moved into a leading `{type: "thinking", thinking: [...], closed: true}` content chunk, deterministically, so the prompt prefix stays byte-stable across turns.
+- **`cache_control` pre-strip**: Anthropic's `cache_control` markers are never valid at Mistral. They are stripped before the request is sent instead of relying on the 422-then-retry rejector path, which otherwise spends a failed round-trip on every fresh `(account, model)` pair.
+- **Pod affinity (`x-affinity`)**: Mistral's prompt cache lives on individual inference pods, so a conversation that the load balancer moves to another pod misses a byte-identical prefix even with a perfect prefix. Every request to an official Mistral host carries `x-affinity`, derived as `ccflare-mistral-<sha256[0..32]>` from the client session id (`metadata.user_id`'s `session_id`) — one-way, so the raw session id never leaves the process. A client-supplied `x-affinity` is always deleted first and never forwarded verbatim. The id is stable for the whole session, including across compaction.
+
+This mirrors Mistral's own CLI (Vibe), which stamps `x-affinity` with the session's root id on every request. It is deliberately **not** paired with the documented `prompt_cache_key` body field. Prefix stability remains the client's job: if a harness reorders tool definitions or injects dynamic content above the system prompt, no header recovers the cache. Cached tokens are reported by Mistral in `usage.prompt_tokens_details.cached_tokens` and are already surfaced as cache-read tokens by `extractUsageInfo`.
+
 ### Streaming Transformation (Key Innovation)
 Uses `TransformStream` with state tracking across chunks:
 
