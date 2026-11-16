@@ -47,6 +47,8 @@ function truncateBase64(body: unknown): {
 export type PeakHoursLookup = (
 	provider: string | null | undefined,
 	ts?: number,
+	accountId?: string | null,
+	model?: string | null,
 ) => { active: boolean } | null;
 
 /**
@@ -180,6 +182,8 @@ export function createRequestsSummaryHandler(
 			peakHours: peakHoursState(
 				request.account_provider,
 				Number(request.timestamp),
+				request.account_used,
+				request.model,
 			),
 		}));
 

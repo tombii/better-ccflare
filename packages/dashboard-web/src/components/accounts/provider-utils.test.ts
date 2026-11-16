@@ -19,9 +19,55 @@ import { describe, expect, it } from "bun:test";
 import {
 	isDeepseekPeakHour,
 	isZaiPeakHour,
+	peakHoursPauseTitle,
 	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
 } from "../../utils/provider-utils";
+
+/**
+ * The peak-hours toggle means three different things depending on the
+ * provider: Zai and DeepSeek pause the whole account during a fixed window,
+ * while TokenHarbor only skips the models its own listing marks as
+ * peak-priced — so its copy must name them (or say the list is still
+ * unknown) rather than implying a provider-wide pause.
+ */
+describe("peakHoursPauseTitle", () => {
+	it("describes DeepSeek's account-wide window", () => {
+		const title = peakHoursPauseTitle({ provider: "deepseek" });
+		expect(title).toContain("pause this account");
+		expect(title).toContain("01:00–04:00 and 06:00–10:00 UTC");
+		expect(title).not.toContain("models this account lists");
+	});
+
+	it("describes Zai's account-wide window", () => {
+		const title = peakHoursPauseTitle({ provider: "zai" });
+		expect(title).toContain("pause this account");
+		expect(title).toContain("14:00–18:00 SGT");
+		expect(title).not.toContain("models this account lists");
+	});
+
+	it("names the peak-priced models for a TokenHarbor account", () => {
+		const title = peakHoursPauseTitle({
+			provider: "anthropic-compatible",
+			peakPricedModels: ["deepseek-v4-pro", "deepseek-v4.1-flash"],
+		});
+		// Model-aware, NOT account-wide: the account keeps serving the rest.
+		expect(title).toContain("Skip this account for");
+		expect(title).toContain("deepseek-v4-pro, deepseek-v4.1-flash");
+		expect(title).toContain("Flat-priced models keep using this account");
+		expect(title).not.toContain("pause this account");
+	});
+
+	it("falls back to generic copy while the TokenHarbor listing is unknown", () => {
+		const title = peakHoursPauseTitle({
+			provider: "anthropic-compatible",
+			peakPricedModels: null,
+		});
+		expect(title).toContain("the models this account lists as peak-priced");
+		// No empty parentheses where the model list would go.
+		expect(title).not.toContain("()");
+	});
+});
 
 describe("providerShowsCreditsBalance", () => {
 	it("returns true for kilo so its credit-balance block renders", () => {

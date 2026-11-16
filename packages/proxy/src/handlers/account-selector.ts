@@ -21,6 +21,7 @@ import type {
 	RequestMeta,
 } from "@better-ccflare/types";
 import { getKnownCodexModels } from "../codex-model-catalog";
+import { isPeakAffected } from "../tokenharbor-peak";
 import {
 	isAccountAllowedForApiKey,
 	isModelAllowedForApiKey,
@@ -1548,6 +1549,15 @@ export async function selectAccountsForRequest(
 				return applyXaiCacheAffinity(candidates, meta);
 			}
 			candidates = usageEligible;
+			// TokenHarbor's peak pricing is per model, not per provider: only the
+			// models its listing marks as having an off-peak rate are avoided
+			// during their peak window, so an account stays usable for the
+			// flat-priced Claude/GLM/Grok models at the same moment. A no-op for
+			// every other provider and for accounts with the toggle off.
+			const peakEligible = candidates.filter(
+				(account) => !isPeakAffected(account, model),
+			);
+			if (peakEligible.length > 0) candidates = peakEligible;
 			const pairs = candidates.map((account) => ({
 				accountId: account.id,
 				model: mapModelName(model, account),

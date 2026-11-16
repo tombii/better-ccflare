@@ -474,6 +474,17 @@ export interface AccountResponse {
 	autoRefreshEnabled: boolean;
 	autoPauseOnOverageEnabled?: boolean;
 	peakHoursPauseEnabled?: boolean;
+	/**
+	 * Runtime-only, server-computed: whether this account's provider supports
+	 * the peak-hours pause toggle at all. TokenHarbor's support depends on its
+	 * endpoint host, so the dashboard cannot derive it from the provider alone.
+	 */
+	peakHoursPauseSupported?: boolean;
+	/**
+	 * Runtime-only: the model ids the account's TokenHarbor listing marks as
+	 * peak-priced. `null` when no listing has been fetched yet.
+	 */
+	peakPricedModels?: string[] | null;
 	nightWindowEnabled?: boolean;
 	/**
 	 * Runtime-only, server-computed peak-hours state (not persisted). `null` for
