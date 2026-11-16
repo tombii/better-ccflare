@@ -48,7 +48,10 @@ import {
 	readOutgoingBody,
 	resolveSlotRouting,
 } from "../request-body-context";
-import { forwardToClient as defaultForwardToClient } from "../response-handler";
+import {
+	forwardToClient as defaultForwardToClient,
+	withServedResponseHeaders,
+} from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
 import { applyAccountRequestTransformer } from "./account-request-transformer";
 import { getComboSlotInfo, getXaiConvId } from "./account-selector";
@@ -1371,7 +1374,52 @@ function comboHasSiblingModel(
 	);
 }
 
+/**
+ * What one account attempt actually sent upstream, read when the attempt
+ * returns. `resolveModel` is set once the outgoing request exists and reads
+ * the live `outgoing` descriptor, so every in-attempt recovery that changes
+ * the model (model-list fallback) or rebuilds the request is reflected.
+ */
+interface ServedTarget {
+	resolveModel?: () => string | null;
+}
+
+type ProxyWithAccountArgs =
+	Parameters<typeof proxyWithAccountAttempt> extends [
+		ServedTarget,
+		...infer Rest,
+	]
+		? Rest
+		: never;
+
+/**
+ * Proxies one request through one account, and stamps the response with the
+ * served-model / served-account headers.
+ *
+ * Decorating here, around the whole attempt, rather than in forwardToClient
+ * is deliberate: several upstream-error paths inside the attempt hand the
+ * upstream response straight back without going through forwardToClient, and
+ * they must carry the headers too. proxy.ts returns the first non-null
+ * response of its candidate loop, so the response decorated here is always
+ * the final attempt's. No headers are added when the attempt built no
+ * outgoing request (nothing was served) or returned null (failover).
+ */
 export async function proxyWithAccount(
+	...args: ProxyWithAccountArgs
+): Promise<Response | null> {
+	const served: ServedTarget = {};
+	const response = await proxyWithAccountAttempt(served, ...args);
+	if (!response || !served.resolveModel) return response;
+	const account = args[2];
+	return withServedResponseHeaders(
+		response,
+		account.name,
+		served.resolveModel(),
+	);
+}
+
+async function proxyWithAccountAttempt(
+	served: ServedTarget,
 	req: Request,
 	url: URL,
 	account: Account,
@@ -1780,6 +1828,13 @@ export async function proxyWithAccount(
 			outgoing.bodyText = bodyText;
 			if (model !== undefined) outgoing.model = model;
 		};
+		// The model this account is being asked for, for the served-model
+		// response header. Read lazily so the final value of `outgoing` wins.
+		// The body's model can be absent for providers that address the model in
+		// the URL; the effective (post-override) request model is the best
+		// remaining answer there.
+		served.resolveModel = () =>
+			outgoing.model || effectiveBodyContext.getModel() || null;
 
 		const transformedBodyJson =
 			transformedModel &&

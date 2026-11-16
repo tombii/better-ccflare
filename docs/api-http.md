@@ -155,6 +155,14 @@ Same as Claude API requirements for the specific endpoint.
 **Response:**
 Proxied response from Claude API, including streaming responses.
 
+**Response Headers:**
+better-ccflare adds these headers to every response an account served, on `POST /v1/messages` and `POST /v1/responses`, streaming and non-streaming, and on upstream error responses passed back to the client:
+- `x-better-ccflare-served-model` — the model actually sent upstream for the attempt that produced this response, after any combo slot override, provider model mapping and model-list fallback. The response body's `model` field keeps echoing the model you requested, so this header is the way to see what a combo alias resolved to.
+- `x-better-ccflare-served-account` — the name of the account that served the request. Only the name is exposed, never the account id or credentials. A name with characters outside printable ASCII is percent-encoded.
+- `x-better-ccflare-model-rewrite` — `<original>-><applied>`, present only when an agent model preference rewrote the requested model.
+
+Responses better-ccflare generates itself without using an account (for example "all accounts failed" or pool-exhausted errors) carry no served headers.
+
 **Automatic Failover:**
 If a request fails or an account is rate limited, better-ccflare automatically retries with the next available account according to the configured load balancing strategy. This ensures high availability and reliability.
 

@@ -1,4 +1,9 @@
-import { requestEvents, TIME_CONSTANTS } from "@better-ccflare/core";
+import {
+	requestEvents,
+	SERVED_ACCOUNT_HEADER,
+	SERVED_MODEL_HEADER,
+	TIME_CONSTANTS,
+} from "@better-ccflare/core";
 import {
 	sanitizeRequestHeaders,
 	withSanitizedProxyHeaders,
@@ -79,6 +84,54 @@ function withModelRewriteHeader(
 		result.set(MODEL_REWRITE_HEADER, `${originalModel}->${appliedModel}`);
 	}
 	return result;
+}
+
+/**
+ * Header values must be visible ASCII. An account name (operator-chosen) or a
+ * model id outside that range would make `Headers.set` throw and take the
+ * whole response down with it, so such a value is percent-encoded instead.
+ */
+function toServedHeaderValue(value: string): string {
+	const trimmed = value.trim();
+	return /^[\x20-\x7e]*$/.test(trimmed) ? trimmed : encodeURIComponent(trimmed);
+}
+
+/**
+ * Returns the response with the served-model / served-account headers set to
+ * the account and upstream model of the attempt that produced it. Any copy an
+ * upstream sent (a chained better-ccflare, say) is overwritten: only this
+ * process knows which of its own accounts answered. The model header is
+ * omitted when the outgoing model is unknown rather than guessed. Account
+ * names only — the account id and credentials never reach a header.
+ */
+export function withServedResponseHeaders(
+	response: Response,
+	accountName: string,
+	servedModel: string | null,
+): Response {
+	const apply = (headers: Headers) => {
+		headers.set(SERVED_ACCOUNT_HEADER, toServedHeaderValue(accountName));
+		if (servedModel) {
+			headers.set(SERVED_MODEL_HEADER, toServedHeaderValue(servedModel));
+		} else {
+			headers.delete(SERVED_MODEL_HEADER);
+		}
+	};
+	// In place when the headers are mutable (every Response this proxy builds
+	// or receives from fetch): re-wrapping would move the body into a new
+	// Response and strand any reference a caller still holds to this one.
+	try {
+		apply(response.headers);
+		return response;
+	} catch {
+		const headers = new Headers(response.headers);
+		apply(headers);
+		return new Response(response.body, {
+			status: response.status,
+			statusText: response.statusText,
+			headers,
+		});
+	}
 }
 
 /**
