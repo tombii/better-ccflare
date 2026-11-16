@@ -1,8 +1,9 @@
-import { mapModelName } from "@better-ccflare/core";
+import { mapModelName, ValidationError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import type { RateLimitInfo } from "../../types";
 import { transformRequestBodyModel } from "../../utils/model-mapping";
+import { applyAnthropicReasoningEffort } from "../../utils/reasoning-effort";
 import { BaseAnthropicCompatibleProvider } from "../base-anthropic-compatible";
 import { sanitizeMetaRequestBody } from "./request-sanitizer";
 
@@ -254,6 +255,10 @@ export class MetaProvider extends BaseAnthropicCompatibleProvider {
 				}
 			}
 
+			// Internal reasoning.effort -> native output_config.effort; the
+			// sanitizer below then drops any level Meta does not accept.
+			applyAnthropicReasoningEffort(body, "output_config");
+
 			const { body: sanitized, changes } = sanitizeMetaRequestBody(body);
 			if (changes.length > 0) {
 				log.debug(
@@ -263,6 +268,7 @@ export class MetaProvider extends BaseAnthropicCompatibleProvider {
 
 			return rebuild(JSON.stringify(sanitized));
 		} catch (error) {
+			if (error instanceof ValidationError) throw error;
 			log.debug("Failed to transform Meta request body:", error);
 			return rebuild(bytes);
 		}

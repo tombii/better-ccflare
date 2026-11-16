@@ -433,6 +433,17 @@ export const LIMITS = {
 	},
 } as const;
 
+/**
+ * Response headers naming who actually served a proxied request. The body's
+ * `model` echoes the model the client asked for (a combo can remap that alias
+ * to another provider's model), so these are the only place a client can see
+ * the upstream model and account of the attempt that produced the response.
+ * Set by proxy-operations (proxyWithAccount) and carried through the
+ * /v1/responses adapter. Account names only — never ids or credentials.
+ */
+export const SERVED_MODEL_HEADER = "x-better-ccflare-served-model";
+export const SERVED_ACCOUNT_HEADER = "x-better-ccflare-served-account";
+
 // HTTP status codes
 export const HTTP_STATUS = {
 	OK: 200,

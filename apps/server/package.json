@@ -21,6 +21,7 @@
 		"@better-ccflare/http-api": "workspace:*",
 		"@better-ccflare/security": "workspace:*",
 		"@better-ccflare/types": "workspace:*",
+		"@better-ccflare/openai-formats": "workspace:*",
 		"@better-ccflare/openai-responses-adapter": "workspace:*"
 	}
 }

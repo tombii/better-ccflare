@@ -29,6 +29,7 @@ import {
 	type Provider,
 	readCodeBuddyGatewayRejection,
 	readRequestJson,
+	reclampReasoningEffort,
 	recoverCodexMessagesContinuation,
 	UPSTREAM_402_OUT_OF_CREDITS_REASON,
 	usageCache,
@@ -50,7 +51,10 @@ import {
 	readOutgoingBody,
 	resolveSlotRouting,
 } from "../request-body-context";
-import { forwardToClient as defaultForwardToClient } from "../response-handler";
+import {
+	forwardToClient as defaultForwardToClient,
+	withServedResponseHeaders,
+} from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
 import { applyAccountRequestTransformer } from "./account-request-transformer";
 import {
@@ -1434,7 +1438,52 @@ function comboHasSiblingModel(
 	);
 }
 
+/**
+ * What one account attempt actually sent upstream, read when the attempt
+ * returns. `resolveModel` is set once the outgoing request exists and reads
+ * the live `outgoing` descriptor, so every in-attempt recovery that changes
+ * the model (model-list fallback) or rebuilds the request is reflected.
+ */
+interface ServedTarget {
+	resolveModel?: () => string | null;
+}
+
+type ProxyWithAccountArgs =
+	Parameters<typeof proxyWithAccountAttempt> extends [
+		ServedTarget,
+		...infer Rest,
+	]
+		? Rest
+		: never;
+
+/**
+ * Proxies one request through one account, and stamps the response with the
+ * served-model / served-account headers.
+ *
+ * Decorating here, around the whole attempt, rather than in forwardToClient
+ * is deliberate: several upstream-error paths inside the attempt hand the
+ * upstream response straight back without going through forwardToClient, and
+ * they must carry the headers too. proxy.ts returns the first non-null
+ * response of its candidate loop, so the response decorated here is always
+ * the final attempt's. No headers are added when the attempt built no
+ * outgoing request (nothing was served) or returned null (failover).
+ */
 export async function proxyWithAccount(
+	...args: ProxyWithAccountArgs
+): Promise<Response | null> {
+	const served: ServedTarget = {};
+	const response = await proxyWithAccountAttempt(served, ...args);
+	if (!response || !served.resolveModel) return response;
+	const account = args[2];
+	return withServedResponseHeaders(
+		response,
+		account.name,
+		served.resolveModel(),
+	);
+}
+
+async function proxyWithAccountAttempt(
+	served: ServedTarget,
 	req: Request,
 	url: URL,
 	account: Account,
@@ -1797,6 +1846,10 @@ export async function proxyWithAccount(
 			),
 		);
 		const targetUrl = provider.buildUrl(url.pathname, url.search, account);
+		// Captured right after buildUrl, which reads the same per-account state:
+		// a provider that removes body.model (Vertex) addresses the model in the
+		// URL, and the account's copy can be overwritten by a concurrent request.
+		const providerTargetModel = provider.getTargetModel?.(account) ?? null;
 
 		const requestInit: RequestInit & { duplex?: "half" } = {
 			method: req.method,
@@ -1879,6 +1932,16 @@ export async function proxyWithAccount(
 			outgoing.bodyText = bodyText;
 			if (model !== undefined) outgoing.model = model;
 		};
+		// The model this account is being asked for, for the served-model
+		// response header. Read lazily so the final value of `outgoing` wins.
+		// The body's model can be absent for providers that address the model in
+		// the URL; the effective (post-override) request model is the best
+		// remaining answer there.
+		served.resolveModel = () =>
+			outgoing.model ||
+			providerTargetModel ||
+			effectiveBodyContext.getModel() ||
+			null;
 
 		const transformedBodyJson =
 			transformedModel &&
@@ -2756,8 +2819,8 @@ export async function proxyWithAccount(
 				capturedHeaders.set("x-better-ccflare-request-id", requestMeta.id);
 				capturedHeaders.set("x-better-ccflare-request-path", requestMeta.path);
 				const capturedModel = effectiveBodyContext.getModel();
-				onTerminalRejection?.(() =>
-					provider.processResponse(
+				onTerminalRejection?.(async () => {
+					const replayed = await provider.processResponse(
 						new Response(terminalBody, {
 							status: capturedStatus,
 							statusText: capturedStatusText,
@@ -2767,8 +2830,18 @@ export async function proxyWithAccount(
 						req.headers,
 						drainAbortController,
 						{ requestModel: capturedModel },
-					),
-				);
+					);
+					// The caller returns this to the client when every candidate
+					// failed, and it never passes through proxyWithAccount's
+					// decoration (the attempt returned null), so stamp it here.
+					return replayed
+						? withServedResponseHeaders(
+								replayed,
+								account.name,
+								served.resolveModel?.() ?? capturedModel,
+							)
+						: replayed;
+				});
 				return null;
 			}
 			cancelDiscardedResponseBody(response);
@@ -3155,6 +3228,31 @@ export async function proxyWithAccount(
 						break;
 					}
 
+					// The client's reasoning effort as it entered the transform (the
+					// internal `reasoning.effort` carrier), read from the pre-transform
+					// body. The transform clamps it against the model MAPPING produces,
+					// but the re-patch below sends `nextBareModel`, so the effort is
+					// re-resolved from this original value against that model. A
+					// client-native `output_config.effort` is passed through verbatim
+					// by the Anthropic-shaped transform and must stay untouched.
+					const preTransformBody = patchedContext?.getParsedJson() as
+						| Record<string, unknown>
+						| null
+						| undefined;
+					const preReasoning = preTransformBody?.reasoning;
+					const originalEffort =
+						preReasoning &&
+						typeof preReasoning === "object" &&
+						!Array.isArray(preReasoning)
+							? (preReasoning as Record<string, unknown>).effort
+							: undefined;
+					const preOutputConfig = preTransformBody?.output_config;
+					const clientSentNativeOutputEffort =
+						!!preOutputConfig &&
+						typeof preOutputConfig === "object" &&
+						!Array.isArray(preOutputConfig) &&
+						(preOutputConfig as Record<string, unknown>).effort !== undefined;
+
 					const retryRequestInit: RequestInit & { duplex?: "half" } = {
 						method: req.method,
 						headers,
@@ -3187,15 +3285,33 @@ export async function proxyWithAccount(
 					if (retryTransformedBodyText !== undefined) {
 						try {
 							const transformedBody = JSON.parse(retryTransformedBodyText);
-							if (
-								applyModelAndRouting(
+							const routingChanged = applyModelAndRouting(
+								transformedBody,
+								nextBareModel,
+								nextSplit.routing,
+								slotRouting,
+								accountSupportsRouting,
+							);
+							// Always re-clamp, even when the re-patch changed nothing: the
+							// transform may have clamped against a different (mapped)
+							// model while the body already names `nextBareModel`.
+							let effortChanged = false;
+							try {
+								effortChanged = reclampReasoningEffort(
 									transformedBody,
 									nextBareModel,
-									nextSplit.routing,
-									slotRouting,
-									accountSupportsRouting,
-								)
-							) {
+									originalEffort,
+									{ preserveOutputConfigEffort: clientSentNativeOutputEffort },
+								);
+							} catch (err) {
+								// The transform already validated the effort; keep the
+								// transformed value rather than dropping the re-patch.
+								log.warn(
+									"Failed to re-clamp reasoning effort for model fallback:",
+									err,
+								);
+							}
+							if (routingChanged || effortChanged) {
 								const repatchedBodyText = JSON.stringify(transformedBody);
 								const repatchedHeaders = new Headers(
 									retryTransformedRequest.headers,

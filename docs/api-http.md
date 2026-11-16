@@ -140,6 +140,7 @@ Note: this is distinct from the `codex` *provider*, which routes requests outbou
 **Known Limitations (`/v1/responses`):**
 - Regular HTTP does not trust an arbitrary caller-supplied `previous_response_id`. On the authenticated, native outbound Codex route, an operator-controlled gateway request can enable gateway-managed continuation. The gateway retains only the last upstream response ID and cryptographic input/configuration digests; it sends a suffix with that server-owned ID only after an exact ordered-prefix and configuration match. Mismatch, expiry, or process restart safely sends the full input without a response ID. WebSocket transport is not implemented.
 - Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are preserved on the native outbound Codex route. Routes translated to Anthropic skip built-in tools and forward only `type: "function"` tools.
+- `reasoning.effort` is forwarded to every account type, not only Codex. Anthropic-shaped accounts receive it as `output_config.effort`, OpenRouter as `reasoning.effort`, and other OpenAI-compatible endpoints as `reasoning_effort`. It is moved to a level the target model supports when needed. Omitting it leaves the provider default in place. A value outside `minimal`, `low`, `medium`, `high`, `xhigh` and `max` returns `400 invalid_request_error`. See [Reasoning Effort](configuration.md#reasoning-effort).
 - Unknown top-level `/v1/responses` request fields fail closed with `400 invalid_request_error`; they are never silently discarded. An explicit `max_output_tokens` also returns 400 when the selected outbound route is the canonical ChatGPT Codex subscription endpoint. Omit it for that route; custom OpenAI-compatible endpoints may support it.
 
 **Note:** `GET /v1/models` is proxied through to Claude like any other `/v1/*` request. A successful response (from a console/API-key account) is also passively captured into better-ccflare's own model catalog cache — see [Model Catalog](#model-catalog) below for the read endpoint (`GET /api/models`) and how the catalog is kept up to date.
@@ -153,6 +154,14 @@ Same as Claude API requirements for the specific endpoint.
 
 **Response:**
 Proxied response from Claude API, including streaming responses.
+
+**Response Headers:**
+better-ccflare adds these headers to every response an account served, on `POST /v1/messages` and `POST /v1/responses`, streaming and non-streaming, and on upstream error responses passed back to the client:
+- `x-better-ccflare-served-model` — the model actually sent upstream for the attempt that produced this response, after any combo slot override, provider model mapping and model-list fallback. The response body's `model` field keeps echoing the model you requested, so this header is the way to see what a combo alias resolved to.
+- `x-better-ccflare-served-account` — the name of the account that served the request. Only the name is exposed, never the account id or credentials. A name with characters outside printable ASCII is percent-encoded.
+- `x-better-ccflare-model-rewrite` — `<original>-><applied>`, present only when an agent model preference rewrote the requested model.
+
+Responses better-ccflare generates itself without using an account (for example "all accounts failed" or pool-exhausted errors) carry no served headers.
 
 **Automatic Failover:**
 If a request fails or an account is rate limited, better-ccflare automatically retries with the next available account according to the configured load balancing strategy. This ensures high availability and reliability.

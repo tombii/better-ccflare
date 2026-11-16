@@ -6,6 +6,7 @@ import {
 	providerSupportsProviderRouting,
 	splitModelRouting,
 	stripModelRouting,
+	ValidationError,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
@@ -77,6 +78,13 @@ export interface ProviderRoutingOptions {
 	 * adapter that knows its target host decides, and `false` means strip.
 	 */
 	supportsProviderRouting?: () => boolean;
+	/**
+	 * Final in-place body rewrite, run after model mapping (so `body.model` is
+	 * the upstream model). Returns true when it changed the body. A
+	 * ValidationError it throws propagates to the caller (client error);
+	 * Anthropic-shaped providers use it for reasoning-effort translation.
+	 */
+	rewriteBody?: (body: Record<string, unknown>) => boolean;
 }
 
 export function resolveProviderRoutingMode(
@@ -321,6 +329,11 @@ export async function transformRequestBodyModel<T extends TransformRequestBody>(
 			}
 		}
 
+		if (options?.rewriteBody) {
+			bodyChanged =
+				options.rewriteBody(body as Record<string, unknown>) || bodyChanged;
+		}
+
 		if (bodyChanged) {
 			// Create new request with transformed body.
 			// Rebuilding from `request.url` (a string) does not inherit the
@@ -337,6 +350,7 @@ export async function transformRequestBodyModel<T extends TransformRequestBody>(
 
 		return request;
 	} catch (error) {
+		if (error instanceof ValidationError) throw error;
 		log.debug("Failed to transform request body model:", error);
 		return request;
 	}

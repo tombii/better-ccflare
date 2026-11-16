@@ -4,6 +4,7 @@ import type { Account } from "@better-ccflare/types";
 import { GoogleAuth } from "google-auth-library";
 import type { TokenRefreshResult } from "../../types";
 import { getModelName } from "../../utils/model-mapping";
+import { applyAnthropicReasoningEffort } from "../../utils/reasoning-effort";
 import {
 	type AnthropicCompatibleConfig,
 	BaseAnthropicCompatibleProvider,
@@ -185,6 +186,15 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 	}
 
 	/**
+	 * The Vertex-formatted model prepareRequest chose, i.e. the one buildUrl puts
+	 * in the request path. body.model is removed before the request leaves, so
+	 * this is the only record of which model is actually called.
+	 */
+	getTargetModel(account: Account): string | undefined {
+		return (account as Account & { _vertexModel?: string })._vertexModel;
+	}
+
+	/**
 	 * Build Vertex AI URL with model in path
 	 * Format: https://{region}-aiplatform.googleapis.com/v1/projects/{projectId}/locations/{region}/publishers/anthropic/models/{model}:streamRawPredict
 	 *
@@ -234,7 +244,7 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 	 */
 	async transformRequestBody(
 		request: Request,
-		_account?: Account,
+		account?: Account,
 	): Promise<Request> {
 		try {
 			const body = await request.json();
@@ -242,6 +252,19 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 			console.log(
 				`[Vertex AI] transformRequestBody - removing model from body`,
 			);
+
+			// Internal reasoning.effort -> Claude's native output_config.effort,
+			// clamped against the model Vertex actually calls: the mapped target
+			// prepareRequest stored for buildUrl, not the client's body.model.
+			const vertexModel = (
+				account as (Account & { _vertexModel?: string }) | undefined
+			)?._vertexModel;
+			const targetModel =
+				vertexModel ||
+				(account && typeof body.model === "string"
+					? getModelName(body.model, account)
+					: body.model);
+			applyAnthropicReasoningEffort(body, "output_config", targetModel);
 
 			// Remove model from body (Vertex AI requires it in URL, not body)
 			delete body.model;

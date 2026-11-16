@@ -1,4 +1,5 @@
 import type { Account } from "@better-ccflare/types";
+import type { AnthropicReasoningEffortStyle } from "../../utils/reasoning-effort";
 import { AnthropicCompatibleProvider } from "../anthropic-compatible/provider";
 
 const OPENROUTER_DEFAULT_ENDPOINT = "https://openrouter.ai/api";
@@ -24,6 +25,11 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 
 	override getEndpoint(): string {
 		return OPENROUTER_DEFAULT_ENDPOINT;
+	}
+
+	/** OpenRouter's native effort field is `reasoning: { effort }`. */
+	protected override getReasoningEffortStyle(): AnthropicReasoningEffortStyle {
+		return "openrouter";
 	}
 
 	override buildUrl(

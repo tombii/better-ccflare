@@ -7,7 +7,11 @@ import {
 	mock,
 	spyOn,
 } from "bun:test";
-import { getModelList } from "@better-ccflare/core";
+import {
+	getModelList,
+	SERVED_ACCOUNT_HEADER,
+	SERVED_MODEL_HEADER,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { preserveTestEnv } from "../../__tests__/preserve-test-env";
@@ -1635,6 +1639,49 @@ describe("proxyWithAccount — CodeBuddy 11128 terminal rejection", () => {
 		// The converter now passes the real gateway message through instead of
 		// the generic invalid_response text.
 		expect(replayedBody.error?.message).toContain("11128");
+	});
+
+	it("the replayed rejection carries the served account and model headers", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					code: 11128,
+					msg: "Illegal API invocation from an unapproved channel",
+				},
+				400,
+			),
+		);
+
+		const captures: Array<() => Promise<Response | null>> = [];
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const result = await proxyWithAccount(
+			makeRequest(bodyBuffer),
+			new URL("https://proxy.local/v1/messages"),
+			makeCodeBuddyAccount(),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			true,
+			(capture) => {
+				captures.push(capture);
+			},
+		);
+
+		expect(result).toBeNull();
+		const replayed = await captures[0]();
+		expect(replayed?.status).toBe(400);
+		// The caller returns this response to the client when every candidate
+		// failed, bypassing the wrapper that decorates ordinary responses.
+		expect(replayed?.headers.get(SERVED_ACCOUNT_HEADER)).toBe("codebuddy-test");
+		expect(replayed?.headers.get(SERVED_MODEL_HEADER)).toBe(
+			"claude-sonnet-4-5",
+		);
 	});
 
 	it("does not register a replay while other candidates remain", async () => {

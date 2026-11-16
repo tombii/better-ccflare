@@ -5,6 +5,9 @@
  * See LICENSE.md in the project root for license terms.
  */
 import { getModelFamily, ValidationError } from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
+
+const log = new Logger("openai-formats/reasoning");
 
 export const REASONING_EFFORT_VALUES = [
 	"minimal",
@@ -45,10 +48,73 @@ function normalizeTargetModelName(model: string): string {
 	return model.toLowerCase().trim().replace(/^.*\//, "");
 }
 
+function isReasoningEffort(value: unknown): value is ReasoningEffort {
+	return (
+		typeof value === "string" &&
+		REASONING_EFFORT_VALUES.includes(value as ReasoningEffort)
+	);
+}
+
+/**
+ * Operator-supplied capability map (model -> supported levels), keyed by the
+ * normalized model name. It only narrows what a request may carry (clamping);
+ * it never makes the router add an effort the client did not send.
+ *
+ * openai-formats must not depend on @better-ccflare/config, so the server
+ * injects the map with setReasoningEffortOverrides() at startup and again
+ * whenever the `reasoning_efforts` config key changes. Sources, in order:
+ * the CCFLARE_REASONING_EFFORTS env var (JSON), the config-file field
+ * `reasoning_efforts`, then nothing (built-in tables only).
+ */
+let reasoningEffortOverrides: Record<string, readonly ReasoningEffort[]> = {};
+
+/**
+ * Replace the operator override map. Keys are normalized like target model
+ * names (case, surrounding whitespace and any provider prefix up to the last
+ * "/" are ignored). Unknown levels are dropped with a warning, duplicates are
+ * removed, levels are ordered by rank, and entries left empty are ignored.
+ * Pass null/undefined to clear.
+ */
+export function setReasoningEffortOverrides(
+	overrides: Readonly<Record<string, readonly string[]>> | null | undefined,
+): void {
+	const next: Record<string, readonly ReasoningEffort[]> = {};
+	if (overrides && typeof overrides === "object" && !Array.isArray(overrides)) {
+		for (const [model, levels] of Object.entries(overrides)) {
+			if (!Array.isArray(levels)) continue;
+			const key = normalizeTargetModelName(model);
+			if (!key) continue;
+			const valid = new Set<ReasoningEffort>();
+			for (const level of levels) {
+				if (isReasoningEffort(level)) {
+					valid.add(level);
+				} else {
+					log.warn(
+						`Ignoring unknown reasoning effort ${JSON.stringify(level)} in override for model ${model}`,
+					);
+				}
+			}
+			if (valid.size === 0) continue;
+			next[key] = [...valid].sort((a, b) => EFFORT_RANK[a] - EFFORT_RANK[b]);
+		}
+	}
+	reasoningEffortOverrides = next;
+}
+
+/** The active operator override map (normalized keys). */
+export function getReasoningEffortOverrides(): Readonly<
+	Record<string, readonly ReasoningEffort[]>
+> {
+	return { ...reasoningEffortOverrides };
+}
+
 export function getSupportedReasoningEfforts(
 	model: string,
 ): readonly ReasoningEffort[] | null {
 	const normalized = normalizeTargetModelName(model);
+	if (Object.hasOwn(reasoningEffortOverrides, normalized)) {
+		return reasoningEffortOverrides[normalized];
+	}
 	const family = getModelFamily(normalized);
 	if (family) {
 		return CLAUDE_REASONING_EFFORTS[family];
@@ -85,10 +151,7 @@ export function resolveReasoningEffort(
 		return { effort: undefined, downgrades: [] };
 	}
 
-	if (
-		typeof effort !== "string" ||
-		!REASONING_EFFORT_VALUES.includes(effort as ReasoningEffort)
-	) {
+	if (!isReasoningEffort(effort)) {
 		throw new ValidationError(
 			`reasoning.effort must be one of: ${REASONING_EFFORT_VALUES.join(", ")}`,
 			"reasoning.effort",
@@ -96,7 +159,7 @@ export function resolveReasoningEffort(
 		);
 	}
 
-	let resolvedEffort = effort as ReasoningEffort;
+	let resolvedEffort: ReasoningEffort = effort;
 	const downgrades: Array<{
 		model: string;
 		from: ReasoningEffort;

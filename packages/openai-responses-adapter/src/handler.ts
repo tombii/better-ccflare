@@ -1,4 +1,9 @@
 import crypto from "node:crypto";
+import {
+	SERVED_ACCOUNT_HEADER,
+	SERVED_MODEL_HEADER,
+	ValidationError,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type {
 	ApiKeyLimitWindowMode,
@@ -20,6 +25,7 @@ const TERMINAL_RESPONSE_EVENT_TYPES = new Set([
 ]);
 
 const NATIVE_RESPONSES_HEADER = "x-better-ccflare-native-responses";
+const SERVED_HEADERS = [SERVED_MODEL_HEADER, SERVED_ACCOUNT_HEADER] as const;
 const CONTINUATION_HEADER = "x-better-ccflare-codex-continuation";
 const CACHE_MODE_HEADER = "x-better-ccflare-prompt-cache-mode";
 const CACHE_TTL_HEADER = "x-better-ccflare-prompt-cache-ttl";
@@ -386,6 +392,27 @@ function extractTerminalNativeResponse(
 	return null;
 }
 
+/**
+ * Copies the proxy's served-model / served-account headers from the proxied
+ * /v1/messages response onto a Response this adapter built itself. The
+ * translated paths construct fresh headers, so without this the only record
+ * of which account and model answered would be dropped for Responses
+ * clients. A no-op when the proxy set neither header.
+ */
+function withServedHeaders(response: Response, upstream: Headers): Response {
+	if (!SERVED_HEADERS.some((name) => upstream.has(name))) return response;
+	const headers = new Headers(response.headers);
+	for (const name of SERVED_HEADERS) {
+		const value = upstream.get(name);
+		if (value !== null) headers.set(name, value);
+	}
+	return new Response(response.body, {
+		status: response.status,
+		statusText: response.statusText,
+		headers,
+	});
+}
+
 export async function handleResponsesRequest(
 	req: Request,
 	url: URL,
@@ -544,9 +571,21 @@ export async function handleResponsesRequest(
 	const responseId = `resp_${crypto.randomBytes(12).toString("hex")}`;
 
 	// 4. Translate to Anthropic format
-	const anthropicBody = translateRequestToAnthropic(
-		body as typeof body & { input: ResponseItem[] },
-	);
+	let anthropicBody: ReturnType<typeof translateRequestToAnthropic>;
+	try {
+		anthropicBody = translateRequestToAnthropic(
+			body as typeof body & { input: ResponseItem[] },
+		);
+	} catch (error) {
+		if (!(error instanceof ValidationError)) throw error;
+		return new Response(
+			JSON.stringify({
+				type: "error",
+				error: { type: "invalid_request_error", message: error.message },
+			}),
+			{ status: 400, headers: { "Content-Type": "application/json" } },
+		);
+	}
 
 	// 4b. Preserve the client's session identity. Codex CLI identifies its
 	// conversation via prompt_cache_key (some versions also send a session_id
@@ -809,11 +848,14 @@ export async function handleResponsesRequest(
 
 	// 8. Stream path
 	if (body.stream) {
-		return translateAnthropicStreamToResponses(
-			anthropicResp,
-			responseId,
-			body.model,
-			getRequestTools(body),
+		return withServedHeaders(
+			translateAnthropicStreamToResponses(
+				anthropicResp,
+				responseId,
+				body.model,
+				getRequestTools(body),
+			),
+			anthropicResp.headers,
 		);
 	}
 
@@ -822,15 +864,18 @@ export async function handleResponsesRequest(
 	try {
 		respBody = await anthropicResp.json();
 	} catch {
-		return new Response(
-			JSON.stringify({
-				error: {
-					message: "Failed to parse upstream response",
-					type: "api_error",
-					code: "api_error",
-				},
-			}),
-			{ status: 502, headers: { "Content-Type": "application/json" } },
+		return withServedHeaders(
+			new Response(
+				JSON.stringify({
+					error: {
+						message: "Failed to parse upstream response",
+						type: "api_error",
+						code: "api_error",
+					},
+				}),
+				{ status: 502, headers: { "Content-Type": "application/json" } },
+			),
+			anthropicResp.headers,
 		);
 	}
 	let translated: ReturnType<typeof translateAnthropicResponseToResponses>;
@@ -842,20 +887,26 @@ export async function handleResponsesRequest(
 			getRequestTools(body),
 		);
 	} catch {
-		return new Response(
-			JSON.stringify({
-				error: {
-					message:
-						"Failed to translate upstream response: invalid tool input or response body",
-					type: "invalid_response_error",
-					code: "invalid_response_error",
-				},
-			}),
-			{ status: 502, headers: { "Content-Type": "application/json" } },
+		return withServedHeaders(
+			new Response(
+				JSON.stringify({
+					error: {
+						message:
+							"Failed to translate upstream response: invalid tool input or response body",
+						type: "invalid_response_error",
+						code: "invalid_response_error",
+					},
+				}),
+				{ status: 502, headers: { "Content-Type": "application/json" } },
+			),
+			anthropicResp.headers,
 		);
 	}
-	return new Response(JSON.stringify(translated), {
-		status: 200,
-		headers: { "Content-Type": "application/json" },
-	});
+	return withServedHeaders(
+		new Response(JSON.stringify(translated), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		}),
+		anthropicResp.headers,
+	);
 }

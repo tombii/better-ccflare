@@ -70,6 +70,15 @@ export interface Provider {
 	): void;
 
 	/**
+	 * Optional: the model the provider addressed in the URL it just built, for
+	 * providers that remove `model` from the request body (Vertex AI). Lets the
+	 * proxy report the model actually called upstream (the served-model
+	 * response header) instead of the client's requested alias. Call it right
+	 * after `buildUrl`; it reflects the most recent `prepareRequest`.
+	 */
+	getTargetModel?(account: Account): string | undefined;
+
+	/**
 	 * Prepare headers for the provider request
 	 * @param headers - Original request headers
 	 * @param accessToken - OAuth access token (for Bearer authentication)

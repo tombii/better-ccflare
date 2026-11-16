@@ -56,7 +56,10 @@ export interface OpenAIRequest {
 	stream_options?: { include_usage: boolean };
 	tools?: OpenAITool[];
 	tool_choice?: OpenAIToolChoice;
+	/** OpenRouter-shaped upstreams only (see ConvertAnthropicRequestOptions). */
 	reasoning?: { effort?: string };
+	/** Standard Chat Completions reasoning effort. */
+	reasoning_effort?: string;
 }
 
 export interface AnthropicTextContent {

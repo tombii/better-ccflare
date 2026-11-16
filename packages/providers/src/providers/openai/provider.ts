@@ -223,6 +223,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			const openaiBody = convertAnthropicRequestToOpenAI(
 				body,
 				effectiveAccount,
+				{ reasoningEffortField: this.getReasoningEffortField(account) },
 			);
 			this.afterConvert(openaiBody, account);
 
@@ -399,6 +400,28 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		if (isMistralEndpoint(account)) {
 			stripMistralReasoning(body);
 		}
+	}
+
+	/**
+	 * Outbound field for the client's reasoning effort. Generic Chat
+	 * Completions upstreams (OpenAI, xAI, CLIProxyAPI, ...) read the standard
+	 * `reasoning_effort`; OpenRouter reads `reasoning: { effort }`, so an
+	 * openrouter.ai endpoint keeps that shape. Subclasses fronting an
+	 * OpenRouter-shaped gateway override this.
+	 */
+	protected getReasoningEffortField(
+		account?: Account,
+	): "reasoning_effort" | "reasoning" {
+		if (!account) return "reasoning_effort";
+		try {
+			const host = new URL(getEndpointUrl(account)).hostname.toLowerCase();
+			if (host === "openrouter.ai" || host.endsWith(".openrouter.ai")) {
+				return "reasoning";
+			}
+		} catch {
+			// Unparseable endpoint: buildUrl falls back to api.openai.com.
+		}
+		return "reasoning_effort";
 	}
 
 	/**

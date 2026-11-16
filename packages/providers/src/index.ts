@@ -40,6 +40,11 @@ export * from "./usage-fetcher";
 export * from "./utils/provider-request-id";
 // Export provider-named serving backend extraction (dashboard "Served by")
 export * from "./utils/provider-serving";
+// Export outbound reasoning-effort re-clamping (proxy model fallback)
+export {
+	type ReclampReasoningEffortOptions,
+	reclampReasoningEffort,
+} from "./utils/reasoning-effort";
 // Export shared request-body helper (Bun 1.3.x clone().json() leak, #382)
 export * from "./utils/request-json";
 // Export shared stream-drain helpers

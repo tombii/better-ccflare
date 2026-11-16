@@ -1,3 +1,4 @@
+import type { ReasoningEffort } from "@better-ccflare/openai-formats";
 import type {
 	ApiKeyLimitWindowMode,
 	ApiKeyRestrictions,
@@ -170,7 +171,8 @@ export interface ResponsesToolChoice {
 }
 
 export interface ResponsesReasoning {
-	effort?: "low" | "medium" | "high";
+	/** Any value in REASONING_EFFORT_VALUES; null is treated as absent. */
+	effort?: ReasoningEffort | null;
 	summary?: string;
 	context?: string;
 }
@@ -260,6 +262,13 @@ export interface AnthropicRequest {
 	stream?: boolean;
 	/** Session identity surfaced the way Anthropic clients send it. */
 	metadata?: { user_id?: string };
+	/**
+	 * Internal (non-Anthropic) carrier for the client's reasoning effort. Each
+	 * outbound provider rewrites it into its native field (Claude
+	 * `output_config.effort`, Chat Completions `reasoning_effort`, or
+	 * OpenRouter `reasoning.effort`) and clamps it to the target model.
+	 */
+	reasoning?: { effort: ReasoningEffort };
 }
 
 export interface AnthropicMessage {

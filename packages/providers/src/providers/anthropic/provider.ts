@@ -9,6 +9,7 @@ import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 import { transformRequestBodyModel } from "../../utils/model-mapping";
+import { applyAnthropicReasoningEffort } from "../../utils/reasoning-effort";
 import { drainReader } from "../../utils/stream-drain";
 
 // Hard rate limit statuses that should block account usage
@@ -356,12 +357,24 @@ export class AnthropicProvider extends BaseProvider {
 		request: Request,
 		account?: Account,
 	): Promise<Request> {
-		return transformRequestBodyModel(request, account, (model, acc) => {
-			if (acc) {
-				return mapModelName(model, acc);
-			}
-			return model;
-		});
+		return transformRequestBodyModel(
+			request,
+			account,
+			(model, acc) => {
+				if (acc) {
+					return mapModelName(model, acc);
+				}
+				return model;
+			},
+			{
+				// Claude Code never sends the internal `reasoning` key, so its
+				// bodies are unchanged; a /v1/responses request routed to an API-key
+				// account gets the client's effort as native output_config.effort
+				// instead of an unknown field the Messages API rejects.
+				rewriteBody: (body) =>
+					applyAnthropicReasoningEffort(body, "output_config"),
+			},
+		);
 	}
 
 	buildUrl(path: string, query: string, account?: Account): string {

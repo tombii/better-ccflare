@@ -6,6 +6,17 @@ const KILO_DEFAULT_ENDPOINT = "https://api.kilo.ai/api/gateway";
 export class KiloProvider extends OpenAICompatibleProvider {
 	override name = "kilo";
 
+	/**
+	 * Kilo's gateway is OpenRouter-shaped and takes `reasoning: { effort }`
+	 * (the shape this provider already sent before reasoning_effort became the
+	 * openai-compatible default).
+	 */
+	protected override getReasoningEffortField(
+		_account?: Account,
+	): "reasoning_effort" | "reasoning" {
+		return "reasoning";
+	}
+
 	override buildUrl(path: string, query: string, account?: Account): string {
 		const endpoint = (
 			account?.custom_endpoint || KILO_DEFAULT_ENDPOINT

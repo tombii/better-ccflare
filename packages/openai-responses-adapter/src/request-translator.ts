@@ -2,8 +2,13 @@ import {
 	LATEST_HAIKU_MODEL,
 	LATEST_OPUS_MODEL,
 	LATEST_SONNET_MODEL,
+	ValidationError,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
+import {
+	REASONING_EFFORT_VALUES,
+	type ReasoningEffort,
+} from "@better-ccflare/openai-formats";
 import { getRequestTools, getTranslatedToolName } from "./custom-tools";
 import { asText } from "./sanitize";
 import type {
@@ -238,6 +243,32 @@ function mergeConsecutiveSameRole(
 	return merged;
 }
 
+/**
+ * Read the client's `reasoning.effort`. Absent, null, or a non-object
+ * `reasoning` yields undefined (the provider default applies); any other
+ * value outside REASONING_EFFORT_VALUES is a ValidationError, which the
+ * handler turns into a 400 invalid_request_error.
+ */
+function translateReasoningEffort(
+	reasoning: unknown,
+): ReasoningEffort | undefined {
+	if (!reasoning || typeof reasoning !== "object" || Array.isArray(reasoning))
+		return undefined;
+	const effort = (reasoning as Record<string, unknown>).effort;
+	if (effort === undefined || effort === null) return undefined;
+	if (
+		typeof effort !== "string" ||
+		!REASONING_EFFORT_VALUES.includes(effort as ReasoningEffort)
+	) {
+		throw new ValidationError(
+			`reasoning.effort must be one of: ${REASONING_EFFORT_VALUES.join(", ")}`,
+			"reasoning.effort",
+			effort,
+		);
+	}
+	return effort as ReasoningEffort;
+}
+
 export function translateRequestToAnthropic(
 	req: ResponsesRequest & { input: ResponseItem[] },
 ): AnthropicRequest {
@@ -347,6 +378,14 @@ export function translateRequestToAnthropic(
 		messages: mergedMessages,
 		max_tokens: req.max_output_tokens ?? 4096,
 	};
+
+	// Carry the client's effort on the internal Anthropic-shaped body; each
+	// outbound provider moves it into its own native field and clamps it to
+	// the target model. Codex accounts read the raw passthrough copy instead.
+	const reasoningEffort = translateReasoningEffort(req.reasoning);
+	if (reasoningEffort !== undefined) {
+		result.reasoning = { effort: reasoningEffort };
+	}
 
 	// Merge developer-role blocks and req.instructions into system prompt.
 	const systemParts: string[] = [];
