@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { splitModelRouting as parseModelRouting } from "@better-ccflare/core";
-import type { Account, RequestMeta } from "@better-ccflare/types";
+import type {
+	Account,
+	ApiKeyRestrictions,
+	RequestMeta,
+} from "@better-ccflare/types";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 
@@ -108,13 +112,18 @@ async function runFallback(opts: {
 	mappings: Record<string, string | string[]>;
 	modelOverride?: string;
 	firstStatus?: number;
+	/** How many leading fetches answer 429; the rest answer 200. */
+	failCount?: number;
+	/** The calling key's restrictions, threaded through to the fallback guard. */
+	restrictions?: ApiKeyRestrictions | null;
 }): Promise<Array<{ model?: string; provider?: unknown }>> {
 	const sent: Array<{ model?: string; provider?: unknown }> = [];
+	const failCount = opts.failCount ?? 1;
 	globalThis.fetch = mock(async (input: RequestInfo | URL) => {
 		const req = input instanceof Request ? input : new Request(String(input));
 		const body = JSON.parse(await req.text().catch(() => "{}"));
 		sent.push({ model: body.model, provider: body.provider });
-		if (sent.length === 1) {
+		if (sent.length <= failCount) {
 			return new Response(
 				JSON.stringify({
 					error: {
@@ -167,6 +176,12 @@ async function runFallback(opts: {
 			0,
 			makeProxyContext(),
 			opts.modelOverride,
+			undefined,
+			undefined,
+			undefined,
+			false,
+			undefined,
+			opts.restrictions,
 		);
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : String(e);
@@ -432,5 +447,80 @@ describe("proxyWithAccount — a slot's pin is inherited by unpinned fallback en
 			model: "a/model-a",
 			provider: { only: ["moonshot"] },
 		});
+	});
+});
+
+describe("proxyWithAccount — per-key model allowlist gates fallback models", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	function restrictions(allowedModels: string[] | null): ApiKeyRestrictions {
+		return { allowedAccounts: null, allowedProviders: null, allowedModels };
+	}
+
+	// The primary fetch 429s, so the account's model list starts cycling. The
+	// account maps the sonnet family to a native id plus an unrelated model; a
+	// key pinned to the exact primary id must never see the unrelated one.
+	it("never sends a fallback model the key's allowlist excludes", async () => {
+		const sent = await runFallback({
+			requestModel: "claude-sonnet-4-5",
+			mappings: { sonnet: ["anthropic/claude-sonnet-4-5", "gpt-4o"] },
+			restrictions: restrictions(["anthropic/claude-sonnet-4-5"]),
+		});
+
+		expect(sent.map((s) => s.model)).toEqual(["anthropic/claude-sonnet-4-5"]);
+		expect(sent.some((s) => s.model === "gpt-4o")).toBe(false);
+	});
+
+	it("still applies the fallback for an unrestricted key (control)", async () => {
+		const sent = await runFallback({
+			requestModel: "claude-sonnet-4-5",
+			mappings: { sonnet: ["anthropic/claude-sonnet-4-5", "gpt-4o"] },
+		});
+
+		expect(sent.map((s) => s.model)).toEqual([
+			"anthropic/claude-sonnet-4-5",
+			"gpt-4o",
+		]);
+	});
+
+	it("still applies the fallback when the allowlist permits it (control)", async () => {
+		const sent = await runFallback({
+			requestModel: "claude-sonnet-4-5",
+			mappings: { sonnet: ["anthropic/claude-sonnet-4-5", "gpt-4o"] },
+			restrictions: restrictions(["anthropic/claude-sonnet-4-5", "gpt-4o"]),
+		});
+
+		expect(sent.map((s) => s.model)).toEqual([
+			"anthropic/claude-sonnet-4-5",
+			"gpt-4o",
+		]);
+	});
+
+	// A family entry covers every model in that family, so the haiku fallback
+	// must still be tried — the regex-free family match is not an exact-id check.
+	// The non-haiku tail is skipped even though cycling continues past entry 1.
+	it("keeps an allowed-family fallback but skips a model outside the family", async () => {
+		const sent = await runFallback({
+			requestModel: "claude-haiku-4-5",
+			mappings: {
+				haiku: ["claude-haiku-4-5", "claude-haiku-4-5-latest", "gpt-4o"],
+			},
+			restrictions: restrictions(["haiku"]),
+			failCount: 2,
+		});
+
+		expect(sent.map((s) => s.model)).toEqual([
+			"claude-haiku-4-5",
+			"claude-haiku-4-5-latest",
+		]);
+		expect(sent.some((s) => s.model === "gpt-4o")).toBe(false);
 	});
 });

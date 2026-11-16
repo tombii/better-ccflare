@@ -35,6 +35,7 @@ import {
 } from "@better-ccflare/providers";
 import type {
 	Account,
+	ApiKeyRestrictions,
 	RateLimitReason,
 	RequestMeta,
 } from "@better-ccflare/types";
@@ -57,6 +58,7 @@ import {
 	getXaiConvId,
 	isModelCooldownFallback,
 } from "./account-selector";
+import { isModelAllowedForApiKey } from "./api-key-restrictions";
 import {
 	ApiKeyRoutedSpendRefusal,
 	getApiKeyRoutedSpendCheck,
@@ -1455,6 +1457,16 @@ export async function proxyWithAccount(
 	 * returning it would stop failover.
 	 */
 	onTerminalRejection?: (capture: () => Promise<Response | null>) => void,
+	/**
+	 * The calling API key's restrictions. Only the model allowlist is consulted
+	 * here, and only for per-account fallback entries: a key allowed exactly
+	 * `claude-haiku-4-5` must not be served `gpt-4o` just because the account's
+	 * `model_mappings` lists it as a fallback. The primary entry (what the
+	 * client asked for, or its slot override) was already authorized by the
+	 * caller, so it is not re-checked. `null`/`undefined` means unrestricted and
+	 * makes the guard inert.
+	 */
+	keyRestrictions?: ApiKeyRestrictions | null,
 ): Promise<Response | null> {
 	try {
 		// Extracted once for the whole call: every direct `saveRequest` audit
@@ -3115,6 +3127,21 @@ export async function proxyWithAccount(
 					// provider.
 					const nextSplit = splitModelRouting(nextModel);
 					const nextBareModel = nextSplit.model;
+					// The allowlist has to gate fallback entries too. A key pinned to an
+					// exact model id would otherwise be served a different model from
+					// this account's fallback list the moment the primary 429s. The
+					// primary (index 0 / the slot override) was already authorized by
+					// the caller, so this deliberately starts at the first fallback.
+					// A skipped entry mutates nothing: `rawResponse` still belongs to
+					// the previous attempt, so if every entry is skipped the loop falls
+					// through to the post-loop exhaustion path and fails over to the
+					// next account exactly as an exhausted list does.
+					if (!isModelAllowedForApiKey(nextBareModel, keyRestrictions)) {
+						log.info(
+							`Skipping fallback model '${nextBareModel}' on account ${account.name}: not permitted for this API key`,
+						);
+						continue;
+					}
 					const patchedContext = patchModelAndRouting(
 						effectiveBodyContext,
 						nextBareModel,

@@ -1949,6 +1949,7 @@ async function handleProxyRequest(
 				(capture: () => Promise<Response | null>) => {
 					terminalRejection = capture;
 				},
+				keyRestrictions,
 			);
 		} finally {
 			if (probeAdmission === "admitted") {
@@ -2037,6 +2038,7 @@ async function handleProxyRequest(
 				(capture: () => Promise<Response | null>) => {
 					terminalRejection = capture;
 				},
+				keyRestrictions,
 			);
 
 			if (response) {
@@ -2184,6 +2186,7 @@ async function handleProxyRequest(
 						(capture: () => Promise<Response | null>) => {
 							terminalRejection = capture;
 						},
+						keyRestrictions,
 					);
 				} finally {
 					if (probeAdmission === "admitted") {
@@ -2245,6 +2248,7 @@ async function handleProxyRequest(
 						(capture: () => Promise<Response | null>) => {
 							terminalRejection = capture;
 						},
+						keyRestrictions,
 					);
 
 					if (response) {
