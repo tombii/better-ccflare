@@ -1746,6 +1746,10 @@ async function proxyWithAccountAttempt(
 			),
 		);
 		const targetUrl = provider.buildUrl(url.pathname, url.search, account);
+		// Captured right after buildUrl, which reads the same per-account state:
+		// a provider that removes body.model (Vertex) addresses the model in the
+		// URL, and the account's copy can be overwritten by a concurrent request.
+		const providerTargetModel = provider.getTargetModel?.(account) ?? null;
 
 		const requestInit: RequestInit & { duplex?: "half" } = {
 			method: req.method,
@@ -1834,7 +1838,10 @@ async function proxyWithAccountAttempt(
 		// the URL; the effective (post-override) request model is the best
 		// remaining answer there.
 		served.resolveModel = () =>
-			outgoing.model || effectiveBodyContext.getModel() || null;
+			outgoing.model ||
+			providerTargetModel ||
+			effectiveBodyContext.getModel() ||
+			null;
 
 		const transformedBodyJson =
 			transformedModel &&
@@ -2737,8 +2744,8 @@ async function proxyWithAccountAttempt(
 				capturedHeaders.set("x-better-ccflare-request-id", requestMeta.id);
 				capturedHeaders.set("x-better-ccflare-request-path", requestMeta.path);
 				const capturedModel = effectiveBodyContext.getModel();
-				onTerminalRejection?.(() =>
-					provider.processResponse(
+				onTerminalRejection?.(async () => {
+					const replayed = await provider.processResponse(
 						new Response(terminalBody, {
 							status: capturedStatus,
 							statusText: capturedStatusText,
@@ -2748,8 +2755,18 @@ async function proxyWithAccountAttempt(
 						req.headers,
 						drainAbortController,
 						{ requestModel: capturedModel },
-					),
-				);
+					);
+					// The caller returns this to the client when every candidate
+					// failed, and it never passes through proxyWithAccount's
+					// decoration (the attempt returned null), so stamp it here.
+					return replayed
+						? withServedResponseHeaders(
+								replayed,
+								account.name,
+								served.resolveModel?.() ?? capturedModel,
+							)
+						: replayed;
+				});
 				return null;
 			}
 			cancelDiscardedResponseBody(response);

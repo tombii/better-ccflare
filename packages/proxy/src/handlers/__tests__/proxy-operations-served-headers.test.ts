@@ -89,6 +89,10 @@ const passthroughForward: ForwardToClient = async (options) => options.response;
 interface StubOptions {
 	/** Simulates provider model mapping: rewrites body.model before sending. */
 	mapModel?: (model: string) => string;
+	/** Simulates Vertex: the model is addressed in the URL and removed from the body. */
+	dropModelFromBody?: boolean;
+	/** The provider's answer to "which model is in the URL" (Vertex only). */
+	targetModel?: string;
 	streaming?: boolean;
 }
 
@@ -112,19 +116,33 @@ function makeProxyContext(stub: StubOptions = {}): ProxyContext {
 			canHandle: () => true,
 			buildUrl: () => "https://upstream.local/v1/messages",
 			prepareHeaders: () => new Headers(),
-			transformRequestBody: stub.mapModel
+			getTargetModel: stub.targetModel ? () => stub.targetModel : undefined,
+			transformRequestBody: stub.dropModelFromBody
 				? async (request: Request) => {
-						const body = (await request.clone().json()) as {
-							model: string;
-						};
-						const mapModel = stub.mapModel as (model: string) => string;
+						const body = (await request.clone().json()) as Record<
+							string,
+							unknown
+						>;
+						delete body.model;
 						return new Request(request.url, {
 							method: request.method,
 							headers: request.headers,
-							body: JSON.stringify({ ...body, model: mapModel(body.model) }),
+							body: JSON.stringify(body),
 						});
 					}
-				: null,
+				: stub.mapModel
+					? async (request: Request) => {
+							const body = (await request.clone().json()) as {
+								model: string;
+							};
+							const mapModel = stub.mapModel as (model: string) => string;
+							return new Request(request.url, {
+								method: request.method,
+								headers: request.headers,
+								body: JSON.stringify({ ...body, model: mapModel(body.model) }),
+							});
+						}
+					: null,
 			processResponse: async (response: Response) => response,
 			parseRateLimit: () => ({
 				isRateLimited: false,
@@ -216,6 +234,33 @@ describe("proxyWithAccount — served model/account response headers", () => {
 		expect(((await response?.json()) as { model: string }).model).toBe(
 			"qwen/qwen3-coder",
 		);
+	});
+
+	it("URL-addressed model (Vertex): reports the provider's target model, never the requested alias", async () => {
+		globalThis.fetch = mock(async () =>
+			messageJson("claude-sonnet-4-6"),
+		) as unknown as typeof fetch;
+
+		const body = makeBody("claude-sonnet-4-6");
+		const response = await proxyWithAccount(
+			makeRequest(body),
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({ name: "vertex-main" }),
+			makeRequestMeta(),
+			body,
+			() => undefined,
+			0,
+			makeProxyContext({
+				dropModelFromBody: true,
+				targetModel: "claude-haiku-4-5@20251001",
+			}),
+		);
+
+		expect(response).not.toBeNull();
+		expect(response?.headers.get(SERVED_MODEL_HEADER)).toBe(
+			"claude-haiku-4-5@20251001",
+		);
+		expect(response?.headers.get(SERVED_ACCOUNT_HEADER)).toBe("vertex-main");
 	});
 
 	it("combo slot override: reports the slot model (routing suffix stripped), not the requested alias", async () => {

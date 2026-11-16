@@ -186,6 +186,15 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 	}
 
 	/**
+	 * The Vertex-formatted model prepareRequest chose, i.e. the one buildUrl puts
+	 * in the request path. body.model is removed before the request leaves, so
+	 * this is the only record of which model is actually called.
+	 */
+	getTargetModel(account: Account): string | undefined {
+		return (account as Account & { _vertexModel?: string })._vertexModel;
+	}
+
+	/**
 	 * Build Vertex AI URL with model in path
 	 * Format: https://{region}-aiplatform.googleapis.com/v1/projects/{projectId}/locations/{region}/publishers/anthropic/models/{model}:streamRawPredict
 	 *
