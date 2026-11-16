@@ -235,7 +235,7 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 	 */
 	async transformRequestBody(
 		request: Request,
-		_account?: Account,
+		account?: Account,
 	): Promise<Request> {
 		try {
 			const body = await request.json();
@@ -245,8 +245,17 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 			);
 
 			// Internal reasoning.effort -> Claude's native output_config.effort,
-			// clamped against the model before it leaves the body.
-			applyAnthropicReasoningEffort(body, "output_config");
+			// clamped against the model Vertex actually calls: the mapped target
+			// prepareRequest stored for buildUrl, not the client's body.model.
+			const vertexModel = (
+				account as (Account & { _vertexModel?: string }) | undefined
+			)?._vertexModel;
+			const targetModel =
+				vertexModel ||
+				(account && typeof body.model === "string"
+					? getModelName(body.model, account)
+					: body.model);
+			applyAnthropicReasoningEffort(body, "output_config", targetModel);
 
 			// Remove model from body (Vertex AI requires it in URL, not body)
 			delete body.model;

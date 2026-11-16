@@ -27,6 +27,7 @@ import {
 	isAnthropicOutOfCredits,
 	type Provider,
 	readCodeBuddyGatewayRejection,
+	reclampReasoningEffort,
 	recoverCodexMessagesContinuation,
 	UPSTREAM_402_OUT_OF_CREDITS_REASON,
 	usageCache,
@@ -3052,6 +3053,31 @@ export async function proxyWithAccount(
 						break;
 					}
 
+					// The client's reasoning effort as it entered the transform (the
+					// internal `reasoning.effort` carrier), read from the pre-transform
+					// body. The transform clamps it against the model MAPPING produces,
+					// but the re-patch below sends `nextBareModel`, so the effort is
+					// re-resolved from this original value against that model. A
+					// client-native `output_config.effort` is passed through verbatim
+					// by the Anthropic-shaped transform and must stay untouched.
+					const preTransformBody = patchedContext?.getParsedJson() as
+						| Record<string, unknown>
+						| null
+						| undefined;
+					const preReasoning = preTransformBody?.reasoning;
+					const originalEffort =
+						preReasoning &&
+						typeof preReasoning === "object" &&
+						!Array.isArray(preReasoning)
+							? (preReasoning as Record<string, unknown>).effort
+							: undefined;
+					const preOutputConfig = preTransformBody?.output_config;
+					const clientSentNativeOutputEffort =
+						!!preOutputConfig &&
+						typeof preOutputConfig === "object" &&
+						!Array.isArray(preOutputConfig) &&
+						(preOutputConfig as Record<string, unknown>).effort !== undefined;
+
 					const retryRequestInit: RequestInit & { duplex?: "half" } = {
 						method: req.method,
 						headers,
@@ -3084,15 +3110,33 @@ export async function proxyWithAccount(
 					if (retryTransformedBodyText !== undefined) {
 						try {
 							const transformedBody = JSON.parse(retryTransformedBodyText);
-							if (
-								applyModelAndRouting(
+							const routingChanged = applyModelAndRouting(
+								transformedBody,
+								nextBareModel,
+								nextSplit.routing,
+								slotRouting,
+								accountSupportsRouting,
+							);
+							// Always re-clamp, even when the re-patch changed nothing: the
+							// transform may have clamped against a different (mapped)
+							// model while the body already names `nextBareModel`.
+							let effortChanged = false;
+							try {
+								effortChanged = reclampReasoningEffort(
 									transformedBody,
 									nextBareModel,
-									nextSplit.routing,
-									slotRouting,
-									accountSupportsRouting,
-								)
-							) {
+									originalEffort,
+									{ preserveOutputConfigEffort: clientSentNativeOutputEffort },
+								);
+							} catch (err) {
+								// The transform already validated the effort; keep the
+								// transformed value rather than dropping the re-patch.
+								log.warn(
+									"Failed to re-clamp reasoning effort for model fallback:",
+									err,
+								);
+							}
+							if (routingChanged || effortChanged) {
 								const repatchedBodyText = JSON.stringify(transformedBody);
 								const repatchedHeaders = new Headers(
 									retryTransformedRequest.headers,

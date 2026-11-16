@@ -180,6 +180,54 @@ describe("other Anthropic-shaped providers with their own body transform", () =>
 		expect(body.reasoning).toBeUndefined();
 	});
 
+	it("Vertex AI clamps against the mapped model it actually calls", async () => {
+		const provider = new VertexAIProvider();
+		const acc = account({
+			provider: "vertex-ai",
+			custom_endpoint: JSON.stringify({ projectId: "p", region: "global" }),
+			model_mappings: JSON.stringify({ sonnet: "claude-haiku-4-5" }),
+		} as Partial<Account>);
+		const request = messagesRequest({
+			model: "claude-sonnet-4-6",
+			reasoning: { effort: "high" },
+		});
+		provider.prepareRequest(request, await request.clone().arrayBuffer(), acc);
+		const transformed = await provider.transformRequestBody(request, acc);
+		const body = (await transformed.json()) as Record<string, unknown>;
+		expect(body.output_config).toEqual({ effort: "medium" });
+		expect(body.model).toBeUndefined();
+	});
+
+	it("Vertex AI applies an override keyed to the mapped model", async () => {
+		setReasoningEffortOverrides({ "claude-haiku-4-5": ["low"] });
+		const provider = new VertexAIProvider();
+		const acc = account({
+			provider: "vertex-ai",
+			custom_endpoint: JSON.stringify({ projectId: "p", region: "global" }),
+			model_mappings: JSON.stringify({ sonnet: "claude-haiku-4-5" }),
+		} as Partial<Account>);
+		const request = messagesRequest({
+			model: "claude-sonnet-4-6",
+			reasoning: { effort: "high" },
+		});
+		provider.prepareRequest(request, await request.clone().arrayBuffer(), acc);
+		const transformed = await provider.transformRequestBody(request, acc);
+		const body = (await transformed.json()) as Record<string, unknown>;
+		expect(body.output_config).toEqual({ effort: "low" });
+	});
+
+	it("Vertex AI falls back to the mapped model when prepareRequest did not run", async () => {
+		const body = await outbound(
+			new VertexAIProvider(),
+			{ model: "claude-sonnet-4-6", reasoning: { effort: "high" } },
+			account({
+				provider: "vertex-ai",
+				model_mappings: JSON.stringify({ sonnet: "claude-haiku-4-5" }),
+			} as Partial<Account>),
+		);
+		expect(body.output_config).toEqual({ effort: "medium" });
+	});
+
 	it("Meta gets output_config.effort and no reasoning key", async () => {
 		const request = new Request("https://api.meta.ai/v1/messages", {
 			method: "POST",
