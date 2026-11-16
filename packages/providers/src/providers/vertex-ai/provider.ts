@@ -2,7 +2,11 @@ import { TIME_CONSTANTS } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { GoogleAuth } from "google-auth-library";
-import type { TokenRefreshResult } from "../../types";
+import type {
+	ProviderRequestState,
+	ProviderResponseContext,
+	TokenRefreshResult,
+} from "../../types";
 import { getModelName } from "../../utils/model-mapping";
 import { applyAnthropicReasoningEffort } from "../../utils/reasoning-effort";
 import {
@@ -38,6 +42,43 @@ function convertToVertexAIModel(anthropicModel: string): string {
 	}
 
 	return vertexModel;
+}
+
+/** Anthropic-format model assumed when the request body names none. */
+const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929";
+/** Vertex-format counterpart, used when no per-request state is available. */
+const DEFAULT_VERTEX_MODEL = "claude-sonnet-4-5@20250929";
+
+interface VertexModels {
+	/** Model in Vertex's `@date` format — the one the URL addresses. */
+	vertexModel: string;
+	/** The client's model, restored into the response. */
+	originalModel: string;
+}
+
+/**
+ * Resolve the models for one request: the client's model (or the default when
+ * the body names none), run through the account's mappings and then into
+ * Vertex's `@date` format.
+ *
+ * Pure by construction. `prepareRequest` (for the URL) and
+ * `transformRequestBody` (for the reasoning-effort clamp) both call it, so the
+ * model in the path and the model the clamp is computed against cannot
+ * disagree — and neither has to stash anything on the shared account object.
+ */
+function resolveVertexModels(
+	bodyModel: string | undefined,
+	account: Account | undefined,
+): VertexModels {
+	const originalModel = bodyModel || DEFAULT_ANTHROPIC_MODEL;
+	const transformedModel = account?.model_mappings
+		? getModelName(originalModel, account)
+		: originalModel;
+
+	return {
+		vertexModel: convertToVertexAIModel(transformedModel),
+		originalModel,
+	};
 }
 
 export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
@@ -129,13 +170,18 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 
 	/**
 	 * Pre-process request to extract model information
-	 * This is called before buildUrl to ensure the model is available
+	 * This is called before buildUrl to ensure the model is available.
+	 *
+	 * @returns this attempt's models. The proxy hands the same value back to
+	 *   buildUrl/getTargetModel and, via the response context, to
+	 *   processResponse — nothing is stored on the account, which concurrent
+	 *   requests share.
 	 */
 	prepareRequest(
 		_request: Request,
 		requestBodyBuffer: ArrayBuffer | null,
 		account: Account,
-	): void {
+	): ProviderRequestState | undefined {
 		try {
 			if (!requestBodyBuffer) {
 				console.log("[Vertex AI] No request body, using fallback model");
@@ -145,38 +191,17 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 			// Extract model from request body
 			const bodyText = new TextDecoder().decode(requestBodyBuffer);
 			const body = JSON.parse(bodyText);
-			const originalModel = body.model || "claude-sonnet-4-5-20250929";
-
-			console.log(
-				`[Vertex AI] prepareRequest - extracted model: ${originalModel}`,
+			const bodyModel = typeof body.model === "string" ? body.model : undefined;
+			const { vertexModel, originalModel } = resolveVertexModels(
+				bodyModel,
+				account,
 			);
 
-			// Apply custom model mappings if configured
-			let transformedModel = originalModel;
-			if (account?.model_mappings) {
-				transformedModel = getModelName(originalModel, account);
-				console.log(
-					`[Vertex AI] prepareRequest - after mapping: ${transformedModel}`,
-				);
-			}
+			console.log(
+				`[Vertex AI] prepareRequest - extracted model: ${originalModel}, Vertex format: ${vertexModel}`,
+			);
 
-			// Convert to Vertex AI format
-			const vertexModel = convertToVertexAIModel(transformedModel);
-			console.log(`[Vertex AI] prepareRequest - Vertex format: ${vertexModel}`);
-
-			// Store models in account for buildUrl to use
-			(
-				account as Account & {
-					_vertexModel?: string;
-					_originalModel?: string;
-				}
-			)._vertexModel = vertexModel;
-			(
-				account as Account & {
-					_vertexModel?: string;
-					_originalModel?: string;
-				}
-			)._originalModel = originalModel;
+			return { vertexModel, originalModel };
 		} catch (error) {
 			console.log(
 				"[Vertex AI] prepareRequest - failed to extract model:",
@@ -186,33 +211,43 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 	}
 
 	/**
-	 * The Vertex-formatted model prepareRequest chose, i.e. the one buildUrl puts
+	 * The Vertex-formatted model this attempt chose, i.e. the one buildUrl puts
 	 * in the request path. body.model is removed before the request leaves, so
 	 * this is the only record of which model is actually called.
 	 */
-	getTargetModel(account: Account): string | undefined {
-		return (account as Account & { _vertexModel?: string })._vertexModel;
+	getTargetModel(
+		_account: Account,
+		state?: ProviderRequestState,
+	): string | undefined {
+		const model = state?.vertexModel;
+		return typeof model === "string" ? model : undefined;
 	}
 
 	/**
 	 * Build Vertex AI URL with model in path
 	 * Format: https://{region}-aiplatform.googleapis.com/v1/projects/{projectId}/locations/{region}/publishers/anthropic/models/{model}:streamRawPredict
 	 *
-	 * Note: buildUrl is called BEFORE transformRequestBody in the proxy flow,
-	 * so we use a cached model from the account object (set by transformRequestBody on previous calls)
+	 * The model comes from this attempt's `state` (returned by
+	 * prepareRequest). Callers that have no request body — the /v1/models
+	 * catalog lookup — get the default model instead.
 	 */
-	buildUrl(path: string, query: string, account?: Account): string {
+	buildUrl(
+		path: string,
+		query: string,
+		account?: Account,
+		state?: ProviderRequestState,
+	): string {
 		if (!account) {
 			throw new Error("Account is required for Vertex AI provider");
 		}
 
 		const config = this.parseVertexConfig(account);
 
-		// Get model from temporary storage (set in transformRequestBody)
-		// Fallback to sonnet in Vertex AI format if not set
+		const stateModel = state?.vertexModel;
 		const model =
-			(account as Account & { _vertexModel?: string })._vertexModel ||
-			"claude-sonnet-4-5@20250929";
+			typeof stateModel === "string" && stateModel
+				? stateModel
+				: DEFAULT_VERTEX_MODEL;
 
 		console.log(`[Vertex AI] buildUrl called - using model: ${model}`);
 
@@ -237,10 +272,8 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 
 	/**
 	 * Transform request body for Vertex AI:
-	 * 1. Remove model from body (it goes in URL instead, already extracted by prepareRequest)
+	 * 1. Remove model from body (it goes in URL instead, extracted by prepareRequest)
 	 * 2. Add anthropic_version field to body
-	 *
-	 * Note: prepareRequest is called before this to extract and store the model
 	 */
 	async transformRequestBody(
 		request: Request,
@@ -254,17 +287,12 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 			);
 
 			// Internal reasoning.effort -> Claude's native output_config.effort,
-			// clamped against the model Vertex actually calls: the mapped target
-			// prepareRequest stored for buildUrl, not the client's body.model.
-			const vertexModel = (
-				account as (Account & { _vertexModel?: string }) | undefined
-			)?._vertexModel;
-			const targetModel =
-				vertexModel ||
-				(account && typeof body.model === "string"
-					? getModelName(body.model, account)
-					: body.model);
-			applyAnthropicReasoningEffort(body, "output_config", targetModel);
+			// clamped against the model Vertex actually calls. Derived with the
+			// same pure helper prepareRequest uses for the URL, so the two cannot
+			// disagree (and neither depends on the shared account object).
+			const bodyModel = typeof body.model === "string" ? body.model : undefined;
+			const { vertexModel } = resolveVertexModels(bodyModel, account);
+			applyAnthropicReasoningEffort(body, "output_config", vertexModel);
 
 			// Remove model from body (Vertex AI requires it in URL, not body)
 			delete body.model;
@@ -286,16 +314,23 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 	/**
 	 * Override processResponse to restore original model name in response
 	 * This ensures history records the Anthropic model format, not Vertex AI format
+	 *
+	 * The model comes from the attempt's `context.providerState` (returned by
+	 * prepareRequest); without it the response is passed through untouched.
 	 */
 	async processResponse(
 		response: Response,
 		account: Account | null,
+		_requestHeaders?: Headers,
+		_drainAbort?: AbortController,
+		context?: ProviderResponseContext,
 	): Promise<Response> {
-		const originalModel = (account as Account & { _originalModel?: string })
-			?._originalModel;
+		const storedModel = context?.providerState?.originalModel;
+		const originalModel =
+			typeof storedModel === "string" ? storedModel : undefined;
 
 		console.log(
-			`[Vertex AI] processResponse - originalModel stored: ${originalModel}`,
+			`[Vertex AI] processResponse - originalModel from state: ${originalModel}`,
 		);
 
 		// If no original model stored, return response as-is

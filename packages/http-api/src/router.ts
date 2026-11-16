@@ -484,6 +484,12 @@ export class APIRouter {
 		this.handlers.set("POST:/api/config/provider-model-defaults", (req) =>
 			configHandlers.setProviderModelDefaults(req),
 		);
+		this.handlers.set("GET:/api/config/reasoning-efforts", () =>
+			configHandlers.getReasoningEfforts(),
+		);
+		this.handlers.set("POST:/api/config/reasoning-efforts", (req) =>
+			configHandlers.setReasoningEfforts(req),
+		);
 		this.handlers.set("GET:/api/config/model-capacity-routing", () =>
 			configHandlers.getModelCapacityRouting(),
 		);

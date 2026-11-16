@@ -98,6 +98,77 @@ export function getReasoningEffortError(effort: unknown): string | null {
 	}
 }
 
+/**
+ * The native outbound field a provider uses for the client's reasoning effort.
+ * `output_config` is Claude's Messages API (`output_config.effort`), `reasoning`
+ * is OpenRouter's `reasoning: { effort }` object, `reasoning_effort` is the
+ * Chat Completions top-level key.
+ */
+export type ReasoningEffortTarget =
+	| "output_config"
+	| "reasoning"
+	| "reasoning_effort";
+
+/**
+ * Put a client's reasoning effort back on an OUTBOUND body after a model
+ * fallback, in the provider's native shape. The provider transform clamps
+ * against the model the ACCOUNT MAPPING produced, which may reject the
+ * parameter outright (e.g. a Haiku 4.5 mapping), so the field never reaches the
+ * transformed body; `reclampReasoningEffort` can only rewrite an existing
+ * field, never add one. This is the add half.
+ *
+ * Resolves `requestedEffort` against `model` — the model actually sent — with
+ * the same `clampEffort` the neighbouring helpers use. It never overwrites a
+ * field the body already carries (that value is the transform's or the
+ * reclamp's business and may be client-native), and never adds one for a model
+ * that still rejects the parameter, for a missing effort or for an invalid one.
+ *
+ * @returns true when the body changed
+ */
+export function restoreReasoningEffort(
+	body: Record<string, unknown>,
+	target: ReasoningEffortTarget,
+	requestedEffort: unknown,
+	model: string,
+): boolean {
+	let clamped: ReturnType<typeof clampEffort>;
+	try {
+		clamped = clampEffort(requestedEffort, model);
+	} catch (error) {
+		// An invalid level is a client error the pre-flight validation already
+		// answered; there is nothing to restore here.
+		if (error instanceof ValidationError) return false;
+		throw error;
+	}
+	if (clamped === undefined) return false;
+
+	if (target === "output_config") {
+		const outputConfig = body.output_config;
+		if (isPlainObject(outputConfig) && outputConfig.effort !== undefined) {
+			return false;
+		}
+		body.output_config = {
+			...(isPlainObject(outputConfig) ? outputConfig : {}),
+			effort: clamped,
+		};
+		return true;
+	}
+
+	if (target === "reasoning_effort") {
+		if (body.reasoning_effort !== undefined) return false;
+		body.reasoning_effort = clamped;
+		return true;
+	}
+
+	const reasoning = body.reasoning;
+	if (isPlainObject(reasoning) && reasoning.effort !== undefined) return false;
+	body.reasoning = {
+		...(isPlainObject(reasoning) ? reasoning : {}),
+		effort: clamped,
+	};
+	return true;
+}
+
 export interface ReclampReasoningEffortOptions {
 	/**
 	 * Leave `output_config.effort` alone even when `requestedEffort` is
@@ -119,7 +190,8 @@ export interface ReclampReasoningEffortOptions {
  * Exactly one native field is rewritten, the first present of
  * `output_config.effort` (Anthropic-shaped), `reasoning_effort` (Chat
  * Completions) or `reasoning.effort` (OpenRouter). An effort is never added
- * where none is present.
+ * where none is present; it is removed when the model rejects the parameter
+ * outright (resolution returns undefined, e.g. Claude Haiku 4.5).
  *
  * `requestedEffort` is the client's original value (the internal
  * `reasoning.effort` before the transform). When given, resolution starts from
@@ -148,7 +220,14 @@ export function reclampReasoningEffort(
 			return false;
 		}
 		const clamped = clampEffort(requestedEffort, model);
-		if (clamped === undefined || clamped === outputConfig.effort) return false;
+		if (clamped === outputConfig.effort) return false;
+		if (clamped === undefined) {
+			// The model rejects the parameter outright (e.g. Claude Haiku 4.5):
+			// a stale effort would 400, so remove it and keep the other keys.
+			const { effort: _dropped, ...rest } = outputConfig;
+			body.output_config = rest;
+			return true;
+		}
 		body.output_config = { ...outputConfig, effort: clamped };
 		return true;
 	}
@@ -158,8 +237,11 @@ export function reclampReasoningEffort(
 			requestedEffort ?? body.reasoning_effort,
 			model,
 		);
-		if (clamped === undefined || clamped === body.reasoning_effort)
-			return false;
+		if (clamped === body.reasoning_effort) return false;
+		if (clamped === undefined) {
+			delete body.reasoning_effort;
+			return true;
+		}
 		body.reasoning_effort = clamped;
 		return true;
 	}
@@ -167,7 +249,12 @@ export function reclampReasoningEffort(
 	const reasoning = body.reasoning;
 	if (isPlainObject(reasoning) && reasoning.effort !== undefined) {
 		const clamped = clampEffort(requestedEffort ?? reasoning.effort, model);
-		if (clamped === undefined || clamped === reasoning.effort) return false;
+		if (clamped === reasoning.effort) return false;
+		if (clamped === undefined) {
+			const { effort: _dropped, ...rest } = reasoning;
+			body.reasoning = rest;
+			return true;
+		}
 		body.reasoning = { ...reasoning, effort: clamped };
 		return true;
 	}

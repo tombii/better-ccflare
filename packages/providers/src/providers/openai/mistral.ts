@@ -10,9 +10,14 @@ import type { Account } from "@better-ccflare/types";
  */
 export const MISTRAL_AFFINITY_HEADER = "x-affinity";
 
-// Official Mistral API hosts: the global endpoint and the EU endpoint. Matching
-// is exact-host (never suffix-based) — see `isMistralEndpoint`.
-const OFFICIAL_MISTRAL_HOSTS = new Set(["api.mistral.ai", "api.eu.mistral.ai"]);
+// Official Mistral API hosts: the global endpoint plus the EU and US regional
+// endpoints. Matching is exact-host (never suffix-based) — see
+// `isMistralEndpoint`.
+const OFFICIAL_MISTRAL_HOSTS = new Set([
+	"api.mistral.ai",
+	"api.eu.mistral.ai",
+	"api.us.mistral.ai",
+]);
 
 // Loosely mirrors a Claude session UUID (v1-v8, RFC 4122 variant). Purely a
 // shape guard before hashing — not a cryptographic or exhaustive UUID
@@ -35,7 +40,7 @@ interface MistralThinkingChunk {
 }
 
 /**
- * True when the account's endpoint is Mistral's API (global or EU). Pure
+ * True when the account's endpoint is Mistral's API (global, EU or US). Pure
  * per-request check on the account, never on shared provider state (the
  * provider is a singleton). Matching is exact-host — a look-alike such as
  * `evil-api.mistral.ai` is not Mistral.

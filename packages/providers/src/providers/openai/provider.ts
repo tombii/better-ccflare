@@ -425,6 +425,14 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	}
 
 	/**
+	 * The same field the transform writes, for the proxy's post-fallback
+	 * restore of an effort the mapped model made it drop.
+	 */
+	reasoningEffortTarget(account?: Account): "reasoning_effort" | "reasoning" {
+		return this.getReasoningEffortField(account);
+	}
+
+	/**
 	 * Hook called before converting Anthropic request to OpenAI format.
 	 * Override to adjust the account (e.g., inject default model mappings).
 	 * Returns the account to use for model mapping.

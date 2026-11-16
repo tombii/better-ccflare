@@ -344,7 +344,22 @@ A client picks the reasoning effort per request, or omits it to get the provider
 | Codex | `reasoning.effort`. Unchanged: Codex still applies its own `medium` default. |
 | Bedrock | `(none)` — dropped; Bedrock builds its own Converse payload |
 
-Accepted values are `minimal`, `low`, `medium`, `high`, `xhigh` and `max`. Any other value returns `400 invalid_request_error`. If the target model does not support the requested level, the effort is moved to the nearest supported level, preferring the next one down. The built-in tables cover Claude families and some GPT-5/Codex models. Effort is forwarded unchanged to models those tables don't know. Meta accepts `low`, `medium`, `high` and `xhigh`; `minimal` is clamped to `low` and `max` to `xhigh`.
+Accepted values are `minimal`, `low`, `medium`, `high`, `xhigh` and `max`. Any other value returns `400 invalid_request_error`. If the target model does not support the requested level, the effort is moved to the nearest supported level, preferring the next one down. The built-in tables cover the Claude families, some GPT-5 models and a few documented third-party models (Mistral Large 4 accepts `low`/`medium`/`high`; `zai-glm-5-3` accepts `low`/`high`/`max`). Effort is forwarded unchanged to models those tables don't know.
+
+Claude support is generation-aware, because the accepted levels differ by release:
+
+| Target | Levels accepted |
+|--------|-----------------|
+| Claude 5.x (Fable, Opus, Sonnet, Haiku), Opus 4.7 and 4.8 | all five |
+| Opus 4.6, Sonnet 4.6 | `low`/`medium`/`high`/`max` (`xhigh` clamps down to `high`) |
+| Opus 4.5 | `low`/`medium`/`high` |
+| Haiku 4.5, Sonnet 4.5 and anything older | `(none)` — the parameter is rejected outright, so the field is dropped rather than clamped |
+
+Both Anthropic model-id orders are understood (`claude-opus-4-7` and `claude-3-5-sonnet-20241022`), and a dated snapshot is not mistaken for a minor version. A bare alias (`haiku`, `sonnet`) is treated as the current generation. An operator entry overrides any row.
+
+Meta accepts `low`, `medium`, `high` and `xhigh`; `minimal` is clamped to `low` and `max` to `xhigh`.
+
+An OpenAI-compatible endpoint with a strict request schema can reject the field instead of ignoring it. When the upstream answers `400`/`422` with a strict-schema error naming `reasoning_effort` or `reasoning`, ccflare retries the request once without that field and remembers the account+model, so later requests omit it up front. Endpoints that accept the field — including Mistral's own reasoning models — keep receiving it.
 
 `reasoning_efforts` (config file) or `CCFLARE_REASONING_EFFORTS` (env var, a JSON string) lets an operator declare which levels a model supports. Use it so an unsupported level does not return 400 and break combo failover:
 
@@ -361,7 +376,8 @@ Accepted values are `minimal`, `low`, `medium`, `high`, `xhigh` and `max`. Any o
 - An entry overrides the built-in table for that model. Models without an entry keep the built-in behaviour.
 - Keys are matched against the model actually sent upstream, after model mapping. Matching ignores case, surrounding whitespace and any provider prefix up to the last `/`.
 - Unknown level names are dropped with a warning. An entry with no valid levels is ignored.
-- The map is loaded at startup and reloaded whenever the `reasoning_efforts` config key changes through `Config.setReasoningEffortOverrides`. Edits made by hand to the file or the env var need a restart.
+- The map is loaded at startup. It can be replaced at runtime without a restart through `POST /api/config/reasoning-efforts` (see [api-http.md](api-http.md#post-apiconfigreasoning-efforts)); rejected payloads leave the map unchanged. Edits made by hand to the config file, and changes to `CCFLARE_REASONING_EFFORTS`, still need a restart.
+- `CCFLARE_REASONING_EFFORTS` outranks both the config file and `POST /api/config/reasoning-efforts`: while it is set to a non-blank value the endpoint answers `409` rather than writing a file value that would never be read.
 
 ## Web Search
 

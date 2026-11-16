@@ -15,6 +15,7 @@
 		"@better-ccflare/database": "workspace:*",
 		"@better-ccflare/config": "workspace:*",
 		"@better-ccflare/oauth-flow": "workspace:*",
+		"@better-ccflare/openai-formats": "workspace:*",
 		"@better-ccflare/providers": "workspace:*",
 		"@better-ccflare/proxy": "workspace:*",
 		"@better-ccflare/types": "workspace:*"

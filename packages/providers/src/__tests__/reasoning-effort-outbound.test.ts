@@ -104,12 +104,12 @@ describe("anthropic-compatible outbound effort", () => {
 	});
 
 	it("clamps via the shared resolver (built-in table and override)", async () => {
-		const haiku = await outbound(
+		const mini = await outbound(
 			provider,
-			{ model: "claude-haiku-4-5", reasoning: { effort: "max" } },
+			{ model: "gpt-5.4-mini", reasoning: { effort: "max" } },
 			acc,
 		);
-		expect(haiku.output_config).toEqual({ effort: "medium" });
+		expect(mini.output_config).toEqual({ effort: "medium" });
 
 		setReasoningEffortOverrides({ "glm-9": ["low", "high"] });
 		const glm = await outbound(
@@ -118,6 +118,16 @@ describe("anthropic-compatible outbound effort", () => {
 			acc,
 		);
 		expect(glm.output_config).toEqual({ effort: "high" });
+	});
+
+	it("drops the effort for a Claude model that rejects the parameter", async () => {
+		const haiku = await outbound(
+			provider,
+			{ model: "claude-haiku-4-5", reasoning: { effort: "max" } },
+			acc,
+		);
+		expect(haiku.output_config).toBeUndefined();
+		expect(haiku.reasoning).toBeUndefined();
 	});
 
 	it("clamps against the mapped model, not the requested alias", async () => {
@@ -185,16 +195,17 @@ describe("other Anthropic-shaped providers with their own body transform", () =>
 		const acc = account({
 			provider: "vertex-ai",
 			custom_endpoint: JSON.stringify({ projectId: "p", region: "global" }),
-			model_mappings: JSON.stringify({ sonnet: "claude-haiku-4-5" }),
+			model_mappings: JSON.stringify({ sonnet: "claude-opus-4-6" }),
 		} as Partial<Account>);
 		const request = messagesRequest({
 			model: "claude-sonnet-4-6",
-			reasoning: { effort: "high" },
+			reasoning: { effort: "xhigh" },
 		});
 		provider.prepareRequest(request, await request.clone().arrayBuffer(), acc);
 		const transformed = await provider.transformRequestBody(request, acc);
 		const body = (await transformed.json()) as Record<string, unknown>;
-		expect(body.output_config).toEqual({ effort: "medium" });
+		// Opus 4.6 predates xhigh, so the mapped model clamps it to high.
+		expect(body.output_config).toEqual({ effort: "high" });
 		expect(body.model).toBeUndefined();
 	});
 
@@ -219,13 +230,13 @@ describe("other Anthropic-shaped providers with their own body transform", () =>
 	it("Vertex AI falls back to the mapped model when prepareRequest did not run", async () => {
 		const body = await outbound(
 			new VertexAIProvider(),
-			{ model: "claude-sonnet-4-6", reasoning: { effort: "high" } },
+			{ model: "claude-sonnet-4-6", reasoning: { effort: "xhigh" } },
 			account({
 				provider: "vertex-ai",
-				model_mappings: JSON.stringify({ sonnet: "claude-haiku-4-5" }),
+				model_mappings: JSON.stringify({ sonnet: "claude-opus-4-6" }),
 			} as Partial<Account>),
 		);
-		expect(body.output_config).toEqual({ effort: "medium" });
+		expect(body.output_config).toEqual({ effort: "high" });
 	});
 
 	it("Meta gets output_config.effort and no reasoning key", async () => {

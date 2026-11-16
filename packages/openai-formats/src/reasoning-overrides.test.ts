@@ -51,10 +51,30 @@ describe("operator reasoning-effort overrides", () => {
 			resolveReasoningEffort("high", { targetModel: "gpt-5.4-mini" }).effort,
 		).toBe("low");
 		// Models without an override keep their built-in table.
+		expect(getSupportedReasoningEfforts("claude-haiku-4-5")).toEqual([]);
+	});
+
+	it("re-enables levels for a model whose built-in table is empty", () => {
+		// Haiku 4.5 rejects the effort parameter, but the operator map can still
+		// declare support (e.g. for an upstream that accepts the field).
+		setReasoningEffortOverrides({ "claude-haiku-4-5": ["low", "max"] });
 		expect(getSupportedReasoningEfforts("claude-haiku-4-5")).toEqual([
 			"low",
-			"medium",
+			"max",
 		]);
+		expect(
+			resolveReasoningEffort("high", { targetModel: "claude-haiku-4-5" })
+				.effort,
+		).toBe("low");
+	});
+
+	it("re-enables max for Opus 4.5", () => {
+		setReasoningEffortOverrides({
+			"claude-opus-4-5": ["low", "medium", "high", "xhigh", "max"],
+		});
+		expect(
+			resolveReasoningEffort("max", { targetModel: "claude-opus-4-5" }).effort,
+		).toBe("max");
 	});
 
 	it("matches by normalized model name (case, whitespace, provider prefix)", () => {

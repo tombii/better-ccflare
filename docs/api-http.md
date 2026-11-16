@@ -140,7 +140,7 @@ Note: this is distinct from the `codex` *provider*, which routes requests outbou
 **Known Limitations (`/v1/responses`):**
 - Regular HTTP does not trust an arbitrary caller-supplied `previous_response_id`. On the authenticated, native outbound Codex route, an operator-controlled gateway request can enable gateway-managed continuation. The gateway retains only the last upstream response ID and cryptographic input/configuration digests; it sends a suffix with that server-owned ID only after an exact ordered-prefix and configuration match. Mismatch, expiry, or process restart safely sends the full input without a response ID. WebSocket transport is not implemented.
 - Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are preserved on the native outbound Codex route. Routes translated to Anthropic skip built-in tools and forward only `type: "function"` tools.
-- `reasoning.effort` is forwarded to every account type except Bedrock, which builds its own Converse payload and drops the effort. Anthropic-shaped accounts receive it as `output_config.effort`, OpenRouter as `reasoning.effort`, and other OpenAI-compatible endpoints as `reasoning_effort`. It is moved to a level the target model supports when needed. Omitting it leaves the provider default in place. A value outside `minimal`, `low`, `medium`, `high`, `xhigh` and `max` returns `400 invalid_request_error` on both `/v1/messages` and `/v1/responses`. See [Reasoning Effort](configuration.md#reasoning-effort).
+- `reasoning.effort` is forwarded to every account type except Bedrock, which builds its own Converse payload and drops the effort. Anthropic-shaped accounts receive it as `output_config.effort`, OpenRouter as `reasoning.effort`, and other OpenAI-compatible endpoints as `reasoning_effort`. It is moved to a level the target model supports when needed. If an OpenAI-compatible upstream's strict request schema rejects the field outright (HTTP 400 or 422 naming it as an unknown input), the request is retried once without it and that rejection is remembered for the account and model, so later requests omit it up front instead of spending a failed round trip. Omitting it leaves the provider default in place. A value outside `minimal`, `low`, `medium`, `high`, `xhigh` and `max` returns `400 invalid_request_error` on both `/v1/messages` and `/v1/responses`. See [Reasoning Effort](configuration.md#reasoning-effort).
 - Unknown top-level `/v1/responses` request fields fail closed with `400 invalid_request_error`; they are never silently discarded. An explicit `max_output_tokens` also returns 400 when the selected outbound route is the canonical ChatGPT Codex subscription endpoint. Omit it for that route; custom OpenAI-compatible endpoints may support it.
 
 **Note:** `GET /v1/models` is proxied through to Claude like any other `/v1/*` request. A successful response (from a console/API-key account) is also passively captured into better-ccflare's own model catalog cache — see [Model Catalog](#model-catalog) below for the read endpoint (`GET /api/models`) and how the catalog is kept up to date.
@@ -815,6 +815,56 @@ Set or clear model-default overrides. Overrides are merged per family — updati
 curl -X POST http://localhost:8080/api/config/provider-model-defaults \
   -H "Content-Type: application/json" \
   -d '{"overrides": [{"provider": "codex", "family": "opus", "model": "gpt-5.3-codex"}]}'
+```
+
+#### GET /api/config/reasoning-efforts
+
+Get the operator reasoning-effort capability map: the levels each model is declared to support, used to clamp a client-supplied `output_config.effort` / `reasoning_effort` instead of returning `400`. See [configuration.md](configuration.md#reasoning-effort).
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "overrides": {
+      "grok-4.7-build-fast": ["low", "medium", "high", "xhigh"]
+    },
+    "source": "file",
+    "envVarSet": false
+  }
+}
+```
+
+`overrides` is the effective map. `source` is `"env"` when `CCFLARE_REASONING_EFFORTS` supplies it, `"file"` when the `reasoning_efforts` config field does, and `"default"` when neither does. `envVarSet` reports whether `CCFLARE_REASONING_EFFORTS` is set to a non-blank value.
+
+**Example:**
+```bash
+curl http://localhost:8080/api/config/reasoning-efforts
+```
+
+#### POST /api/config/reasoning-efforts
+
+Replace the whole map. Unlike the provider model defaults endpoint this is not a merge: models omitted from the payload lose their entry, and `{}` clears the map. Every level must be one of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; an unknown level, a non-array entry, or a missing `overrides` object returns `400`.
+
+**Request:**
+```json
+{
+  "overrides": {
+    "grok-4.7-build-fast": ["low", "medium", "high", "xhigh"],
+    "deepseek-v4.1-flash": ["low", "high", "max"]
+  }
+}
+```
+
+**Response:** Same shape as `GET /api/config/reasoning-efforts`, with `source: "file"`. The change takes effect immediately — no restart required.
+
+If `CCFLARE_REASONING_EFFORTS` is set to a non-blank value the endpoint returns `409 Conflict` and writes nothing: the env var outranks the config file, so the edit would silently have no effect. Update or unset the env var (which needs a restart) instead.
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/config/reasoning-efforts \
+  -H "Content-Type: application/json" \
+  -d '{"overrides": {"grok-4.7-build-fast": ["low", "medium", "high", "xhigh"]}}'
 ```
 
 #### GET /api/config/combos-enabled

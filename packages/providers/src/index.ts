@@ -52,8 +52,10 @@ export * from "./utils/provider-serving";
 // pre-flight validation of a client-supplied effort
 export {
 	getReasoningEffortError,
+	type ReasoningEffortTarget,
 	type ReclampReasoningEffortOptions,
 	reclampReasoningEffort,
+	restoreReasoningEffort,
 } from "./utils/reasoning-effort";
 // Export shared request-body helper (Bun 1.3.x clone().json() leak, #382)
 export * from "./utils/request-json";

@@ -330,7 +330,7 @@ describe("CodexProvider request conversion", () => {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
-				model: "claude-3-5-sonnet-20241022",
+				model: "claude-sonnet-5-0",
 				max_tokens: 100,
 				reasoning: { effort: "high" },
 				messages: [{ role: "user", content: "Hello" }],
@@ -486,7 +486,7 @@ describe("CodexProvider request conversion", () => {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
-				model: "claude-3-5-sonnet-20241022",
+				model: "claude-sonnet-5-0",
 				max_tokens: 100,
 				reasoning: { effort: "xhigh" },
 				messages: [{ role: "user", content: "Hello" }],
