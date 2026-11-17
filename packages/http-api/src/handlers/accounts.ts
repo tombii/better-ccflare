@@ -4240,6 +4240,15 @@ export function createAccountReloadHandler(dbOps: DatabaseOperations) {
 	};
 }
 
+// AWS profile names are alphanumeric plus . _ -; anything else (e.g. ":" or
+// regex metacharacters) would corrupt the bedrock:profile:region endpoint or
+// the RegExp built from the name.
+const awsProfileName = /^[A-Za-z0-9._-]+$/;
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Check if an AWS profile exists in ~/.aws/credentials
  */
@@ -4251,7 +4260,7 @@ function checkAwsProfileExists(profile: string): boolean {
 		}
 		const content = readFileSync(credentialsPath, "utf-8");
 		// Match [profile] section header (handles default and named profiles)
-		const profileRegex = new RegExp(`^\\[${profile}\\]`, "m");
+		const profileRegex = new RegExp(`^\\[${escapeRegExp(profile)}\\]`, "m");
 		return profileRegex.test(content);
 	} catch {
 		return false;
@@ -4271,7 +4280,9 @@ function readAwsRegion(profile: string): string | null {
 		const content = readFileSync(configPath, "utf-8");
 		// In ~/.aws/config, the default profile is [default], named profiles are [profile <name>]
 		const sectionHeader =
-			profile === "default" ? "\\[default\\]" : `\\[profile ${profile}\\]`;
+			profile === "default"
+				? "\\[default\\]"
+				: `\\[profile ${escapeRegExp(profile)}\\]`;
 		const sectionRegex = new RegExp(`${sectionHeader}[\\s\\S]*?(?=\\[|$)`);
 		const sectionMatch = content.match(sectionRegex);
 		if (!sectionMatch) return null;
@@ -4348,6 +4359,9 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 			const profile = validateString(body.profile, "profile", {
 				required: true,
 				minLength: 1,
+				pattern: awsProfileName,
+				patternErrorMessage:
+					"can only contain letters, numbers, dots, hyphens, and underscores",
 				transform: sanitizers.trim,
 			});
 
