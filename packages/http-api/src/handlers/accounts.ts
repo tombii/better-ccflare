@@ -680,6 +680,27 @@ export function createAccountsListHandler(
 							);
 						}
 					}
+				} else if (account.provider === "opencode-go" && usageData) {
+					// OpenCode Go usage data — 5h/weekly/monthly windows from /zen/go/v1/usage
+					const isOpencodeGoData =
+						"five_hour" in usageData && "seven_day" in usageData;
+					if (isOpencodeGoData) {
+						try {
+							const {
+								getRepresentativeOpencodeGoUtilization,
+								getRepresentativeOpencodeGoWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization =
+								getRepresentativeOpencodeGoUtilization(usageData);
+							usageWindow = getRepresentativeOpencodeGoWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process OpenCode Go usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
 				}
 
 				const usageThrottleSettings = {

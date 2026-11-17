@@ -85,6 +85,8 @@ describe("providerShowsCreditsBalance", () => {
 		expect(providerShowsCreditsBalance("anthropic")).toBe(false);
 		expect(providerShowsCreditsBalance("codex")).toBe(false);
 		expect(providerShowsCreditsBalance("zai")).toBe(false);
+		// OpenCode Go renders utilization windows, not a USD balance.
+		expect(providerShowsCreditsBalance("opencode-go")).toBe(false);
 	});
 });
 
@@ -102,6 +104,13 @@ describe("providerShowsWeeklyUsage", () => {
 		// isAlibabaData branch in RateLimitProgress is unreachable and
 		// the pool-usage eligibility set never sees Alibaba accounts.
 		expect(providerShowsWeeklyUsage("alibaba-coding-plan")).toBe(true);
+	});
+
+	it("returns true for opencode-go so its 5-hour and weekly windows render", () => {
+		// OpenCode Go has a rolling 5-hour allowance plus a weekly cap; the
+		// usage fetcher normalises Go's rolling/weekly percent meters into
+		// five_hour/seven_day, so the per-window branch must be reachable.
+		expect(providerShowsWeeklyUsage("opencode-go")).toBe(true);
 	});
 
 	it("returns true for the pre-existing allow-listed providers (regression guard)", () => {

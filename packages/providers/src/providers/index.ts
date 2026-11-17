@@ -79,6 +79,7 @@ export { MinimaxProvider } from "./minimax/index";
 export { NanoGPTProvider } from "./nanogpt/index";
 export { OllamaCloudProvider, OllamaProvider } from "./ollama/index";
 export { OpenAICompatibleProvider } from "./openai/index";
+export { OpencodeGoProvider } from "./opencode-go/provider";
 export { OpenRouterProvider } from "./openrouter/index";
 export { SailresearchProvider } from "./sailresearch/provider";
 export { type VertexAIConfig, VertexAIProvider } from "./vertex-ai/index";

@@ -609,6 +609,144 @@ describe("RateLimitProgress", () => {
 	});
 });
 
+describe("RateLimitProgress — OpenCode Go windows", () => {
+	// The fetcher emits `{ five_hour, seven_day, monthly }`, each a
+	// `{ utilization, resets_at }` window (all snake_case, ISO resets). The
+	// monthly window is Go's binding cap (100% of the shared pool) and must be
+	// rendered alongside the 5-hour and weekly bars, not dropped.
+	const reset = (hours: number) =>
+		new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+
+	const countRows = (html: string) => html.split("Usage (").length - 1;
+
+	it("renders all three windows, including the monthly cap", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={reset(3)}
+				usageUtilization={74}
+				usageWindow="monthly"
+				usageData={
+					{
+						five_hour: { utilization: 3, resets_at: reset(3) },
+						seven_day: { utilization: 19, resets_at: reset(48) },
+						monthly: { utilization: 74, resets_at: reset(200) },
+					} as never
+				}
+				provider="opencode-go"
+				showWeekly
+			/>,
+		);
+
+		expect(countRows(html)).toBe(3);
+		expect(html).toContain("Usage (5-hour)");
+		expect(html).toContain("Usage (Weekly)");
+		expect(html).toContain("Usage (Monthly)");
+		expect(html).toContain(">3%<");
+		expect(html).toContain(">19%<");
+		expect(html).toContain(">74%<");
+	});
+
+	it("skips a window whose utilization is null", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={reset(3)}
+				usageUtilization={74}
+				usageWindow="monthly"
+				usageData={
+					{
+						five_hour: { utilization: null, resets_at: null },
+						seven_day: { utilization: 19, resets_at: reset(48) },
+						monthly: { utilization: 74, resets_at: reset(200) },
+					} as never
+				}
+				provider="opencode-go"
+				showWeekly
+			/>,
+		);
+
+		expect(countRows(html)).toBe(2);
+		expect(html).not.toContain("Usage (5-hour)");
+		expect(html).toContain("Usage (Weekly)");
+		expect(html).toContain("Usage (Monthly)");
+	});
+
+	it("still renders the monthly bar (not PayG copy) when its reset is missing", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={reset(3)}
+				usageUtilization={74}
+				usageWindow="monthly"
+				usageData={
+					{
+						five_hour: { utilization: 3, resets_at: reset(3) },
+						seven_day: { utilization: 19, resets_at: reset(48) },
+						monthly: { utilization: 74, resets_at: null },
+					} as never
+				}
+				provider="opencode-go"
+				showWeekly
+			/>,
+		);
+
+		expect(html).toContain("Usage (Monthly)");
+		expect(html).toContain(">74%<");
+		expect(html).not.toContain("PayG");
+		expect(html).not.toContain("No subscription");
+		expect(html).not.toContain("pay-as-you-go");
+	});
+
+	it("keeps an Alibaba Coding Plan payload on the Alibaba branch", () => {
+		// Alibaba also has five_hour/weekly/monthly, but its monthly window
+		// carries `percentUsed` (no `utilization`) and there is no `seven_day`,
+		// so the opencode-go discriminator must not claim it.
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={reset(3)}
+				usageUtilization={50}
+				usageWindow="monthly"
+				usageData={
+					{
+						five_hour: { percentUsed: 10, resetAt: Date.now() + 3 * 3600e3 },
+						weekly: { percentUsed: 30, resetAt: Date.now() + 48 * 3600e3 },
+						monthly: { percentUsed: 50, resetAt: Date.now() + 200 * 3600e3 },
+					} as never
+				}
+				provider="alibaba"
+				showWeekly
+			/>,
+		);
+
+		expect(countRows(html)).toBe(3);
+		expect(html).toContain("Usage (5-hour)");
+		expect(html).toContain("Usage (Weekly)");
+		expect(html).toContain("Usage (Monthly)");
+		expect(html).toContain(">10%<");
+		expect(html).toContain(">30%<");
+		expect(html).toContain(">50%<");
+	});
+
+	it("keeps a real Anthropic payload on the Anthropic branch (no Monthly row)", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={reset(3)}
+				usageUtilization={10}
+				usageWindow="five_hour"
+				usageData={{
+					five_hour: { utilization: 10, resets_at: reset(3) },
+					seven_day: { utilization: 20, resets_at: reset(48) },
+				}}
+				provider="anthropic"
+				showWeekly
+			/>,
+		);
+
+		expect(countRows(html)).toBe(2);
+		expect(html).toContain("Usage (5-hour)");
+		expect(html).toContain("Usage (Weekly)");
+		expect(html).not.toContain("Usage (Monthly)");
+	});
+});
+
 describe("RateLimitProgress — codex credits vs xAI credits", () => {
 	const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 

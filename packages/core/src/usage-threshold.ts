@@ -306,7 +306,7 @@ export function parseUsagePauseThreshold(value: unknown): number | null {
  * (their own dedicated payload shapes), and minimax (whose fetcher already
  * normalizes its response to the same flat shape before it reaches
  * `readUsageUtilization`, so it rides the anthropic/codex/xai path with no
- * dedicated branch).
+ * dedicated branch), and opencode-go (same flat shape as minimax).
  *
  * Two providers remain excluded, for different reasons:
  *   - `kilo` reports a dollar-credits balance, not a percentage window —
@@ -330,6 +330,7 @@ export function supportsUsagePauseThreshold(
 		provider === "xai" ||
 		provider === "zai" ||
 		provider === "nanogpt" ||
-		provider === "minimax"
+		provider === "minimax" ||
+		provider === "opencode-go"
 	);
 }

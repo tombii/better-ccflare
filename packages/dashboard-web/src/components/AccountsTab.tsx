@@ -130,6 +130,7 @@ export function AccountsTab() {
 			| "minimax"
 			| "deepseek"
 			| "sailresearch"
+			| "opencode-go"
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
@@ -282,6 +283,22 @@ export function AccountsTab() {
 	}) => {
 		try {
 			await api.addSailResearchAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddOpencodeGoAccount = async (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+	}) => {
+		try {
+			await api.addOpencodeGoAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -765,6 +782,7 @@ export function AccountsTab() {
 							onAddMinimaxAccount={handleAddMinimaxAccount}
 							onAddDeepseekAccount={handleAddDeepseekAccount}
 							onAddSailResearchAccount={handleAddSailResearchAccount}
+							onAddOpencodeGoAccount={handleAddOpencodeGoAccount}
 							onAddNanoGPTAccount={handleAddNanoGPTAccount}
 							onAddAlibabaCodingPlanAccount={handleAddAlibabaCodingPlanAccount}
 							onAddKiloAccount={handleAddKiloAccount}

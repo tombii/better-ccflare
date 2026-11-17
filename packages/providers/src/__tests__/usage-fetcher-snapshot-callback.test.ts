@@ -291,6 +291,63 @@ describe("UsageCache._doFetchAndCache onSnapshot wiring (real poll cycle)", () =
 
 		usageCache.stopPolling(accountId);
 	});
+
+	it("fires onSnapshot for opencode-go after a real poll", async () => {
+		const accountId = "snapshot-cb-opencode-go";
+		globalThis.fetch = mock(async () =>
+			jsonResponse({
+				usage: {
+					rolling: {
+						status: "ok",
+						percent: 3,
+						resetsAt: "2026-11-14T15:03:46.000Z",
+					},
+					weekly: {
+						status: "ok",
+						percent: 19,
+						resetsAt: "2026-11-16T00:00:00.000Z",
+					},
+					monthly: {
+						status: "ok",
+						percent: 74,
+						resetsAt: "2026-11-15T04:29:48.000Z",
+					},
+				},
+			}),
+		) as unknown as typeof fetch;
+
+		const onSnapshot = mock(() => {});
+		usageCache.startPolling(
+			accountId,
+			async () => "token",
+			"opencode-go",
+			90000,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			onSnapshot,
+		);
+		await flush();
+
+		expect(onSnapshot).toHaveBeenCalledTimes(1);
+		expect(onSnapshot).toHaveBeenCalledWith(
+			accountId,
+			expect.objectContaining({
+				five_hour: { utilization: 3, resets_at: "2026-11-14T15:03:46.000Z" },
+				seven_day: {
+					utilization: 19,
+					resets_at: "2026-11-16T00:00:00.000Z",
+				},
+				monthly: {
+					utilization: 74,
+					resets_at: "2026-11-15T04:29:48.000Z",
+				},
+			}),
+		);
+
+		usageCache.stopPolling(accountId);
+	});
 });
 
 /**

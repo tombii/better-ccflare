@@ -109,7 +109,11 @@ export function providerShowsWeeklyUsage(provider: string): boolean {
 		// this entry AccountListItem passes showWeekly=false and both 5h
 		// and 7d windows collapse to a single fallback bar — the bug
 		// fixed in this branch.
-		provider === PROVIDER_NAMES.MINIMAX
+		provider === PROVIDER_NAMES.MINIMAX ||
+		// OpenCode Go has a rolling 5-hour allowance plus a weekly cap. Its
+		// fetcher normalises Go's rolling/weekly percent meters into the
+		// canonical five_hour/seven_day keys, so both windows render.
+		provider === PROVIDER_NAMES.OPENCODE_GO
 	);
 }
 

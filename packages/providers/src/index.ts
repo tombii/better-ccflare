@@ -14,6 +14,8 @@ export * from "./nanogpt-usage-fetcher";
 export * from "./night-window";
 // Export OAuth utilities
 export * from "./oauth";
+// Export OpenCode Go usage fetcher
+export * from "./opencode-go-usage-fetcher";
 export * from "./openrouter-usage-fetcher";
 export * from "./provider-model-defaults";
 // Factory functions for creating providers
@@ -80,6 +82,7 @@ import { NanoGPTProvider } from "./providers/nanogpt/provider";
 import { OllamaCloudProvider } from "./providers/ollama/ollama-cloud-provider";
 import { OllamaProvider } from "./providers/ollama/provider";
 import { OpenAICompatibleProvider } from "./providers/openai/provider";
+import { OpencodeGoProvider } from "./providers/opencode-go/provider";
 import { OpenRouterProvider } from "./providers/openrouter/provider";
 import { QwenProvider } from "./providers/qwen/provider";
 import { SailresearchProvider } from "./providers/sailresearch/provider";
@@ -100,6 +103,7 @@ registry.registerProvider(new QwenProvider());
 registry.registerProvider(new MinimaxProvider());
 registry.registerProvider(new DeepseekProvider());
 registry.registerProvider(new SailresearchProvider());
+registry.registerProvider(new OpencodeGoProvider());
 registry.registerProvider(new NanoGPTProvider());
 registry.registerProvider(new ZaiProvider());
 registry.registerProvider(new VertexAIProvider());

@@ -1738,6 +1738,32 @@ describe("startApiKeyUsagePolling", () => {
 		expect(call?.[2]).toBe("minimax");
 		expect(typeof call?.[8]).toBe("function");
 	});
+
+	it("registers OpenCode Go polling with snapshots but no window-reset callback", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({
+				id: "oc-1",
+				name: "opencode-go-1",
+				provider: "opencode-go",
+			}),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		expect(startPolling).toHaveBeenCalledTimes(1);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[0]).toBe("oc-1");
+		expect(call?.[2]).toBe("opencode-go");
+		expect(call?.[3]).toBe(30_000);
+		expect(call?.[4]).toBeUndefined();
+		// Go has no session stickiness, so no onWindowReset (arg 6); snapshots
+		// (arg 9) are recorded so usage history and pause thresholds work.
+		expect(call?.[5]).toBeUndefined();
+		expect(typeof call?.[8]).toBe("function");
+	});
 });
 
 // The regression these tests exist for: the `registerPollingRestarter` callback
