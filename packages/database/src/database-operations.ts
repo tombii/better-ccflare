@@ -1455,6 +1455,14 @@ OAuth tokens will need to be re-authenticated.
 		);
 	}
 
+	async updateRequestCost(requestId: string, costUsd: number): Promise<void> {
+		await withDatabaseRetry(
+			() => this.requests.updateUsage(requestId, { costUsd }),
+			this.retryConfig,
+			"updateRequestCost",
+		);
+	}
+
 	async saveRequest(
 		id: string,
 		method: string,

@@ -24,6 +24,7 @@ import {
 } from "../codex-usage-history";
 import {
 	recordDiscoveredProviderServed,
+	recordProviderCost,
 	tryGetUsageCollector,
 } from "../usage-collector";
 import { drainBody } from "./discard-body-cancel";
@@ -277,6 +278,21 @@ export function updateAccountMetadata(
 						}
 					}
 				}
+				// The billing header is on the response itself, so a streaming
+				// parse that bails early still knows the provider's cost.
+				const headerCostUsd = providerCostHeaderUsd(response);
+				if (headerCostUsd !== undefined) {
+					await recordProviderCost(
+						tryGetUsageCollector(),
+						requestId,
+						headerCostUsd,
+						async (id, costUsd) => {
+							await ctx.asyncWriter.enqueue(() =>
+								ctx.dbOps.updateRequestCost(id, costUsd),
+							);
+						},
+					);
+				}
 			})();
 		} else if (ctx.provider.extractUsageInfo) {
 			const extractUsageInfo = ctx.provider.extractUsageInfo.bind(ctx.provider);
@@ -312,6 +328,25 @@ export function updateAccountMetadata(
 							);
 						} catch (error) {
 							log.warn(`Failed to save usage for request ${requestId}:`, error);
+						}
+					}
+					// The provider's own cost (Anthropic billing header, OpenRouter
+					// body `usage.cost`) beats the collector's catalogue estimate.
+					const providerCostUsd =
+						providerCostHeaderUsd(response) ?? usageInfo?.costUsd;
+					if (providerCostUsd !== undefined) {
+						const handled = await recordProviderCost(
+							tryGetUsageCollector(),
+							requestId,
+							providerCostUsd,
+							async (id, costUsd) => {
+								await ctx.asyncWriter.enqueue(() =>
+									ctx.dbOps.updateRequestCost(id, costUsd),
+								);
+							},
+						);
+						if (!handled) {
+							log.warn(`Failed to save provider cost for request ${requestId}`);
 						}
 					}
 					if (providerServed) {
@@ -373,6 +408,18 @@ export function updateAccountMetadata(
 			})();
 		}
 	}
+}
+
+/**
+ * Cost the provider billed for this request, from the `anthropic-billing-cost`
+ * response header (Anthropic, streaming and non-streaming alike). Undefined
+ * when absent or not a finite non-negative number.
+ */
+function providerCostHeaderUsd(response: Response): number | undefined {
+	const raw = response.headers.get("anthropic-billing-cost");
+	if (raw === null) return undefined;
+	const value = Number.parseFloat(raw);
+	return Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 /**

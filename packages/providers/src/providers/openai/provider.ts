@@ -283,6 +283,8 @@ export class OpenAICompatibleProvider extends BaseProvider {
 						completion_tokens?: number;
 						total_tokens?: number;
 						prompt_tokens_details?: Record<string, unknown>;
+						/** OpenRouter: the provider's own billed cost in USD. */
+						cost?: number;
 					};
 				};
 
@@ -305,12 +307,14 @@ export class OpenAICompatibleProvider extends BaseProvider {
 					promptTokensDetails?.cache_creation_input_tokens || 0;
 				const cacheReadInputTokens = promptTokensDetails?.cached_tokens || 0;
 
-				// Calculate cost using OpenAI-compatible pricing
-				const costUsd = this.calculateCost(
-					json.model,
-					promptTokens,
-					completionTokens,
-				);
+				// Only a cost the provider states is reported; the collector's
+				// catalogue estimate is the fallback for everything else.
+				const costUsd =
+					typeof json.usage.cost === "number" &&
+					Number.isFinite(json.usage.cost) &&
+					json.usage.cost >= 0
+						? json.usage.cost
+						: undefined;
 
 				return {
 					model: json.model,
@@ -328,43 +332,6 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			// Ignore parsing errors
 			return null;
 		}
-	}
-
-	/**
-	 * Calculate cost based on model and token usage
-	 */
-	protected calculateCost(
-		model?: string,
-		promptTokens: number = 0,
-		completionTokens: number = 0,
-	): number {
-		if (!model) return 0;
-
-		// Basic OpenAI-compatible pricing (can be enhanced based on provider)
-		const pricing: Record<string, { input: number; output: number }> = {
-			"gpt-3.5-turbo": { input: 0.0005, output: 0.0015 },
-			"gpt-4": { input: 0.03, output: 0.06 },
-			"gpt-4-turbo": { input: 0.01, output: 0.03 },
-			"gpt-4o": { input: 0.005, output: 0.015 },
-			"gpt-4o-mini": { input: 0.00015, output: 0.0006 },
-			// Default pricing for unknown models
-			default: { input: 0.001, output: 0.002 },
-		};
-
-		// Find matching pricing (use exact match or default)
-		let modelPricing = pricing[model];
-		if (!modelPricing) {
-			// Try to match prefix (e.g., "gpt-4o-*" models)
-			const prefix = Object.keys(pricing).find((key) =>
-				model.includes(key.split("*")[0]),
-			);
-			modelPricing = pricing[prefix || "default"];
-		}
-
-		const inputCost = (promptTokens / 1000) * modelPricing.input;
-		const outputCost = (completionTokens / 1000) * modelPricing.output;
-
-		return Number((inputCost + outputCost).toFixed(6));
 	}
 
 	/**

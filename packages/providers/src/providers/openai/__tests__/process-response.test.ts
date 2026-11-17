@@ -527,11 +527,11 @@ describe("processResponse – other content types (fallback)", () => {
 // ---------------------------------------------------------------------------
 
 describe("extractUsageInfo", () => {
-	it("calculates cost correctly for known model gpt-4o", async () => {
+	it("reports the provider's own usage.cost (OpenRouter)", async () => {
 		const provider = makeProvider();
 		const response = openaiJsonResponse({
 			id: "chatcmpl-cost",
-			model: "gpt-4o",
+			model: "deepseek/deepseek-v4.1-flash-1017",
 			choices: [
 				{
 					message: { role: "assistant", content: "hi" },
@@ -542,17 +542,15 @@ describe("extractUsageInfo", () => {
 				prompt_tokens: 1000,
 				completion_tokens: 500,
 				total_tokens: 1500,
+				cost: 0.0000078,
 			},
 		});
 
 		const info = await provider.extractUsageInfo(response);
-		expect(info).not.toBeNull();
-		expect(info?.costUsd).toBeGreaterThan(0);
-		// (1000/1000 * 0.005) + (500/1000 * 0.015) = 0.005 + 0.0075 = 0.0125
-		expect(info?.costUsd).toBeCloseTo(0.0125, 6);
+		expect(info?.costUsd).toBe(0.0000078);
 	});
 
-	it("returns non-zero cost for unknown model using default pricing", async () => {
+	it("reports no cost when the body carries none", async () => {
 		const provider = makeProvider();
 		const response = openaiJsonResponse({
 			id: "chatcmpl-unk",
@@ -568,8 +566,7 @@ describe("extractUsageInfo", () => {
 
 		const info = await provider.extractUsageInfo(response);
 		expect(info).not.toBeNull();
-		// Default pricing: input 0.001/1k, output 0.002/1k → (100/1000)*0.001 + (50/1000)*0.002 = 0.0001 + 0.0001 = 0.0002
-		expect(info?.costUsd).toBeGreaterThan(0);
+		expect(info?.costUsd).toBeUndefined();
 	});
 
 	it("returns null for streaming (SSE) responses", async () => {

@@ -57,6 +57,8 @@ interface RequestState {
 		outputTokensComputed?: number;
 		totalTokens?: number;
 		costUsd?: number;
+		/** Cost the provider itself reported; wins over the local estimate. */
+		providerCostUsd?: number;
 		tokensPerSecond?: number;
 		/** Backend named by the provider's own response body (non-stream only). */
 		providerServed?: string;
@@ -469,6 +471,8 @@ export class UsageCollector {
 	private readonly maxBufferSize: number;
 	private readonly pricingTimeoutMs: number;
 	private readonly timeoutMs: number;
+	/** Whether this collector is the one `tryGetUsageCollector()` returns. */
+	private isSingleton = false;
 
 	constructor(
 		private readonly dbOps: DatabaseOperations,
@@ -486,6 +490,10 @@ export class UsageCollector {
 			process.env.CF_STREAM_TIMEOUT_MS || TIME_CONSTANTS.STREAM_TIMEOUT_DEFAULT,
 		);
 
+		// A collector built directly (tests, embedded use) is not the global one:
+		// it must not replace or clear the singleton.
+		this.isSingleton = _usageCollector === null;
+		if (this.isSingleton) _usageCollector = this;
 		this.startCleanupInterval();
 	}
 
@@ -783,6 +791,21 @@ export class UsageCollector {
 		return true;
 	}
 
+	/**
+	 * Seed the cost the provider reported for a request. The collector
+	 * estimates only when this is absent, so the provider's own number is what
+	 * the row and the per-API-key spend counter use.
+	 *
+	 * Returns false when the collector holds no state for `requestId`; the
+	 * caller then writes the row itself.
+	 */
+	setProviderCost(requestId: string, costUsd: number): boolean {
+		const state = this.requests.get(requestId);
+		if (!state) return false;
+		state.usage.providerCostUsd = costUsd;
+		return true;
+	}
+
 	getHealth(): UsageCollectorHealth {
 		return { state: "ready" };
 	}
@@ -867,17 +890,22 @@ export class UsageCollector {
 					isCostTrackingEnabled() &&
 					state.costTrackingEpoch === getCostTrackingEpoch()
 				) {
-					state.usage.costUsd = await this.estimateCostWithDeadline(
-						startMessage.requestId,
-						model,
-						() =>
-							estimateCostUSD(model, {
-								inputTokens: state.usage.inputTokens,
-								outputTokens: finalOutputTokens,
-								cacheReadInputTokens: state.usage.cacheReadInputTokens,
-								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-							}),
-					);
+					// The provider's own number is authoritative; the catalogue
+					// estimate only fills in when the provider reported none.
+					state.usage.costUsd =
+						state.usage.providerCostUsd ??
+						(await this.estimateCostWithDeadline(
+							startMessage.requestId,
+							model,
+							() =>
+								estimateCostUSD(model, {
+									inputTokens: state.usage.inputTokens,
+									outputTokens: finalOutputTokens,
+									cacheReadInputTokens: state.usage.cacheReadInputTokens,
+									cacheCreationInputTokens:
+										state.usage.cacheCreationInputTokens,
+								}),
+						));
 				}
 				if (
 					!isCostTrackingEnabled() ||
@@ -1502,6 +1530,7 @@ export class UsageCollector {
 			clearInterval(this.cleanupInterval);
 			this.cleanupInterval = null;
 		}
+		if (this.isSingleton && _usageCollector === this) _usageCollector = null;
 	}
 }
 
@@ -1561,6 +1590,31 @@ export function getUsageCollector(): UsageCollector {
  */
 export function tryGetUsageCollector(): UsageCollector | null {
 	return _usageCollector;
+}
+
+/**
+ * Hand a provider-reported cost to the collector, mirroring
+ * recordDiscoveredProviderServed: seeding the state means the row `handleEnd`
+ * INSERTs and the per-API-key spend counter both use the provider's number.
+ * When the collector holds no state for the request — it already finalised it
+ * — the row is written via `write` (a COALESCE UPDATE), as the fallback only.
+ *
+ * Returns true when the value was dealt with, false when the fallback write
+ * failed (the collector never throws).
+ */
+export async function recordProviderCost(
+	collector: UsageCollector | null,
+	requestId: string,
+	costUsd: number,
+	write: (requestId: string, costUsd: number) => Promise<void>,
+): Promise<boolean> {
+	if (collector?.setProviderCost(requestId, costUsd)) return true;
+	try {
+		await write(requestId, costUsd);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /**

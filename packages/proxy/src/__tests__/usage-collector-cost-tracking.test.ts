@@ -93,6 +93,30 @@ async function saved(id: string) {
 		);
 }
 
+describe("provider-reported cost", () => {
+	it("uses the provider's cost instead of the local estimate", async () => {
+		const estimate = spyOn(core, "estimateCostUSD").mockResolvedValue(99);
+		start("provider");
+		expect(collector.setProviderCost("provider", 0.25)).toBe(true);
+		await end("provider");
+		expect(estimate).not.toHaveBeenCalled();
+		expect(await saved("provider")).toEqual({
+			cost_usd: 0.25,
+			total_tokens: 168,
+		});
+	});
+	it("falls back to the estimate when the provider reports none", async () => {
+		spyOn(core, "estimateCostUSD").mockResolvedValue(4);
+		start("estimated");
+		expect(collector.setProviderCost("missing", 1)).toBe(false);
+		await end("estimated");
+		expect(await saved("estimated")).toEqual({
+			cost_usd: 4,
+			total_tokens: 168,
+		});
+	});
+});
+
 describe("usage collection with cost tracking disabled", () => {
 	it("preserves an ingress epoch through a gap before response collection begins", async () => {
 		const estimate = spyOn(core, "estimateCostUSD").mockResolvedValue(99);
