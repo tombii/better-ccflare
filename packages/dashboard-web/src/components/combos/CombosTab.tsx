@@ -21,7 +21,11 @@ import { Separator } from "../ui/separator";
 import { ComboCard } from "./ComboCard";
 import { ComboDialog } from "./ComboDialog";
 import { CombosIntroCard } from "./CombosIntroCard";
-import { countKeysOverridingCombo } from "./combo-dialog-logic";
+import {
+	countKeysOverridingCombo,
+	describeFamiliesRoutingThrough,
+	familiesRoutingThroughCombo,
+} from "./combo-dialog-logic";
 import { FamilyActivationSection } from "./FamilyActivationSection";
 
 export function CombosTab() {
@@ -43,8 +47,8 @@ export function CombosTab() {
 	const combos = combosQuery.data?.combos ?? [];
 	const families = familiesQuery.data?.families ?? [];
 
-	const familyRoutingThrough = (comboId: string) =>
-		families.find((f) => f.combo_id === comboId)?.family ?? null;
+	const familiesRoutingThrough = (comboId: string) =>
+		familiesRoutingThroughCombo(families, comboId);
 
 	const handleConfirmDelete = () => {
 		if (!comboToDelete) return;
@@ -61,15 +65,18 @@ export function CombosTab() {
 		setComboToDelete(null);
 	};
 
-	const deleteFamily = comboToDelete
-		? familyRoutingThrough(comboToDelete.id)
+	const deleteFamilyMessage = comboToDelete
+		? describeFamiliesRoutingThrough(familiesRoutingThrough(comboToDelete.id))
 		: null;
 	const deletingKeyOverrides = comboToDelete
 		? countKeysOverridingCombo(apiKeysQuery.data, comboToDelete.id)
 		: 0;
-	const deleteFamilyLabel = deleteFamily
-		? deleteFamily.charAt(0).toUpperCase() + deleteFamily.slice(1)
-		: null;
+	// The override warning can only be trusted once the key list has loaded.
+	// While it loads (or if it fails) the user cannot confirm a delete without
+	// seeing whether keys depend on this combo.
+	const keysCheckPending = !!comboToDelete && apiKeysQuery.isLoading;
+	const keysCheckFailed = !!comboToDelete && apiKeysQuery.isError;
+	const deleteBlocked = keysCheckPending || keysCheckFailed;
 
 	const getAssignedFamily = (comboId: string) => {
 		const assignment = families.find((f) => f.combo_id === comboId);
@@ -166,31 +173,37 @@ export function CombosTab() {
 						</DialogDescription>
 					</DialogHeader>
 
-					{(deleteFamily || deletingKeyOverrides > 0) && (
-						<ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-							{deleteFamily && (
-								<li>
-									The{" "}
-									<span className="font-medium text-foreground">
-										{deleteFamilyLabel}
-									</span>{" "}
-									family currently routes through this combo. It will fall back
-									to normal pool routing.
-								</li>
-							)}
-							{deletingKeyOverrides > 0 && (
-								<li>
-									{deletingKeyOverrides}{" "}
-									{deletingKeyOverrides === 1 ? "API key" : "API keys"} override
-									a family to this combo.{" "}
-									{deletingKeyOverrides === 1
-										? "That override"
-										: "Those overrides"}{" "}
-									will be removed.
-								</li>
-							)}
-						</ul>
+					{keysCheckPending && (
+						<p className="text-sm text-muted-foreground">
+							Checking API key overrides...
+						</p>
 					)}
+
+					{keysCheckFailed && (
+						<p className="text-sm text-destructive">
+							Could not check API key overrides. Close and reopen this dialog to
+							retry.
+						</p>
+					)}
+
+					{!keysCheckPending &&
+						!keysCheckFailed &&
+						(deleteFamilyMessage || deletingKeyOverrides > 0) && (
+							<ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+								{deleteFamilyMessage && <li>{deleteFamilyMessage}</li>}
+								{deletingKeyOverrides > 0 && (
+									<li>
+										{deletingKeyOverrides}{" "}
+										{deletingKeyOverrides === 1 ? "API key" : "API keys"}{" "}
+										override a family to this combo.{" "}
+										{deletingKeyOverrides === 1
+											? "That override"
+											: "Those overrides"}{" "}
+										will be removed.
+									</li>
+								)}
+							</ul>
+						)}
 
 					{deleteCombo.isError && (
 						<p className="text-sm text-destructive">
@@ -209,7 +222,7 @@ export function CombosTab() {
 						<Button
 							variant="destructive"
 							onClick={handleConfirmDelete}
-							disabled={deleteCombo.isPending}
+							disabled={deleteCombo.isPending || deleteBlocked}
 						>
 							{deleteCombo.isPending ? "Deleting..." : "Delete"}
 						</Button>

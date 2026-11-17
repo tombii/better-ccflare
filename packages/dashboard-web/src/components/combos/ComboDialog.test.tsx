@@ -29,7 +29,8 @@ const combo = {
  * values across calls so re-renders after input changes are observable.
  */
 function setup(overrides: { name?: string; description?: string | null } = {}) {
-	const data = { combo: { ...combo, ...overrides } };
+	// Mutable so a test can simulate the combo query returning fresh data.
+	const data: { combo: typeof combo } = { combo: { ...combo, ...overrides } };
 	const states: unknown[] = [];
 	let cursor = 0;
 	const state = spyOn(React, "useState").mockImplementation(((
@@ -66,12 +67,20 @@ function setup(overrides: { name?: string; description?: string | null } = {}) {
 		isLoading: false,
 		isError: false,
 	})) as never);
-	const mutation = spyOn(ReactQuery, "useMutation").mockReturnValue({
-		mutate: () => {},
-		isPending: false,
-		isError: false,
-		reset: () => {},
-	} as never);
+	const mutations: Record<string, unknown>[] = [];
+	const mutation = spyOn(ReactQuery, "useMutation").mockImplementation((() => {
+		const entry: Record<string, unknown> = {
+			mutate: (vars: unknown) => {
+				entry.vars = vars;
+			},
+			vars: undefined,
+			isPending: false,
+			isError: false,
+			reset: () => {},
+		};
+		mutations.push(entry);
+		return entry;
+	}) as never);
 	function render() {
 		cursor = 0;
 		return elements(
@@ -82,7 +91,7 @@ function setup(overrides: { name?: string; description?: string | null } = {}) {
 		for (const spy of [state, useRef, effect, queryClient, query, mutation])
 			spy.mockRestore();
 	}
-	return { render, restore };
+	return { render, restore, data, mutations };
 }
 
 describe("ComboDialog edit mode", () => {
@@ -146,6 +155,88 @@ describe("ComboDialog edit mode", () => {
 
 			rename("   ");
 			expect(saveButton()?.props.disabled).toBe(true);
+		} finally {
+			restore();
+		}
+	});
+
+	it("re-seeds a pristine form when the loaded combo changes underneath it", () => {
+		const { render, restore, data } = setup();
+		try {
+			render();
+			render();
+			// The detail query refetches (e.g. after a save elsewhere) with a
+			// new name; the untouched form must follow it.
+			data.combo = { ...combo, name: "Renamed" };
+			render();
+			const nameInput = render().find(
+				(node) => node.type === Input && node.props.id === "combo-edit-name",
+			);
+			expect(nameInput?.props.value).toBe("Renamed");
+		} finally {
+			restore();
+		}
+	});
+
+	it("never clobbers in-progress edits when the combo refetches", () => {
+		const { render, restore, data } = setup();
+		try {
+			render();
+			render();
+			const change = (value: string) => {
+				const input = render().find(
+					(node) => node.type === Input && node.props.id === "combo-edit-name",
+				);
+				(input?.props.onChange as (e: { target: { value: string } }) => void)({
+					target: { value },
+				});
+			};
+			change("My edit");
+			data.combo = { ...combo, name: "Renamed" };
+			const nameInput = render().find(
+				(node) => node.type === Input && node.props.id === "combo-edit-name",
+			);
+			expect(nameInput?.props.value).toBe("My edit");
+		} finally {
+			restore();
+		}
+	});
+
+	it("sends an explicit empty description when the description is cleared", () => {
+		const { render, restore, mutations } = setup();
+		try {
+			render();
+			render();
+			const clear = () => {
+				const input = render().find(
+					(node) =>
+						node.type === Input && node.props.id === "combo-edit-description",
+				);
+				(input?.props.onChange as (e: { target: { value: string } }) => void)({
+					target: { value: "   " },
+				});
+			};
+			clear();
+			const save = render().find(
+				(node) =>
+					node.type === Button && node.props.children === "Save Changes",
+			);
+			expect(save?.props.disabled).toBe(false);
+			(save?.props.onClick as () => void)();
+			// useCreateCombo is registered first, useUpdateCombo second.
+			const update =
+				mutations.find((m) => (m.vars as { id?: string })?.id === combo.id) ??
+				mutations[1];
+			expect(update?.vars).toEqual({
+				id: combo.id,
+				name: "My Combo",
+				description: "",
+			});
+			// The body must actually carry the field, not drop it.
+			expect(JSON.parse(JSON.stringify(update?.vars))).toHaveProperty(
+				"description",
+				"",
+			);
 		} finally {
 			restore();
 		}

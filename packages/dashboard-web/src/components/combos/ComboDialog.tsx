@@ -21,6 +21,7 @@ import {
 	comboFormValues,
 	isComboFormDirty,
 	isComboNameValid,
+	shouldReseedComboForm,
 } from "./combo-dialog-logic";
 
 interface ComboDialogProps {
@@ -38,6 +39,12 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 	// it is open (slot cooldowns poll), so seed only once per opened combo to
 	// avoid clobbering in-progress edits.
 	const seededComboIdRef = useRef<string | null>(null);
+	// The combo the form was last seeded from, used to tell an external
+	// change (re-seed if the form is untouched) from the user's own edits.
+	const seededSnapshotRef = useRef<{
+		name: string;
+		description: string | null;
+	} | null>(null);
 
 	const createCombo = useCreateCombo();
 	const updateCombo = useUpdateCombo();
@@ -47,12 +54,26 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 	const isEditMode = !!comboId;
 
 	useEffect(() => {
-		if (!comboId || !combo || seededComboIdRef.current === comboId) return;
+		if (!comboId || !combo) return;
+		const form = { name, description };
+		const isNewCombo = seededComboIdRef.current !== comboId;
+		if (
+			!isNewCombo &&
+			!shouldReseedComboForm(form, combo, seededSnapshotRef.current)
+		) {
+			// Same combo, and either it has not changed or the user has unsaved
+			// edits: never clobber them from a poll.
+			return;
+		}
 		seededComboIdRef.current = comboId;
+		seededSnapshotRef.current = {
+			name: combo.name,
+			description: combo.description,
+		};
 		const values = comboFormValues(combo);
 		setName(values.name);
 		setDescription(values.description);
-	}, [comboId, combo]);
+	}, [comboId, combo, name, description]);
 
 	const isNameValid = isComboNameValid(name);
 	const isDirty = combo
@@ -86,7 +107,10 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 			{
 				id: comboId,
 				name: name.trim(),
-				description: description.trim() || undefined,
+				// Send the trimmed string even when empty: JSON.stringify drops
+				// `undefined`, which the server reads as "leave unchanged", so
+				// clearing a description would never persist.
+				description: description.trim(),
 			},
 			{ onSuccess: () => handleClose() },
 		);
@@ -97,6 +121,7 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 		setDescription("");
 		setEnabled(true);
 		seededComboIdRef.current = null;
+		seededSnapshotRef.current = null;
 		onClose();
 	};
 
