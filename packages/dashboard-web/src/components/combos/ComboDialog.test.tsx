@@ -30,7 +30,9 @@ const combo = {
  */
 function setup(overrides: { name?: string; description?: string | null } = {}) {
 	// Mutable so a test can simulate the combo query returning fresh data.
-	const data: { combo: typeof combo } = { combo: { ...combo, ...overrides } };
+	const data: {
+		combo: Omit<typeof combo, "description"> & { description: string | null };
+	} = { combo: { ...combo, ...overrides } };
 	const states: unknown[] = [];
 	let cursor = 0;
 	const state = spyOn(React, "useState").mockImplementation(((
