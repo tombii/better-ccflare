@@ -75,6 +75,30 @@ describe("withDatabaseRetry", () => {
 		expect(calls).toBe(2);
 	});
 
+	test("async operation rejecting with a retryable error is retried", async () => {
+		let calls = 0;
+		const result = await withDatabaseRetry(async () => {
+			calls++;
+			if (calls < 3)
+				throw Object.assign(new Error("busy"), { code: "SQLITE_BUSY" });
+			return "async-ok";
+		}, FAST);
+		expect(result).toBe("async-ok");
+		expect(calls).toBe(3);
+	});
+
+	test("async operation rejecting with a non-retryable error rejects on the first call", async () => {
+		let calls = 0;
+		const err = new Error("syntax error");
+		await expect(
+			withDatabaseRetry(async () => {
+				calls++;
+				throw err;
+			}, FAST),
+		).rejects.toBe(err);
+		expect(calls).toBe(1);
+	});
+
 	test("synchronously throwing operation is retried the same way", async () => {
 		let calls = 0;
 		const result = await withDatabaseRetry(() => {
