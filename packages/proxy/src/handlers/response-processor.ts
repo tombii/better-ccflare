@@ -24,6 +24,7 @@ import {
 } from "../codex-usage-history";
 import {
 	recordDiscoveredProviderServed,
+	recordProviderCost,
 	tryGetUsageCollector,
 } from "../usage-collector";
 import { drainBody } from "./discard-body-cancel";
@@ -103,6 +104,19 @@ export function updateAccountMetadata(
 		isCostTrackingEnabled() && costTrackingEpoch === getCostTrackingEpoch()
 			? usage
 			: { ...usage, costUsd: undefined };
+	// Fallback row write for a provider cost the collector no longer tracks.
+	// Re-checks tracking at write time: the request may have started while it
+	// was off, or crossed an off/on gap before this queued job ran.
+	const recordCost = async (id: string, costUsd: number) => {
+		if (
+			!isCostTrackingEnabled() ||
+			costTrackingEpoch !== getCostTrackingEpoch()
+		)
+			return;
+		await ctx.asyncWriter.enqueue(() =>
+			ctx.dbOps.updateRequestCost(id, costUsd),
+		);
+	};
 	// Update basic usage (with optional bypass)
 	if (bypassSession) {
 		// Increment request count without updating session tracking
@@ -277,6 +291,19 @@ export function updateAccountMetadata(
 						}
 					}
 				}
+				// The billing header is on the response itself, so a streaming
+				// parse that bails early still knows the provider's cost.
+				const headerCostUsd = trackedUsage({
+					costUsd: providerCostHeaderUsd(response),
+				}).costUsd;
+				if (headerCostUsd !== undefined) {
+					await recordProviderCost(
+						tryGetUsageCollector(),
+						requestId,
+						headerCostUsd,
+						recordCost,
+					);
+				}
 			})();
 		} else if (ctx.provider.extractUsageInfo) {
 			const extractUsageInfo = ctx.provider.extractUsageInfo.bind(ctx.provider);
@@ -312,6 +339,26 @@ export function updateAccountMetadata(
 							);
 						} catch (error) {
 							log.warn(`Failed to save usage for request ${requestId}:`, error);
+						}
+					}
+					// The provider's own cost (Anthropic billing header, OpenRouter
+					// body `usage.cost`) beats the collector's catalogue estimate.
+					// Both sources go through trackedUsage: the body cost was already
+					// filtered, but the header is read here unfiltered.
+					const providerCostUsd = trackedUsage({
+						costUsd: validCost(
+							providerCostHeaderUsd(response) ?? usageInfo?.costUsd,
+						),
+					}).costUsd;
+					if (providerCostUsd !== undefined) {
+						const handled = await recordProviderCost(
+							tryGetUsageCollector(),
+							requestId,
+							providerCostUsd,
+							recordCost,
+						);
+						if (!handled) {
+							log.warn(`Failed to save provider cost for request ${requestId}`);
 						}
 					}
 					if (providerServed) {
@@ -373,6 +420,28 @@ export function updateAccountMetadata(
 			})();
 		}
 	}
+}
+
+/**
+ * A provider-reported cost, or undefined when it is not a finite non-negative
+ * number. Providers parse their own headers and bodies unchecked (Anthropic
+ * uses a bare `parseFloat`), so anything selected as the provider's cost goes
+ * through here before it can replace the catalogue estimate.
+ */
+function validCost(value: number | undefined): number | undefined {
+	return value !== undefined && Number.isFinite(value) && value >= 0
+		? value
+		: undefined;
+}
+
+/**
+ * Cost the provider billed for this request, from the `anthropic-billing-cost`
+ * response header (Anthropic, streaming and non-streaming alike). Undefined
+ * when absent or invalid.
+ */
+function providerCostHeaderUsd(response: Response): number | undefined {
+	const raw = response.headers.get("anthropic-billing-cost");
+	return raw === null ? undefined : validCost(Number.parseFloat(raw));
 }
 
 /**

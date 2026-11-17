@@ -57,6 +57,8 @@ interface RequestState {
 		outputTokensComputed?: number;
 		totalTokens?: number;
 		costUsd?: number;
+		/** Cost the provider itself reported; wins over the local estimate. */
+		providerCostUsd?: number;
 		tokensPerSecond?: number;
 		/** Backend named by the provider's own response body (non-stream only). */
 		providerServed?: string;
@@ -458,6 +460,8 @@ export class UsageCollector {
 	private readonly missingStateWarnings = new Set<string>();
 	private readonly pendingHandleEnds = new Set<Promise<void>>();
 	private readonly pendingRequestEnds = new Map<string, number>();
+	/** States whose finalizer is running; still open to setProviderCost. */
+	private readonly finalizingRequests = new Map<string, RequestState>();
 	private readonly pendingPricingFallbacks = new Set<() => void>();
 	private cleanupInterval: Timer | null = null;
 	// Permanent once drain() is called — collector cannot estimate costs after this.
@@ -469,6 +473,8 @@ export class UsageCollector {
 	private readonly maxBufferSize: number;
 	private readonly pricingTimeoutMs: number;
 	private readonly timeoutMs: number;
+	/** Whether this collector is the one `tryGetUsageCollector()` returns. */
+	private isSingleton = false;
 
 	constructor(
 		private readonly dbOps: DatabaseOperations,
@@ -486,6 +492,10 @@ export class UsageCollector {
 			process.env.CF_STREAM_TIMEOUT_MS || TIME_CONSTANTS.STREAM_TIMEOUT_DEFAULT,
 		);
 
+		// A collector built directly (tests, embedded use) is not the global one:
+		// it must not replace or clear the singleton.
+		this.isSingleton = _usageCollector === null;
+		if (this.isSingleton) _usageCollector = this;
 		this.startCleanupInterval();
 	}
 
@@ -783,6 +793,22 @@ export class UsageCollector {
 		return true;
 	}
 
+	/**
+	 * Seed the cost the provider reported for a request. The collector
+	 * estimates only when this is absent, so the provider's own number is what
+	 * the row and the per-API-key spend counter use.
+	 *
+	 * Returns false when the collector holds no state for `requestId`; the
+	 * caller then writes the row itself.
+	 */
+	setProviderCost(requestId: string, costUsd: number): boolean {
+		const state =
+			this.requests.get(requestId) ?? this.finalizingRequests.get(requestId);
+		if (!state) return false;
+		state.usage.providerCostUsd = costUsd;
+		return true;
+	}
+
 	getHealth(): UsageCollectorHealth {
 		return { state: "ready" };
 	}
@@ -800,6 +826,12 @@ export class UsageCollector {
 		// Atomically transfer ownership to this finalizer before its first await.
 		// This keeps capacity cleanup from freeing the state while pricing resolves,
 		// and prevents this lifecycle from later deleting a reused request ID.
+		// The state stays reachable until pricing and spend recording finish, so
+		// a provider cost discovered during the pricing await still lands on this
+		// request (see setProviderCost) instead of falling back to a row UPDATE
+		// that races the INSERT below. It lives in its own map, not `requests`:
+		// capacity cleanup and missing-state checks must keep treating the
+		// request as gone.
 		this.requests.delete(msg.requestId);
 
 		const { startMessage } = state;
@@ -810,6 +842,10 @@ export class UsageCollector {
 			this.freeRequestState(state);
 			return;
 		}
+
+		// Registered only past every early return: an entry left behind here is
+		// never visited by cleanup.
+		this.finalizingRequests.set(msg.requestId, state);
 
 		// Flush any incomplete multi-byte UTF-8 sequences held in the streaming decoder
 		const trailing = state.streamDecoder.decode();
@@ -867,7 +903,11 @@ export class UsageCollector {
 					isCostTrackingEnabled() &&
 					state.costTrackingEpoch === getCostTrackingEpoch()
 				) {
-					state.usage.costUsd = await this.estimateCostWithDeadline(
+					// The provider's own number is authoritative; the catalogue
+					// estimate only fills in when the provider reported none. Read
+					// it after the await: the provider parser may seed it while
+					// pricing is in flight.
+					const estimate = await this.estimateCostWithDeadline(
 						startMessage.requestId,
 						model,
 						() =>
@@ -878,6 +918,7 @@ export class UsageCollector {
 								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
 							}),
 					);
+					state.usage.costUsd = state.usage.providerCostUsd ?? estimate;
 				}
 				if (
 					!isCostTrackingEnabled() ||
@@ -1020,6 +1061,28 @@ export class UsageCollector {
 			startMessage.originalModel,
 			startMessage.appliedModel,
 		);
+		// Pricing is done and the usage below is final: a later setProviderCost
+		// must fall back to a row UPDATE rather than mutate this snapshot.
+		this.finalizingRequests.delete(msg.requestId);
+
+		// A provider cost is known even when the model is not (a body the
+		// collector could not parse), and finalization below only prices inside
+		// its model branch. Charge it here so the spend counter does not miss it.
+		if (!state.usage.model && state.usage.providerCostUsd !== undefined) {
+			if (
+				isCostTrackingEnabled() &&
+				state.costTrackingEpoch === getCostTrackingEpoch()
+			) {
+				tryGetApiKeySpendCounter()?.record(
+					startMessage.apiKeyId,
+					state.usage.providerCostUsd,
+					null,
+					Date.now(),
+					startMessage.requestId,
+					startMessage.limitModel ?? startMessage.originalModel ?? null,
+				);
+			}
+		}
 		// No preliminary INSERT needed — dashboard tracks pending requests via SSE events, not DB queries.
 		this.asyncWriter.enqueue(async () => {
 			try {
@@ -1502,6 +1565,7 @@ export class UsageCollector {
 			clearInterval(this.cleanupInterval);
 			this.cleanupInterval = null;
 		}
+		if (this.isSingleton && _usageCollector === this) _usageCollector = null;
 	}
 }
 
@@ -1561,6 +1625,31 @@ export function getUsageCollector(): UsageCollector {
  */
 export function tryGetUsageCollector(): UsageCollector | null {
 	return _usageCollector;
+}
+
+/**
+ * Hand a provider-reported cost to the collector, mirroring
+ * recordDiscoveredProviderServed: seeding the state means the row `handleEnd`
+ * INSERTs and the per-API-key spend counter both use the provider's number.
+ * When the collector holds no state for the request — it already finalised it
+ * — the row is written via `write` (a COALESCE UPDATE), as the fallback only.
+ *
+ * Returns true when the value was dealt with, false when the fallback write
+ * failed (the collector never throws).
+ */
+export async function recordProviderCost(
+	collector: UsageCollector | null,
+	requestId: string,
+	costUsd: number,
+	write: (requestId: string, costUsd: number) => Promise<void>,
+): Promise<boolean> {
+	if (collector?.setProviderCost(requestId, costUsd)) return true;
+	try {
+		await write(requestId, costUsd);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /**

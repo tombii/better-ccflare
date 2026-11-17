@@ -20,6 +20,7 @@ describe("provider metadata cost writes across a tracking gap", () => {
 				const originalEpoch = getCostTrackingEpoch();
 				const jobs: Array<() => Promise<void>> = [];
 				const saved: Record<string, unknown>[] = [];
+				const costs: number[] = [];
 				let finish!: (value: Record<string, unknown>) => void;
 				let parsed!: () => void;
 				const started = new Promise<void>((resolve) => {
@@ -46,6 +47,9 @@ describe("provider metadata cost writes across a tracking gap", () => {
 							usage: Record<string, unknown>,
 						) => {
 							saved.push(usage);
+						},
+						updateRequestCost: async (_id: string, costUsd: number) => {
+							costs.push(costUsd);
 						},
 					},
 					asyncWriter: {
@@ -76,9 +80,16 @@ describe("provider metadata cost writes across a tracking gap", () => {
 				await new Promise<void>((resolve) => setImmediate(resolve));
 				if (gap === "after-enqueue") gapNow();
 				for (const job of jobs) await job();
+				// The usage UPDATE and the provider-cost write are separate jobs;
+				// the cost one is skipped when tracking changed mid-request.
 				expect(saved).toHaveLength(1);
 				expect(saved[0].totalTokens).toBe(321);
 				expect(saved[0].costUsd).toBeUndefined();
+				// The cost job reads the epoch when it runs, so only the JSON path
+				// with a gap after its enqueue still writes.
+				expect(costs).toHaveLength(
+					!isStream && gap === "after-enqueue" ? 1 : 0,
+				);
 			});
 		}
 });
