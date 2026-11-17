@@ -1,7 +1,11 @@
-import { describe, expect, it } from "bun:test";
-import { getProviderFromMode, PROVIDER_NAMES } from "@better-ccflare/types";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { setForceAccountModel } from "@better-ccflare/core";
 import type { Account } from "@better-ccflare/types";
+import { getProviderFromMode, PROVIDER_NAMES } from "@better-ccflare/types";
 import { getProvider } from "../index";
+import { setProviderModelDefaultOverrides } from "../provider-model-defaults";
+
+const SAIL_DEFAULT = "deepseek-ai/DeepSeek-V4.1-Flash-1017";
 
 const account = (overrides: Partial<Account> = {}): Account =>
 	({
@@ -72,29 +76,87 @@ describe("sailresearch provider registration", () => {
 	});
 });
 
-describe("sailresearch model mapping (no mapModelForRequest override)", () => {
-	// Regression guard for the mapModelForRequest extraction in
-	// BaseAnthropicCompatibleProvider: a provider that does NOT override the
-	// hook must keep the base behaviour — map only through account mappings and
-	// leave the model untouched otherwise, even though it registers its own
-	// family defaults.
-	it("leaves a Claude id unchanged when the account has no mappings", async () => {
-		const provider = getProvider("sailresearch");
-		const transformed = await provider?.transformRequestBody(
-			messagesRequest("claude-sonnet-4-5"),
-			account(),
-		);
-		const body = await transformed?.json();
-		expect(body.model).toBe("claude-sonnet-4-5");
+describe("sailresearch model mapping", () => {
+	// Sail serves only its own ids, so an unmapped Claude Code request must be
+	// translated to the registered family default. Global switches are reset
+	// around every test so a failing assertion can never leak state.
+	beforeEach(() => {
+		setForceAccountModel(false);
+		setProviderModelDefaultOverrides(undefined);
 	});
 
-	it("still maps through an account mapping", async () => {
+	afterEach(() => {
+		setForceAccountModel(false);
+		setProviderModelDefaultOverrides(undefined);
+	});
+
+	async function transformedModel(
+		model: string,
+		acc: Account = account(),
+	): Promise<string> {
 		const provider = getProvider("sailresearch");
 		const transformed = await provider?.transformRequestBody(
-			messagesRequest("claude-sonnet-4-5"),
-			account({ model_mappings: JSON.stringify({ sonnet: "sail-sonnet" }) }),
+			messagesRequest(model),
+			acc,
 		);
 		const body = await transformed?.json();
-		expect(body.model).toBe("sail-sonnet");
+		return body.model;
+	}
+
+	it.each([
+		"claude-fable-4-5",
+		"claude-opus-4-5",
+		"claude-sonnet-4-5",
+		"claude-haiku-4-5",
+	])("maps %s to the Sail default when the account has no mappings", async (model) => {
+		expect(await transformedModel(model)).toBe(SAIL_DEFAULT);
+	});
+
+	it("leaves a non-Claude id unchanged", async () => {
+		expect(await transformedModel(SAIL_DEFAULT)).toBe(SAIL_DEFAULT);
+	});
+
+	it("maps through a family account mapping", async () => {
+		expect(
+			await transformedModel(
+				"claude-sonnet-4-5",
+				account({ model_mappings: JSON.stringify({ sonnet: "sail-sonnet" }) }),
+			),
+		).toBe("sail-sonnet");
+	});
+
+	it("maps through an exact-id account mapping", async () => {
+		expect(
+			await transformedModel(
+				"claude-sonnet-4-5",
+				account({
+					model_mappings: JSON.stringify({ "claude-sonnet-4-5": "sail-exact" }),
+				}),
+			),
+		).toBe("sail-exact");
+	});
+
+	it("prefers an operator override over the built-in default", async () => {
+		try {
+			setProviderModelDefaultOverrides({
+				sailresearch: { sonnet: "operator-model" },
+			});
+			expect(await transformedModel("claude-sonnet-4-5")).toBe(
+				"operator-model",
+			);
+		} finally {
+			setProviderModelDefaultOverrides(undefined);
+		}
+	});
+
+	it("leaves the model untouched when force-account-model is on", async () => {
+		try {
+			setForceAccountModel(true);
+			expect(await transformedModel("claude-sonnet-4-5")).toBe(
+				"claude-sonnet-4-5",
+			);
+		} finally {
+			setForceAccountModel(false);
+		}
 	});
 });
