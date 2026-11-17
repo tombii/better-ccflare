@@ -8,6 +8,7 @@ export const PROVIDER_NAMES = {
 	MINIMAX: "minimax",
 	DEEPSEEK: "deepseek",
 	SAILRESEARCH: "sailresearch",
+	OPENCODE_GO: "opencode-go",
 	ANTHROPIC_COMPATIBLE: "anthropic-compatible",
 	OPENAI_COMPATIBLE: "openai-compatible",
 	NANOGPT: "nanogpt",
@@ -87,6 +88,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: false, // No known usage/quota polling API
 		supportsOAuth: false, // Sail uses API key authentication (Bearer)
 		defaultEndpoint: "https://api.sailresearch.com/v1",
+	},
+	[PROVIDER_NAMES.OPENCODE_GO]: {
+		requiresSessionTracking: true, // OpenCode Go has a rolling 5-hour allowance window
+		supportsUsageTracking: true, // Go usage is pollable
+		supportsOAuth: false, // OpenCode Go uses API key authentication (Bearer)
+		defaultEndpoint: "https://opencode.ai/inference/go/anthropic",
 	},
 	[PROVIDER_NAMES.ANTHROPIC_COMPATIBLE]: {
 		requiresSessionTracking: false, // Anthropic-compatible is pay-as-you-go

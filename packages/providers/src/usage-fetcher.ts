@@ -33,6 +33,12 @@ import {
 	type NanoGPTUsageData,
 } from "./nanogpt-usage-fetcher";
 import {
+	fetchOpencodeGoUsageData,
+	getRepresentativeOpencodeGoUtilization,
+	getRepresentativeOpencodeGoWindow,
+	type OpencodeGoUsageData,
+} from "./opencode-go-usage-fetcher";
+import {
 	fetchOpenRouterUsageData,
 	getRepresentativeOpenRouterUtilization,
 	type OpenRouterUsageData,
@@ -137,7 +143,8 @@ export type AnyUsageData =
 	| OpenRouterUsageData
 	| AlibabaCodingPlanUsageData
 	| XaiUsageData
-	| MinimaxUsageData;
+	| MinimaxUsageData
+	| OpencodeGoUsageData;
 
 /**
  * Minimum advance of the upstream reset timestamp that counts as a real window
@@ -562,6 +569,11 @@ function utilizationForProvider(
 		case "minimax": {
 			return getRepresentativeMinimaxUtilization(data as MinimaxUsageData);
 		}
+		case "opencode-go": {
+			return getRepresentativeOpencodeGoUtilization(
+				data as OpencodeGoUsageData,
+			);
+		}
 		default:
 			return null;
 	}
@@ -753,6 +765,11 @@ export function getRepresentativeUsageResetMs(
 				// works for both 5h and 7d windows.
 				return extractUsageResetMs(data, windowName);
 			}
+			case "opencode-go":
+				return extractUsageResetMs(
+					data,
+					getRepresentativeOpencodeGoWindow(data as OpencodeGoUsageData),
+				);
 			default:
 				return null;
 		}
@@ -1363,6 +1380,24 @@ class UsageCache {
 					const window = getRepresentativeZaiWindow(data as ZaiUsageData);
 					log.debug(
 						`Successfully fetched Zai usage data for account ${accountId}: ${utilization}% (${window} window)`,
+					);
+					const snapshotCb = this.snapshotCallbacks.get(accountId);
+					if (snapshotCb) snapshotCb(accountId, data as unknown as UsageData);
+					return { success: true, retryAfterMs: null };
+				}
+			} else if (provider === "opencode-go") {
+				// Fetch OpenCode Go usage data (5h / weekly / monthly windows)
+				data = await fetchOpencodeGoUsageData(token);
+				if (data) {
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const utilization = getRepresentativeOpencodeGoUtilization(
+						data as OpencodeGoUsageData,
+					);
+					const window = getRepresentativeOpencodeGoWindow(
+						data as OpencodeGoUsageData,
+					);
+					log.debug(
+						`Successfully fetched OpenCode Go usage data for account ${accountId}: ${utilization}% (${window} window)`,
 					);
 					const snapshotCb = this.snapshotCallbacks.get(accountId);
 					if (snapshotCb) snapshotCb(accountId, data as unknown as UsageData);

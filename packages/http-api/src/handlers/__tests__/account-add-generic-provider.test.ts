@@ -126,6 +126,10 @@ describe("POST /api/accounts with a generic provider", () => {
 		await expectKeyAccountStored("openrouter", "sk-or-generic-key");
 	});
 
+	it("stores an opencode-go account's apiKey in api_key with null tokens and a ~1 year expiry", async () => {
+		await expectKeyAccountStored("opencode-go", "sk-opencode-go-generic-key");
+	});
+
 	it("stores an anthropic account's token pair with api_key and expires_at null", async () => {
 		const res = await handler(
 			makeRequest({
@@ -345,6 +349,25 @@ describe("POST /api/accounts with a mode alias", () => {
 		expect(row.refresh_token).toBeNull();
 	});
 
+	it("creates an opencode-go account from mode alone, storing the key in api_key", async () => {
+		const res = await handler(
+			makeRequest({
+				name: "opencode-go-mode",
+				mode: "opencode-go",
+				apiKey: "sk-opencode-go-mode-key",
+			}),
+		);
+		expect(res.status).toBe(200);
+
+		const row = getStoredAccount("opencode-go-mode");
+		expect(row).not.toBeNull();
+		if (!row) return;
+		expect(row.provider).toBe("opencode-go");
+		expect(row.api_key).toBe("sk-opencode-go-mode-key");
+		expect(row.access_token).toBeNull();
+		expect(row.refresh_token).toBeNull();
+	});
+
 	it("maps every CLI mode to its provider when sent alone", async () => {
 		const keyModes: Array<[string, string]> = [
 			["zai", "zai"],
@@ -353,6 +376,7 @@ describe("POST /api/accounts with a mode alias", () => {
 			["anthropic-compatible", "anthropic-compatible"],
 			["openai-compatible", "openai-compatible"],
 			["nanogpt", "nanogpt"],
+			["opencode-go", "opencode-go"],
 			["ollama", "ollama"],
 			["meta", "meta"],
 		];

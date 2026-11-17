@@ -329,6 +329,21 @@ describe("readUsageUtilization", () => {
 		).toStrictEqual({ fiveHour: null, weekly: null });
 	});
 
+	it("reads an opencode-go payload on the generic path", () => {
+		// OpenCode Go's fetcher normalises to the flat shape, so no provider
+		// branch is needed — this pins that it keeps working.
+		expect(
+			readUsageUtilization(
+				{
+					five_hour: { utilization: 3, resets_at: "2026-11-14T15:03:46.000Z" },
+					seven_day: { utilization: 19, resets_at: "2026-11-16T00:00:00.000Z" },
+					monthly: { utilization: 74, resets_at: "2026-11-15T04:29:48.000Z" },
+				},
+				"opencode-go",
+			),
+		).toStrictEqual({ fiveHour: 3, weekly: 19 });
+	});
+
 	it("returns nulls for payloads it cannot read", () => {
 		expect(readUsageUtilization(null)).toStrictEqual({
 			fiveHour: null,
@@ -516,13 +531,14 @@ describe("readUsageUtilization", () => {
 });
 
 describe("supportsUsagePauseThreshold", () => {
-	it("returns true for anthropic, codex, xai, zai, nanogpt and minimax", () => {
+	it("returns true for anthropic, codex, xai, zai, nanogpt, minimax and opencode-go", () => {
 		expect(supportsUsagePauseThreshold("anthropic")).toBe(true);
 		expect(supportsUsagePauseThreshold("codex")).toBe(true);
 		expect(supportsUsagePauseThreshold("xai")).toBe(true);
 		expect(supportsUsagePauseThreshold("zai")).toBe(true);
 		expect(supportsUsagePauseThreshold("nanogpt")).toBe(true);
 		expect(supportsUsagePauseThreshold("minimax")).toBe(true);
+		expect(supportsUsagePauseThreshold("opencode-go")).toBe(true);
 	});
 
 	it("returns false for kilo, alibaba-coding-plan, unknown providers, null and undefined", () => {

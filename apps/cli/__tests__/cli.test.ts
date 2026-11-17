@@ -194,6 +194,7 @@ describe("CLI Integration Tests", () => {
 				"codex",
 				"xai",
 				"ollama",
+				"opencode-go",
 			];
 			for (const mode of acceptedModes) {
 				expect(result.stdout).toContain(mode);

@@ -51,6 +51,7 @@ export interface AddAccountOptionsWithAdapter {
 		| "minimax"
 		| "deepseek"
 		| "sailresearch"
+		| "opencode-go"
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
@@ -90,6 +91,7 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "minimax"
 		| "deepseek"
 		| "sailresearch"
+		| "opencode-go"
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
@@ -242,6 +244,40 @@ async function createSailresearchAccount(
 			validatedPriority,
 			null, // No custom endpoint for sailresearch
 			nightWindow ? 1 : 0,
+		],
+	);
+}
+
+/**
+ * Create an OpenCode Go account in the database
+ */
+async function createOpencodeGoAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+
+	// Validate inputs
+	const validatedApiKey = validateApiKey(apiKey, "OpenCode Go API key");
+	const validatedPriority = validatePriority(priority, "priority");
+
+	await dbOps.getAdapter().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint,
+			night_window_enabled
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?, 0)`,
+		[
+			accountId,
+			name,
+			"opencode-go",
+			validatedApiKey,
+			now,
+			validatedPriority,
+			null, // No custom endpoint for opencode-go
 		],
 	);
 }
@@ -1358,6 +1394,7 @@ export async function addAccount(
 			{ label: "Minimax account (API key)", value: "minimax" },
 			{ label: "DeepSeek account (API key)", value: "deepseek" },
 			{ label: "Sail Research account (API key)", value: "sailresearch" },
+			{ label: "OpenCode Go account (API key)", value: "opencode-go" },
 			{ label: "Kilo Gateway (API key)", value: "kilo" },
 			{ label: "OpenRouter (API key)", value: "openrouter" },
 			{
@@ -1605,6 +1642,13 @@ export async function addAccount(
 		);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: Sail Research (API key)");
+	} else if (mode === "opencode-go") {
+		// Handle OpenCode Go accounts with API keys
+		const apiKey = await adapter.input("\nEnter your OpenCode Go API key: ");
+
+		await createOpencodeGoAccount(dbOps, name, apiKey, providedPriority || 0);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: OpenCode Go (API key)");
 	} else if (mode === "nanogpt") {
 		// Handle NanoGPT accounts with API keys
 		const apiKey = await adapter.input("\nEnter your NanoGPT API key: ");
@@ -2088,6 +2132,7 @@ export async function getAccountsList(
 					account.provider === "minimax" ||
 					account.provider === "deepseek" ||
 					account.provider === "sailresearch" ||
+					account.provider === "opencode-go" ||
 					account.provider === "anthropic-compatible" ||
 					account.provider === "bedrock" ||
 					account.provider === "openrouter" ||

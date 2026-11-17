@@ -85,6 +85,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					| "ollama-cloud"
 					| "meta"
 					| "sailresearch"
+					| "opencode-go"
 					| "max"
 					| undefined;
 

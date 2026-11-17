@@ -63,6 +63,11 @@
   - All Claude model families map to `deepseek-ai/DeepSeek-V4.1-Flash-1017` by default
   - Supports the account-level [night window](configuration.md#night-window): inside the configured hours an enabled account asks for Sail's cheaper `balanced` completion tier via `X-Sail-Completion-Window`, and outside them no tier header is sent
   - The tier Sail actually applied is recorded per request as `completion_tier`
+- **OpenCode Go** - OpenCode's $10/month coding subscription, Anthropic Messages protocol:
+  - Every text model on the plan is reachable through the Anthropic Messages API because OpenCode Console translates between API families
+  - Fixed endpoint `https://opencode.ai/inference/go/anthropic`; authenticate with a Console API key (bearer token)
+  - Default model `deepseek-v4.1-flash`
+  - Usage is polled from `GET https://opencode.ai/zen/go/v1/usage` and shown as the rolling 5-hour, weekly and monthly windows Go enforces (5-hour = 20% of the monthly allowance, weekly = 50%, monthly = 100%)
 - **CodeBuddy** - Tencent's coding assistant, built on the [OI]-compatible base:
   - Browser-based external-link authentication (no PKCE, no device code, no callback): the server issues a login URL plus a `state` token and the client polls `/v2/plugin/auth/token`
   - International endpoint `https://www.codebuddy.ai`; override per account with a custom endpoint or `CCFLARE_CODEBUDDY_ENDPOINT`
@@ -73,7 +78,7 @@
 - xAI and Qwen build on the OpenAI-compatible base but support OAuth (unlike generic OpenAI-compatible accounts, which are API-key only)
 - Codex talks to OpenAI's Responses API, a different shape from OpenAI's Chat Completions API used by the other OpenAI-compatible providers
 - OAuth is available for Anthropic, Vertex AI (Google Cloud credentials), xAI, Codex, Qwen, and CodeBuddy; all other providers are API-key only
-- API key authentication for Z.ai, OpenAI-compatible, NanoGPT, Minimax, DeepSeek, Sail Research, and Ollama Cloud providers
+- API key authentication for Z.ai, OpenAI-compatible, NanoGPT, Minimax, DeepSeek, Sail Research, OpenCode Go, and Ollama Cloud providers
 - Ollama Cloud requires model mapping to translate Claude model names to Ollama models
 - Provider system supports format conversion between different API standards
 - Default OAuth client ID: `9d1c250a-e61b-44d9-88ed-5944d1962f5e` (configurable via environment or config file) — this applies to the Anthropic provider; other OAuth providers (xAI, Codex, Qwen) use their own fixed client IDs
@@ -186,7 +191,7 @@ Other providers registered in `packages/providers/src/index.ts` but not covered 
 The providers system handles:
 - OAuth authentication flows with PKCE security (Anthropic, and refresh-token/device-code variants for xAI, Codex, Qwen)
 - Google Cloud authentication (Vertex AI)
-- API key authentication (Z.ai, OpenAI-Compatible, NanoGPT, Minimax, DeepSeek, Ollama Cloud)
+- API key authentication (Z.ai, OpenAI-Compatible, NanoGPT, Minimax, DeepSeek, Sail Research, OpenCode Go, Ollama Cloud)
 - Token lifecycle management (refresh, expiration)
 - Provider-specific request routing and header management
 - Rate limit detection and handling

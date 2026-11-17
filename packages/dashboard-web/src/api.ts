@@ -330,6 +330,7 @@ class API extends HttpClient {
 			| "minimax"
 			| "deepseek"
 			| "sailresearch"
+			| "opencode-go"
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
@@ -737,6 +738,49 @@ class API extends HttpClient {
 				success: boolean;
 				accountId: string;
 			}>(url, { ...data, mode: "sailresearch" });
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	/**
+	 * OpenCode Go has no dedicated POST /api/accounts/opencode-go route; the
+	 * generic POST /api/accounts handler accepts the `opencode-go` mode alias,
+	 * stores the key in api_key and leaves the endpoint at the provider's
+	 * fixed default (https://opencode.ai/inference/go/anthropic).
+	 */
+	async addOpencodeGoAccount(data: {
+		name: string;
+		apiKey: string;
+		priority: number;
+	}): Promise<{ message: string; success: boolean; accountId: string }> {
+		const startTime = Date.now();
+		const url = "/api/accounts";
+
+		// Never log the key: this goes to console.debug, which people paste
+		// into bug reports.
+		this.logger.debug(`→ POST ${url}`, {
+			name: data.name,
+			priority: data.priority,
+		});
+
+		try {
+			const response = await this.post<{
+				message: string;
+				success: boolean;
+				accountId: string;
+			}>(url, { ...data, mode: "opencode-go" });
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
 			return response;

@@ -36,6 +36,9 @@ describe("CLI option names", () => {
 			"{}",
 		]);
 		expect(values.mode).toBe("sailresearch");
+		expect(
+			(parse(["--mode", "opencode-go"]) as Record<string, unknown>).mode,
+		).toBe("opencode-go");
 		expect(values.priority).toBe("3");
 		expect(values.modelMappings).toBe("{}");
 	});

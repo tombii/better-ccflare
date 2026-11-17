@@ -109,6 +109,7 @@ interface ParsedArgs {
 		| "xai"
 		| "ollama"
 		| "sailresearch"
+		| "opencode-go"
 		| null;
 	priority: number | null;
 	profile: string | null;
@@ -599,6 +600,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "xai"
 					| "ollama"
 					| "sailresearch"
+					| "opencode-go"
 					| "max";
 
 				// Handle deprecated "max" mode with warning
@@ -643,6 +645,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "xai"
 					| "ollama"
 					| "sailresearch"
+					| "opencode-go"
 				> = [
 					"claude-oauth",
 					"console",
@@ -660,6 +663,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					"xai",
 					"ollama",
 					"sailresearch",
+					"opencode-go",
 				];
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
@@ -1025,7 +1029,7 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|deepseek|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|codebuddy|xai|ollama|sailresearch>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|deepseek|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|codebuddy|xai|ollama|sailresearch|opencode-go>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
@@ -1043,6 +1047,7 @@ Options:
       xai: xAI/Grok provider (imports local Grok CLI OAuth credentials)
       ollama: Ollama local provider (no API key required)
       sailresearch: Sail Research provider (API key)
+      opencode-go: OpenCode Go subscription (API key)
     --priority <number>   Account priority (default: 0)
     --night-window <on|off>  Enable the provider night window (sailresearch)
   --list               List all accounts
@@ -1253,6 +1258,9 @@ Examples:
 			console.error(
 				"  --mode sailresearch        Sail Research provider (API key)",
 			);
+			console.error(
+				"  --mode opencode-go         OpenCode Go subscription (API key)",
+			);
 			console.error("\nExample:");
 			console.error(
 				"  better-ccflare --add-account work --mode claude-oauth --priority 0",
@@ -1306,6 +1314,37 @@ Examples:
 					mode: "sailresearch",
 					priority,
 					nightWindow: parsed.nightWindow ?? undefined,
+					adapter: {
+						select: async <T extends string | number>(
+							_prompt: string,
+							_options: Array<{ label: string; value: T }>,
+						) => (_options[0]?.value as T) || ("yes" as T),
+						input: async () => apiKey,
+						confirm: async () => true,
+					},
+				});
+			} else if (mode === "opencode-go") {
+				// OpenCode Go: API key from the CLI env vars, or a prompt
+				let apiKey =
+					process.env[
+						`BETTER_CCFLARE_API_KEY_${parsed.addAccount.toUpperCase()}`
+					] ||
+					process.env[`API_KEY_${parsed.addAccount.toUpperCase()}`] ||
+					"";
+
+				if (!apiKey) {
+					const { stdPromptAdapter } = await import(
+						"@better-ccflare/cli-commands"
+					);
+					apiKey = await stdPromptAdapter.input(
+						`Enter API key for ${parsed.addAccount}: `,
+					);
+				}
+
+				await addAccount(dbOps, new Config(), {
+					name: parsed.addAccount,
+					mode: "opencode-go",
+					priority,
 					adapter: {
 						select: async <T extends string | number>(
 							_prompt: string,

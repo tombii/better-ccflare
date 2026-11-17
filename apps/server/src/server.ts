@@ -486,6 +486,7 @@ const API_KEY_USAGE_POLLING_PROVIDERS = [
 	"nanogpt",
 	"zai",
 	"minimax",
+	"opencode-go",
 ] as const;
 
 /**
@@ -498,6 +499,7 @@ const API_KEY_USAGE_POLLING_LABELS: Record<string, string> = {
 	nanogpt: "NanoGPT",
 	zai: "Zai",
 	minimax: "Minimax",
+	"opencode-go": "OpenCode Go",
 };
 
 /**
@@ -537,6 +539,8 @@ export function isApiKeyUsagePollingProvider(
  * - Zai resets the account session on window rollover and records snapshots.
  * - Minimax delegates to {@link registerMinimaxUsagePolling}, which owns the
  *   same API-key contract and is unit-tested directly.
+ * - OpenCode Go records snapshots but has no window-reset callback (no session
+ *   stickiness).
  *
  * Returns true if polling was registered, false if the provider is not
  * API-key pollable or the account has no API key.
@@ -601,6 +605,23 @@ export function startApiKeyUsagePolling(
 				account.provider,
 				intervalMs,
 				account.custom_endpoint,
+				undefined,
+				undefined,
+				undefined,
+				snapshotRecorder,
+			);
+			return true;
+
+		case "opencode-go":
+			// Go has no session stickiness, so no window-reset callback; its
+			// 5h/weekly/monthly windows are still snapshotted for usage history
+			// and pause thresholds.
+			usageCache.startPolling(
+				account.id,
+				apiKeyProvider,
+				account.provider,
+				intervalMs,
+				undefined,
 				undefined,
 				undefined,
 				undefined,
