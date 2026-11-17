@@ -92,14 +92,16 @@ Options:
   --logs [N]           Stream latest N lines then follow
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|deepseek|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|codebuddy|xai|ollama|sailresearch|opencode-go>  Account mode (default: claude-oauth)
     --priority <number>    Account priority (0-100, default: 0)
+    --night-window <on|off>  Enable the provider night window (sailresearch)
   --list               List all accounts
   --remove <name>      Remove an account
   --force-reset-rate-limit <name> Force-clear stale rate-limit lock fields for an account
   --pause <name>       Pause an account
   --resume <name>      Resume an account
   --set-priority <name> <priority> Set account priority (0-100)
+  --set-night-window <name> <on|off>  Enable/disable the provider night window for an account
   --set-usage-pause-thresholds <name> <5h%|off> <weekly%|off>
                        Pause an account when a usage window reaches the given percentage
   --analyze            Analyze database performance
@@ -122,7 +124,7 @@ Add a new OAuth account to the load balancer pool.
 
 **Syntax:**
 ```bash
-bun run cli --add-account <name> --mode <claude-oauth|console|codex|codebuddy|qwen|xai|zai|minimax|deepseek|anthropic-compatible|openai-compatible> --priority <number>
+bun run cli --add-account <name> --mode <claude-oauth|console|codex|codebuddy|qwen|xai|zai|minimax|deepseek|sailresearch|opencode-go|anthropic-compatible|openai-compatible|...> --priority <number>
 ```
 
 **Note:** All flags must be provided explicitly as the CLI requires explicit parameters.
@@ -138,7 +140,11 @@ bun run cli --add-account <name> --mode <claude-oauth|console|codex|codebuddy|qw
   - `zai`: z.ai account (API key)
   - `minimax`: Minimax account (API key)
   - `deepseek`: DeepSeek account (API key)
-  - `openai-compatible`: OpenAI-compatible provider (API key)
+  - `sailresearch`: Sail Research account (API key); supports `--night-window on|off` and `--set-night-window <name> <on|off>`
+  - `opencode-go`: OpenCode Go subscription (API key); usage is polled and shown as its rolling 5-hour, weekly and monthly windows
+  - `nanogpt`, `kilo`, `openrouter`, `ollama`, `ollama-cloud`, `meta`, `bedrock`, `alibaba-coding-plan`: the remaining provider-specific modes, same shape as the above
+  - `anthropic-compatible`: Anthropic-compatible provider (API key)
+  - `openai-compatible`: OpenAI-compatible provider (API key); you are prompted for the account's API endpoint and model mappings. Mistral is added this way — enter `https://api.mistral.ai/v1` (or the EU/US host) and Mistral's request rules apply automatically
 - `--priority`: Account priority (optional, defaults to 0)
   - Range: 0-100
   - Lower numbers indicate higher priority in load balancing
@@ -148,7 +154,7 @@ bun run cli --add-account <name> --mode <claude-oauth|console|codex|codebuddy|qw
 2. For OAuth accounts (claude-oauth/console), opens browser for authentication
 3. Waits for OAuth callback on localhost:7856
 4. For xAI/Grok accounts, imports existing Grok CLI OAuth credentials from `~/.grok/auth.json` without printing token values
-5. For API key accounts (zai/minimax/deepseek/openai-compatible), prompts for API key
+5. For API key accounts (zai/minimax/deepseek/sailresearch/opencode-go/openai-compatible and the other key-based modes), prompts for API key
 6. Stores account credentials securely in the database
 
 #### `--list`

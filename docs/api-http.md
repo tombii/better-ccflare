@@ -205,10 +205,16 @@ List all configured accounts with their current status.
     "rateLimitRemaining": 100,
     "sessionInfo": "Session: 25 requests",
     "autoFallbackEnabled": false,
+    "peakHoursPauseEnabled": false,
+    "peakHoursPauseSupported": false,
+    "nightWindowEnabled": false,
+    "planMonthlyUsd": null,
     "peakHours": { "active": false }
   }
 ]
 ```
+
+Each account also reports its per-account toggles: `peakHoursPauseEnabled` (whether the peak-hours behaviour is switched on), `peakHoursPauseSupported` (`true` for Zai, DeepSeek and TokenHarbor-host accounts only — see [`POST /api/accounts/:accountId/peak-hours-pause`](#post-apiaccountsaccountidpeak-hours-pause)), `nightWindowEnabled` (see [`POST /api/accounts/:accountId/night-window`](#post-apiaccountsaccountidnight-window)), and `planMonthlyUsd` (the recorded subscription price, or `null`).
 
 `peakHours` is computed by the server on each request and is `null` for providers with no peak-hours concept. Currently `deepseek`, `zai`, `anthropic`, and TokenHarbor accounts report `{ "active": boolean }`. For DeepSeek and Zai it uses the same check as peak-hours auto-pause; Anthropic is informational only.
 
@@ -450,6 +456,95 @@ Each field is a whole percentage from 1 to 100, or `null` to turn that window's 
 curl -X POST http://localhost:8080/api/accounts/uuid-here/usage-pause-thresholds \
   -H "Content-Type: application/json" \
   -d '{"fiveHour": 80, "weekly": null}'
+```
+
+#### POST /api/accounts/:accountId/peak-hours-pause
+
+Turn the peak-hours behaviour on or off for an account. What it means depends on the account's provider:
+
+- **Zai / DeepSeek** — the whole account is paused during the provider's peak pricing window and resumed when it ends.
+- **TokenHarbor** — the account is never paused. Only the models the account's own `/v1/models` listing marks as peak-priced are skipped during their peak window, so flat-priced models keep routing to it. Accepted only when the account's endpoint is TokenHarbor's host.
+
+Any other account gets `400`. `enabled` is `0` or `1`; disabling also lifts any peak-hours pause immediately rather than waiting for the scheduler.
+
+**Request:**
+```json
+{
+  "enabled": 1
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Peak hours pause enabled for account 'myaccount'",
+  "peakHoursPauseEnabled": true
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/accounts/uuid-here/peak-hours-pause \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": 1}'
+```
+
+#### POST /api/accounts/:accountId/night-window
+
+Turn the [night window](configuration.md#night-window) on or off for an account. Inside the configured hours an enabled account requests its provider's cheaper completion tier (Sail Research: the `balanced` tier via `X-Sail-Completion-Window`); outside them no tier header is sent. The toggle is provider-agnostic — it applies to any provider that registers a tier adapter — and is a no-op for providers that don't.
+
+**Request:**
+```json
+{
+  "enabled": true
+}
+```
+
+`enabled` must be a strict boolean.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Night window enabled for account 'myaccount'",
+  "nightWindowEnabled": true,
+  "account": { "id": "uuid-here", "name": "myaccount", "provider": "sailresearch" }
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/accounts/uuid-here/night-window \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+```
+
+#### POST /api/accounts/:accountId/plan-price
+
+Record the account's actual monthly subscription price in US dollars, used by the dashboard's plan-value and per-key apportionment figures. `0` is a real price (a free plan); `null` clears the value (unknown or not a paid plan). Any account can carry a price, whatever its provider.
+
+**Request:**
+```json
+{
+  "planMonthlyUsd": 20
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Monthly plan price set to 20 for account 'myaccount'",
+  "planMonthlyUsd": 20
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/accounts/uuid-here/plan-price \
+  -H "Content-Type: application/json" \
+  -d '{"planMonthlyUsd": 20}'
 ```
 
 #### POST /api/accounts/:accountId/force-reset-rate-limit
@@ -1288,6 +1383,34 @@ On failure, `success` is `false` and an `error` field describes the reason; `cat
 **Example:**
 ```bash
 curl -X POST http://localhost:8080/api/models/refresh
+```
+
+#### GET /api/model-prices
+
+List the price catalogue requests are costed with (admin only, like `/api/models`). See [cost-tracking.md](cost-tracking.md#model-prices).
+
+**Response:**
+```json
+{
+  "currency": "USD",
+  "unit": "per_million_tokens",
+  "models": [
+    {
+      "id": "claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5",
+      "provider": "anthropic",
+      "family": "sonnet",
+      "rates": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 }
+    }
+  ]
+}
+```
+
+`rates` is `null` when the price is unknown.
+
+**Example:**
+```bash
+curl http://localhost:8080/api/model-prices
 ```
 
 ---

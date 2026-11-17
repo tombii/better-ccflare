@@ -15,6 +15,8 @@ This guide covers all configuration options for better-ccflare, including file-b
 - [Web Search](#web-search)
 - [Force Account Model](#force-account-model)
 - [Use Extra Usage](#use-extra-usage)
+- [Peak Hours Pause](#peak-hours-pause)
+- [Night Window](#night-window)
 - [Runtime Configuration API](#runtime-configuration-api)
 - [Example Configurations](#example-configurations)
 - [Auto-Fallback Setup](#auto-fallback-setup)
@@ -330,6 +332,8 @@ The **global override** is an editable layer in between: an operator-set default
 
 Only `codex` is editable by default. `xai` and `qwen` use the same mechanism but are gated behind `CCFLARE_MODEL_DEFAULTS_PROVIDERS` (see [Additional Environment Variables](#additional-environment-variables)) since they haven't been exercised against real accounts as extensively. Disabling a provider doesn't discard its stored override — it just stops applying until the provider is re-enabled.
 
+Sail Research and OpenCode Go also register built-in maps (every Claude family → their default model). Because both upstreams serve only ids from their own listing, these providers rewrite a plain Claude model name **even when the account has no model mappings at all**. Resolution order for those two providers is, most specific first: an explicit account mapping → the operator's per-family override → what the account's own model listing implies → the provider's built-in default. With Force Account Model on, none of these apply — the requested model is sent as written.
+
 Manage this via the dashboard (Settings → Advanced → Provider Model Defaults) or directly through the API — see [api-http.md](api-http.md#get-apiconfigprovider-model-defaults).
 
 ## Reasoning Effort
@@ -426,6 +430,16 @@ On, the same account stays in rotation while its provider reports billed capacit
 Only admission changes. The window is still reported as it is; the account's rate-limit status reads `extra_usage (Nm)` instead of `usage_exhausted (Nm)`, it counts as routable rather than `usage_exhausted` on `/health`, and a pool-exhausted response does not name the window as the reason or wait on its reset. When the credits or the extra-usage budget run out, the provider refuses the request and the normal rate-limit handling takes the account out. The auto-refresh scheduler still skips probing an account whose window is spent, so probes never draw on extra usage.
 
 That traffic is billed, which is why this is off by default. Manage it via the dashboard (Settings → Advanced → Use Extra Usage) or the API — see [api-http.md](api-http.md#get-apiconfiguse-extra-usage). `CCFLARE_USE_EXTRA_USAGE` can seed it once on first boot.
+
+## Peak Hours Pause
+
+A per-account toggle (`peak_hours_pause_enabled`, set from the dashboard account row or `POST /api/accounts/:id/peak-hours-pause`) that avoids paying peak pricing. Its meaning depends on the provider:
+
+- **Zai** — pause the whole account during Zai's peak window (weekdays 14:00–18:00 SGT).
+- **DeepSeek** — pause the whole account during DeepSeek's peak windows (weekdays 01:00–04:00 and 06:00–10:00 UTC), excluding Chinese public holidays.
+- **TokenHarbor** — never pause the account. Only the models the account's own `GET /v1/models` listing marks as peak-priced are skipped while their window is active, so flat-priced models keep using the account. Combos reorder peak-priced slots behind flat-priced ones rather than dropping them, and the filter fails open when no listing is cached. See [routing-architecture.md](routing-architecture.md#peak-pricing-exclusion).
+
+Switching the toggle off lifts an existing peak-hours pause immediately instead of waiting for the scheduler. A manual pause is left alone.
 
 ## Night Window
 

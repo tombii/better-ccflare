@@ -13,7 +13,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 ## Why better-ccflare?
 
 - **🚀 Zero Rate Limit Errors** - Automatically distribute requests across multiple accounts
-- **🤖 Multi-Provider Support** - Claude OAuth, Claude API console, Vertex AI, AWS Bedrock, NanoGPT, z.ai, Minimax, DeepSeek, Meta, OpenRouter, Kilo, Codex (OpenAI OAuth), xAI/Grok, OpenCode Go, Anthropic-compatible, and OpenAI-compatible providers
+- **🤖 Multi-Provider Support** - Claude OAuth, Claude API console, Vertex AI, AWS Bedrock, NanoGPT, z.ai, Minimax, DeepSeek, Meta, OpenRouter, Kilo, Codex (OpenAI OAuth), xAI/Grok, OpenCode Go, Sail Research, Mistral, Anthropic-compatible, and OpenAI-compatible providers
 - **🔒 OAuth Token Health** - Real-time monitoring of OAuth token status with automatic refresh and health indicators
 - **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic accounts for enterprise deployments
 - **☁️ OpenAI-Compatible Support** - Use OpenAI-compatible providers like OpenRouter, Together AI, and more with Claude API format
@@ -34,7 +34,7 @@ This project builds upon the excellent foundation of [snipeship/ccflare](https:/
 **🎯 Core Improvements (v3.0.0):**
 - **Enhanced Security** - Critical fixes for authentication bypass, command injection, and PKCE implementation
 - **OAuth Token Health Monitoring** - Real-time status indicators and automatic token refresh with 30-minute buffer
-- **Extended Provider Support** - AWS Bedrock, NanoGPT (with dynamic pricing), Minimax, DeepSeek, Meta, OpenRouter, Kilo, Codex (OpenAI OAuth), xAI/Grok, OpenCode Go, Anthropic-compatible, and OpenAI-compatible providers
+- **Extended Provider Support** - AWS Bedrock, NanoGPT (with dynamic pricing), Minimax, DeepSeek, Meta, OpenRouter, Kilo, Codex (OpenAI OAuth), xAI/Grok, OpenCode Go, Sail Research, Mistral, Anthropic-compatible, and OpenAI-compatible providers
 - **Simplified Load Balancing** - Removed tier system for O(1) priority-based selection
 - **Real-time Analytics Dashboard** - Beautiful web UI with fixed request history (no disappearing requests)
 - **Package Distribution** - Available via npm and bun for easy installation
@@ -655,7 +655,9 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **Auto-fallback** - Automatically switch back to higher priority Claude OAuth accounts when their usage windows reset
 - **Auto-refresh** - Automatically start new usage windows when they reset
 - **Usage Window Alignment** - Sessions automatically align with Claude OAuth usage window resets for optimal resource utilization
-- **Usage Throttling** - Configurable monthly token/cost limits per account with peak-hours auto-pause for Zai and DeepSeek accounts, and per-model peak-hours skipping for TokenHarbor accounts (only the models its own listing marks as peak-priced are avoided; flat-priced models keep using the account)
+- **Usage Throttling** - Configurable monthly token/cost limits per account with peak-hours auto-pause for Zai and DeepSeek accounts, and per-model peak-hours skipping for TokenHarbor accounts (only the models its own listing marks as peak-priced are avoided; flat-priced models keep using the account, and combos reorder peak-priced slots behind flat-priced ones instead of dropping them)
+- **Per-API-Key Governance** - Restrict a key to selected accounts, models and providers, override its combo routing per model family, and cap its spend over calendar or rolling hour/day/week/month windows — blocking with a `429` or warning through Insights — plus a per-key usage page that separates API cost from plan value
+- **Served-Request Headers** - Every account-served response carries `x-better-ccflare-served-model` and `x-better-ccflare-served-account`, so a client can see which model and account a combo alias actually resolved to
 - **503 on Pool Exhaustion** - Returns HTTP 503 when all accounts are rate-limited or paused, enabling client-side retry logic
 - **Rate Limit Audit Trail** - Tracks when and why each account became rate-limited (`rate_limited_reason`, `rate_limited_at`)
 
@@ -710,7 +712,9 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **OpenRouter** - OpenRouter integration with native API support and model mapping
 - **xAI/Grok** - Native Grok CLI OAuth import/refresh with per-request token accounting and Grok Build credits usage polling via grok.com gRPC-web
 - **Kilo** - Kilo API integration with usage tracking
-- **OpenCode Go** - OpenCode's $10/month coding subscription; every text model on the plan is reachable through the Anthropic Messages API because OpenCode Console translates between API families. Authenticate with a Console API key
+- **OpenCode Go** - OpenCode's $10/month coding subscription; every text model on the plan is reachable through the Anthropic Messages API because OpenCode Console translates between API families. Authenticate with a Console API key. Usage is polled from OpenCode and shown as its rolling 5-hour, weekly and monthly windows
+- **Sail Research** - Open-model inference at `api.sailresearch.com` over the Anthropic Messages protocol (Bearer key); all Claude model families map to `deepseek-ai/DeepSeek-V4.1-Flash-1017` by default. Supports the account-level [night window](docs/configuration.md#night-window) to request Sail's cheaper `balanced` completion tier during off-hours
+- **Mistral** - Mistral AI's models via an `openai-compatible` account pointed at `api.mistral.ai` (or the EU/US regional hosts). Mistral-specific handling — reasoning rewrite into typed thinking chunks, up-front `cache_control` strip, and the `x-affinity` pod-affinity header that keeps a conversation's prompt cache on one inference pod — activates automatically on those exact hosts
 - **Anthropic-Compatible** - Custom Anthropic-compatible providers with pay-as-you-go model
 - **Ollama** - Local Ollama instance (v0.14.0+) via native Anthropic-compatible API at `/v1/messages`, no API key required
 - **OpenAI-Compatible** - OpenAI-compatible providers (Together AI, etc.) with Claude API format

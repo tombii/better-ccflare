@@ -6,6 +6,7 @@ This document explains how better-ccflare picks an account for each proxied requ
 
 1. [Overview: Three Orthogonal Axes](#overview-three-orthogonal-axes)
 2. [Master Pipeline](#master-pipeline)
+   - [Peak-pricing exclusion](#peak-pricing-exclusion)
 3. [The Load-Balancing Strategies](#the-load-balancing-strategies)
    - [session](#session-sessionstrategy)
    - [session-drain-soonest](#session-drain-soonest-sessiondrainsoonestrategy)
@@ -22,7 +23,7 @@ Account routing is controlled by three independent settings that can each be cha
 
 ## Master Pipeline
 
-Every proxied request first checks for the `x-better-ccflare-account-id` force-route header (used both for manual force-routing and by internal auto-refresh/keepalive probes), then runs the configured strategy's `select()`, then an optional model-capacity filter, then an optional usage-throttling gate. If the candidate pool is empty afterwards, the response depends on *why* it emptied — the capacity filter and usage-throttling empty the pool for mutually exclusive reasons on a given request (the capacity filter runs first and, if it excludes everyone, usage-throttling never sees any accounts to throttle), so the code checks them in a fixed priority order: a capacity exclusion is reported first (as a structured 429), a throttling exclusion second (as a 529), and a strategy-level "nothing available at all" last (as a generic 503). When a [Combo](./combos.md) is active for the request's model family, an additional per-slot routing layer runs between the forced-header check and `Strategy.select`; it is omitted from the diagram below for clarity (see `packages/proxy/src/handlers/account-selector.ts`).
+Every proxied request first checks for the `x-better-ccflare-account-id` force-route header (used both for manual force-routing and by internal auto-refresh/keepalive probes), then runs the configured strategy's `select()`, then an optional model-capacity filter, then an optional usage-throttling gate, and finally the model-aware peak-pricing filter (TokenHarbor only — see [Peak-pricing exclusion](#peak-pricing-exclusion)). If the candidate pool is empty afterwards, the response depends on *why* it emptied — the capacity filter and usage-throttling empty the pool for mutually exclusive reasons on a given request (the capacity filter runs first and, if it excludes everyone, usage-throttling never sees any accounts to throttle), so the code checks them in a fixed priority order: a capacity exclusion is reported first (as a structured 429), a throttling exclusion second (as a 529), and a strategy-level "nothing available at all" last (as a generic 503). When a [Combo](./combos.md) is active for the request's model family, an additional per-slot routing layer runs between the forced-header check and `Strategy.select`; it is omitted from the diagram below for clarity (see `packages/proxy/src/handlers/account-selector.ts`).
 
 ```mermaid
 flowchart TD
@@ -35,7 +36,8 @@ flowchart TD
     F --> G
     C --> H["applyUsageThrottling<br/>(5h / weekly pacing-line gate)"]
     G --> H
-    H --> I{"Any account available<br/>after throttling?"}
+    H --> H2["Peak-pricing filter<br/>(TokenHarbor, per model;<br/>fail-open)"]
+    H2 --> I{"Any account available<br/>after throttling?"}
     I -->|"No"| J{"Why is the pool empty?"}
     J -->|"Capacity filter emptied<br/>a non-empty candidate list"| K["429 rate_limit_error<br/>code: model_family_exhausted"]
     J -->|"Usage-throttling emptied<br/>an otherwise non-empty list"| L["529 overloaded_error<br/>(usage-throttled)"]
@@ -81,6 +83,33 @@ mapped model has 429ed the request ends at `all_models_exhausted_429`, which
 window.
 
 *Source: `packages/proxy/src/proxy.ts` (`handleProxy`, `applyUsageThrottling`), `packages/proxy/src/handlers/account-selector.ts` (`selectAccountsForRequest`), `packages/proxy/src/handlers/proxy-operations.ts` + `packages/proxy/src/handlers/retryable-429.ts` (the three no-bench 429 classes and the transient-5xx retry/bench path).*
+
+### Peak-pricing exclusion
+
+TokenHarbor prices peak hours per **model**, not per provider: only the models its
+own `GET /v1/models` listing marks with a `pricing.off_peak` block cost more
+during their peak window; Claude, GLM, Grok and Gemini models stay flat-priced.
+The account's peak-hours toggle therefore opts it in to a per-model filter rather
+than the whole-account pause Zai and DeepSeek use.
+
+- **Pool path** — after usage throttling, accounts for which
+  `isPeakAffected(account, model)` is true are dropped, provided at least one
+  candidate remains. The decision uses the model the account would actually call
+  (so a `claude-*` → DeepSeek remapping is affected correctly), and both the
+  window and the model set come from the account's own listing — nothing is
+  hardcoded.
+- **Combo path** — combos return before the pool path, so the same filter is
+  applied by *reordering*: peak-affected slots sort behind flat-priced ones, with
+  relative order preserved inside each group. Accounts and `slots` stay
+  index-aligned because they are paired by position downstream. With no
+  flat-priced slot the order is left untouched.
+- **Fail-open** — no cached listing, a failed fetch, or an account whose provider
+  and endpoint no longer match the row the listing was fetched for leaves the
+  account unconstrained. The worst case is paying peak price, never a pool that
+  silently stops routing to a healthy account.
+- The listing is cached in-process (60-minute TTL, 5-minute failure backoff) and
+  refreshed on the auto-refresh tick, so a model the gateway adds or retires is
+  picked up without a restart. Editing an account's endpoint clears its entry.
 
 ## The Load-Balancing Strategies
 
