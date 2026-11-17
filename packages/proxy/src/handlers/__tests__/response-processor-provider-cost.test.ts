@@ -250,6 +250,29 @@ describe("provider-reported cost reaches the collector", () => {
 		expect(await rowCost(id)).toEqual({ cost_usd: null });
 	});
 
+	it("ignores the header on a JSON response when tracking was off", async () => {
+		const { ctx, calls } = makeCtx("anthropic", false);
+		const id = "req-off-json";
+		start(id, false);
+		await processProxyResponse(
+			new Response(BODY, {
+				status: 200,
+				headers: {
+					"content-type": "application/json",
+					"anthropic-billing-cost": "0.5",
+				},
+			}),
+			ACCOUNT,
+			ctx,
+			id,
+			{ costTrackingEpoch: null },
+		);
+		await settleAsync();
+		// The collector is seeded (no fallback write) and the header never
+		// reaches it; the collector's own estimate is outside this test.
+		expect(calls.updateRequestCostCalls).toEqual([]);
+	});
+
 	it("ignores an invalid cost from the provider parser too", async () => {
 		const { ctx } = makeCtx("anthropic", false);
 		ctx.provider.extractUsageInfo = async () => ({

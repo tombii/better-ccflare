@@ -343,11 +343,13 @@ export function updateAccountMetadata(
 					}
 					// The provider's own cost (Anthropic billing header, OpenRouter
 					// body `usage.cost`) beats the collector's catalogue estimate.
-					// `usageInfo` is already trackedUsage-filtered, so a cost from a
-					// request that crossed a tracking gap never gets here.
-					const providerCostUsd = validCost(
-						providerCostHeaderUsd(response) ?? usageInfo?.costUsd,
-					);
+					// Both sources go through trackedUsage: the body cost was already
+					// filtered, but the header is read here unfiltered.
+					const providerCostUsd = trackedUsage({
+						costUsd: validCost(
+							providerCostHeaderUsd(response) ?? usageInfo?.costUsd,
+						),
+					}).costUsd;
 					if (providerCostUsd !== undefined) {
 						const handled = await recordProviderCost(
 							tryGetUsageCollector(),
