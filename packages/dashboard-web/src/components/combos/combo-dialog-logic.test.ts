@@ -6,7 +6,6 @@ import {
 	describeFamiliesRoutingThrough,
 	familiesRoutingThroughCombo,
 	isComboFormDirty,
-	isComboFormPristine,
 	isComboNameValid,
 	shouldReseedComboForm,
 } from "./combo-dialog-logic";
@@ -82,13 +81,6 @@ describe("isComboFormDirty", () => {
 		expect(
 			isComboFormDirty({ name: "My Combo", description: "   " }, combo),
 		).toBe(true);
-	});
-});
-
-describe("isComboFormPristine", () => {
-	it("is the inverse of isComboFormDirty", () => {
-		expect(isComboFormPristine(comboFormValues(combo), combo)).toBe(true);
-		expect(isComboFormPristine({ ...combo, name: "X" }, combo)).toBe(false);
 	});
 });
 

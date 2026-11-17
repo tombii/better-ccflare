@@ -69,26 +69,6 @@ class ValidationCache {
 		}
 		this.cache.set(key, value);
 	}
-
-	clear(): void {
-		this.cache.clear();
-	}
-
-	size(): number {
-		return this.cache.size;
-	}
-
-	setMaxSize(size: number): void {
-		this.maxSize = size;
-		// If current cache is larger than new size, remove excess items
-		if (this.cache.size > this.maxSize) {
-			const keys = Array.from(this.cache.keys());
-			const keysToRemove = keys.slice(0, this.cache.size - this.maxSize);
-			for (const key of keysToRemove) {
-				this.cache.delete(key);
-			}
-		}
-	}
 }
 
 // Global validation cache instance
@@ -623,28 +603,4 @@ export function validatePathOrThrow(
 		throw new Error(result.reason || "Path validation failed");
 	}
 	return result.resolvedPath;
-}
-
-/**
- * Clear the validation cache
- * Useful for testing or when path configurations change
- */
-export function clearValidationCache(): void {
-	validationCache.clear();
-}
-
-/**
- * Get current cache size for monitoring
- * @returns Number of cached validation results
- */
-export function getValidationCacheSize(): number {
-	return validationCache.size();
-}
-
-/**
- * Set the maximum size of the validation cache
- * @param size - New maximum cache size
- */
-export function setValidationCacheSize(size: number): void {
-	validationCache.setMaxSize(size);
 }

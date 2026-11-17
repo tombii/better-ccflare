@@ -524,9 +524,6 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
  * - 7-layer security validation per path (cached via security package)
  * - Minimal structured logging for security monitoring
  *
- * For high-traffic production deployments, monitor cache hit rates via
- * security.getValidationCacheSize() to ensure effectiveness.
- *
  * @param systemPrompt - The system prompt text
  * @returns Array of agent directory paths
  */

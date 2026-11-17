@@ -77,7 +77,6 @@ import {
 } from "@better-ccflare/core";
 import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
 import { DatabaseFactory } from "@better-ccflare/database";
-import { Logger } from "@better-ccflare/logger";
 import { parseBedrockConfig } from "@better-ccflare/providers";
 // Import server
 import startServer from "@better-ccflare/server";
@@ -1171,7 +1170,6 @@ Examples:
 		cliConfig.getProviderModelDefaultOverrides(),
 	);
 	container.registerInstance(SERVICE_KEYS.Config, cliConfig);
-	container.registerInstance(SERVICE_KEYS.Logger, new Logger("CLI"));
 
 	// Route CLI outbound fetches (OAuth exchange, API key validation, etc.)
 	// through the configured forward proxy, same as the server process.

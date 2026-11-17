@@ -1,7 +1,7 @@
 /**
  * Tests for the bounded / simplified /api/stats queries on StatsRepository:
- * getRecentErrorGroups (GROUP BY rewrite), getTopModels, getAccountStats
- * (sargable account-id predicate) and getApiKeyStats (single merged query).
+ * getRecentErrorGroups (GROUP BY rewrite), getTopModels and getAccountStats
+ * (sargable account-id predicate).
  */
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -366,45 +366,5 @@ describe("StatsRepository — bounded top models / account stats / api keys", ()
 		const none = all.find((r) => r.name === NO_ACCOUNT_ID);
 		expect(none?.requestCount).toBe(2);
 		expect(none?.successRate).toBe(50);
-	});
-
-	it("getApiKeyStats returns counts and success rates", async () => {
-		insertRequest(db, {
-			id: "1",
-			ts: 1,
-			acct: null,
-			success: true,
-			apiKeyId: "k1",
-			apiKeyName: "ci",
-		});
-		insertRequest(db, {
-			id: "2",
-			ts: 2,
-			acct: null,
-			success: false,
-			apiKeyId: "k1",
-			apiKeyName: "ci",
-		});
-		insertRequest(db, {
-			id: "3",
-			ts: 3,
-			acct: null,
-			success: false,
-			apiKeyId: "k1",
-			apiKeyName: "ci",
-		});
-		insertRequest(db, {
-			id: "4",
-			ts: 4,
-			acct: null,
-			success: true,
-			apiKeyId: "k2",
-			apiKeyName: "dev",
-		});
-		insertRequest(db, { id: "5", ts: 5, acct: null, success: true });
-		expect(await repo.getApiKeyStats()).toEqual([
-			{ id: "k1", name: "ci", requests: 3, successRate: 33 },
-			{ id: "k2", name: "dev", requests: 1, successRate: 100 },
-		]);
 	});
 });

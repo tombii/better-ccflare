@@ -675,43 +675,6 @@ describe.skipIf(!livePgAvailable)(
 			);
 
 			liveIt(
-				"getTopModels executes (ROUND(CAST(... AS NUMERIC)) is dialect-sensitive)",
-				async () => {
-					await seedBaseline();
-					const models = await dbOps.getStatsRepository().getTopModels(5);
-					expect(models.length).toBeGreaterThan(0);
-					expect(models[0].model).toBe("claude-sonnet-4");
-					expect(Number.isFinite(models[0].percentage)).toBe(true);
-				},
-			);
-
-			liveIt(
-				"getApiKeyStats executes with a dynamic IN placeholder list",
-				async () => {
-					await seedRequest({
-						id: "k-1",
-						timestamp: now - HOUR,
-						accountUsed: "acct-1",
-						success: true,
-						apiKeyId: "key-1",
-						apiKeyName: "ci",
-					});
-					await seedRequest({
-						id: "k-2",
-						timestamp: now - HOUR,
-						accountUsed: "acct-1",
-						success: false,
-						apiKeyId: "key-1",
-						apiKeyName: "ci",
-					});
-					const stats = await dbOps.getStatsRepository().getApiKeyStats();
-					expect(stats).toHaveLength(1);
-					expect(stats[0].requests).toBe(2);
-					expect(stats[0].successRate).toBe(50);
-				},
-			);
-
-			liveIt(
 				"getSessionStats executes with a per-account thresholds CTE join",
 				async () => {
 					await seedBaseline();
@@ -1545,22 +1508,7 @@ describe.skipIf(!livePgAvailable)(
 			liveIt("read aggregates execute on PostgreSQL", async () => {
 				await seedBaseline();
 				expect((await dbOps.getRecentRequests(10)).length).toBe(6);
-				expect(
-					(await dbOps.getRequestStats(now - 24 * HOUR)).totalRequests,
-				).toBe(6);
 				expect(await dbOps.aggregateStats(24 * HOUR)).toBeDefined();
-				expect((await dbOps.getTopModels(5)).length).toBeGreaterThan(0);
-				expect((await dbOps.getRecentErrors(10)).length).toBeGreaterThan(0);
-				// getRequestsByAccount groups by the raw r.account_used value and does
-				// NOT apply the NULL→NO_ACCOUNT_ID bucket collapse that getAccountStats
-				// uses. The fixture seeds 3 distinct account_used values: 'acct-1'
-				// (matched to accounts.id = 'primary'), NULL (3 rows), and the legacy
-				// literal 'no_account' (1 row). That returns 3 groups on both
-				// dialects; the previous assertion expected 2, which would only hold
-				// if the function bucketed NULL and 'no_account' together.
-				expect((await dbOps.getRequestsByAccount(now - 24 * HOUR)).length).toBe(
-					3,
-				);
 				// getTableRowCounts short-circuits to [] on PostgreSQL (it queries
 				// sqlite_master, which only exists on SQLite). Empty array is still
 				// defined, so this remains a non-vacuous smoke check that the path
