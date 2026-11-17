@@ -46,13 +46,19 @@ describe("isComboFormDirty", () => {
 		expect(isComboFormDirty(comboFormValues(combo), combo)).toBe(false);
 	});
 
-	it("ignores surrounding whitespace and an empty description", () => {
+	it("treats a typed whitespace change as an edit", () => {
+		// Comparing trimmed values would call this unchanged, which lets the
+		// cooldown poll re-seed the field and silently drop the edit.
 		expect(
 			isComboFormDirty(
 				{ name: " My Combo ", description: " primary chain " },
 				combo,
 			),
-		).toBe(false);
+		).toBe(true);
+		expect(isComboFormDirty({ ...combo, name: "My Combo " }, combo)).toBe(true);
+	});
+
+	it("treats an empty description as unchanged for a null column", () => {
 		expect(
 			isComboFormDirty(
 				{ name: "X", description: "" },
@@ -123,6 +129,14 @@ describe("shouldReseedComboForm", () => {
 		expect(
 			shouldReseedComboForm(
 				{ name: "Typing...", description: "primary chain" },
+				{ ...combo, name: "Renamed" },
+				combo,
+			),
+		).toBe(false);
+		// A lone trailing space is still an edit the poll must not discard.
+		expect(
+			shouldReseedComboForm(
+				{ name: "My Combo ", description: "primary chain" },
 				{ ...combo, name: "Renamed" },
 				combo,
 			),

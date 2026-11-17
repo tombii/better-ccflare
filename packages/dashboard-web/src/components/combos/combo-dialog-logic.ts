@@ -20,20 +20,19 @@ export function comboFormValues(combo: {
 }
 
 /**
- * True when the form differs from the loaded combo once both sides are
- * trimmed the way the update request sends them.
+ * True when the form differs from the loaded combo.
+ *
+ * Compares the raw strings, deliberately not the trimmed ones the request
+ * sends: a trailing space the user just typed is an unsaved edit, and treating
+ * it as "unchanged" lets the 10s cooldown poll re-seed the field and silently
+ * discard it along with the Save button.
  */
 export function isComboFormDirty(
 	form: ComboFormValues,
 	combo: { name: string; description: string | null },
 ): boolean {
 	const initial = comboFormValues(combo);
-	// Compare exactly what the update request would send, on both sides.
-	return (
-		form.name.trim() !== initial.name.trim() ||
-		(form.description.trim() || undefined) !==
-			(initial.description.trim() || undefined)
-	);
+	return form.name !== initial.name || form.description !== initial.description;
 }
 
 /**
