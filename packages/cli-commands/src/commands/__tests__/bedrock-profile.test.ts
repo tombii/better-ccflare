@@ -30,18 +30,21 @@ const TEST_DB_PATH = `${process.env.TMPDIR || "/tmp"}/test-bedrock-profile-cli.d
 const PROFILE_PATTERN_ERROR =
 	/Profile names can only contain letters, numbers, dots, hyphens, and underscores/;
 
-// mock.module is process-wide in Bun, so spread the real module and restore
-// it afterwards for other test files sharing the process.
+// mock.module is process-wide in Bun. Capture the originals before mocking:
+// after mocking, the live namespace's homedir is the mock itself, so falling
+// back to it would recurse forever.
 const actualOs = await import("node:os");
+const originalHomedir = actualOs.homedir;
+const originalOs = { ...actualOs };
 let fakeHome: string | null = null;
 
 mock.module("node:os", () => ({
-	...actualOs,
-	homedir: () => fakeHome ?? actualOs.homedir(),
+	...originalOs,
+	homedir: () => fakeHome ?? originalHomedir(),
 }));
 
 afterAll(() => {
-	mock.module("node:os", () => actualOs);
+	mock.module("node:os", () => originalOs);
 });
 
 describe("CLI Bedrock profile validation", () => {
