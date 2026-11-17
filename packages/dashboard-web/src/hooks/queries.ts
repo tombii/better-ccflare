@@ -716,8 +716,11 @@ export const useUpdateCombo = () => {
 			description?: string;
 			enabled?: boolean;
 		}) => api.updateCombo(params.id, params),
-		onSuccess: () => {
+		onSuccess: (_data, { id }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+			// Refresh the detail cache too, or reopening the edit dialog seeds
+			// the pre-save name/description and a second save reverts the edit.
+			queryClient.invalidateQueries({ queryKey: ["combo", id] });
 		},
 	});
 };
