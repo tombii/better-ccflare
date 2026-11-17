@@ -1666,38 +1666,8 @@ OAuth tokens will need to be re-authenticated.
 		return this.requests.getRecentRequests(limit);
 	}
 
-	async getRequestStats(since?: number): Promise<{
-		totalRequests: number;
-		successfulRequests: number;
-		failedRequests: number;
-		avgResponseTime: number | null;
-	}> {
-		return this.requests.getRequestStats(since);
-	}
-
 	async aggregateStats(rangeMs?: number) {
 		return this.requests.aggregateStats(rangeMs);
-	}
-
-	async getRecentErrors(limit?: number): Promise<string[]> {
-		return this.requests.getRecentErrors(limit);
-	}
-
-	async getTopModels(
-		limit?: number,
-	): Promise<Array<{ model: string; count: number }>> {
-		return this.requests.getTopModels(limit);
-	}
-
-	async getRequestsByAccount(since?: number): Promise<
-		Array<{
-			accountId: string;
-			accountName: string | null;
-			requestCount: number;
-			successRate: number;
-		}>
-	> {
-		return this.requests.getRequestsByAccount(since);
 	}
 
 	// Cleanup operations — three explicit passes:

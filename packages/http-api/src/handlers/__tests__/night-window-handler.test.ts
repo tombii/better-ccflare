@@ -12,12 +12,6 @@ function makeHandler(provider = "sailresearch") {
 			run: async () => {},
 		}),
 		setNightWindowEnabled,
-		getAccount: async (id: string) => ({
-			id,
-			name: "acct",
-			provider,
-			night_window_enabled: state.enabled,
-		}),
 	};
 	const handler = createAccountNightWindowHandler(dbOps as never);
 	const call = (body: string, accountId = "a1") =>
@@ -39,10 +33,10 @@ describe("night-window handler", () => {
 		expect(setNightWindowEnabled).toHaveBeenCalledWith("a1", true);
 		const body = (await res.json()) as {
 			nightWindowEnabled: boolean;
-			account: { night_window_enabled: boolean };
+			account?: unknown;
 		};
 		expect(body.nightWindowEnabled).toBe(true);
-		expect(body.account.night_window_enabled).toBe(true);
+		expect(body.account).toBeUndefined();
 	});
 
 	it("disables the flag", async () => {
@@ -51,12 +45,8 @@ describe("night-window handler", () => {
 		const res = await call(JSON.stringify({ enabled: false }));
 		expect(res.status).toBe(200);
 		expect(setNightWindowEnabled).toHaveBeenCalledWith("a1", false);
-		const body = (await res.json()) as {
-			nightWindowEnabled: boolean;
-			account: { night_window_enabled: boolean };
-		};
+		const body = (await res.json()) as { nightWindowEnabled: boolean };
 		expect(body.nightWindowEnabled).toBe(false);
-		expect(body.account.night_window_enabled).toBe(false);
 	});
 
 	it("is provider-agnostic (no sailresearch-only gate)", async () => {
@@ -81,7 +71,6 @@ describe("night-window handler", () => {
 		const dbOps = {
 			getAdapter: () => ({ get: async () => null, run: async () => {} }),
 			setNightWindowEnabled,
-			getAccount: async () => null,
 		};
 		const handler = createAccountNightWindowHandler(dbOps as never);
 		const res = await handler(

@@ -72,93 +72,6 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Synchronous sleep function
- */
-function sleepSync(ms: number): void {
-	// Synchronous sleep using Bun.sleepSync if available, otherwise Node.js fallback
-	if (typeof Bun !== "undefined" && Bun.sleepSync) {
-		Bun.sleepSync(ms);
-	} else {
-		// Try Node.js child_process.spawnSync as fallback
-		try {
-			const { spawnSync } = require("node:child_process");
-			const sleepCommand = process.platform === "win32" ? "timeout" : "sleep";
-			const sleepArg =
-				process.platform === "win32"
-					? `/t ${Math.ceil(ms / 1000)}`
-					: `${ms / 1000}`;
-
-			spawnSync(sleepCommand, [sleepArg], {
-				stdio: "ignore",
-				shell: process.platform === "win32",
-			});
-		} catch (error) {
-			// If child_process is not available or fails, throw an error instead of busy waiting
-			throw new Error(
-				`Synchronous sleep not supported in this environment. ` +
-					`Bun.sleepSync is not available and Node.js child_process failed: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
-	}
-}
-
-/**
- * Synchronous retry logic
- */
-function executeWithRetrySync<T>(
-	operation: () => T,
-	config: Required<DatabaseRetryConfig>,
-	operationName: string,
-): T {
-	let lastError: unknown;
-
-	for (let attempt = 0; attempt < config.attempts; attempt++) {
-		try {
-			const result = operation();
-
-			// Log successful retry if this wasn't the first attempt
-			if (attempt > 0) {
-				logger.info(`${operationName} succeeded after ${attempt + 1} attempts`);
-			}
-
-			return result;
-		} catch (error) {
-			lastError = error;
-
-			// Check if this is a retryable error
-			if (!isRetryableError(error)) {
-				logger.debug(
-					`${operationName} failed with non-retryable error:`,
-					error,
-				);
-				throw error;
-			}
-
-			// If this was the last attempt, throw the error
-			if (attempt === config.attempts - 1) {
-				logger.error(
-					`${operationName} failed after ${config.attempts} attempts:`,
-					error,
-				);
-				throw error;
-			}
-
-			// Calculate delay and wait before retry
-			const delay = calculateDelay(attempt, config);
-			logger.warn(
-				`${operationName} failed (attempt ${attempt + 1}/${config.attempts}), retrying in ${delay.toFixed(0)}ms:`,
-				error instanceof Error ? error.message : String(error),
-			);
-
-			sleepSync(delay);
-		}
-	}
-
-	// This should never be reached, but TypeScript requires it
-	throw lastError;
-}
-
-/**
  * Async retry logic - uses iterative approach to avoid recursive Promise chains
  */
 async function executeWithRetryAsync<T>(
@@ -231,23 +144,4 @@ export async function withDatabaseRetry<T>(
 	};
 
 	return executeWithRetryAsync(operation, retryConfig, operationName);
-}
-
-/**
- * Synchronous retry wrapper for database operations
- */
-export function withDatabaseRetrySync<T>(
-	operation: () => T,
-	config: DatabaseRetryConfig = {},
-	operationName = "database operation",
-): T {
-	const retryConfig: Required<DatabaseRetryConfig> = {
-		attempts: 3,
-		delayMs: 100,
-		backoff: 2,
-		maxDelayMs: 5000,
-		...config,
-	};
-
-	return executeWithRetrySync(operation, retryConfig, operationName);
 }

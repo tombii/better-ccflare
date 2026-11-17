@@ -230,25 +230,6 @@ Validates a path and throws an error if invalid.
 
 **Throws:** `Error` if path is invalid
 
-### `getDefaultAllowedBasePaths(forceRefresh?: boolean): string[]`
-
-Gets the default allowed base directories. Results are cached.
-
-**Parameters:**
-- `forceRefresh`: Force recomputation of cached paths
-
-**Returns:** Array of allowed directory paths
-
-### `clearValidationCache(): void`
-
-Clears the validation cache. Useful for testing or when path configurations change.
-
-### `getValidationCacheSize(): number`
-
-Gets the current number of cached validation results for monitoring.
-
-**Returns:** Number of cached entries
-
 ### `PathValidationOptions`
 
 ```typescript
@@ -303,18 +284,6 @@ The security package includes built-in performance optimizations:
 2. **Production Logging**: Successful validations log at `debug` level in production, `info` in development
 3. **Cached Default Paths**: Default allowed paths are computed once and reused
 4. **Optimized Cache Keys**: Minimal string operations for cache key construction
-
-### Monitoring Cache Performance
-
-```typescript
-import { getValidationCacheSize, clearValidationCache } from '@better-ccflare/security';
-
-// Monitor cache size
-console.log(`Cache entries: ${getValidationCacheSize()}`);
-
-// Clear cache if needed (e.g., after configuration changes)
-clearValidationCache();
-```
 
 ### Additional Recommendations
 

@@ -1334,7 +1334,6 @@ export default async function startServer(options?: {
 
 	// Initialize DI container
 	container.registerInstance(SERVICE_KEYS.Config, new Config());
-	container.registerInstance(SERVICE_KEYS.Logger, new Logger("Server"));
 
 	// Initialize payload encryption (no-op if PAYLOAD_ENCRYPTION_KEY is unset).
 	// This must run before any database operations that read/write payloads.
@@ -1426,7 +1425,7 @@ export default async function startServer(options?: {
 	stopIntegritySchedulerJob = startIntegrityScheduler(dbOps);
 
 	const db = dbOps.getAdapter();
-	const log = container.resolve<Logger>(SERVICE_KEYS.Logger);
+	const log = new Logger("Server");
 	container.registerInstance(SERVICE_KEYS.Database, dbOps);
 
 	// Initialize async DB writer
@@ -1436,7 +1435,6 @@ export default async function startServer(options?: {
 
 	// Initialize pricing logger
 	const pricingLogger = new Logger("Pricing");
-	container.registerInstance(SERVICE_KEYS.PricingLogger, pricingLogger);
 	setPricingLogger(pricingLogger);
 
 	const alertService = new AlertService(db, config, () =>

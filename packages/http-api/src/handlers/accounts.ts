@@ -3538,18 +3538,12 @@ export function createAccountNightWindowHandler(dbOps: DatabaseOperations) {
 			// Update night-window setting
 			await dbOps.setNightWindowEnabled(accountId, enabled);
 
-			const updated = await dbOps.getAccount(accountId);
-			if (!updated) {
-				return errorResponse(NotFound("Account not found"));
-			}
-
 			const action = enabled ? "enabled" : "disabled";
 
 			return jsonResponse({
 				success: true,
 				message: `Night window ${action} for account '${account.name}'`,
 				nightWindowEnabled: enabled,
-				account: updated,
 			});
 		} catch (error) {
 			log.error("Account night-window toggle error:", error);

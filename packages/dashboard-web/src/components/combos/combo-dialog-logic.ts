@@ -36,17 +36,6 @@ export function isComboFormDirty(
 }
 
 /**
- * True when the form holds no unsaved edits relative to the loaded combo.
- * The inverse of {@link isComboFormDirty}, named for the seeding logic.
- */
-export function isComboFormPristine(
-	form: ComboFormValues,
-	combo: { name: string; description: string | null },
-): boolean {
-	return !isComboFormDirty(form, combo);
-}
-
-/**
  * True when the form should be re-seeded from the loaded combo: the combo
  * changed underneath the form (e.g. a successful save followed by a reopen,
  * or a poll picking up another tab's edit) and the form still holds exactly
