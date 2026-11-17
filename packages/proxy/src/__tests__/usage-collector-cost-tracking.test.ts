@@ -131,7 +131,7 @@ describe("provider-reported cost", () => {
 		await finalizing;
 		expect(await saved("late")).toEqual({ cost_usd: 0.5, total_tokens: 168 });
 	});
-	it("declines a cost it cannot apply without a parsed model", async () => {
+	it("declines a cost for a request it does not track", async () => {
 		start("no-model");
 		// A body past the capture cap never parses, so the model stays unknown.
 		await collector.handleEnd({

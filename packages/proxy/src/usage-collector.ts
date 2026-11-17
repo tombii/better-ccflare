@@ -1061,6 +1061,25 @@ export class UsageCollector {
 		// Pricing is done and the usage below is final: a later setProviderCost
 		// must fall back to a row UPDATE rather than mutate this snapshot.
 		this.finalizingRequests.delete(msg.requestId);
+
+		// A provider cost is known even when the model is not (a body the
+		// collector could not parse), and finalization below only prices inside
+		// its model branch. Charge it here so the spend counter does not miss it.
+		if (!state.usage.model && state.usage.providerCostUsd !== undefined) {
+			if (
+				isCostTrackingEnabled() &&
+				state.costTrackingEpoch === getCostTrackingEpoch()
+			) {
+				tryGetApiKeySpendCounter()?.record(
+					startMessage.apiKeyId,
+					state.usage.providerCostUsd,
+					null,
+					Date.now(),
+					startMessage.requestId,
+					startMessage.limitModel ?? startMessage.originalModel ?? null,
+				);
+			}
+		}
 		// No preliminary INSERT needed — dashboard tracks pending requests via SSE events, not DB queries.
 		this.asyncWriter.enqueue(async () => {
 			try {
