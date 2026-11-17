@@ -223,6 +223,33 @@ describe("provider-reported cost reaches the collector", () => {
 		expect(await rowCost(id)).toEqual({ cost_usd: 0.5 });
 	});
 
+	it("ignores the header when the request started with tracking off", async () => {
+		const { ctx } = makeCtx("anthropic", true);
+		const id = "req-off";
+		start(id, true);
+		await processProxyResponse(
+			new Response("", {
+				status: 200,
+				headers: {
+					"content-type": "text/event-stream",
+					"anthropic-billing-cost": "0.5",
+				},
+			}),
+			ACCOUNT,
+			ctx,
+			id,
+			{ costTrackingEpoch: null },
+		);
+		await settleAsync();
+		await collector.handleEnd({
+			type: "end",
+			requestId: id,
+			success: true,
+		});
+		await collector.drain();
+		expect(await rowCost(id)).toEqual({ cost_usd: null });
+	});
+
 	it("ignores an invalid cost from the provider parser too", async () => {
 		const { ctx } = makeCtx("anthropic", false);
 		ctx.provider.extractUsageInfo = async () => ({

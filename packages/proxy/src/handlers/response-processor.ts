@@ -293,7 +293,9 @@ export function updateAccountMetadata(
 				}
 				// The billing header is on the response itself, so a streaming
 				// parse that bails early still knows the provider's cost.
-				const headerCostUsd = providerCostHeaderUsd(response);
+				const headerCostUsd = trackedUsage({
+					costUsd: providerCostHeaderUsd(response),
+				}).costUsd;
 				if (headerCostUsd !== undefined) {
 					await recordProviderCost(
 						tryGetUsageCollector(),

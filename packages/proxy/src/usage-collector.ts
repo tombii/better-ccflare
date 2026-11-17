@@ -833,7 +833,6 @@ export class UsageCollector {
 		// capacity cleanup and missing-state checks must keep treating the
 		// request as gone.
 		this.requests.delete(msg.requestId);
-		this.finalizingRequests.set(msg.requestId, state);
 
 		const { startMessage } = state;
 		const responseTime = Date.now() - startMessage.timestamp;
@@ -843,6 +842,10 @@ export class UsageCollector {
 			this.freeRequestState(state);
 			return;
 		}
+
+		// Registered only past every early return: an entry left behind here is
+		// never visited by cleanup.
+		this.finalizingRequests.set(msg.requestId, state);
 
 		// Flush any incomplete multi-byte UTF-8 sequences held in the streaming decoder
 		const trailing = state.streamDecoder.decode();
