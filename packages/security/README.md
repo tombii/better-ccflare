@@ -230,15 +230,6 @@ Validates a path and throws an error if invalid.
 
 **Throws:** `Error` if path is invalid
 
-### `getDefaultAllowedBasePaths(forceRefresh?: boolean): string[]`
-
-Gets the default allowed base directories. Results are cached.
-
-**Parameters:**
-- `forceRefresh`: Force recomputation of cached paths
-
-**Returns:** Array of allowed directory paths
-
 ### `PathValidationOptions`
 
 ```typescript
