@@ -68,6 +68,76 @@ describe("health runtime payload", () => {
 		});
 	});
 
+	// Audit finding 7: drop counters must reach /health even when the usage
+	// worker health fn is not wired.
+	it("includes asyncWriter drop counters without a usage worker callback", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(db, config, () => ({
+			healthy: true,
+			failureCount: 0,
+			recentDrops: 3,
+			queuedJobs: 0,
+			metadataQueuedJobs: 0,
+			payloadQueuedJobs: 0,
+			payloadBytesPending: 0,
+			oldestMetadataAgeMs: 0,
+			oldestPayloadAgeMs: 0,
+			metadataDropped: 7,
+			payloadDropped: 2,
+			payloadDroppedBytes: 4096,
+		}));
+
+		const response = await handler(new URL("http://localhost/health"));
+		const body = (await response.json()) as HealthResponse;
+
+		expect(response.status).toBe(200);
+		expect(body.runtime?.asyncWriter?.metadataDropped).toBe(7);
+		expect(body.runtime?.asyncWriter?.payloadDropped).toBe(2);
+		expect(body.runtime?.asyncWriter?.payloadDroppedBytes).toBe(4096);
+		expect(body.runtime?.usageWorker).toBeUndefined();
+	});
+
+	it("still degrades status to unhealthy when the async writer is unhealthy and no usage worker is wired", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(db, config, () => ({
+			healthy: false,
+			failureCount: 5,
+			recentDrops: 0,
+			queuedJobs: 0,
+			metadataQueuedJobs: 0,
+			payloadQueuedJobs: 0,
+			payloadBytesPending: 0,
+			oldestMetadataAgeMs: 0,
+			oldestPayloadAgeMs: 0,
+			metadataDropped: 0,
+			payloadDropped: 0,
+			payloadDroppedBytes: 0,
+		}));
+
+		const response = await handler(new URL("http://localhost/health"));
+		const body = (await response.json()) as HealthResponse;
+
+		expect(response.status).toBe(503);
+		expect(body.status).toBe("unhealthy");
+		expect(body.runtime?.asyncWriter?.healthy).toBe(false);
+	});
+
 	it("omits runtime health when callbacks are not provided", async () => {
 		const db = {
 			getAllAccounts: async () => [

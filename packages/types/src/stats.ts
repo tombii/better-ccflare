@@ -305,6 +305,9 @@ export interface HealthResponse {
 			healthy: boolean;
 			failureCount: number;
 			queuedJobs: number;
+			metadataDropped: number;
+			payloadDropped: number;
+			payloadDroppedBytes: number;
 		};
 		usageWorker?: {
 			state: string;

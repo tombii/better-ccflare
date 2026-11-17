@@ -40,20 +40,9 @@ const usageCacheUsageInfo: AccountUsageInfoFn = (account) =>
 		account.provider ?? "anthropic",
 	);
 
-type AsyncWriterHealthFn = () => {
-	healthy: boolean;
-	failureCount: number;
-	recentDrops: number;
-	queuedJobs: number;
-	metadataQueuedJobs: number;
-	payloadQueuedJobs: number;
-	payloadBytesPending: number;
-	oldestMetadataAgeMs: number;
-	oldestPayloadAgeMs: number;
-	metadataDropped: number;
-	payloadDropped: number;
-	payloadDroppedBytes: number;
-};
+type AsyncWriterHealthFn = () => NonNullable<
+	NonNullable<HealthResponse["runtime"]>["asyncWriter"]
+>;
 type UsageWorkerHealthFn = () => {
 	state: string;
 };
@@ -243,10 +232,10 @@ export function createHealthHandler(
 		};
 
 		// Build runtime section from stored results
-		if (asyncWriterHealth && usageWorkerHealth) {
+		if (asyncWriterHealth || usageWorkerHealth) {
 			response.runtime = {
-				asyncWriter: asyncWriterHealth,
-				usageWorker: usageWorkerHealth,
+				...(asyncWriterHealth ? { asyncWriter: asyncWriterHealth } : {}),
+				...(usageWorkerHealth ? { usageWorker: usageWorkerHealth } : {}),
 			};
 		}
 
