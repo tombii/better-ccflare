@@ -63,8 +63,11 @@ function normalizeResetsAt(value: unknown): string | null {
 
 /**
  * A window is usable only when it carries a numeric `percent`. The value is
- * clamped to 0-100 and rounded to one decimal, so a misbehaving upstream can
- * never paint a bar past full or below empty.
+ * clamped to 0-100 so a misbehaving upstream can never paint a bar past full
+ * or below empty. The raw percentage is preserved for routing decisions:
+ * `isUsageExhausted` treats `>= 100` as exhausted, so rounding (e.g. 99.96 up
+ * to 100) would bench an account that still has quota. Any display rounding
+ * belongs to the UI.
  */
 function normalizeWindow(value: unknown): UsageWindowData | null {
 	if (!value || typeof value !== "object") return null;
@@ -73,7 +76,7 @@ function normalizeWindow(value: unknown): UsageWindowData | null {
 	if (typeof percent !== "number" || !Number.isFinite(percent)) return null;
 	const clamped = Math.min(100, Math.max(0, percent));
 	return {
-		utilization: Math.round(clamped * 10) / 10,
+		utilization: clamped,
 		resets_at: normalizeResetsAt(w.resetsAt),
 	};
 }

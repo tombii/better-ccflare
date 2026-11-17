@@ -190,25 +190,36 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		return transformRequestBodyModel(
 			request,
 			account,
-			(model, acc) => {
-				if (acc) {
-					// Use core mapModelName which handles arrays, fallbacks, env overrides, and defaults
-					return mapModelName(model, acc);
-				}
-
-				// Fall back to static config mappings for backward compatibility
-				if (this.config.modelMappings?.[model]) {
-					return this.config.modelMappings[model];
-				}
-
-				return model;
-			},
+			(model, acc) => this.mapModelForRequest(model, acc),
 			{
 				supportsProviderRouting: () => this.supportsProviderRoutingFor(account),
 				rewriteBody: (body) =>
 					applyAnthropicReasoningEffort(body, this.getReasoningEffortStyle()),
 			},
 		);
+	}
+
+	/**
+	 * Resolve the model id to send upstream for a request. Called by
+	 * {@link transformRequestBody} with the routing suffix already stripped.
+	 *
+	 * The base behaviour maps only through the account's own configuration: a
+	 * provider that registers family defaults but does not override this hook
+	 * leaves an unmapped model untouched. A provider whose upstream serves only
+	 * its own model ids overrides this to apply those defaults.
+	 */
+	protected mapModelForRequest(model: string, account?: Account): string {
+		if (account) {
+			// Use core mapModelName which handles arrays, fallbacks, env overrides, and defaults
+			return mapModelName(model, account);
+		}
+
+		// Fall back to static config mappings for backward compatibility
+		if (this.config.modelMappings?.[model]) {
+			return this.config.modelMappings[model];
+		}
+
+		return model;
 	}
 
 	/**

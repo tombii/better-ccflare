@@ -143,7 +143,7 @@ describe("OpenCode Go usage fetcher", () => {
 		expect(usage?.five_hour?.utilization).toBe(0);
 	});
 
-	it("rounds a fractional percent to one decimal", async () => {
+	it("preserves a fractional percent without rounding", async () => {
 		globalThis.fetch = (async () =>
 			jsonResponse({
 				usage: { rolling: { status: "ok", percent: 12.3456, resetsAt: null } },
@@ -151,7 +151,20 @@ describe("OpenCode Go usage fetcher", () => {
 
 		const usage = await fetchOpencodeGoUsageData("k");
 
-		expect(usage?.five_hour?.utilization).toBe(12.3);
+		expect(usage?.five_hour?.utilization).toBe(12.3456);
+	});
+
+	it("keeps 99.96 below 100 so a nearly-full window is not benched", async () => {
+		// isUsageExhausted is `utilization >= 100`; rounding 99.96 up to 100
+		// would mark an account with quota left as exhausted (false exhaustion).
+		globalThis.fetch = (async () =>
+			jsonResponse({
+				usage: { rolling: { status: "ok", percent: 99.96, resetsAt: null } },
+			})) as unknown as typeof fetch;
+
+		const usage = await fetchOpencodeGoUsageData("k");
+
+		expect(usage?.five_hour?.utilization).toBe(99.96);
 	});
 
 	it("returns null when no window parses", async () => {

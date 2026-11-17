@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { setForceAccountModel } from "@better-ccflare/core";
 import type { Account } from "@better-ccflare/types";
 import {
 	clearDerivedProviderModelDefaults,
@@ -42,11 +43,13 @@ describe("OpencodeGoProvider", () => {
 	beforeEach(() => {
 		setProviderModelDefaultOverrides({});
 		clearDerivedProviderModelDefaults();
+		setForceAccountModel(false);
 	});
 
 	afterEach(() => {
 		setProviderModelDefaultOverrides({});
 		clearDerivedProviderModelDefaults();
+		setForceAccountModel(false);
 	});
 
 	it("registers deepseek-v4.1-flash as the default for every Claude family", () => {
@@ -141,6 +144,75 @@ describe("OpencodeGoProvider", () => {
 				);
 				const body = await transformed.json();
 				expect(body.model).toBe("deepseek-v4.1-flash");
+			}
+		});
+
+		it("maps each Claude family to the registered default with NO account mappings", async () => {
+			const provider = new OpencodeGoProvider();
+			for (const family of FAMILIES) {
+				const transformed = await provider.transformRequestBody(
+					messagesRequest(`claude-${family}-5`),
+					account(),
+				);
+				const body = await transformed.json();
+				expect(body.model).toBe("deepseek-v4.1-flash");
+			}
+		});
+
+		it("maps a dated Claude id to the default with no account mappings", async () => {
+			const provider = new OpencodeGoProvider();
+			const transformed = await provider.transformRequestBody(
+				messagesRequest("claude-sonnet-4-5-20250929"),
+				account(),
+			);
+			const body = await transformed.json();
+			expect(body.model).toBe("deepseek-v4.1-flash");
+		});
+
+		it("maps a Claude id to the default even with no account at all", async () => {
+			const provider = new OpencodeGoProvider();
+			const transformed = await provider.transformRequestBody(
+				messagesRequest("claude-sonnet-4-5"),
+			);
+			const body = await transformed.json();
+			expect(body.model).toBe("deepseek-v4.1-flash");
+		});
+
+		it("lets an explicit account mapping win over the built-in default", async () => {
+			const provider = new OpencodeGoProvider();
+			const transformed = await provider.transformRequestBody(
+				messagesRequest("claude-sonnet-4-5"),
+				account({ model_mappings: JSON.stringify({ sonnet: "glm-5.3" }) }),
+			);
+			const body = await transformed.json();
+			expect(body.model).toBe("glm-5.3");
+		});
+
+		it("lets an operator override win over the built-in default", async () => {
+			setProviderModelDefaultOverrides({
+				"opencode-go": { sonnet: "qwen3.8-max" },
+			});
+			const provider = new OpencodeGoProvider();
+			const transformed = await provider.transformRequestBody(
+				messagesRequest("claude-sonnet-4-5"),
+				account(),
+			);
+			const body = await transformed.json();
+			expect(body.model).toBe("qwen3.8-max");
+		});
+
+		it("never rewrites the model while force-account-model is on", async () => {
+			setForceAccountModel(true);
+			try {
+				const provider = new OpencodeGoProvider();
+				const transformed = await provider.transformRequestBody(
+					messagesRequest("claude-sonnet-4-5"),
+					account(),
+				);
+				const body = await transformed.json();
+				expect(body.model).toBe("claude-sonnet-4-5");
+			} finally {
+				setForceAccountModel(false);
 			}
 		});
 	});
