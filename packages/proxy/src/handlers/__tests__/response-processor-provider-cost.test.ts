@@ -220,8 +220,37 @@ describe("provider-reported cost reaches the collector", () => {
 			success: true,
 		});
 		await collector.drain();
-		expect(estimate).not.toHaveBeenCalled();
 		expect(await rowCost(id)).toEqual({ cost_usd: 0.5 });
+	});
+
+	it("ignores an invalid cost from the provider parser too", async () => {
+		const { ctx } = makeCtx("anthropic", false);
+		ctx.provider.extractUsageInfo = async () => ({
+			model: "claude-opus-4-6",
+			inputTokens: 123,
+			outputTokens: 45,
+			costUsd: Number.NaN,
+		});
+		const id = "req-parser-nan";
+		start(id, false);
+		await processProxyResponse(
+			new Response(BODY, {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+			ACCOUNT,
+			ctx,
+			id,
+		);
+		await settleAsync();
+		await collector.handleEnd({
+			type: "end",
+			requestId: id,
+			success: true,
+			responseBody: Buffer.from(BODY).toString("base64"),
+		});
+		await collector.drain();
+		expect(await rowCost(id)).toEqual({ cost_usd: 99 });
 	});
 
 	it("ignores a malformed header and estimates instead", async () => {
@@ -251,7 +280,7 @@ describe("provider-reported cost reaches the collector", () => {
 		expect(await rowCost(id)).toEqual({ cost_usd: 99 });
 	});
 
-	it("falls back to a row UPDATE when no collector state exists", async () => {
+	it("falls back to a row UPDATE when the collector tracks no such request", async () => {
 		const { ctx, calls } = makeCtx("anthropic", false);
 		await processProxyResponse(
 			new Response(BODY, {

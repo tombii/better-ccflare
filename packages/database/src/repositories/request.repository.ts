@@ -332,7 +332,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				usage?.promptTokens || null,
 				usage?.completionTokens || null,
 				usage?.totalTokens || null,
-				usage?.costUsd || null,
+				// `??`, not `||`: a provider-reported zero is a real cost.
+				usage?.costUsd ?? null,
 				usage?.inputTokens || null,
 				usage?.cacheReadInputTokens || null,
 				usage?.cacheCreationInputTokens || null,
@@ -392,7 +393,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				usage.promptTokens || null,
 				usage.completionTokens || null,
 				usage.totalTokens || null,
-				usage.costUsd || null,
+				usage.costUsd ?? null,
 				usage.inputTokens || null,
 				usage.cacheReadInputTokens || null,
 				usage.cacheCreationInputTokens || null,

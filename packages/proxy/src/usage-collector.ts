@@ -460,6 +460,8 @@ export class UsageCollector {
 	private readonly missingStateWarnings = new Set<string>();
 	private readonly pendingHandleEnds = new Set<Promise<void>>();
 	private readonly pendingRequestEnds = new Map<string, number>();
+	/** States whose finalizer is running; still open to setProviderCost. */
+	private readonly finalizingRequests = new Map<string, RequestState>();
 	private readonly pendingPricingFallbacks = new Set<() => void>();
 	private cleanupInterval: Timer | null = null;
 	// Permanent once drain() is called — collector cannot estimate costs after this.
@@ -800,7 +802,8 @@ export class UsageCollector {
 	 * caller then writes the row itself.
 	 */
 	setProviderCost(requestId: string, costUsd: number): boolean {
-		const state = this.requests.get(requestId);
+		const state =
+			this.requests.get(requestId) ?? this.finalizingRequests.get(requestId);
 		if (!state) return false;
 		state.usage.providerCostUsd = costUsd;
 		return true;
@@ -823,7 +826,14 @@ export class UsageCollector {
 		// Atomically transfer ownership to this finalizer before its first await.
 		// This keeps capacity cleanup from freeing the state while pricing resolves,
 		// and prevents this lifecycle from later deleting a reused request ID.
+		// The state stays reachable until pricing and spend recording finish, so
+		// a provider cost discovered during the pricing await still lands on this
+		// request (see setProviderCost) instead of falling back to a row UPDATE
+		// that races the INSERT below. It lives in its own map, not `requests`:
+		// capacity cleanup and missing-state checks must keep treating the
+		// request as gone.
 		this.requests.delete(msg.requestId);
+		this.finalizingRequests.set(msg.requestId, state);
 
 		const { startMessage } = state;
 		const responseTime = Date.now() - startMessage.timestamp;
@@ -891,21 +901,21 @@ export class UsageCollector {
 					state.costTrackingEpoch === getCostTrackingEpoch()
 				) {
 					// The provider's own number is authoritative; the catalogue
-					// estimate only fills in when the provider reported none.
-					state.usage.costUsd =
-						state.usage.providerCostUsd ??
-						(await this.estimateCostWithDeadline(
-							startMessage.requestId,
-							model,
-							() =>
-								estimateCostUSD(model, {
-									inputTokens: state.usage.inputTokens,
-									outputTokens: finalOutputTokens,
-									cacheReadInputTokens: state.usage.cacheReadInputTokens,
-									cacheCreationInputTokens:
-										state.usage.cacheCreationInputTokens,
-								}),
-						));
+					// estimate only fills in when the provider reported none. Read
+					// it after the await: the provider parser may seed it while
+					// pricing is in flight.
+					const estimate = await this.estimateCostWithDeadline(
+						startMessage.requestId,
+						model,
+						() =>
+							estimateCostUSD(model, {
+								inputTokens: state.usage.inputTokens,
+								outputTokens: finalOutputTokens,
+								cacheReadInputTokens: state.usage.cacheReadInputTokens,
+								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
+							}),
+					);
+					state.usage.costUsd = state.usage.providerCostUsd ?? estimate;
 				}
 				if (
 					!isCostTrackingEnabled() ||
@@ -1048,6 +1058,9 @@ export class UsageCollector {
 			startMessage.originalModel,
 			startMessage.appliedModel,
 		);
+		// Pricing is done and the usage below is final: a later setProviderCost
+		// must fall back to a row UPDATE rather than mutate this snapshot.
+		this.finalizingRequests.delete(msg.requestId);
 		// No preliminary INSERT needed — dashboard tracks pending requests via SSE events, not DB queries.
 		this.asyncWriter.enqueue(async () => {
 			try {

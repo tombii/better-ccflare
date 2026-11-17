@@ -95,15 +95,55 @@ async function saved(id: string) {
 
 describe("provider-reported cost", () => {
 	it("uses the provider's cost instead of the local estimate", async () => {
-		const estimate = spyOn(core, "estimateCostUSD").mockResolvedValue(99);
+		// Pricing is still awaited (it may race a late provider cost); only its
+		// result must lose to the provider's number.
+		spyOn(core, "estimateCostUSD").mockResolvedValue(99);
 		start("provider");
 		expect(collector.setProviderCost("provider", 0.25)).toBe(true);
 		await end("provider");
-		expect(estimate).not.toHaveBeenCalled();
 		expect(await saved("provider")).toEqual({
 			cost_usd: 0.25,
 			total_tokens: 168,
 		});
+	});
+	it("records a provider-reported zero", async () => {
+		spyOn(core, "estimateCostUSD").mockResolvedValue(99);
+		start("free");
+		expect(collector.setProviderCost("free", 0)).toBe(true);
+		await end("free");
+		expect(await saved("free")).toEqual({ cost_usd: 0, total_tokens: 168 });
+	});
+	it("applies a cost seeded while the request is still finalizing", async () => {
+		let finish!: (value: number) => void;
+		spyOn(core, "estimateCostUSD").mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				}),
+		);
+		start("late");
+		const finalizing = end("late");
+		// Finalization has dequeued the state and is awaiting pricing.
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(collector.setProviderCost("late", 0.5)).toBe(true);
+		finish(99);
+		await finalizing;
+		expect(await saved("late")).toEqual({ cost_usd: 0.5, total_tokens: 168 });
+	});
+	it("declines a cost it cannot apply without a parsed model", async () => {
+		start("no-model");
+		// A body past the capture cap never parses, so the model stays unknown.
+		await collector.handleEnd({
+			type: "end",
+			requestId: "no-model",
+			success: true,
+			responseBody: Buffer.from('{"model":"claude-opus-4-6","usage":').toString(
+				"base64",
+			),
+		});
+		expect(collector.setProviderCost("no-model", 0.5)).toBe(false);
+		expect(collector.setProviderCost("unknown", 0.5)).toBe(false);
 	});
 	it("falls back to the estimate when the provider reports none", async () => {
 		spyOn(core, "estimateCostUSD").mockResolvedValue(4);
