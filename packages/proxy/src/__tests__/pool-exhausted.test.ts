@@ -11,6 +11,7 @@ import { logBus } from "@better-ccflare/logger";
 import type { Provider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
+import { createPoolExhaustedResponse } from "../handlers/proxy-operations";
 import { INTERNAL_PROBE_SECRET_HEADER } from "../handlers/proxy-types";
 import { clearVisionCapability } from "../handlers/vision-capability";
 import { handleProxy } from "../proxy";
@@ -22,6 +23,16 @@ function stubUsageCollector() {
 		handleChunk: mock(() => {}),
 		handleEnd: mock(() => Promise.resolve()),
 	} as unknown as usageCollectorModule.UsageCollector);
+}
+
+type StagedStart = { responseStatus?: number };
+
+function stagedStart(): StagedStart {
+	const collector = usageCollectorModule.getUsageCollector() as unknown as {
+		handleStart: { mock: { calls: unknown[][] } };
+	};
+	// Last call: the 429 test stages a default 503 response first.
+	return collector.handleStart.mock.calls.at(-1)?.[0] as StagedStart;
 }
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
@@ -337,6 +348,186 @@ describe("pool exhausted — 503 response", () => {
 		// Only codex account should appear
 		expect(accounts.length).toBe(1);
 		expect(accounts[0].name).toBe("codex-account");
+	});
+});
+
+describe("CCFLARE_POOL_EXHAUSTED_STATUS", () => {
+	let savedStatus: string | undefined;
+
+	type PoolBody = {
+		type?: unknown;
+		error?: {
+			type?: unknown;
+			code?: unknown;
+			message?: unknown;
+			next_available_at?: unknown;
+			accounts?: unknown;
+		};
+	};
+
+	beforeEach(() => {
+		savedStatus = process.env.CCFLARE_POOL_EXHAUSTED_STATUS;
+		delete process.env.CCFLARE_POOL_EXHAUSTED_STATUS;
+	});
+
+	afterEach(() => {
+		if (savedStatus === undefined) {
+			delete process.env.CCFLARE_POOL_EXHAUSTED_STATUS;
+		} else {
+			process.env.CCFLARE_POOL_EXHAUSTED_STATUS = savedStatus;
+		}
+	});
+
+	function rateLimitedAccount(until: number): Account {
+		return makeAccount({
+			id: "acc-rl",
+			name: "rate-limited-account",
+			rate_limited_until: until,
+		});
+	}
+
+	async function callHandleProxy(accounts: Account[]) {
+		return handleProxy(
+			makeRequest(),
+			new URL("https://proxy.local/v1/messages"),
+			makeContext(accounts),
+		);
+	}
+
+	it("defaults to the 503 pool_exhausted shape with no unified headers", async () => {
+		const response = await callHandleProxy([]);
+
+		expect(response.status).toBe(503);
+		const body = (await response.json()) as PoolBody;
+		expect(body.type).toBe("error");
+		expect(body.error?.type).toBe("pool_exhausted");
+		expect(body.error?.code).toBeUndefined();
+		expect(
+			response.headers.get("anthropic-ratelimit-unified-status"),
+		).toBeNull();
+		expect(
+			response.headers.get("anthropic-ratelimit-unified-reset"),
+		).toBeNull();
+		expect(response.headers.get("x-should-retry")).toBeNull();
+		expect(stagedStart().responseStatus).toBe(503);
+	});
+
+	it("answers 429 with the same refusal details when set to 429", async () => {
+		const now = Date.UTC(2026, 3, 28, 12, 0, 0);
+		const cooldownUntil = now + 3_600_000; // 1 hour
+		const realDateNow = Date.now;
+		Date.now = () => now;
+		try {
+			const defaultResponse = await callHandleProxy([
+				rateLimitedAccount(cooldownUntil),
+			]);
+			const defaultBody = (await defaultResponse.json()) as PoolBody;
+			expect(defaultResponse.status).toBe(503);
+
+			process.env.CCFLARE_POOL_EXHAUSTED_STATUS = "429";
+			const response = await callHandleProxy([
+				rateLimitedAccount(cooldownUntil),
+			]);
+
+			expect(response.status).toBe(429);
+			const body = (await response.json()) as PoolBody;
+			expect(body.type).toBe("error");
+			expect(body.error?.type).toBe("rate_limit_error");
+			expect(body.error?.code).toBe("pool_exhausted");
+			expect(body.error?.message).toBe(defaultBody.error?.message);
+			expect(body.error?.next_available_at).toBe(
+				defaultBody.error?.next_available_at,
+			);
+			expect(body.error?.accounts).toEqual(defaultBody.error?.accounts);
+
+			expect(response.headers.get("Retry-After")).not.toBeNull();
+			expect(response.headers.get("x-better-ccflare-pool-status")).toBe(
+				"exhausted",
+			);
+			expect(response.headers.get("anthropic-ratelimit-unified-status")).toBe(
+				"rejected",
+			);
+			expect(response.headers.get("anthropic-ratelimit-unified-reset")).toBe(
+				String(
+					Math.floor(
+						Date.parse(defaultBody.error?.next_available_at as string) / 1000,
+					),
+				),
+			);
+			expect(response.headers.get("x-should-retry")).toBe("true");
+			expect(stagedStart().responseStatus).toBe(429);
+		} finally {
+			Date.now = realDateNow;
+		}
+	});
+
+	it("omits the unified reset header when no reset time is known", async () => {
+		process.env.CCFLARE_POOL_EXHAUSTED_STATUS = "429";
+		const pausedAccount = makeAccount({
+			id: "acc-paused",
+			name: "paused-account",
+			paused: true,
+		});
+
+		const response = await callHandleProxy([pausedAccount]);
+
+		expect(response.status).toBe(429);
+		expect(response.headers.get("anthropic-ratelimit-unified-status")).toBe(
+			"rejected",
+		);
+		expect(
+			response.headers.get("anthropic-ratelimit-unified-reset"),
+		).toBeNull();
+		expect(response.headers.get("Retry-After")).toBe("600");
+	});
+
+	it("ignores values other than the literal 429", async () => {
+		for (const value of ["500", "4290", "please"]) {
+			process.env.CCFLARE_POOL_EXHAUSTED_STATUS = value;
+			const response = await callHandleProxy([]);
+			expect(response.status).toBe(503);
+			const body = (await response.json()) as PoolBody;
+			expect(body.error?.type).toBe("pool_exhausted");
+			expect(
+				response.headers.get("anthropic-ratelimit-unified-status"),
+			).toBeNull();
+		}
+	});
+
+	it("leaves circuit_open on its 503 shape", async () => {
+		process.env.CCFLARE_POOL_EXHAUSTED_STATUS = "429";
+		const response = createPoolExhaustedResponse([], undefined, "circuit_open");
+
+		expect(response.status).toBe(503);
+		const body = (await response.json()) as PoolBody;
+		expect(body.error?.type).toBe("circuit_open");
+		expect(body.error?.code).toBeUndefined();
+		expect(
+			response.headers.get("anthropic-ratelimit-unified-status"),
+		).toBeNull();
+		expect(
+			response.headers.get("anthropic-ratelimit-unified-reset"),
+		).toBeNull();
+	});
+
+	it("leaves vision_unsupported on 400", async () => {
+		process.env.CCFLARE_POOL_EXHAUSTED_STATUS = "429";
+		const response = createPoolExhaustedResponse(
+			[],
+			undefined,
+			"vision_unsupported",
+		);
+
+		expect(response.status).toBe(400);
+		const body = (await response.json()) as PoolBody;
+		expect(body.error?.type).toBe("vision_unsupported");
+		expect(body.error?.code).toBeUndefined();
+		expect(
+			response.headers.get("anthropic-ratelimit-unified-status"),
+		).toBeNull();
+		expect(
+			response.headers.get("anthropic-ratelimit-unified-reset"),
+		).toBeNull();
 	});
 });
 

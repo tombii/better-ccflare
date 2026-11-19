@@ -61,21 +61,25 @@ const UNKNOWN_USAGE_RESET = 0;
  * Whether a failed probe's response is better-ccflare's own refusal rather
  * than something an upstream provider sent. Only our refusal may be exempted
  * from the consecutive-failure accounting, so both the status and the body
- * shape have to match: 503 is the only status we refuse with, and
- * {@link LOCAL_REFUSAL_ERROR_TYPES} holds the `error.type` values only we
- * produce. A body we cannot parse is treated as upstream's — failing closed
- * costs at most one counted failure, while failing open would let a genuinely
- * broken endpoint on a benched account escape the pause threshold forever.
+ * shape have to match: we refuse with 503, plus an opt-in 429 for genuine pool
+ * exhaustion (CCFLARE_POOL_EXHAUSTED_STATUS=429). A 503 is ours only when its
+ * `error.type` is in {@link LOCAL_REFUSAL_ERROR_TYPES}; a 429 is ours only when
+ * its `error.code` is `pool_exhausted`, because upstream also sends
+ * `rate_limit_error` and the type alone cannot tell them apart. A body we
+ * cannot parse is treated as upstream's — failing closed costs at most one
+ * counted failure, while failing open would let a genuinely broken endpoint on
+ * a benched account escape the pause threshold forever.
  */
 function isLocalRefusal(status: number, body: string | null): boolean {
-	if (status !== 503 || !body) return false;
+	if ((status !== 503 && status !== 429) || !body) return false;
 	try {
 		const parsed = JSON.parse(body) as {
 			type?: unknown;
-			error?: { type?: unknown };
+			error?: { type?: unknown; code?: unknown };
 		};
+		if (parsed?.type !== "error") return false;
+		if (status === 429) return parsed.error?.code === "pool_exhausted";
 		return (
-			parsed?.type === "error" &&
 			typeof parsed.error?.type === "string" &&
 			LOCAL_REFUSAL_ERROR_TYPES.has(parsed.error.type)
 		);
@@ -866,10 +870,11 @@ export class AutoRefreshScheduler {
 			//
 			// The exemption is for the proxy's OWN refusal only, which takes all
 			// three of:
-			//   (a) status 503 — the only status better-ccflare refuses with;
-			//   (b) a body naming one of LOCAL_REFUSAL_ERROR_TYPES, so an upstream
-			//       5xx that merely arrives while the account is benched still
-			//       counts. A forced probe does reach a rate-limited account (the
+			//   (a) status 503 (or the opt-in 429 pool refusal);
+			//   (b) a body naming one of LOCAL_REFUSAL_ERROR_TYPES — or, for a 429,
+			//       `code: pool_exhausted` — so an upstream 5xx/429 that merely
+			//       arrives while the account is benched still counts. A forced
+			//       probe does reach a rate-limited account (the
 			//       selector's bypass exists for that) and the transient-5xx retry
 			//       is disabled for internal probes, so a genuine upstream failure
 			//       is forwarded here as-is;

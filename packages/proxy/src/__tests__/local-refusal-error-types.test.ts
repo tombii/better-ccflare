@@ -13,14 +13,32 @@
  * Imports come straight from the source files rather than the handlers barrel,
  * which transitively pulls in heavy provider modules just to type resolve.
  */
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	createPoolExhaustedResponse,
 	type PoolExhaustionKind,
 } from "../handlers/proxy-operations";
 import { LOCAL_REFUSAL_ERROR_TYPES } from "../handlers/proxy-types";
 
-type RefusalBody = { type?: unknown; error?: { type?: unknown } };
+type RefusalBody = {
+	type?: unknown;
+	error?: { type?: unknown; code?: unknown };
+};
+
+let savedStatus: string | undefined;
+
+beforeEach(() => {
+	savedStatus = process.env.CCFLARE_POOL_EXHAUSTED_STATUS;
+	delete process.env.CCFLARE_POOL_EXHAUSTED_STATUS;
+});
+
+afterEach(() => {
+	if (savedStatus === undefined) {
+		delete process.env.CCFLARE_POOL_EXHAUSTED_STATUS;
+	} else {
+		process.env.CCFLARE_POOL_EXHAUSTED_STATUS = savedStatus;
+	}
+});
 
 const KINDS: readonly PoolExhaustionKind[] = [
 	"pool_exhausted",
@@ -41,6 +59,24 @@ describe("LOCAL_REFUSAL_ERROR_TYPES — pinned to its producers", () => {
 			expect(LOCAL_REFUSAL_ERROR_TYPES).toContain(body.error?.type as string);
 		});
 	}
+
+	it("recognises the opt-in 429 body by its pool_exhausted code", async () => {
+		// The scheduler's 429 matcher keys on `error.code`, never on
+		// `error.type`: upstream also sends rate_limit_error, so the type alone
+		// cannot tell our refusal from a real upstream 429.
+		process.env.CCFLARE_POOL_EXHAUSTED_STATUS = "429";
+		const response = createPoolExhaustedResponse(
+			[],
+			undefined,
+			"pool_exhausted",
+		);
+		const body = (await response.json()) as RefusalBody;
+
+		expect(response.status).toBe(429);
+		expect(body.type).toBe("error");
+		expect(body.error?.type).toBe("rate_limit_error");
+		expect(body.error?.code).toBe("pool_exhausted");
+	});
 
 	it("still covers the service_unavailable_error producers", () => {
 		// proxy.ts's two refusal helpers and the server's catch-all for

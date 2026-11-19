@@ -1350,8 +1350,8 @@ async function handleProxyRequest(
 		);
 
 		// Skip request-log staging for synthetic auto-refresh probes that
-		// 503 because their target account is on a known cooldown. Logging
-		// these as user-facing 503s inflates the dashboard fail-rate without
+		// refuse because their target account is on a known cooldown. Logging
+		// these as user-facing failures inflates the dashboard fail-rate without
 		// reflecting any real client impact (issue #199, bug 2). The keepalive
 		// scheduler already gets the equivalent treatment via its loop-prevention
 		// header path; this brings auto-refresh in line.
@@ -1376,7 +1376,7 @@ async function handleProxyRequest(
 				project: project ?? null,
 				projectAttributionSource: projectAttributionSource ?? "none",
 				agentAttributionSource: agentAttributionSource ?? "none",
-				responseStatus: 503,
+				responseStatus: poolExhaustedResponse.status,
 				responseHeaders: Object.fromEntries(
 					poolExhaustedResponse.headers.entries(),
 				),

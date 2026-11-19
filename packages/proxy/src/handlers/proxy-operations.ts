@@ -4456,11 +4456,12 @@ export const POOL_EXHAUSTED_MAX_RETRY_AFTER_SECONDS = 3600;
  *
  * `pool_exhausted` means "every account is genuinely exhausted (rate-limited,
  * usage-capped, paused, requires reauth, or otherwise filtered out)".
- * `circuit_open` means "the circuit breaker is refusing this account". For
- * those two the wire shape stays identical — only `error.type` and
- * `accounts[].reason` differ — so SDK clients keep treating the response as a
- * 503 transient. Downstream consumers that need to differentiate (e.g. the AO
- * fleet reaper) read the JSON body.
+ * `circuit_open` means "the circuit breaker is refusing this account". By
+ * default those two keep an identical wire shape — only `error.type` and
+ * `accounts[].reason` differ — so SDK clients treat the response as a 503
+ * transient; `pool_exhausted` may opt into a 429 (see
+ * POOL_EXHAUSTED_STATUS_ENV_VAR). Downstream consumers that need to
+ * differentiate (e.g. the AO fleet reaper) read the JSON body.
  *
  * `vision_unsupported` means every candidate ELIGIBLE for this request is known
  * unable to serve its image: each was either attempted and refused, or is
@@ -4515,9 +4516,18 @@ export type PoolExhaustionAccountReason =
 const CIRCUIT_OPEN_RETRY_AFTER_SECONDS = 30;
 
 /**
- * Create a 503 Service Unavailable response when the account pool is exhausted.
- * All accounts are paused, rate-limited, usage-exhausted, circuit-open, or
- * filtered out.
+ * Opt-in: set to `429` to answer genuine pool exhaustion as a rate-limit
+ * response. Read per request (like CCFLARE_PASSTHROUGH_ON_EMPTY_POOL); only
+ * the literal trimmed value `"429"` enables it.
+ */
+export const POOL_EXHAUSTED_STATUS_ENV_VAR = "CCFLARE_POOL_EXHAUSTED_STATUS";
+
+/**
+ * Create the pool-exhausted refusal: 503 by default, or 429 when
+ * {@link POOL_EXHAUSTED_STATUS_ENV_VAR} is `429` (then `error.type` becomes
+ * `rate_limit_error` with `code: "pool_exhausted"` and Anthropic unified
+ * rate-limit headers describe the reset). All accounts are paused,
+ * rate-limited, usage-exhausted, circuit-open, or filtered out.
  *
  * Usage-aware: `usageSnapshots` (keyed by account.id) lets the function surface
  * a `usage_exhausted` reason for accounts with no `rate_limited_until` cooldown
@@ -4548,7 +4558,8 @@ const CIRCUIT_OPEN_RETRY_AFTER_SECONDS = 30;
  *   `Retry-After` when an upstream reset time is known.
  * @param kind - Which top-level cause to report. Defaults to `"pool_exhausted"`.
  * @returns 503 response with the pool-exhausted JSON shape and Retry-After
- *   header, or a 400 with neither for `"vision_unsupported"`.
+ *   header (429 when `CCFLARE_POOL_EXHAUSTED_STATUS=429`), or a 400 with
+ *   neither for `"vision_unsupported"`.
  */
 export function createPoolExhaustedResponse(
 	accounts: Account[],
@@ -4559,6 +4570,9 @@ export function createPoolExhaustedResponse(
 	const now = Date.now();
 	const isCircuitOpen = kind === "circuit_open";
 	const isVisionUnsupported = kind === "vision_unsupported";
+	const answersRateLimited =
+		kind === "pool_exhausted" &&
+		process.env[POOL_EXHAUSTED_STATUS_ENV_VAR]?.trim() === "429";
 
 	// Build account info list — usage-exhausted outranks cooldown because the
 	// client needs the longer reset horizon (weekly vs minutes-long cooldowns)
@@ -4722,12 +4736,14 @@ export function createPoolExhaustedResponse(
 
 	// vision_unsupported is the one kind a wait cannot fix, so it carries no
 	// Retry-After and no next_available_at and answers 400. Everything else keeps
-	// the 503 transient shape SDK clients already treat as retryable.
+	// the 503 transient shape SDK clients already treat as retryable, unless the
+	// opt-in 429 answers a genuine pool exhaustion.
 	const headers: Record<string, string> = {
 		"Content-Type": "application/json",
 		// Wire shape stays identical regardless of kind — the cause lives
-		// in `error.type`. Downstream consumers that need to differentiate
-		// (fleet reaper, capacity-state consumers) read the JSON body.
+		// in `error.type` (plus `error.code` for the opt-in 429). Downstream
+		// consumers that need to differentiate (fleet reaper, capacity-state
+		// consumers) read the JSON body.
 		"x-better-ccflare-pool-status": isVisionUnsupported
 			? "vision_unsupported"
 			: "exhausted",
@@ -4735,21 +4751,44 @@ export function createPoolExhaustedResponse(
 	if (!isVisionUnsupported) {
 		headers["Retry-After"] = String(retryAfterSeconds);
 	}
+	if (answersRateLimited) {
+		// Anthropic's unified rate-limit headers, so clients that honour them
+		// wait for the reset instead of treating this as an outage. No reset
+		// header when none is known — sending 0/null would mean "reset now".
+		headers["anthropic-ratelimit-unified-status"] = "rejected";
+		// The measured upstream exhausted-window 429 carried this header (derivation: retryable-429.ts).
+		headers["x-should-retry"] = "true";
+		if (earliestRecoveryMs !== null) {
+			headers["anthropic-ratelimit-unified-reset"] = String(
+				Math.floor(earliestRecoveryMs / 1000),
+			);
+		}
+	}
+
+	const message = isVisionUnsupported
+		? VISION_UNSUPPORTED_MESSAGE
+		: ERROR_MESSAGES.POOL_EXHAUSTED;
 
 	return new Response(
 		JSON.stringify({
 			type: "error",
-			error: {
-				type: kind,
-				message: isVisionUnsupported
-					? VISION_UNSUPPORTED_MESSAGE
-					: ERROR_MESSAGES.POOL_EXHAUSTED,
-				next_available_at: nextAvailableAt,
-				accounts: accountInfos,
-			},
+			error: answersRateLimited
+				? {
+						type: "rate_limit_error",
+						code: "pool_exhausted",
+						message,
+						next_available_at: nextAvailableAt,
+						accounts: accountInfos,
+					}
+				: {
+						type: kind,
+						message,
+						next_available_at: nextAvailableAt,
+						accounts: accountInfos,
+					},
 		}),
 		{
-			status: isVisionUnsupported ? 400 : 503,
+			status: isVisionUnsupported ? 400 : answersRateLimited ? 429 : 503,
 			headers,
 		},
 	);
