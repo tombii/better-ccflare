@@ -399,6 +399,52 @@ describe("AutoRefreshScheduler.sendDummyMessage — only OUR OWN refusal is exem
 		expect(scheduler.uncountedProbeFailures.get(accountRow.id)?.streak).toBe(1);
 	});
 
+	it("exempts a 429 carrying our pool_exhausted code", async () => {
+		respondWith(
+			429,
+			JSON.stringify({
+				type: "error",
+				error: {
+					type: "rate_limit_error",
+					code: "pool_exhausted",
+					message: "All accounts are exhausted.",
+					next_available_at: new Date(Date.now() + HOUR).toISOString(),
+					accounts: [],
+				},
+			}),
+		);
+		const db = makeDb(benched());
+		const scheduler = await makeScheduler(db);
+		const accountRow = makeAccountRow();
+
+		await scheduler.sendDummyMessage(accountRow);
+
+		expect(scheduler.consecutiveFailures.get(accountRow.id)).toBeUndefined();
+		expect(scheduler.uncountedProbeFailures.get(accountRow.id)?.streak).toBe(1);
+		expect(pauseCallFor(db, accountRow.id)).toBeUndefined();
+	});
+
+	it("counts an upstream 429 rate_limit_error without our code", async () => {
+		// Upstream also sends rate_limit_error; only our machine-readable code
+		// may exempt a 429, or a genuinely broken endpoint on a benched account
+		// would escape the pause threshold forever.
+		respondWith(
+			429,
+			JSON.stringify({
+				type: "error",
+				error: { type: "rate_limit_error", message: "slow down" },
+			}),
+		);
+		const db = makeDb(benched());
+		const scheduler = await makeScheduler(db);
+		const accountRow = makeAccountRow();
+
+		await scheduler.sendDummyMessage(accountRow);
+
+		expect(scheduler.consecutiveFailures.get(accountRow.id)).toBe(1);
+		expect(scheduler.uncountedProbeFailures.has(accountRow.id)).toBe(false);
+	});
+
 	it("counts an upstream 500 even while the account is benched", async () => {
 		respondWith(
 			500,
