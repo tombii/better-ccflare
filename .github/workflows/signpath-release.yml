@@ -38,7 +38,7 @@ jobs:
 
       - name: Upload unsigned Windows binary
         id: upload-unsigned
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: windows-unsigned
           path: apps/cli/dist/better-ccflare-windows-x64.exe
@@ -49,7 +49,7 @@ jobs:
         # release-signing policy (production certificate anti-abuse gate).
         # This job can block here until approved; it runs independently of
         # release.yml so the rest of the release is never held up.
-        uses: signpath/github-action-submit-signing-request@v1
+        uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
           organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID }}'
