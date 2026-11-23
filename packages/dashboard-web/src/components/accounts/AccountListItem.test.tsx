@@ -30,6 +30,10 @@ const baseAccount: Account = {
 	rateLimitedAt: null,
 	sessionInfo: "No active session",
 	priority: 1,
+	usagePauseFiveHourThreshold: null,
+	usagePauseWeeklyThreshold: null,
+	usagePauseFiveHourEnabled: false,
+	usagePauseWeeklyEnabled: false,
 	autoFallbackEnabled: true,
 	autoRefreshEnabled: true,
 	customEndpoint: null,
@@ -53,6 +57,7 @@ const baseAccount: Account = {
 function renderAccount(
 	account: Account,
 	onRequestTransformerChange?: (account: Account) => void,
+	drainSoonestStrategy = false,
 ): string {
 	return renderToStaticMarkup(
 		<AccountListItem
@@ -68,11 +73,20 @@ function renderAccount(
 			onBillingTypeToggle={() => {}}
 			onAnthropicReauth={() => {}}
 			onRequestTransformerChange={onRequestTransformerChange}
+			onPlanPriceChange={() => {}}
+			drainSoonestStrategy={drainSoonestStrategy}
 		/>,
 	);
 }
 
 describe("AccountListItem", () => {
+	it("marks priority as a tie-break only under drain-soonest strategies", () => {
+		expect(renderAccount(baseAccount)).toMatch(/Priority: 1\s*</);
+		expect(renderAccount(baseAccount, undefined, true)).toContain(
+			"Priority: 1 (tie-break)",
+		);
+	});
+
 	it("shows Needs authentication only when requiresReauth is true", () => {
 		const healthyHtml = renderAccount(baseAccount);
 		const requiresReauthHtml = renderAccount({

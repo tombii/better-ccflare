@@ -46,6 +46,8 @@ function formatPauseReason(reason: string | null): string | null {
 interface AccountListItemProps {
 	account: Account;
 	isPrimary?: boolean;
+	/** Drain-soonest strategies rank by usage reset, so priority is only a tie-break. */
+	drainSoonestStrategy?: boolean;
 	onPauseToggle: (account: Account) => void;
 	onForceResetRateLimit: (account: Account) => void;
 	onRefreshUsage: (account: Account) => Promise<void>;
@@ -75,6 +77,7 @@ interface AccountListItemProps {
 export function AccountListItem({
 	account,
 	isPrimary = false,
+	drainSoonestStrategy = false,
 	onPauseToggle,
 	onForceResetRateLimit,
 	onRefreshUsage,
@@ -187,8 +190,16 @@ export function AccountListItem({
 									Primary
 								</span>
 							)}
-							<span className="px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground rounded-full">
+							<span
+								className="px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground rounded-full"
+								title={
+									drainSoonestStrategy
+										? "Drain-soonest strategies rank by usage-window reset time; priority is only the tie-break."
+										: undefined
+								}
+							>
 								Priority: {account.priority}
+								{drainSoonestStrategy && " (tie-break)"}
 							</span>
 							<OAuthTokenStatusWithBoundary
 								accountName={account.name}
