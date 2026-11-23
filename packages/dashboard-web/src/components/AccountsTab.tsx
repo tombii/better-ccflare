@@ -1,7 +1,8 @@
+import { StrategyName } from "@better-ccflare/core";
 import { AlertCircle, Plus } from "lucide-react";
 import { useState } from "react";
 import { type Account, api, type RequestTransformer } from "../api";
-import { useAccounts, useRenameAccount } from "../hooks/queries";
+import { useAccounts, useRenameAccount, useStrategy } from "../hooks/queries";
 import { useApiError } from "../hooks/useApiError";
 import {
 	AccountAddForm,
@@ -36,6 +37,7 @@ export function AccountsTab() {
 		refetch: loadAccounts,
 	} = useAccounts();
 	const renameAccount = useRenameAccount();
+	const { data: strategyData } = useStrategy();
 
 	const [adding, setAdding] = useState(false);
 	const [confirmDelete, setConfirmDelete] = useState<{
@@ -807,6 +809,9 @@ export function AccountsTab() {
 
 					<AccountList
 						accounts={accounts}
+						drainSoonestStrategy={(strategyData?.strategy ?? "").startsWith(
+							StrategyName.SessionDrainSoonest,
+						)}
 						onPauseToggle={handlePauseToggle}
 						onForceResetRateLimit={handleForceResetRateLimit}
 						onRefreshUsage={handleRefreshUsage}

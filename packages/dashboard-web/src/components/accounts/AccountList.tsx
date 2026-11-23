@@ -3,6 +3,7 @@ import { AccountListItem } from "./AccountListItem";
 
 interface AccountListProps {
 	accounts: Account[] | undefined;
+	drainSoonestStrategy?: boolean;
 	onPauseToggle: (account: Account) => void;
 	onForceResetRateLimit: (account: Account) => void;
 	onRefreshUsage: (account: Account) => Promise<void>;
@@ -31,6 +32,7 @@ interface AccountListProps {
 
 export function AccountList({
 	accounts,
+	drainSoonestStrategy = false,
 	onPauseToggle,
 	onForceResetRateLimit,
 	onRefreshUsage,
@@ -64,6 +66,7 @@ export function AccountList({
 					key={account.name}
 					account={account}
 					isPrimary={account.isPrimary}
+					drainSoonestStrategy={drainSoonestStrategy}
 					onPauseToggle={onPauseToggle}
 					onForceResetRateLimit={onForceResetRateLimit}
 					onRefreshUsage={onRefreshUsage}
