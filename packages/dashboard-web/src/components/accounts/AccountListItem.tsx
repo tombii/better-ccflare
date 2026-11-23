@@ -46,7 +46,7 @@ function formatPauseReason(reason: string | null): string | null {
 interface AccountListItemProps {
 	account: Account;
 	isPrimary?: boolean;
-	/** Drain-soonest strategies rank by usage reset, so priority is only a tie-break. */
+	/** Drain-soonest strategies rank by usage reset; priority is only a tie-break (auto-fallback still uses it). */
 	drainSoonestStrategy?: boolean;
 	onPauseToggle: (account: Account) => void;
 	onForceResetRateLimit: (account: Account) => void;
@@ -194,7 +194,7 @@ export function AccountListItem({
 								className="px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground rounded-full"
 								title={
 									drainSoonestStrategy
-										? "Drain-soonest strategies rank by usage-window reset time; priority is only the tie-break."
+										? "Drain-soonest strategies rank by usage-window reset time; priority is only the tie-break. Exception: auto-fallback reactivation picks its account by priority."
 										: undefined
 								}
 							>
