@@ -154,6 +154,8 @@ export interface AnthropicRequest {
 	tools?: AnthropicTool[];
 	tool_choice?: AnthropicToolChoice;
 	reasoning?: { effort?: string };
+	/** Claude's native Messages API options; `effort` is read as a fallback. */
+	output_config?: { effort?: string; [key: string]: unknown };
 }
 
 export interface OpenAIUsage {

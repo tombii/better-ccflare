@@ -77,7 +77,9 @@ export function applyAnthropicReasoningEffort(
 }
 
 /**
- * Validate a client-supplied `reasoning.effort` before any account is tried.
+ * Validate a client-supplied reasoning effort before any account is tried.
+ * `field` is the request field it came from (`reasoning.effort` or Claude's
+ * native `output_config.effort`) and is the name the message uses.
  *
  * `resolveReasoningEffort` throws `ValidationError` for a value outside the
  * known levels; letting that happen inside the per-account attempt turns a
@@ -87,13 +89,20 @@ export function applyAnthropicReasoningEffort(
  * @returns null when the value is absent or valid, otherwise the validation
  * message
  */
-export function getReasoningEffortError(effort: unknown): string | null {
+export function getReasoningEffortError(
+	effort: unknown,
+	field = "reasoning.effort",
+): string | null {
 	if (effort === undefined || effort === null) return null;
 	try {
 		resolveReasoningEffort(effort, {});
 		return null;
 	} catch (error) {
-		if (error instanceof ValidationError) return error.message;
+		if (error instanceof ValidationError) {
+			// The shared resolver always names the internal carrier; name the
+			// field the client actually sent.
+			return error.message.replace(/^reasoning\.effort\b/, field);
+		}
 		throw error;
 	}
 }

@@ -264,6 +264,36 @@ export interface ReasoningEffortResolution {
 	}>;
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * The reasoning effort a client sent on an Anthropic-shaped request body.
+ *
+ * The internal `reasoning.effort` carrier wins. Otherwise Claude's native
+ * Messages API field `output_config.effort` is used: it is what Claude Code
+ * and the Anthropic SDKs send, and without this fallback it would be lost
+ * whenever the request is converted for a non-Anthropic upstream (Chat
+ * Completions, OpenRouter, Codex). Null counts as absent, as in the
+ * pre-flight validation.
+ *
+ * Returns the raw value, unvalidated; pass it through
+ * `resolveReasoningEffort` to validate and clamp it.
+ */
+export function readClientReasoningEffort(body: unknown): unknown {
+	if (!isPlainRecord(body)) return undefined;
+	const reasoning = body.reasoning;
+	if (isPlainRecord(reasoning) && reasoning.effort != null) {
+		return reasoning.effort;
+	}
+	const outputConfig = body.output_config;
+	if (isPlainRecord(outputConfig) && outputConfig.effort != null) {
+		return outputConfig.effort;
+	}
+	return undefined;
+}
+
 // sourceModel is accepted for API symmetry but only targetModel is used for
 // downgrade resolution — the source model's effort ceiling must not further
 // constrain the value sent to a capable target.
