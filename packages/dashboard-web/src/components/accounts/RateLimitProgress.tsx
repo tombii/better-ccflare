@@ -3,6 +3,7 @@ import {
 	type AnthropicUsageData,
 	type FullUsageData,
 	PROVIDER_NAMES,
+	type TokenHarborDashboardUsageData,
 } from "@better-ccflare/types";
 import { useEffect, useState } from "react";
 import { formatRelativeReset } from "../../lib/pool-usage";
@@ -275,10 +276,13 @@ export function RateLimitProgress({
 				</div>
 			);
 		}
-		// TokenHarbor has no usage windows either, so this early return is its
-		// normal path. Its peak pricing is per model, so the badge names the
-		// affected models rather than a provider-wide window.
-		if (provider === "anthropic-compatible" && peakHours) {
+		// TokenHarbor's peak pricing is per model, so the badge names the
+		// affected models rather than a provider-wide window. Legacy accounts
+		// still on "anthropic-compatible" have the same listing.
+		if (
+			(provider === "tokenharbor" || provider === "anthropic-compatible") &&
+			peakHours
+		) {
 			return (
 				<div className={cn("space-y-3", className)}>
 					<TokenHarborPeakBadge
@@ -472,6 +476,19 @@ export function RateLimitProgress({
 		);
 	})();
 
+	// TokenHarbor serves both allowances (Pass and free models) under
+	// `tokenharbor`, sharing one seven_day window.
+	const isTokenHarborData = (() => {
+		if (!usageData || typeof usageData !== "object") return false;
+		const th = (usageData as { tokenharbor?: unknown }).tokenharbor;
+		return (
+			th !== null &&
+			typeof th === "object" &&
+			"plan_used_pct" in th &&
+			"used_pct" in th
+		);
+	})();
+
 	// Anthropic-style quota data is shared by Anthropic and Codex; detect by shape, not provider name.
 	const hasAnthropicStyleData =
 		usageData != null &&
@@ -483,7 +500,8 @@ export function RateLimitProgress({
 		!isMinimaxData &&
 		!isZaiData &&
 		!isNanoGPTData &&
-		!isOpencodeGoData;
+		!isOpencodeGoData &&
+		!isTokenHarborData;
 
 	if (isAlibabaData && showWeekly) {
 		const alibabaData = usageData as {
@@ -531,6 +549,30 @@ export function RateLimitProgress({
 				resetTime: typeof w.resets_at === "string" ? w.resets_at : null,
 			});
 		}
+	} else if (isTokenHarborData && showWeekly) {
+		// Two allowances over one shared 7-day window: the paid Pass
+		// (plan_used_pct) and the free-model pool (used_pct). Their exhausted
+		// flags decide the label, not the percentage, since a spent allowance
+		// can still read below 100 at the bump that spent it.
+		const thData = usageData as TokenHarborDashboardUsageData;
+		const th = thData.tokenharbor;
+		const resetsAt = th.resets_at ?? thData.seven_day.resets_at;
+		usages.push({
+			utilization: th.plan_used_pct,
+			window: "seven_day",
+			resetTime: resetsAt,
+			label: th.plan_name ? `Pass (${th.plan_name})` : "Pass",
+			exhausted: th.plan_exhausted,
+			severity: th.plan_exhausted ? "critical" : undefined,
+		});
+		usages.push({
+			utilization: th.used_pct,
+			window: "seven_day",
+			resetTime: resetsAt,
+			label: "Free models",
+			exhausted: th.exhausted,
+			severity: th.exhausted ? "critical" : undefined,
+		});
 	} else if (isMinimaxData && showWeekly) {
 		// MiniMax Token Plan usage data — show 5-hour and 7-day windows from
 		// each window's own `utilization` and `resetAt` (camelCase, epoch ms).
@@ -791,9 +833,10 @@ export function RateLimitProgress({
 			{provider === "deepseek" && peakHours && (
 				<DeepseekPeakBadge isPeak={isPeak} />
 			)}
-			{provider === "anthropic-compatible" && peakHours && (
-				<TokenHarborPeakBadge isPeak={isPeak} models={peakPricedModels} />
-			)}
+			{(provider === "tokenharbor" || provider === "anthropic-compatible") &&
+				peakHours && (
+					<TokenHarborPeakBadge isPeak={isPeak} models={peakPricedModels} />
+				)}
 			{hasOrphanThrottledWindow && usageThrottledUntil != null && (
 				<div className="flex items-center justify-between">
 					<span className="text-xs text-amber-600 dark:text-amber-400">
@@ -927,6 +970,11 @@ export function RateLimitProgress({
 											{usage.isActive && (
 												<span className="ml-1.5 text-[10px] font-normal uppercase tracking-wide text-red-500 dark:text-red-400">
 													binding
+												</span>
+											)}
+											{usage.exhausted && (
+												<span className="ml-1.5 text-[10px] font-normal uppercase tracking-wide text-red-500 dark:text-red-400">
+													exhausted
 												</span>
 											)}
 										</span>

@@ -128,9 +128,13 @@ export {
 } from "./response-handler";
 export {
 	clearTokenHarborPeakCacheForAccount,
+	clearTokenHarborPeakCacheForTests,
 	getPeakPricedModelIds,
+	getTokenHarborPeakListing,
 	getTokenHarborPeakState,
+	isTokenHarborAccount,
 	isTokenHarborEndpoint,
+	LEGACY_TOKENHARBOR_PROVIDER,
 	TOKENHARBOR_PROVIDER,
 } from "./tokenharbor-peak";
 export type { ProxyRequest, ProxyResponse } from "./types";

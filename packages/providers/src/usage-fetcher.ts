@@ -51,6 +51,12 @@ import {
 	pickCodexRolloverSlot,
 } from "./providers/codex/window-rollover";
 import {
+	fetchTokenHarborUsageData,
+	getTokenHarborRepresentativeUtilization,
+	getTokenHarborResetMs,
+	type TokenHarborUsageData,
+} from "./tokenharbor-usage-fetcher";
+import {
 	fetchXaiUsageData,
 	getRepresentativeXaiUtilization,
 	getRepresentativeXaiWindow,
@@ -144,7 +150,8 @@ export type AnyUsageData =
 	| AlibabaCodingPlanUsageData
 	| XaiUsageData
 	| MinimaxUsageData
-	| OpencodeGoUsageData;
+	| OpencodeGoUsageData
+	| TokenHarborUsageData;
 
 /**
  * Minimum advance of the upstream reset timestamp that counts as a real window
@@ -170,6 +177,9 @@ export function extractWindowResetTime(
 	if (provider === "zai") {
 		const zai = data as ZaiUsageData;
 		return zai.tokens_limit?.resetAt ?? null;
+	}
+	if (provider === "tokenharbor") {
+		return getTokenHarborResetMs(data);
 	}
 	if (provider === "anthropic" || provider === "codex") {
 		const d = data as UsageData;
@@ -574,6 +584,9 @@ function utilizationForProvider(
 				data as OpencodeGoUsageData,
 			);
 		}
+		case "tokenharbor": {
+			return getTokenHarborRepresentativeUtilization(data);
+		}
 		default:
 			return null;
 	}
@@ -770,6 +783,8 @@ export function getRepresentativeUsageResetMs(
 					data,
 					getRepresentativeOpencodeGoWindow(data as OpencodeGoUsageData),
 				);
+			case "tokenharbor":
+				return getTokenHarborResetMs(data);
 			default:
 				return null;
 		}
@@ -962,6 +977,18 @@ export function normalizeUsageSnapshotForHistory(
 			};
 		}
 		return out;
+	}
+	if (provider === "tokenharbor") {
+		// One shared 7-day window; its utilization is whichever allowance gates
+		// the account, so the recorded history matches the admission signal.
+		const utilization = getTokenHarborRepresentativeUtilization(data);
+		if (utilization === null) return {};
+		return {
+			seven_day: {
+				utilization,
+				resets_at: getTokenHarborResetMs(data),
+			},
+		};
 	}
 	if (provider === "minimax") {
 		const minimax = data as MinimaxUsageData;
@@ -1355,6 +1382,21 @@ class UsageCache {
 					);
 					log.debug(
 						`Successfully fetched NanoGPT usage data for account ${accountId}: ${utilization}% (${window} window)`,
+					);
+					const snapshotCb = this.snapshotCallbacks.get(accountId);
+					if (snapshotCb) snapshotCb(accountId, data as unknown as UsageData);
+					return { success: true, retryAfterMs: null };
+				}
+			} else if (provider === "tokenharbor") {
+				// Pass + free-model allowances from the account's own gateway.
+				// No window-reset callback: both allowances share one 7-day
+				// window and the provider has no session stickiness.
+				data = await fetchTokenHarborUsageData(token, customEndpoint);
+				if (data) {
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const utilization = getTokenHarborRepresentativeUtilization(data);
+					log.debug(
+						`Successfully fetched TokenHarbor usage data for account ${accountId}: ${utilization}% (${(data as TokenHarborUsageData).on_plan ? "Pass" : "free"} allowance)`,
 					);
 					const snapshotCb = this.snapshotCallbacks.get(accountId);
 					if (snapshotCb) snapshotCb(accountId, data as unknown as UsageData);

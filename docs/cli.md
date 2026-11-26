@@ -92,7 +92,7 @@ Options:
   --logs [N]           Stream latest N lines then follow
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|deepseek|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|codebuddy|xai|ollama|sailresearch|opencode-go>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|deepseek|tokenharbor|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex|codebuddy|xai|ollama|sailresearch|opencode-go>  Account mode (default: claude-oauth)
     --priority <number>    Account priority (0-100, default: 0)
     --night-window <on|off>  Enable the provider night window (sailresearch)
   --list               List all accounts
@@ -124,7 +124,7 @@ Add a new OAuth account to the load balancer pool.
 
 **Syntax:**
 ```bash
-bun run cli --add-account <name> --mode <claude-oauth|console|codex|codebuddy|qwen|xai|zai|minimax|deepseek|sailresearch|opencode-go|anthropic-compatible|openai-compatible|...> --priority <number>
+bun run cli --add-account <name> --mode <claude-oauth|console|codex|codebuddy|qwen|xai|zai|minimax|deepseek|tokenharbor|sailresearch|opencode-go|anthropic-compatible|openai-compatible|...> --priority <number>
 ```
 
 **Note:** All flags must be provided explicitly as the CLI requires explicit parameters.
@@ -140,6 +140,7 @@ bun run cli --add-account <name> --mode <claude-oauth|console|codex|codebuddy|qw
   - `zai`: z.ai account (API key)
   - `minimax`: Minimax account (API key)
   - `deepseek`: DeepSeek account (API key)
+  - `tokenharbor`: TokenHarbor account (API key); stores the `tokenharbor` provider so usage polling and per-model peak pricing are enabled, with the endpoint defaulting to `https://tokenharbor.ai`
   - `sailresearch`: Sail Research account (API key); supports `--night-window on|off` and `--set-night-window <name> <on|off>`
   - `opencode-go`: OpenCode Go subscription (API key); usage is polled and shown as its rolling 5-hour, weekly and monthly windows
   - `nanogpt`, `kilo`, `openrouter`, `ollama`, `ollama-cloud`, `meta`, `bedrock`, `alibaba-coding-plan`: the remaining provider-specific modes, same shape as the above

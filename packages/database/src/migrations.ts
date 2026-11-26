@@ -6,6 +6,10 @@ import {
 	addPerformanceIndexes,
 	dropRedundantRequestIndexes,
 } from "./performance-indexes";
+import {
+	addTokenHarborToAllowedProviders,
+	isTokenHarborCustomEndpoint,
+} from "./tokenharbor-promotion";
 
 const log = new Logger("DatabaseMigrations");
 
@@ -2342,6 +2346,51 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		])
 			if (!limitV2Columns.includes(column))
 				db.run(`ALTER TABLE api_keys ADD COLUMN ${column} ${type}`);
+
+		// TokenHarbor is now a first-class provider. Promote only rows whose
+		// endpoint is TokenHarbor's; other anthropic-compatible accounts are
+		// untouched, and the custom_endpoint is kept as-is. The host is checked
+		// in JS because a LIKE cannot normalise case, ports or JSON endpoints.
+		const tokenHarborCandidates = db
+			.prepare(
+				`SELECT id, custom_endpoint FROM accounts
+				 WHERE provider = 'anthropic-compatible' AND custom_endpoint IS NOT NULL`,
+			)
+			.all() as Array<{ id: string; custom_endpoint: string }>;
+		const promoteTokenHarbor = db.prepare(
+			"UPDATE accounts SET provider = 'tokenharbor' WHERE id = ?",
+		);
+		const promotedIds = tokenHarborCandidates
+			.filter((row) => isTokenHarborCustomEndpoint(row.custom_endpoint))
+			.map((row) => row.id);
+
+		// Keys that allowlisted the shared `anthropic-compatible` string would
+		// otherwise lose the accounts just promoted. NULL and [] keep their
+		// meaning (unrestricted / deny-all). Only a real promotion backfills, so
+		// an admin's later removal of "tokenharbor" survives the next boot.
+		// Backfill first: if the process dies in between, the next boot still
+		// sees the candidates and finishes the job.
+		if (promotedIds.length > 0) {
+			const apiKeys = db
+				.prepare(
+					"SELECT id, allowed_providers FROM api_keys WHERE allowed_providers IS NOT NULL",
+				)
+				.all() as Array<{ id: string; allowed_providers: string }>;
+			const updateAllowedProviders = db.prepare(
+				"UPDATE api_keys SET allowed_providers = ? WHERE id = ?",
+			);
+			for (const key of apiKeys) {
+				const updated = addTokenHarborToAllowedProviders(key.allowed_providers);
+				if (updated !== null) updateAllowedProviders.run(updated, key.id);
+			}
+		}
+
+		for (const id of promotedIds) promoteTokenHarbor.run(id);
+		if (promotedIds.length > 0) {
+			log.info(
+				`Promoted ${promotedIds.length} TokenHarbor account(s) to the tokenharbor provider`,
+			);
+		}
 	});
 
 	// Execute the migration transaction

@@ -27,12 +27,24 @@ import {
 	stripModelRouting,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
+import {
+	getTokenHarborAllowanceExhausted,
+	getTokenHarborResetMs,
+	usageCache,
+} from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 
 const log = new Logger("TokenHarborPeak");
 
-/** The provider string an `--mode anthropic-compatible` account stores. */
-export const TOKENHARBOR_PROVIDER = "anthropic-compatible";
+/** The provider string a first-class TokenHarbor account stores. */
+export const TOKENHARBOR_PROVIDER = "tokenharbor";
+
+/**
+ * Rows created before TokenHarbor had its own provider remain valid: they are
+ * still accepted when their endpoint is TokenHarbor's, and the migration
+ * rewrites them to {@link TOKENHARBOR_PROVIDER} on boot.
+ */
+export const LEGACY_TOKENHARBOR_PROVIDER = "anthropic-compatible";
 
 /** Exact host, never suffix-based — see `isTokenHarborEndpoint`. */
 const TOKENHARBOR_HOST = "tokenharbor.ai";
@@ -47,6 +59,66 @@ const FAILURE_BACKOFF_MS = 5 * 60 * 1000;
 
 const MINUTES_PER_DAY = 1440;
 
+const MS_PER_HOUR = 60 * 60 * 1000;
+
+/** Default grace window: stop skipping peak pricing in the last day of a period. */
+const DEFAULT_PEAK_GRACE_HOURS = 24;
+
+/**
+ * Hours before the shared 7-day reset at which peak-priced models stop being
+ * skipped, from `CCFLARE_TOKENHARBOR_PEAK_GRACE_HOURS`. Unset, empty, invalid
+ * or negative falls back to 24; 0 disables the grace (always skip at peak).
+ */
+export function parseTokenHarborPeakGraceHours(
+	env: Record<string, string | undefined> = process.env,
+): number {
+	const raw = env.CCFLARE_TOKENHARBOR_PEAK_GRACE_HOURS?.trim();
+	if (!raw) return DEFAULT_PEAK_GRACE_HOURS;
+	const hours = Number(raw);
+	if (!Number.isFinite(hours) || hours < 0) {
+		return DEFAULT_PEAK_GRACE_HOURS;
+	}
+	return hours;
+}
+
+/**
+ * True when the current allowance is inside its final {@link
+ * DEFAULT_PEAK_GRACE_HOURS} before the shared reset and still has quota.
+ * TokenHarbor's allowances are use-it-or-lose-it, so paying peak price with
+ * hours left beats letting the remainder expire unspent.
+ *
+ * Fail-safe: no cached usage, a reset in the past or unparseable, or an
+ * allowance that is (or might be) exhausted all keep today's peak skipping —
+ * routing at peak price into a spent quota would waste wallet money.
+ */
+function isTokenHarborResetGrace(accountId: string, ts: number): boolean {
+	const graceHours = parseTokenHarborPeakGraceHours();
+	if (graceHours <= 0) return false;
+	const usage = usageCache.get(accountId);
+	if (!usage) return false;
+	const resetMs = getTokenHarborResetMs(usage);
+	if (resetMs === null || resetMs <= ts) return false;
+	if (getTokenHarborAllowanceExhausted(usage) !== false) return false;
+	return resetMs - ts <= graceHours * MS_PER_HOUR;
+}
+
+/**
+ * Whether a peak-priced window currently constrains routing: inside peak, and
+ * not inside the pre-reset grace. Both `isPeakAffected` and the badge use this
+ * so the routing decision and the UI status cannot disagree.
+ */
+function isPeakActive(
+	window: { startMin: number; endMin: number },
+	ts: number,
+	accountId: string,
+	applyGrace = true,
+): boolean {
+	return (
+		!isInOffPeakWindow(window, ts) &&
+		(!applyGrace || !isTokenHarborResetGrace(accountId, ts))
+	);
+}
+
 /**
  * True when the account's endpoint is TokenHarbor. Exact-host match on the
  * account's own endpoint, never on shared provider state — the
@@ -60,6 +132,20 @@ export function isTokenHarborEndpoint(account?: Account | null): boolean {
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * Whether this row belongs to TokenHarbor. A first-class provider row always
+ * does; a legacy anthropic-compatible row only when its endpoint is
+ * TokenHarbor's, so other custom endpoints stay untouched.
+ */
+export function isTokenHarborAccount(account?: Account | null): boolean {
+	if (!account) return false;
+	return (
+		account.provider === TOKENHARBOR_PROVIDER ||
+		(account.provider === LEGACY_TOKENHARBOR_PROVIDER &&
+			isTokenHarborEndpoint(account))
+	);
 }
 
 /**
@@ -181,18 +267,38 @@ const listings = new Map<string, TokenHarborPeakListing>();
 const inflight = new Map<string, Promise<TokenHarborPeakListing | null>>();
 const lastFailureAt = new Map<string, number>();
 
+/**
+ * Bumped whenever an account's cache is cleared. An in-flight fetch that
+ * started before the clear must not write its (now unwanted) listing back, or
+ * disabling peak hours could be undone by a request already on the wire.
+ */
+const generation = new Map<string, number>();
+
+function bumpGeneration(accountId: string): void {
+	generation.set(accountId, (generation.get(accountId) ?? 0) + 1);
+}
+
 /** Test seam: the cache is process-wide and would leak between cases. */
 export function clearTokenHarborPeakCacheForTests(): void {
 	listings.clear();
 	inflight.clear();
 	lastFailureAt.clear();
+	generation.clear();
 }
 
 /** Drops a removed account's listing so it does not linger. */
 export function clearTokenHarborPeakCacheForAccount(accountId: string): void {
+	bumpGeneration(accountId);
 	listings.delete(accountId);
 	inflight.delete(accountId);
 	lastFailureAt.delete(accountId);
+}
+
+// Linear scan: a backtracking regex on account-supplied input is a ReDoS risk.
+function stripTrailingSlashes(value: string): string {
+	let end = value.length;
+	while (end > 0 && value.charCodeAt(end - 1) === 47 /* "/" */) end--;
+	return value.slice(0, end);
 }
 
 async function fetchListing(
@@ -205,9 +311,13 @@ async function fetchListing(
 		);
 		return null;
 	}
-	const base = getEndpointUrl(account).replace(/\/+$/, "");
+	// A first-class TokenHarbor row may carry no custom_endpoint at all; the
+	// shared getEndpointUrl default is OpenAI's, so fall back explicitly.
+	const endpoint = account.custom_endpoint?.trim() || "https://tokenharbor.ai";
+	const base = stripTrailingSlashes(endpoint);
 	const url = `${base}${base.endsWith("/v1") ? "" : "/v1"}/models`;
 
+	const fetchGeneration = generation.get(account.id) ?? 0;
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 	try {
@@ -228,10 +338,14 @@ async function fetchListing(
 			fetchedAt: Date.now(),
 			account,
 		};
+		// The cache was cleared while this request was in flight (peak hours
+		// disabled, account removed, endpoint edited): drop the result.
+		if ((generation.get(account.id) ?? 0) !== fetchGeneration) return null;
 		listings.set(account.id, listing);
 		lastFailureAt.delete(account.id);
 		return listing;
 	} catch (error) {
+		if ((generation.get(account.id) ?? 0) !== fetchGeneration) return null;
 		lastFailureAt.set(account.id, Date.now());
 		const cached = listings.get(account.id);
 		log.warn(
@@ -265,7 +379,8 @@ export async function getTokenHarborPeakListing(
 	if (pending) return pending;
 
 	const promise = fetchListing(account).finally(() => {
-		inflight.delete(account.id);
+		// A clear during the request may have replaced this entry already.
+		if (inflight.get(account.id) === promise) inflight.delete(account.id);
 	});
 	inflight.set(account.id, promise);
 	return promise;
@@ -295,8 +410,9 @@ export function peekTokenHarborPeakListing(
  *
  * Returns false — route normally — for every case we cannot answer: the
  * toggle is off, no listing has been fetched yet, the model is not in the
- * peak-priced set, or the model is unknown (no model means no per-model
- * decision to make).
+ * peak-priced set, the model is unknown (no model means no per-model decision
+ * to make), or the account is inside the pre-reset grace with quota left (see
+ * {@link isTokenHarborResetGrace}).
  */
 export function isPeakAffected(
 	account: Account,
@@ -314,7 +430,8 @@ export function isPeakAffected(
 	// of skipping another gateway on TokenHarbor's prices. A plain string
 	// comparison on the stored row, not a URL parse — this is the request path.
 	if (
-		account.provider !== TOKENHARBOR_PROVIDER ||
+		(account.provider !== TOKENHARBOR_PROVIDER &&
+			account.provider !== LEGACY_TOKENHARBOR_PROVIDER) ||
 		account.custom_endpoint !== listing.account.custom_endpoint
 	) {
 		return false;
@@ -327,7 +444,7 @@ export function isPeakAffected(
 	const window = listing.models.get(mapped);
 	if (!window) return false;
 
-	return !isInOffPeakWindow(window, ts);
+	return isPeakActive(window, ts, account.id);
 }
 
 /** Number of accounts with a cached listing; for the scheduler's logging. */
@@ -353,11 +470,17 @@ export function getPeakPricedModelIds(accountId: string): string[] | null {
  *
  * Returns null when the account has no cached listing (never fetched, fetch
  * failed, or the toggle was never on) — "no opinion", not "off peak".
+ *
+ * `applyGrace = false` evaluates only the price window at `ts`, ignoring the
+ * live pre-reset grace. Request summaries pass it so a historical request keeps
+ * the window it was actually billed under instead of flipping when the usage
+ * window rolls; the live account badge keeps the default.
  */
 export function getTokenHarborPeakState(
 	accountId: string,
 	model: string | null | undefined,
 	ts = Date.now(),
+	applyGrace = true,
 ): { active: boolean } | null {
 	const listing = listings.get(accountId);
 	if (!listing) return null;
@@ -371,11 +494,12 @@ export function getTokenHarborPeakState(
 			listing.models.get(mapped) ??
 			listing.models.get(stripModelRouting(model));
 		if (!window) return null;
-		return { active: !isInOffPeakWindow(window, ts) };
+		return { active: isPeakActive(window, ts, accountId, applyGrace) };
 	}
 
 	for (const window of listing.models.values()) {
-		if (!isInOffPeakWindow(window, ts)) return { active: true };
+		if (isPeakActive(window, ts, accountId, applyGrace))
+			return { active: true };
 	}
 	return { active: false };
 }

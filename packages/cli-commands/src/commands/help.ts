@@ -6,7 +6,7 @@ export function getHelpText(): string {
 Usage: better-ccflare <command> [options]
 
 Commands:
-  add <name> [--mode <claude-oauth|console|codex|qwen|xai|zai|minimax|anthropic-compatible|openai-compatible|nanogpt|kilo|openrouter|ollama|ollama-cloud|meta|opencode-go>] [--priority <number>] [--modelMappings <JSON>]
+  add <name> [--mode <claude-oauth|console|codex|qwen|xai|zai|minimax|anthropic-compatible|openai-compatible|nanogpt|tokenharbor|kilo|openrouter|ollama|ollama-cloud|meta|opencode-go>] [--priority <number>] [--modelMappings <JSON>]
     Add a new account using OAuth or API key
     --mode: Account type (optional, will prompt if not provided)
       claude-oauth: Claude CLI OAuth account (OAuth)
@@ -19,6 +19,7 @@ Commands:
       anthropic-compatible: Anthropic-compatible provider (API key)
       openai-compatible: OpenAI-compatible provider (API key)
       nanogpt: NanoGPT provider (API key)
+      tokenharbor: TokenHarbor provider (API key)
       kilo: Kilo Gateway provider (API key)
       openrouter: OpenRouter provider (API key)
       ollama: Ollama local provider (v0.14.0+, no API key required)

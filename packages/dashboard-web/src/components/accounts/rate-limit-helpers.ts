@@ -24,6 +24,8 @@ export interface UsageDisplay {
 	severity?: string;
 	/** True when this is the currently-binding limit (from limits[].is_active). */
 	isActive?: boolean;
+	/** True when the provider reports this allowance spent (TokenHarbor). */
+	exhausted?: boolean;
 }
 
 /**

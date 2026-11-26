@@ -37,6 +37,7 @@ export const ACCOUNT_MODES = {
 	ANTHROPIC_COMPATIBLE: "anthropic-compatible", // Anthropic-compatible provider (API key)
 	OPENAI_COMPATIBLE: "openai-compatible", // OpenAI-compatible provider (API key)
 	NANOGPT: "nanogpt", // NanoGPT provider (API key)
+	TOKENHARBOR: "tokenharbor", // TokenHarbor provider (API key)
 	XAI: "xai", // xAI/Grok account (Grok CLI OAuth)
 	OLLAMA: "ollama", // Ollama local provider (v0.14.0+, no API key required)
 	META: "meta", // Meta Model API provider (API key)
@@ -80,6 +81,8 @@ export function getProviderFromMode(mode: AccountMode): ProviderName {
 			return PROVIDER_NAMES.OPENAI_COMPATIBLE;
 		case ACCOUNT_MODES.NANOGPT:
 			return PROVIDER_NAMES.NANOGPT;
+		case ACCOUNT_MODES.TOKENHARBOR:
+			return PROVIDER_NAMES.TOKENHARBOR;
 		case ACCOUNT_MODES.XAI:
 			return PROVIDER_NAMES.XAI;
 		case ACCOUNT_MODES.OLLAMA:

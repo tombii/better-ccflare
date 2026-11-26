@@ -43,7 +43,8 @@ import { PEAK_HOUR_CHECKS } from "./peak-hours";
 import type { ProxyContext } from "./proxy";
 import {
 	getTokenHarborPeakListing,
-	isTokenHarborEndpoint,
+	isTokenHarborAccount,
+	LEGACY_TOKENHARBOR_PROVIDER,
 	TOKENHARBOR_PROVIDER,
 } from "./tokenharbor-peak";
 
@@ -1667,13 +1668,13 @@ export class AutoRefreshScheduler {
 			// `mapModelName` reads: the listing keeps the account row so the
 			// request summary can resolve a client model onto the upstream one.
 			`SELECT id, name, provider, custom_endpoint, api_key, COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled, model_mappings, model_fallbacks
-			 FROM accounts WHERE provider = ? AND peak_hours_pause_enabled = 1`,
-			[TOKENHARBOR_PROVIDER],
+			 FROM accounts WHERE provider IN (?, ?) AND peak_hours_pause_enabled = 1`,
+			[TOKENHARBOR_PROVIDER, LEGACY_TOKENHARBOR_PROVIDER],
 		);
 
 		for (const row of accounts) {
 			const account = row as unknown as Account;
-			if (!isTokenHarborEndpoint(account)) continue;
+			if (!isTokenHarborAccount(account)) continue;
 			try {
 				await getTokenHarborPeakListing(account);
 			} catch (error) {

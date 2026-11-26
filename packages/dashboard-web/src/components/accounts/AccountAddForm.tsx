@@ -69,6 +69,12 @@ interface AccountAddFormProps {
 		apiKey: string;
 		priority: number;
 	}) => Promise<void>;
+	onAddTokenHarborAccount: (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		customEndpoint?: string;
+	}) => Promise<void>;
 	onAddAnthropicCompatibleAccount: (params: {
 		name: string;
 		apiKey: string;
@@ -154,6 +160,7 @@ export function AccountAddForm({
 	onAddDeepseekAccount,
 	onAddSailResearchAccount,
 	onAddOpencodeGoAccount,
+	onAddTokenHarborAccount,
 	onAddAnthropicCompatibleAccount,
 	onAddNanoGPTAccount,
 	onAddOpenAIAccount,
@@ -185,6 +192,7 @@ export function AccountAddForm({
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
+			| "tokenharbor"
 			| "vertex-ai"
 			| "bedrock"
 			| "kilo"
@@ -1099,6 +1107,38 @@ export function AccountAddForm({
 			return;
 		}
 
+		if (newAccount.mode === "tokenharbor") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for TokenHarbor accounts");
+				return;
+			}
+			await onAddTokenHarborAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				priority: newAccount.priority,
+				customEndpoint: newAccount.customEndpoint || undefined,
+			});
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
+				crossRegionMode: "geographic",
+				customBedrockModel: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+				fableModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
 		if (newAccount.mode === "anthropic-compatible") {
 			if (!newAccount.apiKey) {
 				onError("API key is required for Anthropic-compatible accounts");
@@ -1429,6 +1469,7 @@ export function AccountAddForm({
 									| "opencode-go"
 									| "anthropic-compatible"
 									| "openai-compatible"
+									| "tokenharbor"
 									| "bedrock"
 									| "kilo"
 									| "openrouter"
@@ -1469,6 +1510,9 @@ export function AccountAddForm({
 								</SelectItem>
 								<SelectItem value="openai-compatible">
 									OpenAI-Compatible (API Key)
+								</SelectItem>
+								<SelectItem value="tokenharbor">
+									TokenHarbor (API Key)
 								</SelectItem>
 								<SelectItem value="kilo">Kilo Gateway (API Key)</SelectItem>
 								<SelectItem value="openrouter">OpenRouter (API Key)</SelectItem>
@@ -2103,6 +2147,42 @@ export function AccountAddForm({
 								(https://opencode.ai/inference/go/anthropic).
 							</p>
 						</div>
+					)}
+					{newAccount.mode === "tokenharbor" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="apiKey">TokenHarbor API Key</Label>
+								<Input
+									id="apiKey"
+									type="password"
+									value={newAccount.apiKey}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											apiKey: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter your TokenHarbor API key"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="customEndpoint">
+									Custom Endpoint (Optional)
+								</Label>
+								<Input
+									id="customEndpoint"
+									type="url"
+									value={newAccount.customEndpoint}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											customEndpoint: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="https://tokenharbor.ai (default)"
+								/>
+							</div>
+						</>
 					)}
 					{newAccount.mode === "nanogpt" && (
 						<>

@@ -12,6 +12,7 @@ export const PROVIDER_NAMES = {
 	ANTHROPIC_COMPATIBLE: "anthropic-compatible",
 	OPENAI_COMPATIBLE: "openai-compatible",
 	NANOGPT: "nanogpt",
+	TOKENHARBOR: "tokenharbor",
 	VERTEX_AI: "vertex-ai",
 	BEDROCK: "bedrock",
 	KILO: "kilo",
@@ -112,6 +113,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: true, // NanoGPT supports subscription usage tracking via API
 		supportsOAuth: false, // NanoGPT uses API key authentication
 		defaultEndpoint: "https://nano-gpt.com/api", // Default, can be overridden via custom endpoint
+	},
+	[PROVIDER_NAMES.TOKENHARBOR]: {
+		requiresSessionTracking: false, // TokenHarbor has no session stickiness
+		supportsUsageTracking: true, // Polls /api/cli/free-tier for Pass + free-model allowances
+		supportsOAuth: false, // TokenHarbor uses API key authentication
+		defaultEndpoint: "https://tokenharbor.ai",
 	},
 	[PROVIDER_NAMES.VERTEX_AI]: {
 		requiresSessionTracking: false, // Vertex AI is pay-as-you-go via Google Cloud billing

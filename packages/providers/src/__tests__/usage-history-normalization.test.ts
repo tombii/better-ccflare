@@ -144,6 +144,35 @@ describe("normalizeUsageSnapshotForHistory", () => {
 		});
 	});
 
+	it("records TokenHarbor's gating allowance in the shared seven_day window", () => {
+		const tokenharbor = {
+			plan_used_pct: 12,
+			used_pct: 80,
+			on_plan: true,
+			reset_at: "2026-12-03T09:05:44.382+00:00",
+		};
+
+		expect(
+			normalizeUsageSnapshotForHistory("tokenharbor", tokenharbor),
+		).toEqual({
+			seven_day: {
+				utilization: 12,
+				resets_at: Date.parse("2026-12-03T09:05:44.382+00:00"),
+			},
+		});
+		expect(
+			normalizeUsageSnapshotForHistory("tokenharbor", {
+				...tokenharbor,
+				on_plan: false,
+			}),
+		).toEqual({
+			seven_day: {
+				utilization: 80,
+				resets_at: Date.parse("2026-12-03T09:05:44.382+00:00"),
+			},
+		});
+	});
+
 	it("passes anthropic/codex/xai payloads through unchanged (no dedicated branch)", () => {
 		const anthropic = {
 			five_hour: { utilization: 30, resets_at: "2030-01-01T00:00:00.000Z" },

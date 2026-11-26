@@ -214,11 +214,34 @@ List all configured accounts with their current status.
 ]
 ```
 
-Each account also reports its per-account toggles: `peakHoursPauseEnabled` (whether the peak-hours behaviour is switched on), `peakHoursPauseSupported` (`true` for Zai, DeepSeek and TokenHarbor-host accounts only — see [`POST /api/accounts/:accountId/peak-hours-pause`](#post-apiaccountsaccountidpeak-hours-pause)), `nightWindowEnabled` (see [`POST /api/accounts/:accountId/night-window`](#post-apiaccountsaccountidnight-window)), and `planMonthlyUsd` (the recorded subscription price, or `null`).
+Each account also reports its per-account toggles: `peakHoursPauseEnabled` (whether the peak-hours behaviour is switched on), `peakHoursPauseSupported` (`true` for Zai, DeepSeek and TokenHarbor accounts only — see [`POST /api/accounts/:accountId/peak-hours-pause`](#post-apiaccountsaccountidpeak-hours-pause)), `nightWindowEnabled` (see [`POST /api/accounts/:accountId/night-window`](#post-apiaccountsaccountidnight-window)), and `planMonthlyUsd` (the recorded subscription price, or `null`).
 
-`peakHours` is computed by the server on each request and is `null` for providers with no peak-hours concept. Currently `deepseek`, `zai`, `anthropic`, and TokenHarbor accounts report `{ "active": boolean }`. For DeepSeek and Zai it uses the same check as peak-hours auto-pause; Anthropic is informational only.
+`peakHours` is computed by the server on each request and is `null` for providers with no peak-hours concept. Currently `deepseek`, `zai`, `anthropic`, and TokenHarbor accounts report `{ "active": boolean }`. For DeepSeek and Zai it uses the same check as peak-hours auto-pause; Anthropic is informational only. For TokenHarbor, `active` is `true` only while a peak-priced model is actually being skipped: it is `false` inside the pre-reset grace window even if the clock is still in a peak-priced window, because routing is not skipping then.
 
 TokenHarbor's peak pricing is per model rather than per provider, so those accounts also report `peakPricedModels` — the model ids whose `pricing.off_peak` block in the account's own `/v1/models` listing is currently set (`null` until the listing has been fetched). The window and the model set both come from that listing; no window is hardcoded. Accounts on any other `anthropic-compatible` endpoint report `null` for both fields.
+
+TokenHarbor accounts also report `usageUtilization`, `usageWindow`, and `usageData`. `usageWindow` is `"seven_day"`. `usageUtilization` is the allowance that gates routing — `plan_used_pct` when `on_plan`, `used_pct` otherwise — clamped to 0–100. `usageData` nests both allowances over the one shared window:
+
+```json
+{
+  "seven_day": { "utilization": 42, "resets_at": "2026-12-01T00:00:00.000Z" },
+  "tokenharbor": {
+    "plan_name": "Pass",
+    "on_plan": true,
+    "plan_used_pct": 42,
+    "plan_exhausted": false,
+    "used_pct": 10,
+    "exhausted": false,
+    "activated": true,
+    "resets_at": "2026-12-01T00:00:00.000Z",
+    "models": []
+  }
+}
+```
+
+`usageData.seven_day.utilization` always mirrors `plan_used_pct` (the Pass bar), while `usageUtilization` is the gating allowance. Both allowances share `resets_at`; the boolean flags decide the exhausted label rather than the percentage. Usage-pause thresholds are **not** supported for `tokenharbor` (see below).
+
+After the boot migration, TokenHarbor rows created as `anthropic-compatible` are stored as provider `tokenharbor` with their endpoint kept; `tokenharbor` is the canonical form, and the usage fields above are reported for it. A row still marked `anthropic-compatible` whose endpoint is TokenHarbor's host is recognised for peak pricing via `isTokenHarborAccount`, but usage polling is keyed on the provider id. `POST /api/accounts` accepts `{"provider":"tokenharbor","name":"...","apiKey":"..."}` (or `{"mode":"tokenharbor",...}`), and `POST /api/accounts/:accountId/peak-hours-pause` is accepted for it.
 
 **Example:**
 ```bash
@@ -419,7 +442,7 @@ curl -X POST http://localhost:8080/api/accounts/uuid-here/pause
 
 #### POST /api/accounts/:accountId/usage-pause-thresholds
 
-Set the account's usage-window pause thresholds. The account is paused once a configured window reaches its percentage, and resumed automatically once every configured window reads back below it.
+Set the account's usage-window pause thresholds. The account is paused once a configured window reaches its percentage, and resumed automatically once every configured window reads back below it. Supported only for providers whose usage windows ccflare can pause on (`anthropic`, `codex`, `xai`, `zai`, `nanogpt`, `minimax`, `opencode-go`); any other provider — including `tokenharbor` — gets `400`.
 
 **Request (bare percentage):**
 ```json
@@ -463,7 +486,7 @@ curl -X POST http://localhost:8080/api/accounts/uuid-here/usage-pause-thresholds
 Turn the peak-hours behaviour on or off for an account. What it means depends on the account's provider:
 
 - **Zai / DeepSeek** — the whole account is paused during the provider's peak pricing window and resumed when it ends.
-- **TokenHarbor** — the account is never paused. Only the models the account's own `/v1/models` listing marks as peak-priced are skipped during their peak window, so flat-priced models keep routing to it. Accepted only when the account's endpoint is TokenHarbor's host.
+- **TokenHarbor** — the account is never paused. Only the models the account's own `/v1/models` listing marks as peak-priced are skipped during their peak window, so flat-priced models keep routing to it. Inside the last `CCFLARE_TOKENHARBOR_PEAK_GRACE_HOURS` hours (default `24`; `0` disables) before the shared 7-day reset, those models stop being skipped (provided the gating allowance reports itself not exhausted and the reset is still ahead), and `peakHours.active` reads `false`. Accepted for provider `tokenharbor` and for legacy `anthropic-compatible` rows whose endpoint is TokenHarbor's host.
 
 Any other account gets `400`. `enabled` is `0` or `1`; disabling also lifts any peak-hours pause immediately rather than waiting for the scheduler.
 
@@ -729,7 +752,7 @@ curl "http://localhost:8080/api/requests?limit=100"
 - `streamTerminalState` — the real SSE outcome for a streaming `/v1/messages` request. One of `complete`, `recovered`, `error`, `truncated`, or `client_cancelled`; `undefined` for non-streaming requests. A response can carry `statusCode: 200` and still be `truncated` or `client_cancelled`, so this is the authoritative "did the stream actually finish?" signal. An unrecognized value (e.g. written by a newer build, surviving a rollback) surfaces as `"unknown"` rather than vanishing.
 - `clientSessionId` — the `x-claude-code-session-id` header value when the client sent one; used to attribute requests to a Claude Code session.
 - `rateLimited` — convenience flag, `true` when `statusCode === 429`.
-- `peakHours` — whether this request was served during its account provider's peak pricing window, evaluated at the request's own start timestamp with the same rules the peak-hours auto-pause uses (Zai weekdays 14:00–18:00 SGT; DeepSeek weekdays 01:00–04:00 and 06:00–10:00 UTC, excluding Chinese public holidays; Anthropic weekdays 13:00–19:00 UTC, informational; TokenHarbor per model, for models its listing marks as peak-priced). Computed server-side because DeepSeek's window needs the Chinese holiday calendar and TokenHarbor's needs the account's model listing. `null` for providers without a peak concept and for requests not attributed to an account.
+- `peakHours` — whether this request was served during its account provider's peak pricing window, evaluated at the request's own start timestamp with the same rules the peak-hours auto-pause uses (Zai weekdays 14:00–18:00 SGT; DeepSeek weekdays 01:00–04:00 and 06:00–10:00 UTC, excluding Chinese public holidays; Anthropic weekdays 13:00–19:00 UTC, informational; TokenHarbor per model, for models its listing marks as peak-priced, reported from the price window at that timestamp only — unlike the live account badge, a stored request does not apply the pre-reset grace, so it keeps the window it was billed under). Computed server-side because DeepSeek's window needs the Chinese holiday calendar and TokenHarbor's needs the account's model listing. `null` for providers without a peak concept and for requests not attributed to an account.
 
 #### GET /api/requests/detail
 

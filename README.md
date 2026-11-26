@@ -13,7 +13,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 ## Why better-ccflare?
 
 - **🚀 Zero Rate Limit Errors** - Automatically distribute requests across multiple accounts
-- **🤖 Multi-Provider Support** - Claude OAuth, Claude API console, Vertex AI, AWS Bedrock, NanoGPT, z.ai, Minimax, DeepSeek, Meta, OpenRouter, Kilo, Codex (OpenAI OAuth), xAI/Grok, OpenCode Go, Sail Research, Mistral, Anthropic-compatible, and OpenAI-compatible providers
+- **🤖 Multi-Provider Support** - Claude OAuth, Claude API console, Vertex AI, AWS Bedrock, NanoGPT, z.ai, Minimax, DeepSeek, TokenHarbor, Meta, OpenRouter, Kilo, Codex (OpenAI OAuth), xAI/Grok, OpenCode Go, Sail Research, Mistral, Anthropic-compatible, and OpenAI-compatible providers
 - **🔒 OAuth Token Health** - Real-time monitoring of OAuth token status with automatic refresh and health indicators
 - **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic accounts for enterprise deployments
 - **☁️ OpenAI-Compatible Support** - Use OpenAI-compatible providers like OpenRouter, Together AI, and more with Claude API format
@@ -34,7 +34,7 @@ This project builds upon the excellent foundation of [snipeship/ccflare](https:/
 **🎯 Core Improvements (v3.0.0):**
 - **Enhanced Security** - Critical fixes for authentication bypass, command injection, and PKCE implementation
 - **OAuth Token Health Monitoring** - Real-time status indicators and automatic token refresh with 30-minute buffer
-- **Extended Provider Support** - AWS Bedrock, NanoGPT (with dynamic pricing), Minimax, DeepSeek, Meta, OpenRouter, Kilo, Codex (OpenAI OAuth), xAI/Grok, OpenCode Go, Sail Research, Mistral, Anthropic-compatible, and OpenAI-compatible providers
+- **Extended Provider Support** - AWS Bedrock, NanoGPT (with dynamic pricing), Minimax, DeepSeek, TokenHarbor, Meta, OpenRouter, Kilo, Codex (OpenAI OAuth), xAI/Grok, OpenCode Go, Sail Research, Mistral, Anthropic-compatible, and OpenAI-compatible providers
 - **Simplified Load Balancing** - Removed tier system for O(1) priority-based selection
 - **Real-time Analytics Dashboard** - Beautiful web UI with fixed request history (no disappearing requests)
 - **Package Distribution** - Available via npm and bun for easy installation
@@ -655,7 +655,7 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **Auto-fallback** - Automatically switch back to higher priority Claude OAuth accounts when their usage windows reset
 - **Auto-refresh** - Automatically start new usage windows when they reset
 - **Usage Window Alignment** - Sessions automatically align with Claude OAuth usage window resets for optimal resource utilization
-- **Usage Throttling** - Configurable monthly token/cost limits per account with peak-hours auto-pause for Zai and DeepSeek accounts, and per-model peak-hours skipping for TokenHarbor accounts (only the models its own listing marks as peak-priced are avoided; flat-priced models keep using the account, and combos reorder peak-priced slots behind flat-priced ones instead of dropping them)
+- **Usage Throttling** - Configurable monthly token/cost limits per account with peak-hours auto-pause for Zai and DeepSeek accounts, and per-model peak-hours skipping for TokenHarbor accounts (only the models its own listing marks as peak-priced are avoided; flat-priced models keep using the account, and combos reorder peak-priced slots behind flat-priced ones instead of dropping them). In the last `CCFLARE_TOKENHARBOR_PEAK_GRACE_HOURS` hours before TokenHarbor's shared 7-day reset, peak-priced models stop being skipped so leftover allowance is not wasted — see [Configuration](docs/configuration.md#peak-hours-pause)
 - **Per-API-Key Governance** - Restrict a key to selected accounts, models and providers, override its combo routing per model family, and cap its spend over calendar or rolling hour/day/week/month windows — blocking with a `429` or warning through Insights — plus a per-key usage page that separates API cost from plan value
 - **Served-Request Headers** - Every account-served response carries `x-better-ccflare-served-model` and `x-better-ccflare-served-account`, so a client can see which model and account a combo alias actually resolved to
 - **503 on Pool Exhaustion** - Returns HTTP 503 when all accounts are rate-limited or paused, enabling client-side retry logic
@@ -709,6 +709,7 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **AWS Bedrock** - Native AWS Bedrock integration with SigV4 authentication, inference profile support (geographic/global/regional), and automatic credential chain resolution via AWS CLI profiles
 - **Vertex AI** - Google Cloud Vertex AI integration with service account authentication
 - **z.ai, Minimax, DeepSeek, Meta** - API key based providers with pay-as-you-go model
+- **TokenHarbor** - Anthropic-compatible gateway with API key authentication, two dashboard allowances (paid Pass and free models) over one shared 7-day window, and per-model peak pricing read from its own `/v1/models` listing
 - **OpenRouter** - OpenRouter integration with native API support and model mapping
 - **xAI/Grok** - Native Grok CLI OAuth import/refresh with per-request token accounting and Grok Build credits usage polling via grok.com gRPC-web
 - **Kilo** - Kilo API integration with usage tracking

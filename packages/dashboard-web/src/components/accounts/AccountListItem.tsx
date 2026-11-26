@@ -658,8 +658,9 @@ export function AccountListItem({
 				account.provider === "codex" ||
 				// DeepSeek has no usage data; mount for the peak/off-peak badge.
 				account.provider === "deepseek" ||
-				// TokenHarbor likewise: no usage windows, only a per-model
-				// peak/off-peak badge, and only once its listing has loaded.
+				// TokenHarbor: Pass + free-model allowances, plus a per-model
+				// peak badge once its listing has loaded.
+				account.provider === "tokenharbor" ||
 				account.peakPricedModels != null ||
 				providerShowsCreditsBalance(account.provider)) && (
 				<RateLimitProgress

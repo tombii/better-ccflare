@@ -1,5 +1,9 @@
 import { Logger } from "@better-ccflare/logger";
 import type { BunSqlAdapter } from "./adapters/bun-sql-adapter";
+import {
+	addTokenHarborToAllowedProviders,
+	isTokenHarborCustomEndpoint,
+} from "./tokenharbor-promotion";
 
 const log = new Logger("DatabaseMigrations-PG");
 
@@ -2300,6 +2304,66 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		);
 	} catch (_error) {
 		// Ignore if fails
+	}
+
+	// TokenHarbor is now a first-class provider. Idempotent: after the first
+	// run no row still matches, and the custom_endpoint is kept as-is. The host
+	// is checked in JS because a LIKE cannot normalise case, ports or JSON.
+	try {
+		const candidates = await adapter.query<{
+			id: string;
+			custom_endpoint: string;
+		}>(
+			`SELECT id, custom_endpoint FROM accounts
+			 WHERE provider = 'anthropic-compatible' AND custom_endpoint IS NOT NULL`,
+		);
+		const promotedIds = candidates
+			.filter((row) => isTokenHarborCustomEndpoint(row.custom_endpoint))
+			.map((row) => row.id);
+
+		// Keys that allowlisted the shared `anthropic-compatible` string would
+		// otherwise lose the accounts just promoted. NULL and [] keep their
+		// meaning (unrestricted / deny-all). Only a real promotion backfills, so
+		// an admin's later removal of "tokenharbor" survives the next boot.
+		// Backfill first: if the process dies in between, the next boot still
+		// sees the candidates and finishes the job.
+		if (promotedIds.length > 0) {
+			const apiKeys = await adapter.query<{
+				id: string;
+				allowed_providers: string;
+			}>(
+				"SELECT id, allowed_providers FROM api_keys WHERE allowed_providers IS NOT NULL",
+			);
+			let changedKeys = 0;
+			for (const key of apiKeys) {
+				const updated = addTokenHarborToAllowedProviders(key.allowed_providers);
+				if (updated === null) continue;
+				await adapter.run(
+					"UPDATE api_keys SET allowed_providers = ? WHERE id = ?",
+					[updated, key.id],
+				);
+				changedKeys++;
+			}
+			backfillWork.recordChanged("api_keys", changedKeys);
+		}
+
+		let promotedTokenHarbor = 0;
+		for (const id of promotedIds) {
+			promotedTokenHarbor += await adapter.runWithChanges(
+				"UPDATE accounts SET provider = 'tokenharbor' WHERE id = ?",
+				[id],
+			);
+		}
+		backfillWork.recordChanged("accounts", promotedTokenHarbor);
+		if (promotedTokenHarbor > 0) {
+			log.info(
+				`Promoted ${promotedTokenHarbor} TokenHarbor account(s) to the tokenharbor provider`,
+			);
+		}
+	} catch (error) {
+		log.warn(
+			`Error promoting TokenHarbor accounts: ${(error as Error).message}`,
+		);
 	}
 
 	await migrateApiKeyLimitsPg(adapter);

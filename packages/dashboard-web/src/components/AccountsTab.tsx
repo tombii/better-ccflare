@@ -310,6 +310,23 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleAddTokenHarborAccount = async (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		customEndpoint?: string;
+	}) => {
+		try {
+			await api.addTokenHarborAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
 	const handleAddNanoGPTAccount = async (params: {
 		name: string;
 		apiKey: string;
@@ -785,6 +802,7 @@ export function AccountsTab() {
 							onAddDeepseekAccount={handleAddDeepseekAccount}
 							onAddSailResearchAccount={handleAddSailResearchAccount}
 							onAddOpencodeGoAccount={handleAddOpencodeGoAccount}
+							onAddTokenHarborAccount={handleAddTokenHarborAccount}
 							onAddNanoGPTAccount={handleAddNanoGPTAccount}
 							onAddAlibabaCodingPlanAccount={handleAddAlibabaCodingPlanAccount}
 							onAddKiloAccount={handleAddKiloAccount}
