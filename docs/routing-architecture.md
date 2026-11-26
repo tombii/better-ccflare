@@ -110,8 +110,11 @@ than the whole-account pause Zai and DeepSeek use.
   is withheld when the gating allowance (`plan_exhausted` when `on_plan`, else
   `exhausted`) reports spent or unknown, when no usage is cached, or when the
   reset is absent or already past. It never unpauses a manually paused account.
-  The dashboard peak badge goes through the same `isPeakActive` decision, so it
-  reads off-peak whenever routing is no longer skipping.
+  The dashboard's live peak badge goes through the same `isPeakActive`
+  decision, so it reads off-peak whenever routing is no longer skipping. A
+  stored request's `peakHours` is different: it reports only the price window
+  at that request's timestamp, so it keeps the window it was billed under
+  instead of flipping once the usage window enters grace.
 - **Fail-open** — no cached listing, a failed fetch, or an account whose provider
   and endpoint no longer match the row the listing was fetched for leaves the
   account unconstrained. The worst case is paying peak price, never a pool that

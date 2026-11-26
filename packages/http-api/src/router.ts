@@ -258,7 +258,9 @@ export class APIRouter {
 			// account has no listing stays null, exactly as before.
 			(provider, ts, accountId, model) =>
 				getPeakHoursState(provider, ts) ??
-				(accountId ? getTokenHarborPeakState(accountId, model, ts) : null),
+				(accountId
+					? getTokenHarborPeakState(accountId, model, ts, false)
+					: null),
 		);
 		const requestsDetailHandler = createRequestsDetailHandler(dbOps);
 		const configHandlers = createConfigHandlers(

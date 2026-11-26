@@ -1674,6 +1674,12 @@ export async function addAccount(
 		// provider id so usage polling and peak pricing are enabled.
 		const apiKey = await adapter.input("\nEnter your TokenHarbor API key: ");
 		const endpoint = customEndpoint || "https://tokenharbor.ai";
+		// Same model-mapping prompt as anthropic-compatible; TokenHarbor serves
+		// the same transport and needs its own remaps.
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+		);
 
 		await createAnthropicCompatibleAccount(
 			dbOps,
@@ -1681,7 +1687,7 @@ export async function addAccount(
 			apiKey,
 			providedPriority || 0,
 			endpoint,
-			null,
+			finalModelMappings,
 			null,
 			"tokenharbor",
 		);

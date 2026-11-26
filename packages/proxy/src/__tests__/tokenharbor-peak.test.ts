@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import {
+	clearTokenHarborPeakCacheForAccount,
 	clearTokenHarborPeakCacheForTests,
 	extractPeakPricedModels,
 	getPeakPricedModelIds,
@@ -423,6 +424,37 @@ describe("isPeakAffected", () => {
 		).toEqual({ active: true });
 	});
 
+	it("discards a listing that resolves after the account cache was cleared", async () => {
+		let resolveResponse!: (response: Response) => void;
+		const gate = new Promise<Response>((resolve) => {
+			resolveResponse = resolve;
+		});
+		globalThis.fetch = (() => gate) as unknown as typeof globalThis.fetch;
+		const account = makeAccount();
+
+		const inFlight = getTokenHarborPeakListing(account);
+		// Disabling peak hours (or removing the account) clears the cache while
+		// the request is still on the wire.
+		clearTokenHarborPeakCacheForAccount(account.id);
+		resolveResponse(
+			new Response(
+				JSON.stringify({
+					data: [
+						{
+							id: "deepseek-v4-pro",
+							pricing: { off_peak: { window: "14:00–00:00 UTC" } },
+						},
+					],
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+
+		expect(await inFlight).toBeNull();
+		expect(peekTokenHarborPeakListing(account.id)).toBeNull();
+		expect(getTokenHarborPeakState(account.id, null)).toBeNull();
+	});
+
 	it("exposes the peak-priced ids only once a listing exists", async () => {
 		const account = makeAccount();
 		expect(getPeakPricedModelIds(account.id)).toBeNull();
@@ -604,5 +636,31 @@ describe("TokenHarbor peak grace near the shared reset", () => {
 		expect(
 			getTokenHarborPeakState(account.id, null, WED(2) - 48 * HOUR_MS),
 		).toEqual({ active: true });
+	});
+
+	it("can report the price window at a timestamp without the live grace", async () => {
+		const account = makeAccount();
+		await primeListing(account);
+		usageCache.set(account.id, usageResettingAt(WED(2), 23) as never);
+
+		// Inside grace the live badge follows routing and reads off peak…
+		expect(getTokenHarborPeakState(account.id, null, WED(2))).toEqual({
+			active: false,
+		});
+		// …while a request summary keeps the window it was billed under.
+		expect(getTokenHarborPeakState(account.id, null, WED(2), false)).toEqual({
+			active: true,
+		});
+		expect(
+			getTokenHarborPeakState(account.id, "deepseek-v4-pro", WED(2), false),
+		).toEqual({ active: true });
+
+		// Outside the peak window both agree.
+		expect(getTokenHarborPeakState(account.id, null, WED(15))).toEqual({
+			active: false,
+		});
+		expect(getTokenHarborPeakState(account.id, null, WED(15), false)).toEqual({
+			active: false,
+		});
 	});
 });

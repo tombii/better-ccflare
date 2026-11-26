@@ -1247,6 +1247,7 @@ export class UsageCollector {
 								startMessage.originalModel ??
 								null,
 							startMessage.timestamp,
+							false,
 						))
 					: null,
 			// Same value handed to saveRequest above, so a dashboard does not have

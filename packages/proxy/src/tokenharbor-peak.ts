@@ -111,9 +111,11 @@ function isPeakActive(
 	window: { startMin: number; endMin: number },
 	ts: number,
 	accountId: string,
+	applyGrace = true,
 ): boolean {
 	return (
-		!isInOffPeakWindow(window, ts) && !isTokenHarborResetGrace(accountId, ts)
+		!isInOffPeakWindow(window, ts) &&
+		(!applyGrace || !isTokenHarborResetGrace(accountId, ts))
 	);
 }
 
@@ -265,15 +267,28 @@ const listings = new Map<string, TokenHarborPeakListing>();
 const inflight = new Map<string, Promise<TokenHarborPeakListing | null>>();
 const lastFailureAt = new Map<string, number>();
 
+/**
+ * Bumped whenever an account's cache is cleared. An in-flight fetch that
+ * started before the clear must not write its (now unwanted) listing back, or
+ * disabling peak hours could be undone by a request already on the wire.
+ */
+const generation = new Map<string, number>();
+
+function bumpGeneration(accountId: string): void {
+	generation.set(accountId, (generation.get(accountId) ?? 0) + 1);
+}
+
 /** Test seam: the cache is process-wide and would leak between cases. */
 export function clearTokenHarborPeakCacheForTests(): void {
 	listings.clear();
 	inflight.clear();
 	lastFailureAt.clear();
+	generation.clear();
 }
 
 /** Drops a removed account's listing so it does not linger. */
 export function clearTokenHarborPeakCacheForAccount(accountId: string): void {
+	bumpGeneration(accountId);
 	listings.delete(accountId);
 	inflight.delete(accountId);
 	lastFailureAt.delete(accountId);
@@ -302,6 +317,7 @@ async function fetchListing(
 	const base = stripTrailingSlashes(endpoint);
 	const url = `${base}${base.endsWith("/v1") ? "" : "/v1"}/models`;
 
+	const fetchGeneration = generation.get(account.id) ?? 0;
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 	try {
@@ -322,10 +338,14 @@ async function fetchListing(
 			fetchedAt: Date.now(),
 			account,
 		};
+		// The cache was cleared while this request was in flight (peak hours
+		// disabled, account removed, endpoint edited): drop the result.
+		if ((generation.get(account.id) ?? 0) !== fetchGeneration) return null;
 		listings.set(account.id, listing);
 		lastFailureAt.delete(account.id);
 		return listing;
 	} catch (error) {
+		if ((generation.get(account.id) ?? 0) !== fetchGeneration) return null;
 		lastFailureAt.set(account.id, Date.now());
 		const cached = listings.get(account.id);
 		log.warn(
@@ -359,7 +379,8 @@ export async function getTokenHarborPeakListing(
 	if (pending) return pending;
 
 	const promise = fetchListing(account).finally(() => {
-		inflight.delete(account.id);
+		// A clear during the request may have replaced this entry already.
+		if (inflight.get(account.id) === promise) inflight.delete(account.id);
 	});
 	inflight.set(account.id, promise);
 	return promise;
@@ -449,11 +470,17 @@ export function getPeakPricedModelIds(accountId: string): string[] | null {
  *
  * Returns null when the account has no cached listing (never fetched, fetch
  * failed, or the toggle was never on) — "no opinion", not "off peak".
+ *
+ * `applyGrace = false` evaluates only the price window at `ts`, ignoring the
+ * live pre-reset grace. Request summaries pass it so a historical request keeps
+ * the window it was actually billed under instead of flipping when the usage
+ * window rolls; the live account badge keeps the default.
  */
 export function getTokenHarborPeakState(
 	accountId: string,
 	model: string | null | undefined,
 	ts = Date.now(),
+	applyGrace = true,
 ): { active: boolean } | null {
 	const listing = listings.get(accountId);
 	if (!listing) return null;
@@ -467,11 +494,12 @@ export function getTokenHarborPeakState(
 			listing.models.get(mapped) ??
 			listing.models.get(stripModelRouting(model));
 		if (!window) return null;
-		return { active: isPeakActive(window, ts, accountId) };
+		return { active: isPeakActive(window, ts, accountId, applyGrace) };
 	}
 
 	for (const window of listing.models.values()) {
-		if (isPeakActive(window, ts, accountId)) return { active: true };
+		if (isPeakActive(window, ts, accountId, applyGrace))
+			return { active: true };
 	}
 	return { active: false };
 }
