@@ -26,6 +26,10 @@
   - Default model: `deepseek-v4-flash`
   - Uses API key authentication (`x-api-key` header, no OAuth support)
   - Built on the same `BaseAnthropicCompatibleProvider` base as Minimax
+- **TokenHarbor** - Anthropic-compatible gateway reselling many upstream models behind one key:
+  - Default endpoint `https://tokenharbor.ai`, overridable per account; API key authentication (`x-api-key` on the inference path)
+  - Two allowances — a paid Pass and a free-model pool — polled from `GET /api/cli/free-tier` over one shared 7-day window
+  - Peak pricing is per model: only the models the account's own `/v1/models` listing marks with a `pricing.off_peak` window are skipped during it, and a configurable grace window stops skipping near the shared reset
 - **Anthropic-Compatible** - Generic provider for Anthropic-compatible APIs:
   - Supports custom endpoints
   - API key authentication only
@@ -81,7 +85,7 @@
 - xAI and Qwen build on the OpenAI-compatible base but support OAuth (unlike generic OpenAI-compatible accounts, which are API-key only)
 - Codex talks to OpenAI's Responses API, a different shape from OpenAI's Chat Completions API used by the other OpenAI-compatible providers
 - OAuth is available for Anthropic, Vertex AI (Google Cloud credentials), xAI, Codex, Qwen, and CodeBuddy; all other providers are API-key only
-- API key authentication for Z.ai, OpenAI-compatible (including Mistral), NanoGPT, Minimax, DeepSeek, Sail Research, OpenCode Go, and Ollama Cloud providers
+- API key authentication for Z.ai, OpenAI-compatible (including Mistral), NanoGPT, Minimax, DeepSeek, TokenHarbor, Sail Research, OpenCode Go, and Ollama Cloud providers
 - Ollama Cloud requires model mapping to translate Claude model names to Ollama models
 - Provider system supports format conversion between different API standards
 - Default OAuth client ID: `9d1c250a-e61b-44d9-88ed-5944d1962f5e` (configurable via environment or config file) — this applies to the Anthropic provider; other OAuth providers (xAI, Codex, Qwen) use their own fixed client IDs
@@ -92,6 +96,7 @@
 - [OAuth Authentication Flow](#oauth-authentication-flow)
 - [AnthropicProvider Implementation](#anthropicprovider-implementation)
 - [ZaiProvider Implementation](#zaiprovider-implementation)
+- [TokenHarborProvider Implementation](#tokenharborprovider-implementation)
 - [VertexAIProvider Implementation](#vertexaiprovider-implementation)
 - [OpenAI-Compatible Provider Implementation](#openai-compatible-provider-implementation)
 - [XaiProvider Implementation](#xaiprovider-implementation)
@@ -189,12 +194,18 @@ The better-ccflare providers system is a modular architecture designed to suppor
     - Rewrites the Claude Code system prompt into a Qwen Code identity before forwarding
     - All Claude model families map to a single `coder-model`
 
+14. **TokenHarbor Provider** - Provides access to:
+    - **TokenHarbor's Anthropic-compatible gateway** at `https://tokenharbor.ai` (overridable per account)
+    - API key authentication (`x-api-key`)
+    - Two usage allowances over one shared 7-day window, polled from the account's own endpoint
+    - Per-model peak pricing taken from the account's `/v1/models` listing, with a pre-reset grace window
+
 Other providers registered in `packages/providers/src/index.ts` but not covered in depth here (Alibaba Coding Plan, AWS Bedrock, Kilo, OpenRouter, Sail Research, OpenCode Go, CodeBuddy) are thin wrappers around the `AnthropicCompatibleProvider`/`OpenAICompatibleProvider`/`BaseProvider` bases described below, following the same patterns as Z.ai, Minimax, and OpenAI-Compatible respectively. Sail Research and OpenCode Go additionally override `mapModelForRequest` so a plain Claude Code model name is translated even when the account has no model mappings of its own.
 
 The providers system handles:
 - OAuth authentication flows with PKCE security (Anthropic, and refresh-token/device-code variants for xAI, Codex, Qwen)
 - Google Cloud authentication (Vertex AI)
-- API key authentication (Z.ai, OpenAI-Compatible including Mistral, NanoGPT, Minimax, DeepSeek, Sail Research, OpenCode Go, Ollama Cloud)
+- API key authentication (Z.ai, OpenAI-Compatible including Mistral, NanoGPT, Minimax, DeepSeek, TokenHarbor, Sail Research, OpenCode Go, Ollama Cloud)
 - Token lifecycle management (refresh, expiration)
 - Provider-specific request routing and header management
 - Rate limit detection and handling
@@ -383,6 +394,53 @@ prepareHeaders(headers: Headers, accessToken?: string, apiKey?: string): Headers
 ```
 
 The API key is stored in the `refresh_token` field of the account record for consistency with the authentication system.
+
+## TokenHarborProvider Implementation
+
+The TokenHarborProvider (`packages/providers/src/providers/tokenharbor/provider.ts`) shares the `BaseAnthropicCompatibleProvider` transport. Its only differences from a generic `anthropic-compatible` account are the provider id (`tokenharbor`), which switches on usage polling and per-model peak pricing, and a default endpoint:
+
+```typescript
+export class TokenHarborProvider extends BaseAnthropicCompatibleProvider {
+  constructor() {
+    super({ name: "tokenharbor", authHeader: "x-api-key", authType: "direct", supportsStreaming: true });
+  }
+  getEndpoint(): string { return "https://tokenharbor.ai"; }
+}
+```
+
+`buildUrl` honours the account's `custom_endpoint` when set, so a mirror of the same gateway keeps working; the default is used otherwise. Credentials are the account's API key, sent as `x-api-key` on inference requests.
+
+### Usage polling
+
+`packages/providers/src/tokenharbor-usage-fetcher.ts` polls:
+
+```http
+GET {account endpoint}/api/cli/free-tier
+Authorization: Bearer <api key>
+```
+
+The payload carries **two allowances over one shared 7-day window**:
+
+- `plan_used_pct` — the paid Pass allowance, gated by `plan_exhausted` and named by `plan_name` when `on_plan` is true.
+- `used_pct` — the free-model allowance, gated by `exhausted`.
+
+`reset_at` is the end of the shared window (it equals `period_ends_at`). The fetcher reads only the documented fields (`plan_name`, `on_plan`, `plan_used_pct`, `plan_exhausted`, `used_pct`, `exhausted`, `activated`, `reset_at`, and optional `models`/`models_enabled`) and ignores extras; `plan_name` and `reset_at` may be null. The utilization that gates routing is the Pass when `on_plan`, the free allowance otherwise, clamped to 0–100. Failures return `null` and never affect provider operation.
+
+The dashboard renders both allowances as separate bars — `Pass (<plan_name>)` and `Free models` — sharing one reset countdown, and marks each bar exhausted from its own flag (a spent allowance can read below 100% at the request that spent it).
+
+### Per-model peak pricing
+
+TokenHarbor's peak pricing is per model, not per provider. The account's own `GET /v1/models` listing marks peak-priced models with `pricing.off_peak.window` (for example `"14:00–00:00 UTC"`); both the window and the model set are read from that listing, nothing is hardcoded. `packages/proxy/src/tokenharbor-peak.ts` uses the listing to skip only those models during their window. Models with no `off_peak` block stay routable, and the account itself is never paused. See [routing-architecture.md](routing-architecture.md#peak-pricing-exclusion) for the routing paths and fail-open rules.
+
+### Pre-reset grace window
+
+Allowances are use-it-or-lose-it, so inside the last `CCFLARE_TOKENHARBOR_PEAK_GRACE_HOURS` hours before the shared 7-day reset (default `24`; `0` disables) peak-priced models are **not** skipped, letting leftover Pass allowance be spent at peak price rather than expire. Grace is withheld when the gating allowance reports itself exhausted (`plan_exhausted` when `on_plan`, else `exhausted`), when its exhaustion state is unknown, when no usage is cached, or when the reset is absent or already in the past. The same decision drives routing and the dashboard peak badge, and it never unpauses a manually paused account. See [configuration.md](configuration.md#peak-hours-pause).
+
+### Migration and account creation
+
+On boot, both the SQLite and PostgreSQL migrations promote existing `anthropic-compatible` rows whose `custom_endpoint` points at `tokenharbor.ai` to provider `tokenharbor`, keeping the endpoint unchanged. `tokenharbor` is the canonical form: usage polling is keyed on it. A row still marked `anthropic-compatible` on TokenHarbor's host is recognised for peak pricing through `isTokenHarborAccount`.
+
+Create an account from the dashboard add form (API key plus optional endpoint, default `https://tokenharbor.ai`), the CLI (`--mode tokenharbor`), or `POST /api/accounts` with `{"provider":"tokenharbor","name":"...","apiKey":"..."}`.
 
 ## VertexAIProvider Implementation
 

@@ -196,7 +196,7 @@ The better-ccflare CLI provides comprehensive command-line interface for managem
 bun run apps/cli/src/main.ts [command]
 
 # Account management
-bun run apps/cli/src/main.ts --add-account <name> --mode <claude-oauth|console|zai|openai-compatible|sailresearch|opencode-go> --priority <number>  # Add account
+bun run apps/cli/src/main.ts --add-account <name> --mode <claude-oauth|console|zai|tokenharbor|openai-compatible|sailresearch|opencode-go> --priority <number>  # Add account
 bun run apps/cli/src/main.ts --list                   # List accounts
 bun run apps/cli/src/main.ts --remove <name>          # Remove account
 bun run apps/cli/src/main.ts --pause <name>           # Pause account
