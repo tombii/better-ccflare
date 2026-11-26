@@ -128,7 +128,9 @@ export {
 } from "./response-handler";
 export {
 	clearTokenHarborPeakCacheForAccount,
+	clearTokenHarborPeakCacheForTests,
 	getPeakPricedModelIds,
+	getTokenHarborPeakListing,
 	getTokenHarborPeakState,
 	isTokenHarborAccount,
 	isTokenHarborEndpoint,

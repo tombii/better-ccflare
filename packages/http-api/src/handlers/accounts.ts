@@ -3477,6 +3477,7 @@ export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 			// peak-priced are avoided, so the account must be on TokenHarbor's
 			// host for the toggle to mean anything. Every other
 			// anthropic-compatible endpoint has no peak concept.
+			let tokenHarbor = false;
 			if (
 				account.provider === TOKENHARBOR_PROVIDER ||
 				account.provider === LEGACY_TOKENHARBOR_PROVIDER
@@ -3506,6 +3507,7 @@ export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 						),
 					);
 				}
+				tokenHarbor = true;
 			} else if (
 				account.provider !== "zai" &&
 				account.provider !== "deepseek"
@@ -3528,6 +3530,9 @@ export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 					"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ? AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
 					[accountId],
 				);
+				// The badge reads the cached listing without consulting the toggle,
+				// so a disabled toggle must drop it or `peakHours.active` stays true.
+				if (tokenHarbor) clearTokenHarborPeakCacheForAccount(accountId);
 			}
 
 			const action = enabled === 1 ? "enabled" : "disabled";
