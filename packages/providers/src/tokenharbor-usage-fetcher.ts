@@ -12,25 +12,16 @@ const FETCH_TIMEOUT_MS = 5_000;
  * paid Pass allowance, `used_pct` the free-model one.
  */
 export interface TokenHarborUsageData {
-	plan_name: string;
+	plan_name: string | null;
 	models: string[];
 	models_enabled: boolean;
 	on_plan: boolean;
-	campaign: boolean;
-	req_used: number;
 	reset_at: string | null;
-	unlocked: boolean;
 	used_pct: number;
 	activated: boolean;
 	exhausted: boolean;
-	rpm_limit: number;
-	buffer_pct: number;
 	plan_used_pct: number;
-	base_share_pct: number;
-	campaign_label: string;
-	period_ends_at: string | null;
 	plan_exhausted: boolean;
-	period_started_at: string | null;
 }
 
 function isNumber(value: unknown): value is number {
@@ -107,56 +98,48 @@ function readAllowances(usage: unknown): TokenHarborAllowances | null {
 	};
 }
 
-/** Validate a raw response body; null when any known field has the wrong type. */
+/**
+ * Validate a raw response body; null when any guaranteed field has the wrong
+ * type. Only the documented fields are read: TokenHarbor promises to keep them
+ * and says everything else may appear or vanish.
+ */
 export function parseTokenHarborUsageData(
 	body: unknown,
 ): TokenHarborUsageData | null {
 	if (!body || typeof body !== "object") return null;
 	const b = body as Record<string, unknown>;
+	const planName = b.plan_name;
+	const resetAt = b.reset_at;
+	const models = b.models;
+	const modelsEnabled = b.models_enabled;
 	if (
-		!isString(b.plan_name) ||
-		!Array.isArray(b.models) ||
-		!b.models.every(isString) ||
-		!isBoolean(b.models_enabled) ||
+		!isNullableString(planName) ||
 		!isBoolean(b.on_plan) ||
-		!isBoolean(b.campaign) ||
-		!isNumber(b.req_used) ||
-		!isBoolean(b.unlocked) ||
-		!isNumber(b.used_pct) ||
-		!isBoolean(b.activated) ||
-		!isBoolean(b.exhausted) ||
-		!isNumber(b.rpm_limit) ||
-		!isNumber(b.buffer_pct) ||
 		!isNumber(b.plan_used_pct) ||
-		!isNumber(b.base_share_pct) ||
-		!isString(b.campaign_label) ||
 		!isBoolean(b.plan_exhausted) ||
-		!isNullableString(b.reset_at) ||
-		!isNullableString(b.period_ends_at) ||
-		!isNullableString(b.period_started_at)
+		!isNumber(b.used_pct) ||
+		!isBoolean(b.exhausted) ||
+		!isBoolean(b.activated) ||
+		// Required key, but its value is legitimately null between windows.
+		!("reset_at" in b) ||
+		!isNullableString(resetAt) ||
+		(models !== undefined &&
+			(!Array.isArray(models) || !models.every(isString))) ||
+		(modelsEnabled !== undefined && !isBoolean(modelsEnabled))
 	) {
 		return null;
 	}
 	return {
-		plan_name: b.plan_name,
-		models: b.models,
-		models_enabled: b.models_enabled,
+		plan_name: planName ?? null,
+		models: models === undefined ? [] : (models as string[]),
+		models_enabled: modelsEnabled ?? true,
 		on_plan: b.on_plan,
-		campaign: b.campaign,
-		req_used: b.req_used,
-		reset_at: b.reset_at ?? null,
-		unlocked: b.unlocked,
+		reset_at: resetAt ?? null,
 		used_pct: b.used_pct,
 		activated: b.activated,
 		exhausted: b.exhausted,
-		rpm_limit: b.rpm_limit,
-		buffer_pct: b.buffer_pct,
 		plan_used_pct: b.plan_used_pct,
-		base_share_pct: b.base_share_pct,
-		campaign_label: b.campaign_label,
-		period_ends_at: b.period_ends_at ?? null,
 		plan_exhausted: b.plan_exhausted,
-		period_started_at: b.period_started_at ?? null,
 	};
 }
 

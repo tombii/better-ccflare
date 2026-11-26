@@ -111,11 +111,71 @@ describe("TokenHarbor usage fetcher", () => {
 		const parsed = parseTokenHarborUsageData({
 			...USAGE_BODY,
 			reset_at: null,
-			period_ends_at: null,
 		});
 
 		expect(parsed?.reset_at).toBeNull();
 		expect(getTokenHarborResetMs(parsed)).toBeNull();
+	});
+
+	it("accepts plan_name: null (no Pass on the account)", () => {
+		const parsed = parseTokenHarborUsageData({
+			...USAGE_BODY,
+			plan_name: null,
+			on_plan: false,
+		});
+
+		expect(parsed?.plan_name).toBeNull();
+		expect(parsed?.on_plan).toBe(false);
+	});
+
+	it("defaults absent plan_name to null", () => {
+		const { plan_name: _omit, ...rest } = USAGE_BODY;
+
+		expect(parseTokenHarborUsageData(rest)?.plan_name).toBeNull();
+	});
+
+	it("ignores undocumented fields and their types", () => {
+		// The docs say only the listed fields are guaranteed; anything else may
+		// appear and must not make a valid payload fail.
+		const parsed = parseTokenHarborUsageData({
+			...USAGE_BODY,
+			campaign: "not-a-boolean",
+			req_used: null,
+			rpm_limit: "unlimited",
+			some_future_field: { nested: true },
+		});
+
+		expect(parsed?.plan_used_pct).toBe(0);
+	});
+
+	it("parses a minimal documented payload", () => {
+		const parsed = parseTokenHarborUsageData({
+			plan_name: null,
+			on_plan: false,
+			plan_used_pct: 0,
+			plan_exhausted: false,
+			used_pct: 42,
+			exhausted: false,
+			activated: true,
+			reset_at: "2026-12-03T09:05:44.382+00:00",
+		});
+
+		expect(parsed).toMatchObject({
+			plan_name: null,
+			on_plan: false,
+			plan_used_pct: 0,
+			used_pct: 42,
+			reset_at: "2026-12-03T09:05:44.382+00:00",
+		});
+		// Optional documented fields default.
+		expect(parsed?.models).toEqual([]);
+		expect(parsed?.models_enabled).toBe(true);
+	});
+
+	it("rejects a payload missing the required reset_at key", () => {
+		const { reset_at: _omit, ...rest } = USAGE_BODY;
+
+		expect(parseTokenHarborUsageData(rest)).toBeNull();
 	});
 
 	it("rejects a non-string reset_at", () => {

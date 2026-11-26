@@ -35,6 +35,7 @@ import {
 	getRepresentativeUtilization,
 	getRepresentativeUtilizationForProvider,
 	getRepresentativeWindow,
+	getTokenHarborRepresentativeUtilization,
 	parseCodexUsageHeaders,
 	type TokenHarborUsageData,
 	type UsageData,
@@ -714,35 +715,25 @@ export function createAccountsListHandler(
 						typeof th.plan_used_pct === "number" &&
 						typeof th.used_pct === "number"
 					) {
-						try {
-							const {
-								getTokenHarborRepresentativeUtilization,
-							} = require("@better-ccflare/providers");
-							usageUtilization = getTokenHarborRepresentativeUtilization(th);
-							usageWindow = "seven_day";
-							fullUsageData = {
-								seven_day: {
-									utilization: th.plan_used_pct,
-									resets_at: th.reset_at,
-								},
-								tokenharbor: {
-									plan_name: th.plan_name ?? null,
-									on_plan: th.on_plan,
-									plan_used_pct: th.plan_used_pct,
-									plan_exhausted: th.plan_exhausted === true,
-									used_pct: th.used_pct,
-									exhausted: th.exhausted === true,
-									activated: th.activated === true,
-									resets_at: th.reset_at,
-									models: Array.isArray(th.models) ? th.models : [],
-								},
-							};
-						} catch (error) {
-							log.warn(
-								`Failed to process TokenHarbor usage data for account ${account.name}:`,
-								error,
-							);
-						}
+						usageUtilization = getTokenHarborRepresentativeUtilization(th);
+						usageWindow = "seven_day";
+						fullUsageData = {
+							seven_day: {
+								utilization: th.plan_used_pct,
+								resets_at: th.reset_at,
+							},
+							tokenharbor: {
+								plan_name: th.plan_name ?? null,
+								on_plan: th.on_plan,
+								plan_used_pct: th.plan_used_pct,
+								plan_exhausted: th.plan_exhausted === true,
+								used_pct: th.used_pct,
+								exhausted: th.exhausted === true,
+								activated: th.activated === true,
+								resets_at: th.reset_at,
+								models: Array.isArray(th.models) ? th.models : [],
+							},
+						};
 					}
 				}
 
