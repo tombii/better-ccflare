@@ -43,6 +43,30 @@ function makePreMigrationDb(): Database {
 		)
 	`);
 
+	// Mirrors ensureSchema's api_keys table so key rows can exist pre-migration.
+	db.run(`
+		CREATE TABLE api_keys (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			hashed_key TEXT NOT NULL UNIQUE,
+			prefix_last_8 TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used INTEGER,
+			usage_count INTEGER DEFAULT 0,
+			is_active INTEGER DEFAULT 1,
+			allowed_accounts TEXT,
+			allowed_models TEXT,
+			allowed_providers TEXT,
+			limit_usd REAL,
+			limit_window TEXT,
+			limit_enforce TEXT,
+			limit_window_mode TEXT NOT NULL DEFAULT 'calendar' CHECK (limit_window_mode IN ('calendar', 'rolling')),
+			family_combo_overrides TEXT,
+			spend_reset_at INTEGER,
+			spend_reset_by TEXT
+		)
+	`);
+
 	return db;
 }
 
@@ -65,6 +89,26 @@ function providerOf(db: Database, id: string): string {
 		)
 		.get(id);
 	return row?.provider as string;
+}
+
+function insertApiKey(
+	db: Database,
+	id: string,
+	allowedProviders: string | null,
+): void {
+	db.run(
+		"INSERT INTO api_keys (id, name, hashed_key, prefix_last_8, created_at, allowed_providers) VALUES (?, ?, ?, ?, ?, ?)",
+		[id, id, `hash-${id}`, "12345678", Date.now(), allowedProviders],
+	);
+}
+
+function allowedProvidersOf(db: Database, id: string): string | null {
+	const row = db
+		.query<{ allowed_providers: string | null }, [string]>(
+			"SELECT allowed_providers FROM api_keys WHERE id = ?",
+		)
+		.get(id);
+	return row?.allowed_providers ?? null;
 }
 
 describe("Database migration — TokenHarbor provider promotion", () => {
@@ -104,6 +148,30 @@ describe("Database migration — TokenHarbor provider promotion", () => {
 		);
 		insertAccount(db, "zai-row", "zai", "https://tokenharbor.ai");
 		insertAccount(db, "no-endpoint", "anthropic-compatible", null);
+		insertAccount(
+			db,
+			"uppercase-port",
+			"anthropic-compatible",
+			"https://TOKENHARBOR.AI:443/v1",
+		);
+		insertAccount(
+			db,
+			"path-lookalike",
+			"anthropic-compatible",
+			"https://evil.example//tokenharbor.ai",
+		);
+		insertAccount(
+			db,
+			"json-endpoint",
+			"anthropic-compatible",
+			'{"endpoint":"https://tokenharbor.ai"}',
+		);
+		insertAccount(db, "invalid-json", "anthropic-compatible", '{"endpoint":');
+
+		insertApiKey(db, "key-legacy", '["anthropic-compatible"]');
+		insertApiKey(db, "key-openai", '["openai-compatible"]');
+		insertApiKey(db, "key-null", null);
+		insertApiKey(db, "key-empty", "[]");
 	});
 
 	afterEach(() => {
@@ -144,5 +212,40 @@ describe("Database migration — TokenHarbor provider promotion", () => {
 
 		expect(providerOf(db, "plain")).toBe("tokenharbor");
 		expect(providerOf(db, "other")).toBe("anthropic-compatible");
+	});
+
+	it("matches the parsed host, not a LIKE pattern", () => {
+		runMigrations(db);
+
+		// Port stripped, host case normalised.
+		expect(providerOf(db, "uppercase-port")).toBe("tokenharbor");
+		// Hostname is evil.example; the path merely mentions TokenHarbor.
+		expect(providerOf(db, "path-lookalike")).toBe("anthropic-compatible");
+		// A JSON custom_endpoint resolves through its endpoint field.
+		expect(providerOf(db, "json-endpoint")).toBe("tokenharbor");
+		expect(providerOf(db, "invalid-json")).toBe("anthropic-compatible");
+	});
+
+	it("adds tokenharbor to API keys that allowlist anthropic-compatible", () => {
+		runMigrations(db);
+
+		expect(JSON.parse(allowedProvidersOf(db, "key-legacy") as string)).toEqual([
+			"anthropic-compatible",
+			"tokenharbor",
+		]);
+		// Every other key keeps NULL, [] or its unrelated allowlist verbatim.
+		expect(allowedProvidersOf(db, "key-openai")).toBe('["openai-compatible"]');
+		expect(allowedProvidersOf(db, "key-null")).toBeNull();
+		expect(allowedProvidersOf(db, "key-empty")).toBe("[]");
+	});
+
+	it("does not duplicate tokenharbor when migrations run twice", () => {
+		runMigrations(db);
+		runMigrations(db);
+
+		expect(JSON.parse(allowedProvidersOf(db, "key-legacy") as string)).toEqual([
+			"anthropic-compatible",
+			"tokenharbor",
+		]);
 	});
 });

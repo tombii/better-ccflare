@@ -6,6 +6,10 @@ import {
 	addPerformanceIndexes,
 	dropRedundantRequestIndexes,
 } from "./performance-indexes";
+import {
+	addTokenHarborToAllowedProviders,
+	isTokenHarborCustomEndpoint,
+} from "./tokenharbor-promotion";
 
 const log = new Logger("DatabaseMigrations");
 
@@ -2345,19 +2349,49 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 		// TokenHarbor is now a first-class provider. Promote only rows whose
 		// endpoint is TokenHarbor's; other anthropic-compatible accounts are
-		// untouched, and the custom_endpoint is kept as-is.
-		const promotedTokenHarbor = db
+		// untouched, and the custom_endpoint is kept as-is. The host is checked
+		// in JS because a LIKE cannot normalise case, ports or JSON endpoints.
+		const tokenHarborCandidates = db
 			.prepare(
-				`UPDATE accounts SET provider = 'tokenharbor'
-				 WHERE provider = 'anthropic-compatible'
-				   AND custom_endpoint IS NOT NULL
-				   AND (custom_endpoint LIKE '%//tokenharbor.ai' OR custom_endpoint LIKE '%//tokenharbor.ai/%')`,
+				`SELECT id, custom_endpoint FROM accounts
+				 WHERE provider = 'anthropic-compatible' AND custom_endpoint IS NOT NULL`,
 			)
-			.run().changes as number;
+			.all() as Array<{ id: string; custom_endpoint: string }>;
+		const promoteTokenHarbor = db.prepare(
+			"UPDATE accounts SET provider = 'tokenharbor' WHERE id = ?",
+		);
+		let promotedTokenHarbor = 0;
+		for (const row of tokenHarborCandidates) {
+			if (isTokenHarborCustomEndpoint(row.custom_endpoint)) {
+				promoteTokenHarbor.run(row.id);
+				promotedTokenHarbor++;
+			}
+		}
 		if (promotedTokenHarbor > 0) {
 			log.info(
 				`Promoted ${promotedTokenHarbor} TokenHarbor account(s) to the tokenharbor provider`,
 			);
+		}
+
+		// Keys that allowlisted the shared `anthropic-compatible` string would
+		// otherwise lose the accounts just promoted. NULL and [] keep their
+		// meaning (unrestricted / deny-all).
+		const hasTokenHarborAccount = db
+			.prepare("SELECT 1 FROM accounts WHERE provider = 'tokenharbor' LIMIT 1")
+			.get();
+		if (hasTokenHarborAccount) {
+			const apiKeys = db
+				.prepare(
+					"SELECT id, allowed_providers FROM api_keys WHERE allowed_providers IS NOT NULL",
+				)
+				.all() as Array<{ id: string; allowed_providers: string }>;
+			const updateAllowedProviders = db.prepare(
+				"UPDATE api_keys SET allowed_providers = ? WHERE id = ?",
+			);
+			for (const key of apiKeys) {
+				const updated = addTokenHarborToAllowedProviders(key.allowed_providers);
+				if (updated !== null) updateAllowedProviders.run(updated, key.id);
+			}
 		}
 	});
 

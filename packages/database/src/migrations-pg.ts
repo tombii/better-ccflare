@@ -1,5 +1,9 @@
 import { Logger } from "@better-ccflare/logger";
 import type { BunSqlAdapter } from "./adapters/bun-sql-adapter";
+import {
+	addTokenHarborToAllowedProviders,
+	isTokenHarborCustomEndpoint,
+} from "./tokenharbor-promotion";
 
 const log = new Logger("DatabaseMigrations-PG");
 
@@ -2303,19 +2307,55 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	}
 
 	// TokenHarbor is now a first-class provider. Idempotent: after the first
-	// run no row still matches, and the custom_endpoint is kept as-is.
+	// run no row still matches, and the custom_endpoint is kept as-is. The host
+	// is checked in JS because a LIKE cannot normalise case, ports or JSON.
 	try {
-		const promotedTokenHarbor = await adapter.runWithChanges(
-			`UPDATE accounts SET provider = 'tokenharbor'
-			 WHERE provider = 'anthropic-compatible'
-			   AND custom_endpoint IS NOT NULL
-			   AND (custom_endpoint LIKE '%//tokenharbor.ai' OR custom_endpoint LIKE '%//tokenharbor.ai/%')`,
+		const candidates = await adapter.query<{
+			id: string;
+			custom_endpoint: string;
+		}>(
+			`SELECT id, custom_endpoint FROM accounts
+			 WHERE provider = 'anthropic-compatible' AND custom_endpoint IS NOT NULL`,
 		);
+		let promotedTokenHarbor = 0;
+		for (const row of candidates) {
+			if (!isTokenHarborCustomEndpoint(row.custom_endpoint)) continue;
+			promotedTokenHarbor += await adapter.runWithChanges(
+				"UPDATE accounts SET provider = 'tokenharbor' WHERE id = ?",
+				[row.id],
+			);
+		}
 		backfillWork.recordChanged("accounts", promotedTokenHarbor);
 		if (promotedTokenHarbor > 0) {
 			log.info(
 				`Promoted ${promotedTokenHarbor} TokenHarbor account(s) to the tokenharbor provider`,
 			);
+		}
+
+		// Keys that allowlisted the shared `anthropic-compatible` string would
+		// otherwise lose the accounts just promoted. NULL and [] keep their
+		// meaning (unrestricted / deny-all).
+		const hasTokenHarborAccount = await adapter.get<{ one: number }>(
+			"SELECT 1 AS one FROM accounts WHERE provider = 'tokenharbor' LIMIT 1",
+		);
+		if (hasTokenHarborAccount) {
+			const apiKeys = await adapter.query<{
+				id: string;
+				allowed_providers: string;
+			}>(
+				"SELECT id, allowed_providers FROM api_keys WHERE allowed_providers IS NOT NULL",
+			);
+			let changedKeys = 0;
+			for (const key of apiKeys) {
+				const updated = addTokenHarborToAllowedProviders(key.allowed_providers);
+				if (updated === null) continue;
+				await adapter.run(
+					"UPDATE api_keys SET allowed_providers = ? WHERE id = ?",
+					[updated, key.id],
+				);
+				changedKeys++;
+			}
+			backfillWork.recordChanged("api_keys", changedKeys);
 		}
 	} catch (error) {
 		log.warn(
