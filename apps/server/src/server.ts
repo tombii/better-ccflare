@@ -484,6 +484,7 @@ const API_KEY_USAGE_POLLING_PROVIDERS = [
 	"kilo",
 	"openrouter",
 	"nanogpt",
+	"tokenharbor",
 	"zai",
 	"minimax",
 	"opencode-go",
@@ -497,6 +498,7 @@ const API_KEY_USAGE_POLLING_LABELS: Record<string, string> = {
 	kilo: "Kilo Gateway",
 	openrouter: "OpenRouter",
 	nanogpt: "NanoGPT",
+	tokenharbor: "TokenHarbor",
 	zai: "Zai",
 	minimax: "Minimax",
 	"opencode-go": "OpenCode Go",
@@ -599,6 +601,9 @@ export function startApiKeyUsagePolling(
 			return true;
 
 		case "nanogpt":
+		case "tokenharbor":
+			// Both usage APIs are endpoint-relative and snapshot their windows;
+			// neither has a window reset that should clear the account session.
 			usageCache.startPolling(
 				account.id,
 				apiKeyProvider,

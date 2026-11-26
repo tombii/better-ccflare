@@ -2302,6 +2302,27 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		// Ignore if fails
 	}
 
+	// TokenHarbor is now a first-class provider. Idempotent: after the first
+	// run no row still matches, and the custom_endpoint is kept as-is.
+	try {
+		const promotedTokenHarbor = await adapter.runWithChanges(
+			`UPDATE accounts SET provider = 'tokenharbor'
+			 WHERE provider = 'anthropic-compatible'
+			   AND custom_endpoint IS NOT NULL
+			   AND (custom_endpoint LIKE '%//tokenharbor.ai' OR custom_endpoint LIKE '%//tokenharbor.ai/%')`,
+		);
+		backfillWork.recordChanged("accounts", promotedTokenHarbor);
+		if (promotedTokenHarbor > 0) {
+			log.info(
+				`Promoted ${promotedTokenHarbor} TokenHarbor account(s) to the tokenharbor provider`,
+			);
+		}
+	} catch (error) {
+		log.warn(
+			`Error promoting TokenHarbor accounts: ${(error as Error).message}`,
+		);
+	}
+
 	await migrateApiKeyLimitsPg(adapter);
 	await migrateApiKeySpendResetPg(adapter);
 

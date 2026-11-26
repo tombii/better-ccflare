@@ -43,6 +43,8 @@ export {
 	listProviders,
 	registerProvider,
 } from "./registry";
+// Export TokenHarbor usage fetcher
+export * from "./tokenharbor-usage-fetcher";
 export * from "./types";
 // Export usage fetcher
 export * from "./usage-fetcher";
@@ -86,6 +88,7 @@ import { OpencodeGoProvider } from "./providers/opencode-go/provider";
 import { OpenRouterProvider } from "./providers/openrouter/provider";
 import { QwenProvider } from "./providers/qwen/provider";
 import { SailresearchProvider } from "./providers/sailresearch/provider";
+import { TokenHarborProvider } from "./providers/tokenharbor/provider";
 import { VertexAIProvider } from "./providers/vertex-ai/provider";
 import { XaiProvider } from "./providers/xai/provider";
 import { ZaiProvider } from "./providers/zai/provider";
@@ -105,6 +108,7 @@ registry.registerProvider(new DeepseekProvider());
 registry.registerProvider(new SailresearchProvider());
 registry.registerProvider(new OpencodeGoProvider());
 registry.registerProvider(new NanoGPTProvider());
+registry.registerProvider(new TokenHarborProvider());
 registry.registerProvider(new ZaiProvider());
 registry.registerProvider(new VertexAIProvider());
 registry.registerProvider(new XaiProvider());

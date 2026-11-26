@@ -36,6 +36,7 @@ import {
 	getRepresentativeUtilizationForProvider,
 	getRepresentativeWindow,
 	parseCodexUsageHeaders,
+	type TokenHarborUsageData,
 	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -53,7 +54,8 @@ import {
 	getPeakPricedModelIds,
 	getTokenHarborPeakState,
 	getUsageThrottleStatus,
-	isTokenHarborEndpoint,
+	isTokenHarborAccount,
+	LEGACY_TOKENHARBOR_PROVIDER,
 	refreshCodexUsageForAccount,
 	restartUsagePollingForAccount,
 	TOKENHARBOR_PROVIDER,
@@ -701,6 +703,47 @@ export function createAccountsListHandler(
 							);
 						}
 					}
+				} else if (account.provider === "tokenharbor" && usageData) {
+					// TokenHarbor reports two allowances over one shared 7-day
+					// window: the Pass (plan_used_pct) and the free-model pool
+					// (used_pct). The Pass is surfaced as seven_day; both are kept
+					// for the provider-specific panel.
+					const th = usageData as unknown as TokenHarborUsageData;
+					if (
+						typeof th.on_plan === "boolean" &&
+						typeof th.plan_used_pct === "number" &&
+						typeof th.used_pct === "number"
+					) {
+						try {
+							const {
+								getTokenHarborRepresentativeUtilization,
+							} = require("@better-ccflare/providers");
+							usageUtilization = getTokenHarborRepresentativeUtilization(th);
+							usageWindow = "seven_day";
+							fullUsageData = {
+								seven_day: {
+									utilization: th.plan_used_pct,
+									resets_at: th.reset_at,
+								},
+								tokenharbor: {
+									plan_name: th.plan_name ?? null,
+									on_plan: th.on_plan,
+									plan_used_pct: th.plan_used_pct,
+									plan_exhausted: th.plan_exhausted === true,
+									used_pct: th.used_pct,
+									exhausted: th.exhausted === true,
+									activated: th.activated === true,
+									resets_at: th.reset_at,
+									models: Array.isArray(th.models) ? th.models : [],
+								},
+							};
+						} catch (error) {
+							log.warn(
+								`Failed to process TokenHarbor usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
 				}
 
 				const usageThrottleSettings = {
@@ -879,12 +922,10 @@ export function createAccountsListHandler(
 					peakHoursPauseSupported:
 						account.provider === "zai" ||
 						account.provider === "deepseek" ||
-						(account.provider === TOKENHARBOR_PROVIDER &&
-							isTokenHarborEndpoint(account as never)),
-					peakPricedModels:
-						account.provider === TOKENHARBOR_PROVIDER
-							? getPeakPricedModelIds(account.id)
-							: null,
+						isTokenHarborAccount(account as never),
+					peakPricedModels: isTokenHarborAccount(account as never)
+						? getPeakPricedModelIds(account.id)
+						: null,
 					// NOT NULL on both backends; `!!` normalises 1/0 and true/false.
 					nightWindowEnabled: !!account.night_window_enabled,
 					// Provider-wide windows first (zai/deepseek/anthropic), then
@@ -892,7 +933,7 @@ export function createAccountsListHandler(
 					// here", not "off peak".
 					peakHours:
 						getPeakHoursState(account.provider, now) ??
-						(account.provider === TOKENHARBOR_PROVIDER
+						(isTokenHarborAccount(account as never)
 							? getTokenHarborPeakState(account.id, null, now)
 							: null),
 					usagePauseFiveHourThreshold:
@@ -3445,7 +3486,13 @@ export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 			// peak-priced are avoided, so the account must be on TokenHarbor's
 			// host for the toggle to mean anything. Every other
 			// anthropic-compatible endpoint has no peak concept.
-			if (account.provider === TOKENHARBOR_PROVIDER) {
+			if (
+				account.provider === TOKENHARBOR_PROVIDER ||
+				account.provider === LEGACY_TOKENHARBOR_PROVIDER
+			) {
+				// The row read above carries only name/provider, so load the
+				// endpoint before deciding: a legacy anthropic-compatible row is
+				// TokenHarbor only on its host, a first-class row always is.
 				const full = await db.get<{
 					custom_endpoint: string | null;
 					api_key: string | null;
@@ -3454,7 +3501,14 @@ export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 					"SELECT custom_endpoint, api_key, model_mappings FROM accounts WHERE id = ?",
 					[accountId],
 				);
-				if (!isTokenHarborEndpoint(full as never)) {
+				// The provider comes from the row already read; only the endpoint
+				// needed a second selection.
+				if (
+					!isTokenHarborAccount({
+						...full,
+						provider: account.provider,
+					} as never)
+				) {
 					return errorResponse(
 						BadRequest(
 							"Peak hours pause is only available for Zai, DeepSeek and TokenHarbor accounts",

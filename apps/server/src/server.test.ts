@@ -1537,6 +1537,7 @@ describe("isApiKeyUsagePollingProvider", () => {
 		expect(isApiKeyUsagePollingProvider("nanogpt")).toBe(true);
 		expect(isApiKeyUsagePollingProvider("zai")).toBe(true);
 		expect(isApiKeyUsagePollingProvider("minimax")).toBe(true);
+		expect(isApiKeyUsagePollingProvider("tokenharbor")).toBe(true);
 	});
 
 	it("rejects refresh-backed providers and everything that is not a provider", () => {
@@ -1688,6 +1689,30 @@ describe("startApiKeyUsagePolling", () => {
 		expect(call?.[2]).toBe("nanogpt");
 		// NanoGPT's usage endpoint is relative to the account's custom endpoint.
 		expect(call?.[4]).toBe("https://nano-gpt.example/api");
+		expect(typeof call?.[8]).toBe("function");
+	});
+
+	it("passes TokenHarbor its custom endpoint and an onSnapshot but no window reset", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = startApiKeyUsagePolling(
+			makeAccount({
+				id: "th-1",
+				name: "tokenharbor-1",
+				provider: "tokenharbor",
+				custom_endpoint: "https://tokenharbor.ai",
+			}),
+			registrar,
+			30_000,
+			makeDbOps(),
+		);
+
+		expect(result).toBe(true);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[2]).toBe("tokenharbor");
+		// TokenHarbor's usage endpoint is relative to the account's endpoint.
+		expect(call?.[4]).toBe("https://tokenharbor.ai");
+		// Both allowances share one 7-day window, so no session reset callback.
+		expect(call?.[5]).toBeUndefined();
 		expect(typeof call?.[8]).toBe("function");
 	});
 

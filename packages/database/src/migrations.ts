@@ -2342,6 +2342,23 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		])
 			if (!limitV2Columns.includes(column))
 				db.run(`ALTER TABLE api_keys ADD COLUMN ${column} ${type}`);
+
+		// TokenHarbor is now a first-class provider. Promote only rows whose
+		// endpoint is TokenHarbor's; other anthropic-compatible accounts are
+		// untouched, and the custom_endpoint is kept as-is.
+		const promotedTokenHarbor = db
+			.prepare(
+				`UPDATE accounts SET provider = 'tokenharbor'
+				 WHERE provider = 'anthropic-compatible'
+				   AND custom_endpoint IS NOT NULL
+				   AND (custom_endpoint LIKE '%//tokenharbor.ai' OR custom_endpoint LIKE '%//tokenharbor.ai/%')`,
+			)
+			.run().changes as number;
+		if (promotedTokenHarbor > 0) {
+			log.info(
+				`Promoted ${promotedTokenHarbor} TokenHarbor account(s) to the tokenharbor provider`,
+			);
+		}
 	});
 
 	// Execute the migration transaction

@@ -31,8 +31,15 @@ import type { Account } from "@better-ccflare/types";
 
 const log = new Logger("TokenHarborPeak");
 
-/** The provider string an `--mode anthropic-compatible` account stores. */
-export const TOKENHARBOR_PROVIDER = "anthropic-compatible";
+/** The provider string a first-class TokenHarbor account stores. */
+export const TOKENHARBOR_PROVIDER = "tokenharbor";
+
+/**
+ * Rows created before TokenHarbor had its own provider remain valid: they are
+ * still accepted when their endpoint is TokenHarbor's, and the migration
+ * rewrites them to {@link TOKENHARBOR_PROVIDER} on boot.
+ */
+export const LEGACY_TOKENHARBOR_PROVIDER = "anthropic-compatible";
 
 /** Exact host, never suffix-based — see `isTokenHarborEndpoint`. */
 const TOKENHARBOR_HOST = "tokenharbor.ai";
@@ -60,6 +67,20 @@ export function isTokenHarborEndpoint(account?: Account | null): boolean {
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * Whether this row belongs to TokenHarbor. A first-class provider row always
+ * does; a legacy anthropic-compatible row only when its endpoint is
+ * TokenHarbor's, so other custom endpoints stay untouched.
+ */
+export function isTokenHarborAccount(account?: Account | null): boolean {
+	if (!account) return false;
+	return (
+		account.provider === TOKENHARBOR_PROVIDER ||
+		(account.provider === LEGACY_TOKENHARBOR_PROVIDER &&
+			isTokenHarborEndpoint(account))
+	);
 }
 
 /**
@@ -205,7 +226,10 @@ async function fetchListing(
 		);
 		return null;
 	}
-	const base = getEndpointUrl(account).replace(/\/+$/, "");
+	// A first-class TokenHarbor row may carry no custom_endpoint at all; the
+	// shared getEndpointUrl default is OpenAI's, so fall back explicitly.
+	const endpoint = account.custom_endpoint?.trim() || "https://tokenharbor.ai";
+	const base = endpoint.replace(/\/+$/, "");
 	const url = `${base}${base.endsWith("/v1") ? "" : "/v1"}/models`;
 
 	const controller = new AbortController();
@@ -314,7 +338,8 @@ export function isPeakAffected(
 	// of skipping another gateway on TokenHarbor's prices. A plain string
 	// comparison on the stored row, not a URL parse — this is the request path.
 	if (
-		account.provider !== TOKENHARBOR_PROVIDER ||
+		(account.provider !== TOKENHARBOR_PROVIDER &&
+			account.provider !== LEGACY_TOKENHARBOR_PROVIDER) ||
 		account.custom_endpoint !== listing.account.custom_endpoint
 	) {
 		return false;

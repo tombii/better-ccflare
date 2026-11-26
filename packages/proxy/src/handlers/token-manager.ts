@@ -997,7 +997,8 @@ export async function getValidAccessToken(
 		account.provider === "claude-console-api" ||
 		account.provider === "anthropic-compatible" ||
 		account.provider === "minimax" ||
-		account.provider === "deepseek"
+		account.provider === "deepseek" ||
+		account.provider === "tokenharbor"
 	) {
 		if (account.api_key) {
 			return account.api_key;

@@ -82,6 +82,7 @@ export { OpenAICompatibleProvider } from "./openai/index";
 export { OpencodeGoProvider } from "./opencode-go/provider";
 export { OpenRouterProvider } from "./openrouter/index";
 export { SailresearchProvider } from "./sailresearch/provider";
+export { TokenHarborProvider } from "./tokenharbor/index";
 export { type VertexAIConfig, VertexAIProvider } from "./vertex-ai/index";
 export {
 	applyXaiConvIdHeader,

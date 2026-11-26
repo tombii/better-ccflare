@@ -95,6 +95,7 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
+		| "tokenharbor"
 		| "vertex-ai"
 		| "bedrock"
 		| "kilo"
@@ -2150,6 +2151,7 @@ export async function getAccountsList(
 					account.provider === "deepseek" ||
 					account.provider === "sailresearch" ||
 					account.provider === "opencode-go" ||
+					account.provider === "tokenharbor" ||
 					account.provider === "anthropic-compatible" ||
 					account.provider === "bedrock" ||
 					account.provider === "openrouter" ||

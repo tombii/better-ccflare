@@ -329,6 +329,24 @@ export interface MinimaxUsageData {
 	seven_day: MinimaxUsageWindow | null;
 }
 
+// Dashboard shape for TokenHarbor accounts. The Pass allowance is reported as
+// the shared seven_day window; the raw allowances ride alongside for the
+// provider-specific panel.
+export interface TokenHarborDashboardUsageData {
+	seven_day: UsageWindowData;
+	tokenharbor: {
+		plan_name: string | null;
+		on_plan: boolean;
+		plan_used_pct: number;
+		plan_exhausted: boolean;
+		used_pct: number;
+		exhausted: boolean;
+		activated: boolean;
+		resets_at: string | null;
+		models: string[];
+	};
+}
+
 // Combined usage data type that supports all providers
 export type FullUsageData =
 	| AnthropicUsageData
@@ -338,7 +356,8 @@ export type FullUsageData =
 	| OpenRouterUsageData
 	| AlibabaCodingPlanUsageData
 	| XaiUsageData
-	| MinimaxUsageData;
+	| MinimaxUsageData
+	| TokenHarborDashboardUsageData;
 
 // Database row types that match the actual database schema
 export interface AccountRow {
@@ -568,6 +587,7 @@ export interface AccountListItem {
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
+		| "tokenharbor"
 		| "vertex-ai"
 		| "bedrock"
 		| "kilo"

@@ -14,6 +14,7 @@ import {
 	getTokenHarborPeakState,
 	isInOffPeakWindow,
 	isPeakAffected,
+	isTokenHarborAccount,
 	isTokenHarborEndpoint,
 	parseOffPeakWindow,
 	peekTokenHarborPeakListing,
@@ -27,7 +28,7 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
 		id: "th-1",
 		name: "tokenharbor",
-		provider: "anthropic-compatible",
+		provider: "tokenharbor",
 		custom_endpoint: "https://tokenharbor.ai",
 		api_key: "test-key",
 		peak_hours_pause_enabled: true,
@@ -169,6 +170,33 @@ describe("isTokenHarborEndpoint", () => {
 	});
 });
 
+describe("isTokenHarborAccount", () => {
+	it("accepts the first-class provider whatever its endpoint", () => {
+		expect(isTokenHarborAccount(makeAccount())).toBe(true);
+		expect(
+			isTokenHarborAccount(
+				makeAccount({ custom_endpoint: "https://mirror.example" }),
+			),
+		).toBe(true);
+	});
+
+	it("accepts legacy anthropic-compatible rows only on TokenHarbor's host", () => {
+		expect(
+			isTokenHarborAccount(makeAccount({ provider: "anthropic-compatible" })),
+		).toBe(true);
+		expect(
+			isTokenHarborAccount(
+				makeAccount({
+					provider: "anthropic-compatible",
+					custom_endpoint: "https://other-gateway.example",
+				}),
+			),
+		).toBe(false);
+		expect(isTokenHarborAccount(makeAccount({ provider: "zai" }))).toBe(false);
+		expect(isTokenHarborAccount(null)).toBe(false);
+	});
+});
+
 describe("isPeakAffected", () => {
 	let originalFetch: typeof globalThis.fetch;
 
@@ -269,6 +297,13 @@ describe("isPeakAffected", () => {
 		expect(isPeakAffected(moved, "deepseek-v4-pro", WED(2))).toBe(false);
 	});
 
+	it("keeps honouring a legacy anthropic-compatible TokenHarbor row", async () => {
+		stubListing();
+		const account = makeAccount({ provider: "anthropic-compatible" });
+		await getTokenHarborPeakListing(account);
+		expect(isPeakAffected(account, "deepseek-v4-pro", WED(2))).toBe(true);
+	});
+
 	it("ignores a listing once the account's provider has changed", async () => {
 		stubListing();
 		const account = makeAccount();
@@ -294,6 +329,22 @@ describe("isPeakAffected", () => {
 		expect(await getTokenHarborPeakListing(account)).toBeNull();
 		expect(peekTokenHarborPeakListing(account.id)).toBeNull();
 		expect(isPeakAffected(account, "deepseek-v4-pro", WED(2))).toBe(false);
+	});
+
+	it("fetches from tokenharbor.ai when a first-class row has no custom endpoint", async () => {
+		let requestedUrl = "";
+		globalThis.fetch = (async (input: string) => {
+			requestedUrl = String(input);
+			return new Response(JSON.stringify({ data: [] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as unknown as typeof globalThis.fetch;
+		const account = makeAccount({ custom_endpoint: null });
+
+		await getTokenHarborPeakListing(account);
+
+		expect(requestedUrl).toBe("https://tokenharbor.ai/v1/models");
 	});
 
 	it("reports peak state per account and per model", async () => {
