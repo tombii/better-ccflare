@@ -113,7 +113,10 @@ export function providerShowsWeeklyUsage(provider: string): boolean {
 		// OpenCode Go has a rolling 5-hour allowance plus a weekly cap. Its
 		// fetcher normalises Go's rolling/weekly percent meters into the
 		// canonical five_hour/seven_day keys, so both windows render.
-		provider === PROVIDER_NAMES.OPENCODE_GO
+		provider === PROVIDER_NAMES.OPENCODE_GO ||
+		// TokenHarbor's Pass and free-model allowances share one seven_day
+		// window; the dashboard payload carries it alongside `tokenharbor`.
+		provider === PROVIDER_NAMES.TOKENHARBOR
 	);
 }
 

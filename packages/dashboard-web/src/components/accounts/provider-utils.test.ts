@@ -58,6 +58,16 @@ describe("peakHoursPauseTitle", () => {
 		expect(title).not.toContain("pause this account");
 	});
 
+	it("names the peak-priced models for a first-class TokenHarbor account", () => {
+		const title = peakHoursPauseTitle({
+			provider: "tokenharbor",
+			peakPricedModels: ["deepseek-v4-pro"],
+		});
+		expect(title).toContain("Skip this account for");
+		expect(title).toContain("deepseek-v4-pro");
+		expect(title).not.toContain("pause this account");
+	});
+
 	it("falls back to generic copy while the TokenHarbor listing is unknown", () => {
 		const title = peakHoursPauseTitle({
 			provider: "anthropic-compatible",
@@ -111,6 +121,13 @@ describe("providerShowsWeeklyUsage", () => {
 		// usage fetcher normalises Go's rolling/weekly percent meters into
 		// five_hour/seven_day, so the per-window branch must be reachable.
 		expect(providerShowsWeeklyUsage("opencode-go")).toBe(true);
+	});
+
+	it("returns true for tokenharbor so its two allowances share the seven_day window", () => {
+		// Both allowances render as seven_day rows; without this entry
+		// AccountListItem passes showWeekly=false and the TokenHarbor branch
+		// falls through to the elapsed-time bar.
+		expect(providerShowsWeeklyUsage("tokenharbor")).toBe(true);
 	});
 
 	it("returns true for the pre-existing allow-listed providers (regression guard)", () => {

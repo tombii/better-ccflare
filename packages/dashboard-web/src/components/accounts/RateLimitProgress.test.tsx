@@ -1147,3 +1147,94 @@ describe("RateLimitProgress — threshold tooltip wording", () => {
 		});
 	});
 });
+
+describe("RateLimitProgress — TokenHarbor allowances", () => {
+	const reset = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+
+	const usageData = (overrides: {
+		plan_used_pct?: number;
+		plan_exhausted?: boolean;
+		used_pct?: number;
+		exhausted?: boolean;
+		plan_name?: string | null;
+	}) => ({
+		seven_day: { utilization: overrides.plan_used_pct ?? 40, resets_at: reset },
+		tokenharbor: {
+			plan_name:
+				overrides.plan_name === undefined ? "Agent Pass" : overrides.plan_name,
+			on_plan: true,
+			plan_used_pct: overrides.plan_used_pct ?? 40,
+			plan_exhausted: overrides.plan_exhausted ?? false,
+			used_pct: overrides.used_pct ?? 90,
+			exhausted: overrides.exhausted ?? false,
+			activated: true,
+			resets_at: reset,
+			models: ["deepseek-v4-pro"],
+		},
+	});
+
+	it("renders the Pass and free-model allowances as two labelled bars", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={reset}
+				usageUtilization={40}
+				usageWindow="seven_day"
+				usageData={usageData({}) as never}
+				provider="tokenharbor"
+				peakHours={{ active: true }}
+				peakPricedModels={["deepseek-v4-pro"]}
+				showWeekly
+			/>,
+		);
+
+		expect(html).toContain("Pass (Agent Pass)");
+		expect(html).toContain("Free models");
+		expect(html).toContain(">40%<");
+		expect(html).toContain(">90%<");
+		// The peak-pricing badge stays visible alongside the bars.
+		expect(html).toContain("Peak pricing: deepseek-v4-pro");
+	});
+
+	it("labels an exhausted allowance as exhausted, not merely full", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={reset}
+				usageUtilization={40}
+				usageWindow="seven_day"
+				usageData={usageData({ used_pct: 100, exhausted: true }) as never}
+				provider="tokenharbor"
+				showWeekly
+			/>,
+		);
+
+		expect(html).toContain("exhausted");
+		// Spent free models turn the bar red rather than waiting for 100%.
+		expect(html).toContain("bg-red-500");
+	});
+
+	it("shows the peak badge before any usage data arrives", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={null}
+				provider="tokenharbor"
+				peakHours={{ active: true }}
+				peakPricedModels={["deepseek-v4-pro"]}
+			/>,
+		);
+
+		expect(html).toContain("Peak pricing: deepseek-v4-pro");
+	});
+
+	it("renders nothing for a TokenHarbor account with no data and no listing", () => {
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={null}
+				provider="tokenharbor"
+				peakHours={null}
+				peakPricedModels={null}
+			/>,
+		);
+
+		expect(html).toBe("");
+	});
+});

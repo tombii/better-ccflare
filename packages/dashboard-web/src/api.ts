@@ -797,6 +797,49 @@ class API extends HttpClient {
 		}
 	}
 
+	/**
+	 * TokenHarbor has no dedicated creation route; the generic POST
+	 * /api/accounts handler accepts the `tokenharbor` mode alias and defaults
+	 * the endpoint to https://tokenharbor.ai when none is given.
+	 */
+	async addTokenHarborAccount(data: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		customEndpoint?: string;
+	}): Promise<{ message: string; success: boolean; accountId: string }> {
+		const startTime = Date.now();
+		const url = "/api/accounts";
+
+		// Never log the key: this goes to console.debug, which people paste
+		// into bug reports.
+		this.logger.debug(`→ POST ${url}`, {
+			name: data.name,
+			priority: data.priority,
+		});
+
+		try {
+			const response = await this.post<{
+				message: string;
+				success: boolean;
+				accountId: string;
+			}>(url, { ...data, mode: "tokenharbor" });
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async addVertexAIAccount(data: {
 		name: string;
 		projectId: string;
