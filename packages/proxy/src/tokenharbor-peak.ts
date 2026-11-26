@@ -279,6 +279,13 @@ export function clearTokenHarborPeakCacheForAccount(accountId: string): void {
 	lastFailureAt.delete(accountId);
 }
 
+// Linear scan: a backtracking regex on account-supplied input is a ReDoS risk.
+function stripTrailingSlashes(value: string): string {
+	let end = value.length;
+	while (end > 0 && value.charCodeAt(end - 1) === 47 /* "/" */) end--;
+	return value.slice(0, end);
+}
+
 async function fetchListing(
 	account: Account,
 ): Promise<TokenHarborPeakListing | null> {
@@ -292,7 +299,7 @@ async function fetchListing(
 	// A first-class TokenHarbor row may carry no custom_endpoint at all; the
 	// shared getEndpointUrl default is OpenAI's, so fall back explicitly.
 	const endpoint = account.custom_endpoint?.trim() || "https://tokenharbor.ai";
-	const base = endpoint.replace(/\/+$/, "");
+	const base = stripTrailingSlashes(endpoint);
 	const url = `${base}${base.endsWith("/v1") ? "" : "/v1"}/models`;
 
 	const controller = new AbortController();

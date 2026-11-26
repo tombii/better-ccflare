@@ -349,6 +349,41 @@ describe("isPeakAffected", () => {
 		expect(requestedUrl).toBe("https://tokenharbor.ai/v1/models");
 	});
 
+	it("builds the listing URL without duplicating slashes", async () => {
+		let requestedUrl = "";
+		globalThis.fetch = (async (input: string) => {
+			requestedUrl = String(input);
+			return new Response(JSON.stringify({ data: [] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as unknown as typeof globalThis.fetch;
+		const cases: Array<[string, Account["custom_endpoint"], string]> = [
+			[
+				"th-slashy",
+				"https://tokenharbor.ai///",
+				"https://tokenharbor.ai/v1/models",
+			],
+			[
+				"th-plain",
+				"https://tokenharbor.ai",
+				"https://tokenharbor.ai/v1/models",
+			],
+			[
+				"th-v1",
+				"https://mirror.example/v1/",
+				"https://mirror.example/v1/models",
+			],
+		];
+
+		for (const [id, endpoint, expected] of cases) {
+			await getTokenHarborPeakListing(
+				makeAccount({ id, custom_endpoint: endpoint }),
+			);
+			expect(requestedUrl).toBe(expected);
+		}
+	});
+
 	it("reports peak state per account and per model", async () => {
 		stubListing();
 		const account = makeAccount();
