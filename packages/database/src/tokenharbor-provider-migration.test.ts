@@ -239,6 +239,26 @@ describe("Database migration — TokenHarbor provider promotion", () => {
 		expect(allowedProvidersOf(db, "key-empty")).toBe("[]");
 	});
 
+	it("does not re-grant tokenharbor after an admin removes it", () => {
+		runMigrations(db);
+		expect(JSON.parse(allowedProvidersOf(db, "key-legacy") as string)).toEqual([
+			"anthropic-compatible",
+			"tokenharbor",
+		]);
+
+		// The admin revokes TokenHarbor; no legacy accounts remain to promote.
+		db.run("UPDATE api_keys SET allowed_providers = ? WHERE id = ?", [
+			'["anthropic-compatible"]',
+			"key-legacy",
+		]);
+
+		runMigrations(db);
+
+		expect(allowedProvidersOf(db, "key-legacy")).toBe(
+			'["anthropic-compatible"]',
+		);
+	});
+
 	it("does not duplicate tokenharbor when migrations run twice", () => {
 		runMigrations(db);
 		runMigrations(db);

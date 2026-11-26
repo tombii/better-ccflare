@@ -2317,28 +2317,17 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			`SELECT id, custom_endpoint FROM accounts
 			 WHERE provider = 'anthropic-compatible' AND custom_endpoint IS NOT NULL`,
 		);
-		let promotedTokenHarbor = 0;
-		for (const row of candidates) {
-			if (!isTokenHarborCustomEndpoint(row.custom_endpoint)) continue;
-			promotedTokenHarbor += await adapter.runWithChanges(
-				"UPDATE accounts SET provider = 'tokenharbor' WHERE id = ?",
-				[row.id],
-			);
-		}
-		backfillWork.recordChanged("accounts", promotedTokenHarbor);
-		if (promotedTokenHarbor > 0) {
-			log.info(
-				`Promoted ${promotedTokenHarbor} TokenHarbor account(s) to the tokenharbor provider`,
-			);
-		}
+		const promotedIds = candidates
+			.filter((row) => isTokenHarborCustomEndpoint(row.custom_endpoint))
+			.map((row) => row.id);
 
 		// Keys that allowlisted the shared `anthropic-compatible` string would
 		// otherwise lose the accounts just promoted. NULL and [] keep their
-		// meaning (unrestricted / deny-all).
-		const hasTokenHarborAccount = await adapter.get<{ one: number }>(
-			"SELECT 1 AS one FROM accounts WHERE provider = 'tokenharbor' LIMIT 1",
-		);
-		if (hasTokenHarborAccount) {
+		// meaning (unrestricted / deny-all). Only a real promotion backfills, so
+		// an admin's later removal of "tokenharbor" survives the next boot.
+		// Backfill first: if the process dies in between, the next boot still
+		// sees the candidates and finishes the job.
+		if (promotedIds.length > 0) {
 			const apiKeys = await adapter.query<{
 				id: string;
 				allowed_providers: string;
@@ -2356,6 +2345,20 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 				changedKeys++;
 			}
 			backfillWork.recordChanged("api_keys", changedKeys);
+		}
+
+		let promotedTokenHarbor = 0;
+		for (const id of promotedIds) {
+			promotedTokenHarbor += await adapter.runWithChanges(
+				"UPDATE accounts SET provider = 'tokenharbor' WHERE id = ?",
+				[id],
+			);
+		}
+		backfillWork.recordChanged("accounts", promotedTokenHarbor);
+		if (promotedTokenHarbor > 0) {
+			log.info(
+				`Promoted ${promotedTokenHarbor} TokenHarbor account(s) to the tokenharbor provider`,
+			);
 		}
 	} catch (error) {
 		log.warn(

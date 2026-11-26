@@ -2360,26 +2360,17 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		const promoteTokenHarbor = db.prepare(
 			"UPDATE accounts SET provider = 'tokenharbor' WHERE id = ?",
 		);
-		let promotedTokenHarbor = 0;
-		for (const row of tokenHarborCandidates) {
-			if (isTokenHarborCustomEndpoint(row.custom_endpoint)) {
-				promoteTokenHarbor.run(row.id);
-				promotedTokenHarbor++;
-			}
-		}
-		if (promotedTokenHarbor > 0) {
-			log.info(
-				`Promoted ${promotedTokenHarbor} TokenHarbor account(s) to the tokenharbor provider`,
-			);
-		}
+		const promotedIds = tokenHarborCandidates
+			.filter((row) => isTokenHarborCustomEndpoint(row.custom_endpoint))
+			.map((row) => row.id);
 
 		// Keys that allowlisted the shared `anthropic-compatible` string would
 		// otherwise lose the accounts just promoted. NULL and [] keep their
-		// meaning (unrestricted / deny-all).
-		const hasTokenHarborAccount = db
-			.prepare("SELECT 1 FROM accounts WHERE provider = 'tokenharbor' LIMIT 1")
-			.get();
-		if (hasTokenHarborAccount) {
+		// meaning (unrestricted / deny-all). Only a real promotion backfills, so
+		// an admin's later removal of "tokenharbor" survives the next boot.
+		// Backfill first: if the process dies in between, the next boot still
+		// sees the candidates and finishes the job.
+		if (promotedIds.length > 0) {
 			const apiKeys = db
 				.prepare(
 					"SELECT id, allowed_providers FROM api_keys WHERE allowed_providers IS NOT NULL",
@@ -2392,6 +2383,13 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				const updated = addTokenHarborToAllowedProviders(key.allowed_providers);
 				if (updated !== null) updateAllowedProviders.run(updated, key.id);
 			}
+		}
+
+		for (const id of promotedIds) promoteTokenHarbor.run(id);
+		if (promotedIds.length > 0) {
+			log.info(
+				`Promoted ${promotedIds.length} TokenHarbor account(s) to the tokenharbor provider`,
+			);
 		}
 	});
 
