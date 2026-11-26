@@ -55,6 +55,7 @@ export interface AddAccountOptionsWithAdapter {
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
+		| "tokenharbor"
 		| "vertex-ai"
 		| "bedrock"
 		| "kilo"
@@ -1407,6 +1408,7 @@ export async function addAccount(
 			{ label: "DeepSeek account (API key)", value: "deepseek" },
 			{ label: "Sail Research account (API key)", value: "sailresearch" },
 			{ label: "OpenCode Go account (API key)", value: "opencode-go" },
+			{ label: "TokenHarbor account (API key)", value: "tokenharbor" },
 			{ label: "Kilo Gateway (API key)", value: "kilo" },
 			{ label: "OpenRouter (API key)", value: "openrouter" },
 			{
@@ -1667,6 +1669,25 @@ export async function addAccount(
 		await createOpencodeGoAccount(dbOps, name, apiKey, providedPriority || 0);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: OpenCode Go (API key)");
+	} else if (mode === "tokenharbor") {
+		// TokenHarbor shares the anthropic-compatible transport, with its own
+		// provider id so usage polling and peak pricing are enabled.
+		const apiKey = await adapter.input("\nEnter your TokenHarbor API key: ");
+		const endpoint = customEndpoint || "https://tokenharbor.ai";
+
+		await createAnthropicCompatibleAccount(
+			dbOps,
+			name,
+			apiKey,
+			providedPriority || 0,
+			endpoint,
+			null,
+			null,
+			"tokenharbor",
+		);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: TokenHarbor (API key)");
+		console.log(`Endpoint: ${endpoint}`);
 	} else if (mode === "nanogpt") {
 		// Handle NanoGPT accounts with API keys
 		const apiKey = await adapter.input("\nEnter your NanoGPT API key: ");
