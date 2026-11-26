@@ -240,6 +240,59 @@ describe("proxyWithAccount — model fallback re-clamps reasoning effort", () =>
 		expect(sent[1].reasoning).toBeUndefined();
 	});
 
+	it("openai-compatible: a client-native output_config.effort is carried and re-clamped from the original", async () => {
+		// The transform clamps against Opus 4.7 (low only); the fallback sent is
+		// Opus 4.5, so starting from the client's native "max" gives "high".
+		setReasoningEffortOverrides({ "claude-opus-4-7": ["low"] });
+		const sent = await runEffortFallback(
+			makeAccount({
+				provider: "openai-compatible",
+				custom_endpoint: "https://cliproxy.example.test/v1",
+				model_mappings: MAPPINGS,
+			}),
+			{ model: "claude-sonnet-4-5", output_config: { effort: "max" } },
+		);
+
+		expect(sent).toHaveLength(2);
+		expect(sent[0].model).toBe("claude-sonnet-4-6");
+		expect(sent[0].reasoning_effort).toBe("max");
+		expect(sent[0].output_config).toBeUndefined();
+		expect(sent[1].model).toBe("claude-opus-4-5");
+		expect(sent[1].reasoning_effort).toBe("high");
+		expect(sent[1].output_config).toBeUndefined();
+	});
+
+	it("anthropic-compatible: a native output_config.effort alone stays untouched on fallback", async () => {
+		const sent = await runEffortFallback(
+			makeAccount({ model_mappings: MAPPINGS }),
+			{ model: "claude-sonnet-4-5", output_config: { effort: "max" } },
+		);
+
+		expect(sent).toHaveLength(2);
+		expect(sent[0].output_config).toEqual({ effort: "max" });
+		expect(sent[1].model).toBe("claude-opus-4-5");
+		expect(sent[1].output_config).toEqual({ effort: "max" });
+		expect(sent[1].reasoning).toBeUndefined();
+	});
+
+	it("openrouter (Anthropic-shaped): a native output_config.effort passes through and gains no reasoning object", async () => {
+		const sent = await runEffortFallback(
+			makeAccount({
+				provider: "openrouter",
+				custom_endpoint: "https://openrouter.ai/api",
+				model_mappings: MAPPINGS,
+			}),
+			{ model: "claude-sonnet-4-5", output_config: { effort: "max" } },
+		);
+
+		expect(sent).toHaveLength(2);
+		expect(sent[0].output_config).toEqual({ effort: "max" });
+		expect(sent[0].reasoning).toBeUndefined();
+		expect(sent[1].model).toBe("claude-opus-4-5");
+		expect(sent[1].output_config).toEqual({ effort: "max" });
+		expect(sent[1].reasoning).toBeUndefined();
+	});
+
 	it("anthropic-compatible: restores an effort the mapped model rejects for a fallback that accepts it", async () => {
 		// Both the primary and the opus family are mapped to Haiku 4.5, which
 		// rejects the effort parameter outright, so the transform drops it. The

@@ -343,6 +343,26 @@ describe("CodexProvider request conversion", () => {
 		expect(body.reasoning).toEqual({ effort: "high", context: "all_turns" });
 	});
 
+	it("forwards a client-native output_config.effort to Codex reasoning.effort", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-sonnet-5-0",
+				max_tokens: 100,
+				output_config: { effort: "high" },
+				messages: [{ role: "user", content: "Hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+
+		expect(body.reasoning).toEqual({ effort: "high", context: "all_turns" });
+		expect(body.output_config).toBeUndefined();
+	});
+
 	it("adds a continuation nudge after Skill tool results", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {

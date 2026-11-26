@@ -2,7 +2,7 @@ import { mapModelName } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { normalizeOpenAIContent } from "./content";
-import { resolveReasoningEffort } from "./reasoning";
+import { readClientReasoningEffort, resolveReasoningEffort } from "./reasoning";
 import type {
 	AnthropicContent,
 	AnthropicContentBlock,
@@ -133,7 +133,7 @@ export function convertAnthropicRequestToOpenAI(
 		}
 	}
 	const reasoningResolution = resolveReasoningEffort(
-		anthropicData.reasoning?.effort,
+		readClientReasoningEffort(anthropicData),
 		{
 			sourceModel: anthropicData.model,
 			targetModel: mappedModel,

@@ -339,7 +339,7 @@ Manage this via the dashboard (Settings → Advanced → Provider Model Defaults
 
 ## Reasoning Effort
 
-A client picks the reasoning effort per request, or omits it to get the provider's default. better-ccflare never adds an effort the client did not send. It carries the effort to the account that serves the request, in that upstream's own field:
+A client picks the reasoning effort per request, or omits it to get the provider's default. better-ccflare never adds an effort the client did not send. On `/v1/messages` the effort is read from `reasoning.effort` or, when that is absent, from Claude's native `output_config.effort` (what Claude Code and the Anthropic SDKs send). It carries the effort to the account that serves the request, in that upstream's own field:
 
 | Upstream | Outbound field |
 |----------|----------------|
@@ -349,7 +349,7 @@ A client picks the reasoning effort per request, or omits it to get the provider
 | Codex | `reasoning.effort`. Unchanged: Codex still applies its own `medium` default. |
 | Bedrock | `(none)` — dropped; Bedrock builds its own Converse payload |
 
-Accepted values are `minimal`, `low`, `medium`, `high`, `xhigh` and `max`. Any other value returns `400 invalid_request_error`. If the target model does not support the requested level, the effort is moved to the nearest supported level, preferring the next one down. The built-in tables cover the Claude families, some GPT-5 models and a few documented third-party models (Mistral Large 4 accepts `low`/`medium`/`high`; `zai-glm-5-3` accepts `low`/`high`/`max`). Effort is forwarded unchanged to models those tables don't know.
+Accepted values are `minimal`, `low`, `medium`, `high`, `xhigh` and `max`. Any other value, in either field, returns `400 invalid_request_error`. When both fields are sent, `reasoning.effort` wins for the converted upstreams, and Anthropic-shaped upstreams keep the client's `output_config.effort` as sent. If the target model does not support the requested level, the effort is moved to the nearest supported level, preferring the next one down. The built-in tables cover the Claude families, some GPT-5 models and a few documented third-party models (Mistral Large 4 accepts `low`/`medium`/`high`; `zai-glm-5-3` accepts `low`/`high`/`max`). Effort is forwarded unchanged to models those tables don't know.
 
 Claude support is generation-aware, because the accepted levels differ by release:
 

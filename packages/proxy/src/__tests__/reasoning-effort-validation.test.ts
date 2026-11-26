@@ -58,13 +58,17 @@ function makeContext(getAllAccounts: () => Promise<Account[]>): ProxyContext {
 	};
 }
 
-function makeRequest(reasoning?: Record<string, unknown>): Request {
+function makeRequest(
+	reasoning?: Record<string, unknown>,
+	outputConfig?: Record<string, unknown>,
+): Request {
 	const body: Record<string, unknown> = {
 		model: "claude-sonnet-4-5",
 		messages: [{ role: "user", content: "hello" }],
 		max_tokens: 16,
 	};
 	if (reasoning !== undefined) body.reasoning = reasoning;
+	if (outputConfig !== undefined) body.output_config = outputConfig;
 	return new Request("https://proxy.local/v1/messages", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -107,6 +111,41 @@ describe("/v1/messages reasoning.effort validation", () => {
 
 		const response = await handleProxy(
 			makeRequest({ effort: "high" }),
+			new URL("https://proxy.local/v1/messages"),
+			ctx,
+		);
+
+		expect(response.status).not.toBe(400);
+		expect(getAllAccounts).toHaveBeenCalled();
+	});
+});
+
+describe("/v1/messages output_config.effort validation", () => {
+	it("answers 400 for an invalid client-native effort without consulting an account", async () => {
+		const getAllAccounts = mock(async () => [] as Account[]);
+		const ctx = makeContext(getAllAccounts);
+
+		const response = await handleProxy(
+			makeRequest(undefined, { effort: "extreme" }),
+			new URL("https://proxy.local/v1/messages"),
+			ctx,
+		);
+
+		expect(response.status).toBe(400);
+		const body = (await response.json()) as {
+			error: { type: string; message: string };
+		};
+		expect(body.error.type).toBe("invalid_request_error");
+		expect(body.error.message).toContain("output_config.effort must be one of");
+		expect(getAllAccounts).not.toHaveBeenCalled();
+	});
+
+	it("lets a valid client-native effort through to the normal routing path", async () => {
+		const getAllAccounts = mock(async () => [] as Account[]);
+		const ctx = makeContext(getAllAccounts);
+
+		const response = await handleProxy(
+			makeRequest(undefined, { effort: "high" }),
 			new URL("https://proxy.local/v1/messages"),
 			ctx,
 		);

@@ -17,7 +17,10 @@ import {
 } from "@better-ccflare/core";
 import { withSanitizedProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
-import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
+import {
+	readClientReasoningEffort,
+	stripCacheControlFromOpenAIRequest,
+} from "@better-ccflare/openai-formats";
 import {
 	type AnyUsageData,
 	applyMistralAffinityHeader,
@@ -3551,13 +3554,15 @@ async function proxyWithAccountAttempt(
 					// but the re-patch below sends `nextBareModel`, so the effort is
 					// re-resolved from this original value against that model. A
 					// client-native `output_config.effort` is passed through verbatim
-					// by the Anthropic-shaped transform and must stay untouched.
+					// by the Anthropic-shaped transform and must stay untouched; every
+					// other transform converts it like `reasoning.effort` (see
+					// readClientReasoningEffort), so there it is the original value.
 					const preTransformBody = patchedContext?.getParsedJson() as
 						| Record<string, unknown>
 						| null
 						| undefined;
 					const preReasoning = preTransformBody?.reasoning;
-					const originalEffort =
+					const carrierEffort =
 						preReasoning &&
 						typeof preReasoning === "object" &&
 						!Array.isArray(preReasoning)
@@ -3569,6 +3574,8 @@ async function proxyWithAccountAttempt(
 						typeof preOutputConfig === "object" &&
 						!Array.isArray(preOutputConfig) &&
 						(preOutputConfig as Record<string, unknown>).effort !== undefined;
+					const fallbackEffortTarget =
+						provider.reasoningEffortTarget?.(account);
 
 					const retryRequestInit: RequestInit & { duplex?: "half" } = {
 						method: req.method,
@@ -3602,6 +3609,23 @@ async function proxyWithAccountAttempt(
 					if (retryTransformedBodyText !== undefined) {
 						try {
 							const transformedBody = JSON.parse(retryTransformedBodyText);
+							// Anthropic-shaped transforms (OpenRouter's included, whose
+							// effort target is `reasoning`) pass a client-native
+							// `output_config.effort` through verbatim, so it is still on
+							// the outbound body. Any other transform converted it, and
+							// then it is the client's original effort.
+							const outboundOutputConfig = transformedBody.output_config;
+							const nativeEffortPassesThrough =
+								clientSentNativeOutputEffort &&
+								!!outboundOutputConfig &&
+								typeof outboundOutputConfig === "object" &&
+								!Array.isArray(outboundOutputConfig) &&
+								outboundOutputConfig.effort !== undefined;
+							const originalEffort =
+								carrierEffort ??
+								(nativeEffortPassesThrough
+									? undefined
+									: readClientReasoningEffort(preTransformBody));
 							const routingChanged = applyModelAndRouting(
 								transformedBody,
 								nextBareModel,
@@ -3638,7 +3662,7 @@ async function proxyWithAccountAttempt(
 							// passes it through verbatim), so its "already present" check
 							// no-ops there — same guarantee as preserveOutputConfigEffort.
 							if (originalEffort !== undefined) {
-								const effortTarget = provider.reasoningEffortTarget?.(account);
+								const effortTarget = fallbackEffortTarget;
 								if (effortTarget) {
 									try {
 										// OR, not assign: the re-clamp above may already have
@@ -3661,10 +3685,10 @@ async function proxyWithAccountAttempt(
 							// The fallback pair may already be a known rejector (learned
 							// from an earlier request): strip up front instead of
 							// spending the failed round trip the recovery exists to
-							// avoid. Skipped when the client sent a native effort, which
-							// the transform passes through verbatim.
+							// avoid. Skipped when the client's native effort is passed
+							// through verbatim (Anthropic-shaped upstreams).
 							if (
-								!clientSentNativeOutputEffort &&
+								!nativeEffortPassesThrough &&
 								reasoningFieldRejectors.has(
 									reasoningFieldRejectorKey(account.id, nextBareModel),
 								) &&

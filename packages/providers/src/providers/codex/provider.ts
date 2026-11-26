@@ -9,6 +9,7 @@ import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import type { AnthropicImageContent } from "@better-ccflare/openai-formats";
 import {
+	readClientReasoningEffort,
 	resolveReasoningEffort,
 	sanitizeSchemaForOpenAI,
 	toOpenAIImagePart,
@@ -2800,7 +2801,7 @@ export class CodexProvider extends BaseProvider {
 			| { effort?: string; summary?: unknown; context?: unknown }
 			| undefined;
 		const reasoningEffort =
-			passthroughReasoning?.effort ?? body.reasoning?.effort;
+			passthroughReasoning?.effort ?? readClientReasoningEffort(body);
 		const reasoningResolution = resolveReasoningEffort(reasoningEffort, {
 			sourceModel: body.model,
 			targetModel: model,

@@ -787,17 +787,25 @@ async function handleProxyRequest(
 			// The provider transform throws ValidationError for an invalid value,
 			// which inside a per-account attempt becomes an "all accounts failed"
 			// 503 after every account is retried. It is a client error: answer 400.
-			const reasoning = parsedBody.reasoning;
-			if (
-				reasoning &&
-				typeof reasoning === "object" &&
-				!Array.isArray(reasoning)
-			) {
-				const effort = (reasoning as Record<string, unknown>).effort;
+			// Claude's native `output_config.effort` is checked too: transforms
+			// for non-Anthropic upstreams read it when `reasoning.effort` is absent.
+			const effortSources: Array<[string, unknown]> = [
+				["reasoning.effort", parsedBody.reasoning],
+				["output_config.effort", parsedBody.output_config],
+			];
+			for (const [field, container] of effortSources) {
+				if (
+					!container ||
+					typeof container !== "object" ||
+					Array.isArray(container)
+				) {
+					continue;
+				}
+				const effort = (container as Record<string, unknown>).effort;
 				if (effort !== undefined && effort !== null) {
-					const effortError = getReasoningEffortError(effort);
+					const effortError = getReasoningEffortError(effort, field);
 					if (effortError) {
-						log.warn("Rejected invalid reasoning.effort", { effort });
+						log.warn(`Rejected invalid ${field}`, { effort });
 						return new Response(
 							JSON.stringify({
 								type: "error",
