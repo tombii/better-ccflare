@@ -5,6 +5,7 @@
  * Reference calendar (2026-09, UTC): 23 Wed, 26 Sat, 27 Sun.
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import {
 	clearTokenHarborPeakCacheForTests,
@@ -17,6 +18,7 @@ import {
 	isTokenHarborAccount,
 	isTokenHarborEndpoint,
 	parseOffPeakWindow,
+	parseTokenHarborPeakGraceHours,
 	peekTokenHarborPeakListing,
 } from "../tokenharbor-peak";
 
@@ -415,5 +417,157 @@ describe("isPeakAffected", () => {
 			})) as unknown as typeof globalThis.fetch;
 		const again = await getTokenHarborPeakListing(account);
 		expect(again?.models.size).toBe(1);
+	});
+});
+
+describe("parseTokenHarborPeakGraceHours", () => {
+	it("defaults to 24 hours when unset", () => {
+		expect(parseTokenHarborPeakGraceHours({})).toBe(24);
+		expect(
+			parseTokenHarborPeakGraceHours({
+				CCFLARE_TOKENHARBOR_PEAK_GRACE_HOURS: undefined,
+			}),
+		).toBe(24);
+	});
+
+	it("accepts 0 to disable the grace", () => {
+		expect(
+			parseTokenHarborPeakGraceHours({
+				CCFLARE_TOKENHARBOR_PEAK_GRACE_HOURS: "0",
+			}),
+		).toBe(0);
+	});
+
+	it("falls back to 24 for invalid or negative values", () => {
+		for (const raw of ["", "abc", "-1", "NaN", "Infinity"]) {
+			expect(
+				parseTokenHarborPeakGraceHours({
+					CCFLARE_TOKENHARBOR_PEAK_GRACE_HOURS: raw,
+				}),
+			).toBe(24);
+		}
+	});
+});
+
+describe("TokenHarbor peak grace near the shared reset", () => {
+	let originalFetch: typeof globalThis.fetch;
+	const GRACE_ENV_KEY = "CCFLARE_TOKENHARBOR_PEAK_GRACE_HOURS";
+	const savedEnv = process.env[GRACE_ENV_KEY];
+	const HOUR_MS = 60 * 60 * 1000;
+
+	beforeEach(() => {
+		clearTokenHarborPeakCacheForTests();
+		usageCache.clear();
+		delete process.env[GRACE_ENV_KEY];
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+		clearTokenHarborPeakCacheForTests();
+		usageCache.clear();
+		if (savedEnv === undefined) delete process.env[GRACE_ENV_KEY];
+		else process.env[GRACE_ENV_KEY] = savedEnv;
+	});
+
+	function stubListing() {
+		globalThis.fetch = (async () =>
+			new Response(
+				JSON.stringify({
+					data: [
+						{
+							id: "deepseek-v4-pro",
+							pricing: { off_peak: { window: "14:00–00:00 UTC" } },
+						},
+					],
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			)) as unknown as typeof globalThis.fetch;
+	}
+
+	/** Real payload shape, positioned at a chosen reset relative to `ts`. */
+	function usageResettingAt(ts: number, resetInHours: number) {
+		return {
+			on_plan: true,
+			plan_used_pct: 40,
+			used_pct: 10,
+			reset_at: new Date(ts + resetInHours * HOUR_MS).toISOString(),
+			plan_exhausted: false,
+			exhausted: false,
+		};
+	}
+
+	async function primeListing(account: Account) {
+		stubListing();
+		await getTokenHarborPeakListing(account);
+	}
+
+	it("stops skipping a peak-priced model inside the last 24h before reset", async () => {
+		const account = makeAccount();
+		await primeListing(account);
+		usageCache.set(account.id, usageResettingAt(WED(2), 23) as never);
+
+		expect(isPeakAffected(account, "deepseek-v4-pro", WED(2))).toBe(false);
+	});
+
+	it("still skips when the reset is further out than the grace", async () => {
+		const account = makeAccount();
+		await primeListing(account);
+		usageCache.set(account.id, usageResettingAt(WED(2), 25) as never);
+
+		expect(isPeakAffected(account, "deepseek-v4-pro", WED(2))).toBe(true);
+	});
+
+	it("can be disabled with 0", async () => {
+		const account = makeAccount();
+		await primeListing(account);
+		usageCache.set(account.id, usageResettingAt(WED(2), 1) as never);
+		process.env[GRACE_ENV_KEY] = "0";
+
+		expect(isPeakAffected(account, "deepseek-v4-pro", WED(2))).toBe(true);
+	});
+
+	it("does not spend a grace period into an exhausted allowance", async () => {
+		const account = makeAccount();
+		await primeListing(account);
+		usageCache.set(account.id, {
+			...usageResettingAt(WED(2), 1),
+			plan_exhausted: true,
+		} as never);
+
+		expect(isPeakAffected(account, "deepseek-v4-pro", WED(2))).toBe(true);
+	});
+
+	it("does not apply without cached usage data", async () => {
+		const account = makeAccount();
+		await primeListing(account);
+
+		expect(isPeakAffected(account, "deepseek-v4-pro", WED(2))).toBe(true);
+	});
+
+	it("treats a reset already in the past as no grace", async () => {
+		const account = makeAccount();
+		await primeListing(account);
+		usageCache.set(account.id, usageResettingAt(WED(2), -1) as never);
+
+		expect(isPeakAffected(account, "deepseek-v4-pro", WED(2))).toBe(true);
+	});
+
+	it("agrees with routing in the badge state, including a historical ts", async () => {
+		const account = makeAccount();
+		await primeListing(account);
+		usageCache.set(account.id, usageResettingAt(WED(2), 23) as never);
+
+		expect(getTokenHarborPeakState(account.id, null, WED(2))).toEqual({
+			active: false,
+		});
+		expect(
+			getTokenHarborPeakState(account.id, "deepseek-v4-pro", WED(2)),
+		).toEqual({ active: false });
+		// Grace is judged against the ts it is asked about, so a request from
+		// long before the grace window still reports peak.
+		expect(
+			getTokenHarborPeakState(account.id, null, WED(2) - 48 * HOUR_MS),
+		).toEqual({ active: true });
 	});
 });

@@ -59,6 +59,8 @@ interface AllowanceShape {
 	plan_used_pct?: unknown;
 	used_pct?: unknown;
 	reset_at?: unknown;
+	exhausted?: unknown;
+	plan_exhausted?: unknown;
 	seven_day?: { resets_at?: unknown } | null;
 	tokenharbor?: AllowanceShape | null;
 }
@@ -68,6 +70,8 @@ interface TokenHarborAllowances {
 	planUsedPct: number;
 	usedPct: number;
 	resetAt: string | null;
+	exhausted: boolean | null;
+	planExhausted: boolean | null;
 }
 
 function readAllowances(usage: unknown): TokenHarborAllowances | null {
@@ -98,6 +102,8 @@ function readAllowances(usage: unknown): TokenHarborAllowances | null {
 		planUsedPct: raw.plan_used_pct,
 		usedPct: raw.used_pct,
 		resetAt,
+		exhausted: isBoolean(raw.exhausted) ? raw.exhausted : null,
+		planExhausted: isBoolean(raw.plan_exhausted) ? raw.plan_exhausted : null,
 	};
 }
 
@@ -225,4 +231,17 @@ export function getTokenHarborResetMs(usage: unknown): number | null {
 	if (!allowances?.resetAt) return null;
 	const ms = Date.parse(allowances.resetAt);
 	return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Whether the allowance that gates the account — the Pass on a plan, the
+ * free-model allowance otherwise — reports itself spent. Null when the shape
+ * carries no meaningful flag, which callers must treat as unknown.
+ */
+export function getTokenHarborAllowanceExhausted(
+	usage: unknown,
+): boolean | null {
+	const allowances = readAllowances(usage);
+	if (!allowances) return null;
+	return allowances.onPlan ? allowances.planExhausted : allowances.exhausted;
 }
